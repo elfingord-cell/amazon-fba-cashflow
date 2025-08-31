@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Amazon FBA · Cashflow Planung</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <meta name="robots" content="noindex,nofollow" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <strong>Amazon FBA</strong> · Cashflow Planung
+        <span class="tag">Phase 1 · static · local-first</span>
+      </div>
+      <nav class="nav">
+        <a href="#/dashboard" data-link>Dashboard</a>
+        <a href="#/plan" data-link>Plan</a>
+        <a href="#/inputs" data-link>Eingaben</a>
+        <a href="#/io" data-link>Export/Import</a>
+        <button id="debug-toggle" class="btn-ghost" aria-controls="debug-panel" aria-expanded="false">Debug</button>
+      </nav>
+    </header>
+
+    <main id="app" aria-live="polite"></main>
+
+    <aside id="debug-panel" hidden>
+      <div class="card warn">
+        <strong>No-SW:</strong> In Phase 1 wird <em>kein</em> Service Worker verwendet.
+        <div class="debug-actions">
+          <button id="btn-sw-unregister">Alle SW abmelden</button>
+          <button id="btn-caches-clear">HTTP-Caches leeren</button>
+          <button id="btn-storage-clear">App-Daten löschen</button>
+        </div>
+        <small id="debug-status" class="muted"></small>
+      </div>
+    </aside>
+
+    <footer class="app-footer">
+      <small>Local-first • JSON Export/Import • vorbereitet für Sync-Adapter</small>
+    </footer>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
