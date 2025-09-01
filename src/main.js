@@ -1,73 +1,75 @@
+// FBA-CF-0013 — minimaler Hash-Router + aktive Tabs (keine externen Libs)
 
-import { storage } from "./data/storageLocal.js";
-import { computeMonthly } from "./domain/cashflow.js";
-import { DashboardView } from "./ui/dashboard.js";
-import { PlanView } from "./ui/plan.js";
-import { InputsView } from "./ui/inputs.js";
-import { ImportExportView } from "./ui/importExport.js";
-import { NoopSyncAdapter } from "./sync/adapter.js";
-
-const SLUG = "amazon_fba_cashflow_v1";
+const ROUTES = ["dashboard", "plan", "eingaben", "export", "debug"];
+const DEFAULT_ROUTE = "dashboard";
 const appEl = document.getElementById("app");
 
-// Debug (No-SW)
-const debugToggle = document.getElementById("debug-toggle");
-const debugPanel = document.getElementById("debug-panel");
-const debugStatus = document.getElementById("debug-status");
-document.getElementById("btn-sw-unregister")?.addEventListener("click", async () => {
-  if ("serviceWorker" in navigator) {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.allSettled(regs.map(r => r.unregister()));
-    debugStatus.textContent = `Service Worker abgemeldet: ${regs.length}`;
-  } else debugStatus.textContent = "Kein Service Worker API";
-});
-document.getElementById("btn-caches-clear")?.addEventListener("click", async () => {
-  if ("caches" in window) {
-    const names = await caches.keys();
-    await Promise.allSettled(names.map(n => caches.delete(n)));
-    debugStatus.textContent = `HTTP-Caches gelöscht: ${names.length}`;
-  } else debugStatus.textContent = "Kein Cache API";
-});
-document.getElementById("btn-storage-clear")?.addEventListener("click", () => {
-  localStorage.removeItem(SLUG);
-  debugStatus.textContent = "App-Daten gelöscht (localStorage)";
-});
-debugToggle?.addEventListener("click", () => {
-  const open = debugPanel.hasAttribute("hidden");
-  debugPanel.toggleAttribute("hidden", !open);
-  debugToggle.setAttribute("aria-expanded", String(open));
-});
+function $(sel, root = document) { return root.querySelector(sel); }
+function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
 
-// State
-const sync = new NoopSyncAdapter();
-let state = storage.load();
-
-function withRecompute(nextState = state) {
-  const monthly = computeMonthly(nextState);
-  return { ...nextState, _computed: { monthly } };
-}
-state = withRecompute(state);
-
-function save(next) {
-  storage.save(next);
-  state = withRecompute(next);
-  render();
+function getRouteFromHash() {
+  const h = location.hash.replace(/^#/, "").trim();
+  return ROUTES.includes(h) ? h : DEFAULT_ROUTE;
 }
 
-// Router
-const routes = {
-  "#/dashboard": () => DashboardView(state, save),
-  "#/plan": () => PlanView(state, save),
-  "#/inputs": () => InputsView(state, save),
-  "#/io": () => ImportExportView(state, save),
-};
-function render() {
-  const route = routes[location.hash] ? location.hash : "#/dashboard";
-  document.querySelectorAll("a[data-link]").forEach(a => {
-    a.classList.toggle("active", a.getAttribute("href") === route);
+function setActiveNav(route) {
+  $all(".topnav .navbtn").forEach(a => {
+    const r = a.getAttribute("data-route");
+    const active = r === route;
+    a.classList.toggle("active", active);
+    if (active) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   });
-  appEl.innerHTML = "";
-  appEl.appendChild(routes[route]());
 }
-window.addEventListener("hashchange", render);
-render();
+
+async function renderRoute(route) {
+  setActiveNav(route);
+  try {
+    let modPath = null;
+    if (route === "dashboard") modPath = "./ui/dashboard.js";
+    if (route === "plan")      modPath = "./ui/plan.js";
+    if (route === "eingaben")  modPath = "./ui/eingaben.js";
+    if (route === "export")    modPath = "./ui/export.js";
+    if (route === "debug")     modPath = "./ui/debug.js";
+
+    if (modPath) {
+      const mod = await import(modPath);
+      if (typeof mod.render === "function") {
+        await mod.render(appEl);
+        return;
+      }
+    }
+    appEl.innerHTML = `<section class="card"><h2>${route}</h2><p class="muted">Kein View-Modul gefunden.</p></section>`;
+  } catch (e) {
+    console.error("Renderfehler:", e);
+    appEl.innerHTML = `
+      <section class="card">
+        <h2>${route}</h2>
+        <p class="muted">Fehler beim Laden der Ansicht.</p>
+        <pre style="white-space:pre-wrap;background:#fff;padding:8px;border-radius:8px;border:1px solid #eee">${String(e)}</pre>
+      </section>`;
+  }
+}
+
+function goto(route) {
+  if (!ROUTES.includes(route)) route = DEFAULT_ROUTE;
+  if (getRouteFromHash() !== route) location.hash = "#" + route;
+  else renderRoute(route);
+}
+
+function bindNav() {
+  $all(".topnav .navbtn").forEach(a => {
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      goto(a.getAttribute("data-route") || DEFAULT_ROUTE);
+    });
+  });
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  bindNav();
+  const r = getRouteFromHash();
+  setActiveNav(r);
+  renderRoute(r);
+});
+window.addEventListener("hashchange", () => renderRoute(getRouteFromHash()));
