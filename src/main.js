@@ -1,73 +1,63 @@
-
-import { storage } from "./data/storageLocal.js";
-import { computeMonthly } from "./domain/cashflow.js";
-import { DashboardView } from "./ui/dashboard.js";
-import { PlanView } from "./ui/plan.js";
-import { InputsView } from "./ui/inputs.js";
-import { ImportExportView } from "./ui/importExport.js";
-import { NoopSyncAdapter } from "./sync/adapter.js";
-
-const SLUG = "amazon_fba_cashflow_v1";
+// Hash-Router + aktive Tabs — stabile Version (ohne externe Libs)
+const ROUTES = ["dashboard", "plan", "eingaben", "export", "debug"];
+const DEFAULT_ROUTE = "dashboard";
 const appEl = document.getElementById("app");
 
-// Debug (No-SW)
-const debugToggle = document.getElementById("debug-toggle");
-const debugPanel = document.getElementById("debug-panel");
-const debugStatus = document.getElementById("debug-status");
-document.getElementById("btn-sw-unregister")?.addEventListener("click", async () => {
-  if ("serviceWorker" in navigator) {
-    const regs = await navigator.serviceWorker.getRegistrations();
-    await Promise.allSettled(regs.map(r => r.unregister()));
-    debugStatus.textContent = `Service Worker abgemeldet: ${regs.length}`;
-  } else debugStatus.textContent = "Kein Service Worker API";
-});
-document.getElementById("btn-caches-clear")?.addEventListener("click", async () => {
-  if ("caches" in window) {
-    const names = await caches.keys();
-    await Promise.allSettled(names.map(n => caches.delete(n)));
-    debugStatus.textContent = `HTTP-Caches gelöscht: ${names.length}`;
-  } else debugStatus.textContent = "Kein Cache API";
-});
-document.getElementById("btn-storage-clear")?.addEventListener("click", () => {
-  localStorage.removeItem(SLUG);
-  debugStatus.textContent = "App-Daten gelöscht (localStorage)";
-});
-debugToggle?.addEventListener("click", () => {
-  const open = debugPanel.hasAttribute("hidden");
-  debugPanel.toggleAttribute("hidden", !open);
-  debugToggle.setAttribute("aria-expanded", String(open));
-});
-
-// State
-const sync = new NoopSyncAdapter();
-let state = storage.load();
-
-function withRecompute(nextState = state) {
-  const monthly = computeMonthly(nextState);
-  return { ...nextState, _computed: { monthly } };
+function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
+function getRoute() {
+  const h = location.hash.replace(/^#/, "").trim();
+  return ROUTES.includes(h) ? h : DEFAULT_ROUTE;
 }
-state = withRecompute(state);
-
-function save(next) {
-  storage.save(next);
-  state = withRecompute(next);
-  render();
-}
-
-// Router
-const routes = {
-  "#/dashboard": () => DashboardView(state, save),
-  "#/plan": () => PlanView(state, save),
-  "#/inputs": () => InputsView(state, save),
-  "#/io": () => ImportExportView(state, save),
-};
-function render() {
-  const route = routes[location.hash] ? location.hash : "#/dashboard";
-  document.querySelectorAll("a[data-link]").forEach(a => {
-    a.classList.toggle("active", a.getAttribute("href") === route);
+function markActive(route) {
+  $all(".topnav .navbtn").forEach(a => {
+    const r = a.getAttribute("data-route");
+    const on = r === route;
+    a.classList.toggle("active", on);
+    if (on) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   });
-  appEl.innerHTML = "";
-  appEl.appendChild(routes[route]());
 }
-window.addEventListener("hashchange", render);
-render();
+async function render(route) {
+  markActive(route);
+  const map = {
+    dashboard: "./ui/dashboard.js",
+    plan: "./ui/plan.js",
+    eingaben: "./ui/eingaben.js",
+    export: "./ui/export.js",
+    debug: "./ui/debug.js",
+  };
+  try {
+    const mod = await import(map[route]);
+    if (mod && typeof mod.render === "function") {
+      await mod.render(appEl);
+      return;
+    }
+    appEl.innerHTML = `<section class="card"><h2>${route}</h2><p class="muted">Kein View-Modul gefunden.</p></section>`;
+  } catch (e) {
+    console.error(e);
+    appEl.innerHTML = `
+      <section class="card">
+        <h2>${route}</h2>
+        <p class="muted">Fehler beim Laden der Ansicht.</p>
+        <pre style="white-space:pre-wrap;background:#fff;padding:8px;border:1px solid #eee;border-radius:8px">${String(e)}</pre>
+      </section>`;
+  }
+}
+function goto(route) {
+  const r = ROUTES.includes(route) ? route : DEFAULT_ROUTE;
+  if (getRoute() !== r) location.hash = "#" + r;
+  else render(r);
+}
+function bindNav() {
+  $all(".topnav .navbtn").forEach(a => {
+    a.addEventListener("click", ev => {
+      ev.preventDefault();
+      goto(a.getAttribute("data-route") || DEFAULT_ROUTE);
+    });
+  });
+}
+window.addEventListener("DOMContentLoaded", () => {
+  bindNav();
+  render(getRoute());
+});
+window.addEventListener("hashchange", () => render(getRoute()));
