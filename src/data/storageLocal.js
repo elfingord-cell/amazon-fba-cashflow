@@ -1,8 +1,18 @@
 // Local-first Storage für Amazon-FBA Cashflow
-// - Beibehalt der bestehenden API: `storage.load()` / `storage.save()`
-// - NEU: Shim-Exports `loadState` / `saveState` für Module, die Named Exports erwarten.
+// Beibehalt der bestehenden API + Shim + Change-Events für Live-Refresh
 
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
+
+// Mini-Eventing ohne Abhängigkeiten
+const EVT_NAME = "fba:state-changed";
+export function addStateListener(fn) {
+  window.addEventListener(EVT_NAME, fn);
+  return () => window.removeEventListener(EVT_NAME, fn);
+}
+function notifyChange() {
+  // Event synchron feuern; leichtgewichtig
+  try { window.dispatchEvent(new CustomEvent(EVT_NAME)); } catch {}
+}
 
 const defaults = {
   settings: {
@@ -28,7 +38,6 @@ export const storage = {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return structuredClone(defaults);
       const obj = JSON.parse(raw);
-      // Merge mit Defaults, damit neue Felder nachgerüstet werden
       return { ...structuredClone(defaults), ...obj };
     } catch {
       return structuredClone(defaults);
@@ -38,19 +47,13 @@ export const storage = {
     const { _computed, ...clean } = state || {};
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+      notifyChange(); // <<< NEU: Änderungen mitteilen
     } catch {
-      // still schlucken – localStorage kann im Private Mode eingeschränkt sein
+      // still schlucken
     }
   }
 };
 
-// --------- NEU: Shim für Named-Imports ---------
-// Damit Code, der `import { loadState, saveState } from "../data/storageLocal.js"` nutzt,
-// ohne Änderungen läuft.
-export function loadState() {
-  return storage.load();
-}
-
-export function saveState(state) {
-  return storage.save(state);
-}
+// Named-Export-Shim (Kompatibilität)
+export function loadState()  { return storage.load(); }
+export function saveState(s) { return storage.save(s); }
