@@ -1,5 +1,6 @@
-// Export/Import-View mit Live-Refresh + Normalisierung für Preview/Export
-// Diese Version baut auf 0004b/c auf.
+// FBA-CF-0004e — Export/Import-View (konsistente Normalisierung)
+// - Vorschau/Export zeigen immer dieselbe Zahl als openingEur & openingBalance (de-DE)
+// - arbeitet mit storageLocal (Events) zusammen
 
 import { loadState, saveState, addStateListener } from "../data/storageLocal.js";
 import { fmtEUR } from "../domain/metrics.js";
@@ -40,27 +41,31 @@ export async function render(root) {
     </section>
   `;
 
-  // Elements
-  const elSummary = $("#summary", root);
-  const taJson = $("#ta-json", root);
-  const taImport = $("#ta-import", root);
-  const inFile = $("#file-input", root);
-  const btnExport = $("#btn-export-file", root);
-  const btnCopy = $("#btn-copy-json", root);
-  const btnSample = $("#btn-load-sample", root);
-  const btnApply = $("#btn-apply", root);
-  const btnClear = $("#btn-clear", root);
-  const btnPaste = $("#btn-paste", root);
-  const btnApplyText = $("#btn-apply-text", root);
-  const elMeta = $("#import-meta", root);
+  const $ = (sel, el = root) => el.querySelector(sel);
+  const elSummary = $("#summary");
+  const taJson = $("#ta-json");
+  const taImport = $("#ta-import");
+  const inFile = $("#file-input");
+  const btnExport = $("#btn-export-file");
+  const btnCopy = $("#btn-copy-json");
+  const btnSample = $("#btn-load-sample");
+  const btnApply = $("#btn-apply");
+  const btnClear = $("#btn-clear");
+  const btnPaste = $("#btn-paste");
+  const btnApplyText = $("#btn-apply-text");
+  const elMeta = $("#import-meta");
 
-  // Initial render
+  // Initial & Live-Refresh
+  const redraw = () => {
+    const s = loadState();
+    const norm = normalizeForExport(s);
+    taJson.value = pretty(norm);
+    elSummary.innerHTML = renderSummary(norm);
+  };
   redraw();
+  const off = addStateListener(redraw);
 
-  // Live-Refresh from storage events
-  const off = addStateListener(() => redraw());
-
-  // Export file (immer normalisierte Sicht)
+  // Export Datei
   btnExport.addEventListener("click", () => {
     const json = pretty(normalizeForExport(loadState()));
     const blob = new Blob([json], { type: "application/json;charset=utf-8" });
@@ -68,7 +73,7 @@ export async function render(root) {
     downloadBlob(blob, `fba-cf-export-${ts}.json`);
   });
 
-  // Export to clipboard
+  // Export in Zwischenablage
   btnCopy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(pretty(normalizeForExport(loadState())));
@@ -78,7 +83,7 @@ export async function render(root) {
     }
   });
 
-  // Load sample data (setzt opening etc.)
+  // Testdaten laden
   btnSample.addEventListener("click", () => {
     const base = loadState();
     const next = {
@@ -96,7 +101,7 @@ export async function render(root) {
         { month: "2025-04", label: "Sonderausgabe", amountEur: "1.000,00" }
       ]
     };
-    saveState(next); // storage synchronisiert openingEur/openingBalance & feuert Event
+    saveState(next);
     toast("Testdaten geladen.");
   });
 
@@ -137,7 +142,6 @@ export async function render(root) {
     if (!candidate) { elMeta.innerHTML = `<span style="color:#b00020">Kein Import vorhanden.</span>`; return; }
     const { ok, msg } = quickValidate(candidate);
     if (!ok) { elMeta.innerHTML = `<span style="color:#b00020">${escapeHtml(msg)}</span>`; return; }
-    // Speichern (storage sorgt für Kanonisierung + Event)
     saveState(candidate);
     taImport.value = "";
     elMeta.textContent = "Import übernommen.";
@@ -193,41 +197,27 @@ export async function render(root) {
   root._cleanup = () => { try { off && off(); } catch {} };
 
   // ---- Helpers ----
-  function redraw() {
-    const s = loadState();
-    const norm = normalizeForExport(s);
-    taJson.value = pretty(norm);
-    elSummary.innerHTML = renderSummary(norm);
-  }
   function normalizeForExport(s) {
     const out = structuredClone(s || {});
-    const obStr = out?.settings?.openingBalance;
-    const obNum = out?.openingEur;
-    const parsed = (typeof obStr === "string") ? Number(obStr.replace(/\./g,"").replace(",", ".")) : NaN;
-    if (isFinite(parsed)) {
-      out.openingEur = parsed;
-    } else if (typeof obNum === "number" && isFinite(obNum)) {
-      // stelle sicher, dass auch der String vorhanden ist
-      out.settings = out.settings || {};
-      out.settings.openingBalance = (out.settings.openingBalance ?? obNum.toLocaleString("de-DE", { minimumFractionDigits:2, maximumFractionDigits:2 }));
-    } else {
-      // Fallback 0
-      out.openingEur = 0;
-      out.settings = out.settings || {};
-      out.settings.openingBalance = "0,00";
-    }
+    // Konsistente Kanonisierung: Zahl = primär
+    let n = NaN;
+    if (typeof out.openingEur === "number" && isFinite(out.openingEur)) n = out.openingEur;
+    else if (out?.settings?.openingBalance) n = toNum(out.settings.openingBalance);
+    if (!isFinite(n)) n = 0;
+    out.openingEur = n;
+    out.settings = out.settings || {};
+    out.settings.openingBalance = n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return out;
   }
-
-  function $(sel, el = document) { return el.querySelector(sel); }
+  function $(sel, el = document) { return (root || document).querySelector(sel); }
   function pretty(obj) { return JSON.stringify(obj, null, 2); }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function stripBOM(s) { return s.replace(/^\uFEFF/, "").trim(); }
-  function tsName() { const d = new Date(); const z = (n)=>String(n).padStart(2,"0"); return `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`; }
+  function tsName() { const d=new Date(); const z=(n)=>String(n).padStart(2,"0"); return `${d.getFullYear()}${z(d.getMonth()+1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`; }
   function downloadBlob(blob, filename) { const a=document.createElement("a"); const url=URL.createObjectURL(blob); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
   function formatBytes(b) { if (b<1024) return `${b} B`; if (b<1024*1024) return `${(b/1024).toFixed(1)} KB`; return `${(b/1024/1024).toFixed(2)} MB`; }
-  function sum(arr) { return (arr||[]).reduce((a,r)=> a + toNum(r.amountEur), 0); }
   function toNum(x){ if(x==null) return 0; if(typeof x==="number") return x; return Number(String(x).replace(/\./g,"").replace(",", "."))||0; }
+  function sum(arr) { return (arr||[]).reduce((a,r)=> a + toNum(r.amountEur), 0); }
   function pctStr(p){ if(p==null||!isFinite(p)) return "—"; const v=p>1?p:p*100; return v.toLocaleString("de-DE",{maximumFractionDigits:2})+" %"; }
   function renderSummary(s) {
     const opening = (typeof s.openingEur === "number" && isFinite(s.openingEur)) ? s.openingEur : toNum(s.settings?.openingBalance || 0);
@@ -245,5 +235,12 @@ export async function render(root) {
         <li>Extras gesamt: <b>${fmtEUR(extras)}</b> • Ausgaben gesamt: <b>${fmtEUR(outs)}</b></li>
         <li>Startmonat: <b>${start}</b> • Horizont: <b>${horizon}</b> Monate</li>
       </ul>`;
+  }
+  function toast(txt) {
+    const div = document.createElement("div");
+    div.textContent = txt;
+    div.style.cssText = "position:fixed;right:12px;bottom:12px;background:#111;color:#fff;padding:8px 10px;border-radius:10px;opacity:.95;z-index:9999";
+    document.body.appendChild(div);
+    setTimeout(()=> div.remove(), 1800);
   }
 }
