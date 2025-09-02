@@ -1,106 +1,153 @@
-// Local-first Storage (ohne Abhängigkeiten)
-// API: loadState(), saveState(), storage, addStateListener()
-// NEU: Kanonisierung openingEur <-> settings.openingBalance (de-DE)
+// FBA-CF-0004g — Einheitliche Storage-Schicht
+// - fester Key: amazon_fba_cashflow_v1
+// - Kanonisierung: openingEur (Number) <-> settings.openingBalance (de-DE)
+// - sofortiges Persistieren + Listener
 
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 
-// --- Mini-Event-System ---
-const EVT_NAME = "fba:state-changed";
-export function addStateListener(fn) {
-  window.addEventListener(EVT_NAME, fn);
-  return () => window.removeEventListener(EVT_NAME, fn);
-}
-function notifyChange() {
-  try { window.dispatchEvent(new CustomEvent(EVT_NAME)); } catch {}
-}
-
-// --- Helpers de-DE ---
-function parseDE(x) {
-  if (x == null) return NaN;
-  if (typeof x === "number") return x;
-  const s = String(x).trim();
-  if (!s) return NaN;
-  return Number(s.replace(/\./g, "").replace(",", "."));
-}
-function fmtDE(n) {
-  if (!isFinite(n)) return "0,00";
-  return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-// --- Defaults (tolerant) ---
-const defaults = {
+// Robuste Defaults (nur das Nötigste)
+const DEFAULTS = {
   settings: {
     startMonth: "2025-02",
     horizonMonths: 18,
+    // de-DE formatiert
     openingBalance: "50.000,00",
   },
-  incomings: [
-    { month: "2025-02", revenueEur: "20.000,00", payoutRate: "0,85" },
-    { month: "2025-03", revenueEur: "22.000,00", payoutRate: "0,85" },
-  ],
-  extras: [
-    { month: "2025-03", label: "USt-Erstattung", amountEur: "1.500,00" },
-  ],
-  outgoings: [
-    { month: "2025-02", label: "Fixkosten", amountEur: "2.000,00" },
-  ],
-  // optionale numerische Spiegel-Felder:
-  openingEur: undefined,
-  monthlyAmazonEur: undefined,
-  payoutPct: undefined,
+  // Zahlenspiegel (beide Perspektiven vorhanden)
+  openingEur: 50000.0,
+
+  // Platzhalter-Domänenfelder (werden evtl. von Views verwendet)
+  monthlyAmazonEur: 0,
+  payoutPct: 0.85,
+  extras: [],     // [{month:"YYYY-MM"|date, label, amountEur: "1.234,56"|number}]
+  outgoings: [],  // dito
 };
 
-// --- Kern-API ---
-export const storage = {
-  load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return structuredClone(defaults);
-      const obj = JSON.parse(raw);
-      return { ...structuredClone(defaults), ...obj };
-    } catch {
-      return structuredClone(defaults);
-    }
-  },
-
-  save(state) {
-    // 1) _computed raus
-    const { _computed, ...clean } = state || {};
-    const next = structuredClone(clean);
-
-    // 2) Kanonisierung Opening:
-    //    - wenn settings.openingBalance vorhanden → openingEur aus de-DE ableiten
-    //    - sonst, wenn openingEur existiert → openingBalance formatieren
-    const s = next.settings || (next.settings = {});
-    const hasStr = typeof s.openingBalance === "string" && s.openingBalance.trim() !== "";
-    const hasNum = typeof next.openingEur === "number" && isFinite(next.openingEur);
-
-    if (hasStr) {
-      const parsed = parseDE(s.openingBalance);
-      if (isFinite(parsed)) {
-        next.openingEur = parsed;
-      } else if (!hasNum) {
-        // Fallback: falls der String unparsebar ist und kein openingEur vorhanden, setze 0
-        next.openingEur = 0;
-        s.openingBalance = fmtDE(0);
-      }
-    } else if (hasNum) {
-      s.openingBalance = fmtDE(next.openingEur);
-    } else {
-      // gar nichts vorhanden → setze 0,00
-      next.openingEur = 0;
-      s.openingBalance = fmtDE(0);
-    }
-
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      notifyChange();
-    } catch {
-      // stillschweigend ignorieren
-    }
-  },
+// ---------- Helpers ----------
+const parseDE = (x) => {
+  if (x == null) return NaN;
+  if (typeof x === "number") return x;
+  const t = String(x).trim();
+  if (!t) return NaN;
+  return Number(t.replace(/\./g, "").replace(",", "."));
+};
+const fmtDE = (n) => {
+  if (!isFinite(n)) return "0,00";
+  return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Named-Export-Shim
-export function loadState() { return storage.load(); }
-export function saveState(s) { return storage.save(s); }
+// Öffentliche Listener-API
+const listeners = new Set();
+export function addStateListener(fn) {
+  if (typeof fn === "function") listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+function notify() {
+  for (const fn of [...listeners]) {
+    try { fn(); } catch { /* View-Fehler nicht propagieren */ }
+  }
+}
+
+// Defensive Deep-Clone
+function clone(obj) {
+  return obj ? JSON.parse(JSON.stringify(obj)) : obj;
+}
+
+// Kanonisierung: sorgt dafür, dass Zahl + String übereinstimmen
+function canonicalize(rawIn) {
+  const s = clone(rawIn) || {};
+  s.settings = s.settings || {};
+
+  // Ausgangswerte ermitteln
+  let n = NaN;
+  // 1) openingEur hat Vorrang, wenn valide Zahl
+  if (typeof s.openingEur === "number" && isFinite(s.openingEur)) {
+    n = s.openingEur;
+  }
+  // 2) sonst aus settings.openingBalance (de-DE) ableiten
+  if (!isFinite(n) && s.settings.openingBalance != null) {
+    const p = parseDE(s.settings.openingBalance);
+    if (isFinite(p)) n = p;
+  }
+  // 3) fallback auf Default
+  if (!isFinite(n)) n = parseDE(DEFAULTS.settings.openingBalance);
+
+  // Beide Repräsentationen setzen
+  s.openingEur = n;
+  s.settings.openingBalance = fmtDE(n);
+
+  // Standardfelder absichern
+  if (typeof s.settings.startMonth !== "string") s.settings.startMonth = DEFAULTS.settings.startMonth;
+  if (!Number.isFinite(s.settings.horizonMonths)) s.settings.horizonMonths = DEFAULTS.settings.horizonMonths;
+
+  if (!Array.isArray(s.extras)) s.extras = [];
+  if (!Array.isArray(s.outgoings)) s.outgoings = [];
+
+  if (!Number.isFinite(s.monthlyAmazonEur)) s.monthlyAmazonEur = 0;
+  if (!Number.isFinite(s.payoutPct)) s.payoutPct = 0.85;
+
+  return s;
+}
+
+// Interner RAM-Cache (einmal beim ersten loadState() eingelesen)
+let _state = null;
+
+// Lesen aus localStorage (einmalig oder bei harter Neuinitialisierung)
+function readFromLS() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return canonicalize(DEFAULTS);
+    const obj = JSON.parse(raw);
+    // Migration: falls altes Format wie {storage:{load/save}} o.Ä. -> ignorieren
+    return canonicalize({ ...DEFAULTS, ...obj });
+  } catch {
+    return canonicalize(DEFAULTS);
+  }
+}
+
+// Schreiben nach localStorage (atomar; ohne Throttle)
+function writeToLS(obj) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+  } catch {
+    // Speicher voll / privates Fenster: ignorieren, aber _state bleibt korrekt
+  }
+}
+
+// ---------- Öffentliche API ----------
+
+// Liefert einen **Clone** des aktuellen Zustands
+export function loadState() {
+  if (_state == null) {
+    _state = readFromLS();
+  }
+  return clone(_state);
+}
+
+// Speichert **sofort** und benachrichtigt Listener
+export function saveState(next) {
+  // next kann Teilausschnitt oder kompletter State sein
+  const merged = canonicalize({ ..._state ?? {}, ...clone(next) });
+  _state = merged;
+  writeToLS(merged);
+  notify();
+}
+
+// Convenience: vollständiger Reset (z.B. für „Reset“-Button)
+export function resetState() {
+  _state = canonicalize(DEFAULTS);
+  writeToLS(_state);
+  notify();
+}
+
+// Für Ex/Import (Datei)
+export function exportState() {
+  // Export immer in kanonischer Form
+  return canonicalize(loadState());
+}
+export function importState(obj) {
+  const cand = canonicalize(obj || {});
+  _state = cand;
+  writeToLS(cand);
+  notify();
+}
