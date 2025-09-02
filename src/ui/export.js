@@ -1,9 +1,9 @@
-// FBA-CF-0004a — Export/Import (JSON) Fixes:
-// - quickValidate hinzugefügt
-// - BOM-Strip + präzisere Fehlermeldungen
-// - Paste-Import ("Aus Text übernehmen")
+// FBA-CF-0004b — Export/Import View
+// - Live-Refresh: JSON-Vorschau + Summary reagieren auf State-Changes
+// - "Import übernehmen" parst jetzt standardmäßig den aktuellen Text aus der Vorschau/Textarea
+// - Beibehalt: BOM-Strip, Validator, Paste-Import, Testdaten
 
-import { loadState, saveState } from "../data/storageLocal.js";
+import { loadState, saveState, addStateListener } from "../data/storageLocal.js";
 import { fmtEUR } from "../domain/metrics.js";
 
 export async function render(root) {
@@ -61,8 +61,16 @@ export async function render(root) {
   taJson.value = pretty(state);
   elSummary.innerHTML = renderSummary(state);
 
+  // --- LIVE-REFRESH: aktualisiere JSON-Vorschau + Summary bei State-Änderungen
+  const off = addStateListener(() => {
+    const s = loadState();
+    taJson.value = pretty(s);
+    elSummary.innerHTML = renderSummary(s);
+  });
+
   // Export: Datei
   btnExport.addEventListener("click", () => {
+    // immer aktuellen Stand ziehen
     const json = pretty(loadState());
     const blob = new Blob([json], { type: "application/json;charset=utf-8" });
     const ts = tsName();
@@ -83,8 +91,7 @@ export async function render(root) {
   btnSample.addEventListener("click", () => {
     const next = withTestdata(loadState());
     saveState(next); // triggert live-refresh
-    taJson.value = pretty(next);
-    elSummary.innerHTML = renderSummary(next);
+    // live listener aktualisiert Preview/Summary automatisch
     toast("Testdaten geladen.");
   });
 
@@ -107,8 +114,8 @@ export async function render(root) {
         elMeta.innerHTML = `<span style="color:#b00020">${escapeHtml(msg)}</span>`;
         return;
       }
-      importObj = obj;
-      taImport.value = pretty(importObj);
+      importObj = obj;                 // Merke Original
+      taImport.value = pretty(obj);    // …aber Textarea ist editierbar
       elMeta.textContent = `${f.name} • ${formatBytes(f.size)} • gültig`;
       btnApply.disabled = false;
       btnClear.style.display = "inline-block";
@@ -117,10 +124,28 @@ export async function render(root) {
     }
   });
 
-  // Import anwenden (aus Datei-Vorschau)
+  // Import anwenden (priorisiert Textarea-Inhalt; fallback: importObj)
   btnApply.addEventListener("click", () => {
-    if (!importObj) return;
-    applyImport(importObj, "Import übernommen.");
+    const txt = String(taImport.value || "").trim();
+    let candidate = importObj;
+    if (txt) {
+      try {
+        candidate = JSON.parse(stripBOM(txt));
+      } catch (e) {
+        elMeta.innerHTML = `<span style="color:#b00020">Ungültige JSON (Text): ${escapeHtml(e?.message || e)}</span>`;
+        return;
+      }
+    }
+    if (!candidate) {
+      elMeta.innerHTML = `<span style="color:#b00020">Kein Import vorhanden. Datei wählen oder Text einfügen.</span>`;
+      return;
+    }
+    const { ok, msg } = quickValidate(candidate);
+    if (!ok) {
+      elMeta.innerHTML = `<span style="color:#b00020">${escapeHtml(msg)}</span>`;
+      return;
+    }
+    applyImport(candidate, "Import übernommen.");
   });
 
   // Vorschau verwerfen
@@ -139,12 +164,14 @@ export async function render(root) {
       const txt = await navigator.clipboard.readText();
       taImport.value = txt;
       elMeta.textContent = "Zwischenablage eingefügt. Prüfe und übernehme ggf. aus Text.";
+      btnApply.disabled = false;
+      btnClear.style.display = "inline-block";
     } catch {
       toast("Zwischenablage nicht verfügbar. Bitte Text manuell in das Feld einfügen.");
     }
   });
 
-  // Aus Text übernehmen
+  // Aus Text übernehmen (explizit)
   btnApplyText.addEventListener("click", () => {
     try {
       const txt = stripBOM(String(taImport.value || ""));
@@ -159,6 +186,10 @@ export async function render(root) {
       elMeta.innerHTML = `<span style="color:#b00020">Ungültige JSON (Text): ${escapeHtml(e?.message || e)}</span>`;
     }
   });
+
+  // Cleanup Listener beim Navigationswechsel
+  // (nicht zwingend notwendig, aber sauber)
+  root._cleanup = () => { try { off && off(); } catch {} };
 
   // ---- Helfer
   function $(sel, el = document) { return el.querySelector(sel); }
@@ -233,21 +264,19 @@ export async function render(root) {
     if (typeof obj !== "object" || obj === null) {
       return { ok: false, msg: "Root muss ein Objekt sein." };
     }
-    // Sehr tolerant: prüfe nur erwartete Typen, wenn vorhanden
     if (obj.settings && typeof obj.settings !== "object") {
       return { ok: false, msg: "settings muss ein Objekt sein." };
     }
-    ["extras", "outgoings", "incomings"].forEach(k => {
+    for (const k of ["extras", "outgoings", "incomings"]) {
       if (k in obj && !Array.isArray(obj[k])) {
         return { ok: false, msg: `${k} muss Array sein.` };
       }
-    });
+    }
     return { ok: true, msg: "ok" };
   }
   function applyImport(obj, msg) {
     saveState(obj);
-    taJson.value = pretty(obj);
-    elSummary.innerHTML = renderSummary(obj);
+    // Live-Listener aktualisiert Preview/Summary automatisch.
     taImport.value = "";
     elMeta.textContent = msg;
     btnApply.disabled = true;
