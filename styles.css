@@ -88,7 +88,7 @@ canvas.chart{
 .kpi-label { font-size: 12px; color: #9aa3b2; }
 .kpi-value { font-size: 18px; font-weight: 600; }
 
-/* Bars */
+/* Dashboard Bars */
 .bars { display: grid; gap: 6px; }
 .bar-row { display: grid; grid-template-columns: 86px 1fr 110px; align-items: center; gap: 8px; }
 .bar-label { font-size: 12px; color: #9aa3b2; }
