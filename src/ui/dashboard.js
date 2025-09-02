@@ -1,62 +1,57 @@
-// FBA-CF-0008 — Dashboard: 5k-Y-Ticks, schräge X-Labels, Balken nur oben rund
+// FBA-CF-0009 — Dashboard: Netto je Monat aus incomings + extras – outgoings
+import { loadState, addStateListener } from "../data/storageLocal.js";
+const $ = (sel, r=document)=> r.querySelector(sel);
 
-import { loadState } from "../data/storageLocal.js";
-
-const $ = (sel, r=document) => r.querySelector(sel);
-
-// Hilfen
-function parseDE(s){ return Number(String(s??0).replace(/\./g,"").replace(",", ".")) || 0; }
-function monthSeq(startYm, n){
-  const [y0,m0] = (startYm||"2025-02").split("-").map(Number);
-  const out=[];
-  for(let i=0;i<n;i++){
-    const d=new Date(y0, (m0-1)+i, 1);
-    out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-  }
+function parseDE(x){ return Number(String(x??0).replace(/\./g,"").replace(",", ".")) || 0; }
+function monthSeq(startYm="2025-02", n=18){
+  const [y,m] = startYm.split("-").map(Number);
+  const out=[]; for(let i=0;i<n;i++){ const d=new Date(y,(m-1)+i,1); out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); }
   return out;
 }
 
 export async function render(root){
   const s = loadState();
+  const months = monthSeq(s?.settings?.startMonth || "2025-02", Number(s?.settings?.horizonMonths||18));
 
-  // simple Netto: (Monatsumsatz × Payout) + ExtrasΣ − AusgabenΣ
-  const revenue = parseDE(s.monthlyAmazonEur ?? 0);
-  const payout  = Number(s.payoutPct ?? 0.85) || 0;
-  const inflow  = revenue * payout;
-  const extraΣ  = (s.extras||[]).reduce((a,r)=> a + parseDE(r.amountEur), 0);
-  const outΣ    = (s.outgoings||[]).reduce((a,r)=> a + parseDE(r.amountEur), 0);
-  const netBase = inflow + extraΣ - outΣ;
+  const byMonth = new Map(months.map(m=>[m,{inflow:0, extras:0, out:0}]));
+  (s.incomings||[]).forEach(r=>{
+    const m = r.month;
+    if (!byMonth.has(m)) return;
+    const rev = parseDE(r.revenueEur);
+    const pct = Number(r.payoutPct||0);
+    byMonth.get(m).inflow += rev * (pct > 1 ? pct/100 : pct);
+  });
+  (s.extras||[]).forEach(r=>{
+    const m = r.month; if (!byMonth.has(m)) return;
+    byMonth.get(m).extras += parseDE(r.amountEur);
+  });
+  (s.outgoings||[]).forEach(r=>{
+    const m = r.month; if (!byMonth.has(m)) return;
+    byMonth.get(m).out += parseDE(r.amountEur);
+  });
 
-  const months = monthSeq(s?.settings?.startMonth ?? "2025-02", Number(s?.settings?.horizonMonths ?? 18));
-  const net = months.map(() => netBase); // bis FO/PO kommt, gleichmäßig
+  const net = months.map(m=>{
+    const row = byMonth.get(m);
+    return (row.inflow + row.extras) - row.out;
+  });
 
-  // Y-Skala in 5k-Schritten
-  const maxVal = Math.max(0, ...net);
+  const maxVal = Math.max(1, ...net);
   const step = 5000;
-  const top = Math.ceil(maxVal/step)*step || step;
-  const ticks = [0, step, step*2, step*3, step*4, step*5].filter(v=>v<=top);
-  const tickPct = v => (v/top)*100;
+  const top = Math.max(step, Math.ceil(maxVal/step)*step);
+  const ticks = []; for (let v=0; v<=top; v+=step) ticks.push(v);
 
   root.innerHTML = `
     <section class="card">
       <h2>Dashboard</h2>
-
       <div class="vchart" style="--cols:${months.length}">
-        <div class="vchart-grid">
-          ${ticks.map(()=>`<div class="yline"></div>`).join("")}
-        </div>
-        <div class="vchart-y">
-          ${ticks.slice().reverse().map(v=>`<div class="ytick">${Math.round(v/1000)}k</div>`).join("")}
-        </div>
-
+        <div class="vchart-grid">${ticks.map(()=>`<div class="yline"></div>`).join("")}</div>
+        <div class="vchart-y">${ticks.slice().reverse().map(v=>`<div class="ytick">${Math.round(v/1000)}k</div>`).join("")}</div>
         <div class="vchart-bars">
           ${net.map(v=>{
             const h = Math.max(0, Math.min(100, (v/top)*100));
-            const neg = v<0 ? "neg" : "";
-            return `<div class="vbar-wrap"><div class="vbar ${neg}" style="--h:${h}%"></div></div>`;
+            return `<div class="vbar-wrap"><div class="vbar" style="--h:${h}%"></div></div>`;
           }).join("")}
         </div>
-
         <div class="vchart-x" style="margin-top:12px">
           ${months.map(m=>`<div class="xlabel">${m}</div>`).join("")}
         </div>
@@ -64,10 +59,10 @@ export async function render(root){
     </section>
   `;
 
-  // leichte Schräge für Labels (nur einmalig)
-  const style = document.createElement("style");
-  style.textContent = `
-    .vchart-x .xlabel { transform: rotate(-30deg); transform-origin: right top; height: 24px; }
-  `;
-  root.appendChild(style);
+  // Live-Refresh für spätere Änderungen ohne erneutes Navigieren
+  const off = addStateListener(()=>{
+    const r = document.getElementById("app");
+    if (!r) { off(); return; }
+    if (location.hash.replace("#","") === "dashboard") render(r);
+  });
 }
