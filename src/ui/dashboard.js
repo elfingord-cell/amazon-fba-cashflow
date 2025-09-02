@@ -1,6 +1,5 @@
-// FBA-CF-0005 — Reaktives Dashboard (local-first, ohne Libs)
-// Aggregiert je Monat: (Sales * payout) + Extras – Ausgaben
-
+// FBA-CF-0006 — Dashboard: heller Kontrast + vertikale Monatsbalken
+// Aggregation: (Sales * payout) + Extras – Ausgaben  → Netto
 import { loadState, addStateListener } from "../data/storageLocal.js";
 import { fmtEUR } from "../domain/metrics.js";
 
@@ -8,29 +7,55 @@ export async function render(root) {
   root.innerHTML = `
     <section class="card">
       <h2>Dashboard</h2>
+
       <div id="kpis" class="grid three" style="gap:12px"></div>
-      <div class="row" style="align-items:center;margin-top:8px;margin-bottom:6px">
+
+      <div class="row" style="align-items:center;margin-top:10px;margin-bottom:8px">
         <h3 style="margin:0">Monatsübersicht</h3>
-        <div class="muted" id="range" style="margin-left:8px"></div>
+        <div id="range" class="muted" style="margin-left:8px"></div>
         <div style="flex:1"></div>
         <small class="muted">grün = Netto+</small>
         <small class="muted" style="margin-left:8px">rot = Netto−</small>
       </div>
-      <div id="bars"></div>
+
+      <div id="vchart" class="vchart">
+        <div class="vchart-y" id="vchart-y"></div>
+        <div class="vchart-grid" id="vchart-grid"></div>
+        <div class="vchart-bars" id="vchart-bars"></div>
+        <div class="vchart-x" id="vchart-x"></div>
+      </div>
     </section>
   `;
 
-  const elKPIs  = root.querySelector("#kpis");
-  const elRange = root.querySelector("#range");
-  const elBars  = root.querySelector("#bars");
+  const elKPIs   = root.querySelector("#kpis");
+  const elRange  = root.querySelector("#range");
+  const elY      = root.querySelector("#vchart-y");
+  const elGrid   = root.querySelector("#vchart-grid");
+  const elBars   = root.querySelector("#vchart-bars");
+  const elX      = root.querySelector("#vchart-x");
 
-  const off = addStateListener(redraw);
+  const off = addStateListener(() => { if (location.hash === "#dashboard" || location.hash === "" ) redraw(); });
   await redraw();
   root._cleanup = () => { try { off && off(); } catch {} };
 
-  async function redraw() {
-    const s = loadState();
+  function monthsFrom(startYYYYMM, n){
+    const [y0,m0] = String(startYYYYMM||"").split("-").map(Number);
+    if(!y0||!m0) return [];
+    const out=[];
+    for(let i=0;i<Math.max(0,Number(n||0));i++){
+      const d=new Date(y0,(m0-1)+i,1);
+      out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+    }
+    return out;
+  }
+  const toNum = (x)=> typeof x==="number" ? x : Number(String(x||"").replace(/\./g,"").replace(",","."))||0;
+  const toMonth = (r)=>{
+    if (r?.month && /^\d{4}-\d{2}$/.test(r.month)) return r.month;
+    if (r?.date) { const d=new Date(r.date); if(!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+    return null;
+  };
 
+  function aggregate(s) {
     const startMonth   = s?.settings?.startMonth || "2025-02";
     const horizon      = Number(s?.settings?.horizonMonths || 18);
     const opening      = Number(s?.openingEur || 0);
@@ -39,13 +64,39 @@ export async function render(root) {
     const extras       = Array.isArray(s?.extras) ? s.extras : [];
     const outs         = Array.isArray(s?.outgoings) ? s.outgoings : [];
 
-    const months   = buildMonths(startMonth, horizon);
-    const perMonth = aggregate(months, monthlySales, payoutPct, extras, outs);
+    const months = monthsFrom(startMonth, horizon);
+    const idx = new Map(months.map((m,i)=>[m,i]));
+    const rows = months.map(m => ({ month:m, inflow: monthlySales*payoutPct, extras:0, out:0, net:0 }));
 
-    const sumExtras = perMonth.reduce((a,m)=>a+m.extras,0);
-    const sumOuts   = perMonth.reduce((a,m)=>a+m.out,0);
-    const avgNet    = perMonth.reduce((a,m)=>a+m.net,0) / (months.length || 1);
-    const firstNeg  = findFirstNegative(opening, perMonth);
+    for (const e of extras) {
+      const m = toMonth(e); if(!m||!idx.has(m)) continue;
+      rows[idx.get(m)].extras += toNum(e.amountEur);
+    }
+    for (const o of outs) {
+      const m = toMonth(o); if(!m||!idx.has(m)) continue;
+      rows[idx.get(m)].out += Math.abs(toNum(o.amountEur));
+    }
+    for (const r of rows) { r.net = (r.inflow + r.extras) - r.out; }
+
+    return { months, rows, opening };
+  }
+
+  function kpi(label, value){
+    return `<div class="kpi">
+      <div class="kpi-label">${escapeHtml(label)}</div>
+      <div class="kpi-value">${escapeHtml(String(value))}</div>
+    </div>`;
+  }
+
+  function redraw(){
+    const s = loadState();
+    const { months, rows, opening } = aggregate(s);
+
+    // KPIs
+    const sumExtras = rows.reduce((a,m)=>a+m.extras,0);
+    const sumOuts   = rows.reduce((a,m)=>a+m.out,0);
+    const avgNet    = rows.reduce((a,m)=>a+m.net,0) / (months.length||1);
+    const firstNeg  = (()=>{ let bal=opening; for(const r of rows){ bal+=r.net; if (bal<0) return r.month; } return null; })();
 
     elKPIs.innerHTML = `
       ${kpi("Opening", fmtEUR(opening))}
@@ -53,115 +104,45 @@ export async function render(root) {
       ${kpi("Ausgaben (Σ)", fmtEUR(sumOuts))}
       ${kpi("Ø Netto/Monat", fmtEUR(avgNet))}
       ${kpi("Erster negativer Monat", firstNeg || "—")}
-      ${kpi("Sales × Payout", fmtEUR(monthlySales * payoutPct))}
+      ${kpi("Sales × Payout", fmtEUR((toNum(s?.monthlyAmazonEur)||0)*(toNum(s?.payoutPct??0.85))))}
     `;
+    elRange.textContent = `${months[0]||"—"} … ${months[months.length-1]||"—"}`;
 
-    elRange.textContent = `${months[0] || "—"} … ${months[months.length - 1] || "—"}`;
+    // Vertikale Balken (einfacher 0..maxAbs Maßstab)
+    const maxAbs = Math.max(1, ...rows.map(r=>Math.abs(r.net)));
+    const ticks = [0.25,0.5,0.75,1].map(p=>Math.round(p*maxAbs));
 
-    const maxAbs = Math.max(1, ...perMonth.map(m => Math.abs(m.net)));
-    elBars.innerHTML = `
-      <div class="bars">
-        ${perMonth.map(m => barRow(m, maxAbs)).join("")}
-      </div>
+    // Y-Achse & Grid
+    elY.innerHTML = `
+      <div class="ytick">${fmtEUR(ticks[3])}</div>
+      <div class="ytick">${fmtEUR(ticks[2])}</div>
+      <div class="ytick">${fmtEUR(ticks[1])}</div>
+      <div class="ytick">${fmtEUR(ticks[0])}</div>
+      <div class="ytick">0</div>
     `;
-    attachTooltips(elBars, perMonth);
+    elGrid.innerHTML = `<div class="yline"></div><div class="yline"></div><div class="yline"></div><div class="yline"></div><div class="yline"></div>`;
+
+    // Bars
+    elBars.style.setProperty("--cols", String(months.length));
+    elBars.innerHTML = rows.map(r=>{
+      const h = Math.min(100, Math.round((Math.abs(r.net)/maxAbs)*100));
+      const cls = (r.net>=0) ? "vbar pos" : "vbar neg";
+      const tip = [
+        `${r.month}`,
+        `Netto: ${fmtEUR(r.net)}`,
+        `Inflow (Sales×Payout): ${fmtEUR(r.inflow)}`,
+        `Extras: ${fmtEUR(r.extras)}`,
+        `Ausgaben: ${fmtEUR(r.out)}`
+      ].join("\n");
+      return `<div class="vbar-wrap" title="${escapeHtml(tip)}">
+        <div class="${cls}" style="--h:${h}%"></div>
+      </div>`;
+    }).join("");
+
+    // X-Achse Beschriftung
+    elX.style.setProperty("--cols", String(months.length));
+    elX.innerHTML = months.map(m=>`<div class="xlabel">${escapeHtml(m)}</div>`).join("");
   }
+
+  function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 }
-
-// ---- helpers ----
-function kpi(label, value){
-  return `
-    <div class="kpi">
-      <div class="kpi-label">${escapeHtml(label)}</div>
-      <div class="kpi-value">${escapeHtml(String(value))}</div>
-    </div>
-  `;
-}
-
-function buildMonths(startYYYYMM, n){
-  const [y0, m0] = String(startYYYYMM||"").split("-").map(Number);
-  if (!y0 || !m0) return [];
-  const out=[];
-  for (let i=0;i<Math.max(0, Number(n||0));i++){
-    const d=new Date(y0,(m0-1)+i,1);
-    out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-  }
-  return out;
-}
-
-// inflow = sales*payout + extras; out = outgoings; net = inflow - out
-function aggregate(months, monthlySales, payout, extras, outs){
-  const idx = new Map(months.map((m,i)=>[m,i]));
-  const rows = months.map(m => ({ month:m, inflow: monthlySales*payout, extras:0, out:0, net:0 }));
-
-  const toNum = (x) => {
-    if (x==null) return 0;
-    if (typeof x === "number") return x;
-    return Number(String(x).replace(/\./g,"").replace(",", ".")) || 0;
-  };
-  const toMonth = (r) => {
-    if (r?.month && /^\d{4}-\d{2}$/.test(r.month)) return r.month;
-    if (r?.date){
-      const d=new Date(r.date);
-      if (!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-    }
-    return null;
-  };
-
-  for (const e of extras||[]){
-    const m = toMonth(e); if (!m || !idx.has(m)) continue;
-    rows[idx.get(m)].extras += toNum(e.amountEur);
-  }
-  for (const o of outs||[]){
-    const m = toMonth(o); if (!m || !idx.has(m)) continue;
-    rows[idx.get(m)].out += Math.abs(toNum(o.amountEur));
-  }
-  for (const r of rows){
-    const inflow = (r.inflow||0) + (r.extras||0);
-    const out    = (r.out||0);
-    r.net = inflow - out;
-  }
-  return rows;
-}
-
-function findFirstNegative(opening, rows){
-  let bal = Number(opening||0);
-  for (const r of rows){
-    bal += r.net || 0;
-    if (bal < 0) return r.month;
-  }
-  return null;
-}
-
-function barRow(m, maxAbs){
-  const pct = Math.min(100, Math.round((Math.abs(m.net)/maxAbs)*100));
-  const isPos = (m.net||0) >= 0;
-  const cls = isPos ? "bar bar-pos" : "bar bar-neg";
-  return `
-    <div class="bar-row" data-month="${escapeHtml(m.month)}" data-net="${String(m.net)}"
-         data-inflow="${String(m.inflow)}" data-extras="${String(m.extras)}" data-out="${String(m.out)}">
-      <div class="bar-label">${escapeHtml(m.month)}</div>
-      <div class="${cls}" style="--w:${pct}%"></div>
-      <div class="bar-val">${escapeHtml(fmtEUR(m.net||0))}</div>
-    </div>
-  `;
-}
-
-function attachTooltips(container, rows){
-  const map = new Map(rows.map(r=>[r.month,r]));
-  container.querySelectorAll(".bar-row").forEach(el=>{
-    const m = el.getAttribute("data-month");
-    const r = map.get(m);
-    if (!r) return;
-    const txt = [
-      `${m}`,
-      `Inflow (Sales×Payout): ${fmtEUR(r.inflow||0)}`,
-      `Extras: ${fmtEUR(r.extras||0)}`,
-      `Outflows: ${fmtEUR(r.out||0)}`,
-      `Netto: ${fmtEUR(r.net||0)}`
-    ].join("\n");
-    el.setAttribute("title", txt);
-  });
-}
-
-function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
