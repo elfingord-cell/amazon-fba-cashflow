@@ -1,8 +1,36 @@
-// FBA-CF-0006 — Dashboard: heller Kontrast + vertikale Monatsbalken
-// Aggregation: (Sales * payout) + Extras – Ausgaben  → Netto
-import { loadState, addStateListener } from "../data/storageLocal.js";
-import { fmtEUR } from "../domain/metrics.js";
+// FBA-CF-0006a — Dashboard Hotfix
+// - Helper (monthsFrom/toNum/toMonth/fmtEUR) stehen VOR jeder Nutzung
+// - Vertikale Monatsbalken, helle KPI-Karten
 
+// ---------- Helper ----------
+function monthsFrom(startYYYYMM, n){
+  const [y0,m0] = String(startYYYYMM||"").split("-").map(Number);
+  if(!y0||!m0) return [];
+  const out=[];
+  for(let i=0;i<Math.max(0,Number(n||0));i++){
+    const d=new Date(y0,(m0-1)+i,1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+  return out;
+}
+function toNum(x){ if(typeof x==="number") return x; return Number(String(x||"").replace(/\./g,"").replace(",", "."))||0; }
+function toMonth(r){
+  if (r?.month && /^\d{4}-\d{2}$/.test(r.month)) return r.month;
+  if (r?.date) { const d=new Date(r.date); if(!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
+  return null;
+}
+function fmtEUR(n){
+  if (n==null || isNaN(n)) return "–";
+  const v = Math.round(Number(n)*100)/100;
+  const s = v.toLocaleString("de-DE", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  return `${s} €`;
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ---------- State API (nur die Funktionen, die wir brauchen) ----------
+import { loadState, addStateListener } from "../data/storageLocal.js";
+
+// ---------- View ----------
 export async function render(root) {
   root.innerHTML = `
     <section class="card">
@@ -34,26 +62,9 @@ export async function render(root) {
   const elBars   = root.querySelector("#vchart-bars");
   const elX      = root.querySelector("#vchart-x");
 
-  const off = addStateListener(() => { if (location.hash === "#dashboard" || location.hash === "" ) redraw(); });
+  const off = addStateListener(() => { if (location.hash === "#dashboard" || location.hash === "") redraw(); });
   await redraw();
   root._cleanup = () => { try { off && off(); } catch {} };
-
-  function monthsFrom(startYYYYMM, n){
-    const [y0,m0] = String(startYYYYMM||"").split("-").map(Number);
-    if(!y0||!m0) return [];
-    const out=[];
-    for(let i=0;i<Math.max(0,Number(n||0));i++){
-      const d=new Date(y0,(m0-1)+i,1);
-      out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-    }
-    return out;
-  }
-  const toNum = (x)=> typeof x==="number" ? x : Number(String(x||"").replace(/\./g,"").replace(",","."))||0;
-  const toMonth = (r)=>{
-    if (r?.month && /^\d{4}-\d{2}$/.test(r.month)) return r.month;
-    if (r?.date) { const d=new Date(r.date); if(!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
-    return null;
-  };
 
   function aggregate(s) {
     const startMonth   = s?.settings?.startMonth || "2025-02";
@@ -76,7 +87,7 @@ export async function render(root) {
       const m = toMonth(o); if(!m||!idx.has(m)) continue;
       rows[idx.get(m)].out += Math.abs(toNum(o.amountEur));
     }
-    for (const r of rows) { r.net = (r.inflow + r.extras) - r.out; }
+    for (const r of rows) r.net = (r.inflow + r.extras) - r.out;
 
     return { months, rows, opening };
   }
@@ -108,11 +119,10 @@ export async function render(root) {
     `;
     elRange.textContent = `${months[0]||"—"} … ${months[months.length-1]||"—"}`;
 
-    // Vertikale Balken (einfacher 0..maxAbs Maßstab)
+    // Vertikale Balken
     const maxAbs = Math.max(1, ...rows.map(r=>Math.abs(r.net)));
     const ticks = [0.25,0.5,0.75,1].map(p=>Math.round(p*maxAbs));
 
-    // Y-Achse & Grid
     elY.innerHTML = `
       <div class="ytick">${fmtEUR(ticks[3])}</div>
       <div class="ytick">${fmtEUR(ticks[2])}</div>
@@ -122,7 +132,6 @@ export async function render(root) {
     `;
     elGrid.innerHTML = `<div class="yline"></div><div class="yline"></div><div class="yline"></div><div class="yline"></div><div class="yline"></div>`;
 
-    // Bars
     elBars.style.setProperty("--cols", String(months.length));
     elBars.innerHTML = rows.map(r=>{
       const h = Math.min(100, Math.round((Math.abs(r.net)/maxAbs)*100));
@@ -139,10 +148,7 @@ export async function render(root) {
       </div>`;
     }).join("");
 
-    // X-Achse Beschriftung
     elX.style.setProperty("--cols", String(months.length));
     elX.innerHTML = months.map(m=>`<div class="xlabel">${escapeHtml(m)}</div>`).join("");
   }
-
-  function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 }
