@@ -1,6 +1,6 @@
-// FBA-CF-0004f — Export/Import-View (konsistente Normalisierung + Fix für doppelte $-Deklaration)
-// - Vorschau/Export zeigen immer dieselbe Zahl als openingEur & openingBalance (de-DE)
-// - arbeitet mit storageLocal (Events) zusammen
+// FBA-CF-0004h — Export/Import-View (konsistente Normalisierung + quickValidate)
+// - Vorschau/Export zeigen openingEur & settings.openingBalance konsistent (de-DE)
+// - quickValidate: leichtgewichtige Schema-Prüfung für Import
 // - FIX: nur eine einzige $-Helper-Funktion
 
 import { loadState, saveState, addStateListener } from "../data/storageLocal.js";
@@ -42,21 +42,21 @@ export async function render(root) {
     </section>
   `;
 
-  // Einziger Query-Helper:
+  // Einziger Query-Helper
   function $(sel, el = root) { return el.querySelector(sel); }
 
-  const elSummary   = $("#summary");
-  const taJson      = $("#ta-json");
-  const taImport    = $("#ta-import");
-  const inFile      = $("#file-input");
-  const btnExport   = $("#btn-export-file");
-  const btnCopy     = $("#btn-copy-json");
-  const btnSample   = $("#btn-load-sample");
-  const btnApply    = $("#btn-apply");
-  const btnClear    = $("#btn-clear");
-  const btnPaste    = $("#btn-paste");
-  const btnApplyText= $("#btn-apply-text");
-  const elMeta      = $("#import-meta");
+  const elSummary    = $("#summary");
+  const taJson       = $("#ta-json");
+  const taImport     = $("#ta-import");
+  const inFile       = $("#file-input");
+  const btnExport    = $("#btn-export-file");
+  const btnCopy      = $("#btn-copy-json");
+  const btnSample    = $("#btn-load-sample");
+  const btnApply     = $("#btn-apply");
+  const btnClear     = $("#btn-clear");
+  const btnPaste     = $("#btn-paste");
+  const btnApplyText = $("#btn-apply-text");
+  const elMeta       = $("#import-meta");
 
   // Initial & Live-Refresh
   const redraw = () => {
@@ -243,5 +243,58 @@ export async function render(root) {
         <li>Extras gesamt: <b>${fmtEUR(extras)}</b> • Ausgaben gesamt: <b>${fmtEUR(outs)}</b></li>
         <li>Startmonat: <b>${start}</b> • Horizont: <b>${horizon}</b> Monate</li>
       </ul>`;
+  }
+
+  // --- quickValidate: einfache Schema-Prüfung ---
+  function quickValidate(obj) {
+    if (obj == null || typeof obj !== "object") {
+      return { ok: false, msg: "Import muss ein JSON-Objekt sein." };
+    }
+    // erlaubte Top-Level-Felder (weich)
+    const allowedTop = new Set([
+      "settings","openingEur","monthlyAmazonEur","payoutPct","extras","outgoings"
+    ]);
+    for (const k of Object.keys(obj)) {
+      if (!allowedTop.has(k)) {
+        // nicht hart ablehnen; nur Hinweis
+      }
+    }
+    // settings
+    if (obj.settings != null) {
+      if (typeof obj.settings !== "object") return { ok:false, msg:"'settings' muss ein Objekt sein." };
+      if ("startMonth" in obj.settings && typeof obj.settings.startMonth !== "string") return { ok:false, msg:"'settings.startMonth' muss String sein (YYYY-MM)." };
+      if ("horizonMonths" in obj.settings && !Number.isFinite(obj.settings.horizonMonths)) return { ok:false, msg:"'settings.horizonMonths' muss Zahl sein." };
+      if ("openingBalance" in obj.settings && typeof obj.settings.openingBalance !== "string") return { ok:false, msg:"'settings.openingBalance' muss String im de-DE Format sein (z.B. 1.000,00)." };
+    }
+    // openingEur
+    if ("openingEur" in obj && !Number.isFinite(obj.openingEur)) {
+      return { ok:false, msg:"'openingEur' muss eine Zahl sein." };
+    }
+    // monthlyAmazonEur / payoutPct
+    if ("monthlyAmazonEur" in obj && !Number.isFinite(obj.monthlyAmazonEur)) {
+      return { ok:false, msg:"'monthlyAmazonEur' muss eine Zahl sein." };
+    }
+    if ("payoutPct" in obj && !Number.isFinite(obj.payoutPct)) {
+      return { ok:false, msg:"'payoutPct' muss eine Zahl sein (0.85 = 85%)." };
+    }
+    // extras / outgoings Arrays
+    const checkArr = (arr, name) => {
+      if (!Array.isArray(arr)) return { ok:false, msg:`'${name}' muss ein Array sein.` };
+      for (let i=0;i<arr.length;i++){
+        const r = arr[i];
+        if (r==null || typeof r!=="object") return { ok:false, msg:`'${name}[${i}]' muss ein Objekt sein.` };
+        if (!("month" in r) && !("date" in r)) return { ok:false, msg:`'${name}[${i}]' braucht 'month' (YYYY-MM) oder 'date' (ISO).` };
+        if ("month" in r && typeof r.month!=="string") return { ok:false, msg:`'${name}[${i}].month' muss String sein.` };
+        if ("date" in r && typeof r.date!=="string") return { ok:false, msg:`'${name}[${i}].date' muss String sein.` };
+        if ("label" in r && typeof r.label!=="string") return { ok:false, msg:`'${name}[${i}].label' muss String sein.` };
+        if (!("amountEur" in r)) return { ok:false, msg:`'${name}[${i}]' braucht 'amountEur'.` };
+        const t = typeof r.amountEur;
+        if (!(t==="string" || t==="number")) return { ok:false, msg:`'${name}[${i}].amountEur' muss String (de-DE) oder Zahl sein.` };
+      }
+      return {ok:true};
+    };
+    if ("extras" in obj){ const r = checkArr(obj.extras, "extras"); if(!r.ok) return r; }
+    if ("outgoings" in obj){ const r = checkArr(obj.outgoings, "outgoings"); if(!r.ok) return r; }
+    return { ok:true, msg:"OK" };
   }
 }
