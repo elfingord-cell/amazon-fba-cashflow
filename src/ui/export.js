@@ -1,147 +1,184 @@
-// FBA-CF-0006 — Export/Import + Extras-Editor (Tabelle)
-import { loadState, saveState, exportState, importStateFile, addStateListener } from "../data/storageLocal.js";
-import { fmtEUR } from "../domain/metrics.js";
+// FBA-CF-0007 — Export/Import (stabiler Editor)
+// - Inputs speichern auf change/blur (kein Cursor-Sprung)
+// - JSON-Vorschau & Kurz-Summary aktualisieren sich lokal
+// - Import nutzt storageLocal.importStateFile
 
+import {
+  loadState,
+  saveState,
+  exportState,
+  importStateFile,
+} from "../data/storageLocal.js";
+
+// ----- kleine Helfer -----
+const $ = (sel, r = document) => r.querySelector(sel);
+const $$ = (sel, r = document) => [...r.querySelectorAll(sel)];
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function fmtEUR(numLike){
+  const n = Number(String(numLike).replace(/\./g, "").replace(",", ".")) || 0;
+  return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+}
+function toDE(n){ // Zahl → "1.234,56"
+  if (n === "" || n == null) return "";
+  const v = Number(n); if (isNaN(v)) return String(n);
+  return v.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function sum(arr, prop){
+  return (arr||[]).reduce((a,x)=> a + (Number(String(x[prop]||"").replace(/\./g,"").replace(",","."))||0), 0);
+}
+
+// ----- Rendering -----
 export async function render(root){
+  const state = loadState();
+
   root.innerHTML = `
     <section class="card">
       <h2>Export / Import</h2>
 
-      <div class="row" style="gap:8px; flex-wrap:wrap">
-        <button id="btnExport" class="btn">JSON herunterladen</button>
-        <label class="btn">
-          JSON importieren
-          <input id="file" type="file" accept="application/json" style="display:none"/>
-        </label>
-        <button id="btnSeed" class="btn secondary">Testdaten laden</button>
-        <div style="flex:1"></div>
-        <span class="muted">Namespace: localStorage</span>
+      <div class="row" style="gap:8px">
+        <button id="btn-dl" class="btn">JSON herunterladen</button>
+        <label class="btn" for="file-imp" style="cursor:pointer;">JSON importieren</label>
+        <input id="file-imp" type="file" accept="application/json" style="display:none" />
       </div>
 
-      <div class="grid two" style="margin-top:12px; gap:12px">
-        <div class="card sub">
-          <h3>Aktueller Stand (Kurz)</h3>
-          <ul id="summary" class="list"></ul>
+      <div class="grid two" style="margin-top:12px">
+        <div class="card soft" id="summary">
+          <h3 class="muted">Aktueller Stand (kurz)</h3>
+          <ul id="summary-ul" class="muted"></ul>
         </div>
 
-        <div class="card sub">
-          <h3>Extras (Editor)</h3>
-          <div class="table-wrap">
-            <table class="tbl" id="tblExtras" aria-label="Extras Editor">
-              <thead><tr><th>Monat (YYYY-MM)</th><th>Label</th><th class="num">Betrag (€)</th><th></th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <div class="row" style="margin-top:6px"><button id="btnAddExtra" class="btn">+ Zeile</button></div>
+        <div class="card soft" id="extras-card">
+          <h3 class="muted">Extras (Editor)</h3>
+          <div id="extras-rows"></div>
+          <button id="btn-add" class="btn" style="margin-top:8px">+ Zeile</button>
         </div>
       </div>
 
-      <div class="card sub" style="margin-top:12px">
-        <h3>JSON Vorschau</h3>
-        <pre id="json" class="jsonpreview" aria-label="JSON Preview"></pre>
+      <div class="card soft" style="margin-top:12px">
+        <h3 class="muted">JSON Vorschau</h3>
+        <pre id="json-pre" style="white-space:pre-wrap;background:#fff;border:1px solid #eee;border-radius:8px;padding:8px;max-height:45vh;overflow:auto"></pre>
       </div>
     </section>
   `;
 
-  const $ = (sel,el=root)=>el.querySelector(sel);
-  const $$ = (sel,el=root)=>[...el.querySelectorAll(sel)];
+  // ---- lokale, veränderliche Kopie für diese Ansicht ----
+  let s = structuredClone(state);
 
-  const elSummary = $("#summary");
-  const elJson    = $("#json");
-  const elTblBody = $("#tblExtras tbody");
-  const inputFile = $("#file");
+  // ---- Summary + Vorschau initial ----
+  redrawSummary();
+  redrawPreview();
 
-  // Live-Refresh von Preview/Summary
-  const off = addStateListener(updateAll);
-  root._cleanup = () => { try { off && off(); } catch {} };
-
-  $("#btnExport").addEventListener("click", ()=> exportState(loadState()));
-  $("#btnSeed").addEventListener("click", seed);
-  $("#btnAddExtra").addEventListener("click", ()=> { const s=loadState(); (s.extras ||= []).push({month:s?.settings?.startMonth||"2025-02", label:"Extra", amountEur:"0,00"}); saveState(s); updateAll(); });
-  inputFile.addEventListener("change", (e)=>{
-    const f = e.target.files?.[0];
-    if(!f) return;
-    importStateFile(f, s => { saveState(s); updateAll(); });
-    e.target.value="";
+  // ---- Buttons ----
+  $("#btn-dl", root).addEventListener("click", () => exportState(s));
+  $("#file-imp", root).addEventListener("change", (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    importStateFile(file, (merged) => {
+      s = structuredClone(merged);
+      redrawSummary();
+      renderExtras();
+      redrawPreview();
+    });
+    e.target.value = ""; // reset
+  });
+  $("#btn-add", root).addEventListener("click", () => {
+    s.extras = Array.isArray(s.extras) ? s.extras : [];
+    s.extras.push({ month: "2025-05", label: "", amountEur: "0,00" });
+    // persist erst bei blur/change, aber UI zeigen
+    renderExtras();
+    redrawPreview();
   });
 
-  updateAll();
+  // ---- Extras-Editor ----
+  renderExtras();
 
-  function updateAll(){
-    const s = loadState();
-    // Summary
-    const extraSum = (s.extras||[]).reduce((a,r)=>a+toNum(r.amountEur),0);
-    const outSum   = (s.outgoings||[]).reduce((a,r)=>a+Math.abs(toNum(r.amountEur)),0);
-    elSummary.innerHTML = `
-      <li>Opening: <strong>${fmtEUR(toNum(s.openingEur))}</strong></li>
-      <li>Sales × Payout: <strong>${fmtEUR(toNum(s.monthlyAmazonEur)*(toNum(s.payoutPct)||0))}</strong></li>
-      <li>Extras (Σ): <strong>${fmtEUR(extraSum)}</strong></li>
-      <li>Ausgaben (Σ): <strong>${fmtEUR(outSum)}</strong></li>
-      <li>Zeitraum: <strong>${escapeHtml(s?.settings?.startMonth||"—")}</strong>, ${escapeHtml(String(s?.settings?.horizonMonths||18))} Monate</li>
-    `;
+  // ---------- Funktionen ----------
+  function renderExtras(){
+    const box = $("#extras-rows", root);
+    const rows = Array.isArray(s.extras) ? s.extras : [];
+    box.innerHTML = rows.map((r, idx) => rowTpl(r, idx)).join("");
 
-    // Extras-Tabelle
-    renderExtrasTable(s);
+    // Listener je Zeile
+    rows.forEach((r, idx) => {
+      // Monat
+      const m = $(`[data-idx="${idx}"][data-field="month"]`, box);
+      m.addEventListener("change", () => {
+        s.extras[idx].month = m.value;
+        saveState(s);                       // persistiert
+        redrawSummary(); redrawPreview();   // lokal aktualisieren
+      });
+      m.addEventListener("blur", () => m.dispatchEvent(new Event("change")));
 
-    // JSON-Preview (gereinigt)
-    const clean = cleanStateForExport(loadState());
-    elJson.textContent = JSON.stringify(clean, null, 2);
-  }
+      // Label
+      const l = $(`[data-idx="${idx}"][data-field="label"]`, box);
+      l.addEventListener("change", () => {
+        s.extras[idx].label = l.value;
+        saveState(s);
+        redrawSummary(); redrawPreview();
+      });
+      l.addEventListener("blur", () => l.dispatchEvent(new Event("change")));
 
-  function renderExtrasTable(s){
-    const rows = Array.isArray(s.extras) ? s.extras : (s.extras = []);
-    elTblBody.innerHTML = rows.map((r,i)=> tr(r,i)).join("");
-    // Bindings
-    rows.forEach((r,i)=>{
-      const row = elTblBody.querySelector(`tr[data-i="${i}"]`);
-      const im = row.querySelector('input[name="month"]');
-      const il = row.querySelector('input[name="label"]');
-      const ia = row.querySelector('input[name="amount"]');
-      const del= row.querySelector('button[data-del]');
+      // Betrag
+      const a = $(`[data-idx="${idx}"][data-field="amount"]`, box);
+      a.addEventListener("change", () => {
+        // Eingabe tolerant annehmen; DE → String sauber halten
+        const raw = a.value.trim();
+        // Try parse, dann wieder in DE-Format schreiben (bleibt „ruhig“ bis blur)
+        const parsed = Number(raw.replace(/\./g,"").replace(",", ".")) || 0;
+        const pretty = toDE(parsed);
+        s.extras[idx].amountEur = pretty.replace(".", ","); // sicher DE-Komma
+        a.value = s.extras[idx].amountEur;
+        saveState(s);
+        redrawSummary(); redrawPreview();
+      });
+      a.addEventListener("blur", () => a.dispatchEvent(new Event("change")));
 
-      im.value = r.month || "";
-      il.value = r.label || "";
-      ia.value = r.amountEur ?? "0,00";
-
-      im.oninput = ()=> { r.month = im.value.trim(); saveState(s); };
-      il.oninput = ()=> { r.label = il.value; saveState(s); };
-      ia.oninput = ()=> { r.amountEur = ia.value; saveState(s); updateAll(); }; // Update sums live
-      del.onclick = ()=> { rows.splice(i,1); saveState(s); updateAll(); };
+      // Entfernen
+      const rm = $(`[data-idx="${idx}"][data-action="rm"]`, box);
+      rm.addEventListener("click", () => {
+        s.extras.splice(idx, 1);
+        saveState(s);
+        renderExtras();
+        redrawSummary(); redrawPreview();
+      });
     });
   }
 
-  function tr(_r,i){
-    return `<tr data-i="${i}">
-      <td><input name="month" class="in month" placeholder="YYYY-MM" /></td>
-      <td><input name="label" class="in" placeholder="Bezeichnung" /></td>
-      <td class="num"><input name="amount" class="in num" placeholder="1.234,56" /></td>
-      <td class="num"><button data-del class="btn danger">×</button></td>
-    </tr>`;
+  function rowTpl(r, idx){
+    const m = esc(r?.month ?? "");
+    const l = esc(r?.label ?? "");
+    const a = esc(r?.amountEur ?? "");
+    return `
+      <div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
+        <input class="in" type="month" value="${m}" data-idx="${idx}" data-field="month" />
+        <input class="in" type="text"  placeholder="Label" value="${l}" data-idx="${idx}" data-field="label" />
+        <input class="in" type="text"  placeholder="Betrag (z.B. 1.234,56)" value="${a}" data-idx="${idx}" data-field="amount" style="max-width:160px" />
+        <button class="btn danger" data-idx="${idx}" data-action="rm">✕</button>
+      </div>
+    `;
   }
 
-  function seed(){
-    const s = loadState();
-    s.openingEur = "50.000,00";
-    s.monthlyAmazonEur = "22.500,00";
-    s.payoutPct = "0,85";
-    s.settings ||= {};
-    s.settings.startMonth = "2025-02";
-    s.settings.horizonMonths = 18;
-    s.extras = [
-      { month:"2025-03", label:"USt-Erstattung", amountEur:"1.500,00" },
-      { month:"2025-04", label:"Einmalzahlung", amountEur:"2.000,00" },
-    ];
-    s.outgoings = [
-      { month:"2025-02", label:"Fixkosten", amountEur:"3.000,00" }
-    ];
-    saveState(s);
-    updateAll();
+  function redrawSummary(){
+    const ul = $("#summary-ul", root);
+    const opening = Number(String(s.openingEur||"").replace(/\./g,"").replace(",", ".")) || 0;
+    const sales   = Number(String(s.monthlyAmazonEur||"").replace(/\./g,"").replace(",", ".")) || 0;
+    const payout  = Number(s.payoutPct ?? 0.85) || 0;
+    const sxp     = sales * payout;
+    const extrasΣ = sum(s.extras, "amountEur");
+    const outΣ    = sum(s.outgoings, "amountEur");
+    const range   = `${s?.settings?.startMonth || "—"} , ${s?.settings?.horizonMonths || "18"} Monate`;
+
+    ul.innerHTML = `
+      <li>Opening: <b>${fmtEUR(opening)}</b></li>
+      <li>Sales × Payout: <b>${fmtEUR(sxp)}</b></li>
+      <li>Extras (Σ): <b>${fmtEUR(extrasΣ)}</b></li>
+      <li>Ausgaben (Σ): <b>${fmtEUR(outΣ)}</b></li>
+      <li>Zeitraum: <b>${esc(range)}</b></li>
+    `;
   }
 
-  function cleanStateForExport(s){
-    const { _computed, ...rest } = s || {};
-    return rest;
+  function redrawPreview(){
+    // Vorschau zeigt den aktuellen (lokalen) Zustand
+    $("#json-pre", root).textContent = JSON.stringify(s, null, 2);
   }
-  function toNum(x){ if(typeof x==="number") return x; return Number(String(x||"").replace(/\./g,"").replace(",", "."))||0; }
-  function escapeHtml(str){ return String(str).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 }

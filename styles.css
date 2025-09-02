@@ -143,3 +143,16 @@ canvas.chart{
   display: grid; grid-template-columns: repeat(var(--cols,12), 1fr); gap: 6px;
 }
 .vchart-x .xlabel { font-size: 11px; color: #6b7280; text-align: center; }
+
+/* FBA-CF-0007 — Balken-Fallback, falls vorher nicht vorhanden */
+.vchart { position: relative; height: 280px; background:#fff; border:1px solid #eee; border-radius:12px; padding:12px; }
+.vchart-bars { display:grid; grid-template-columns: repeat(var(--cols, 1), minmax(0,1fr)); align-items:end; gap:10px; height: 180px; margin-top: 8px; }
+.vbar-wrap { display:flex; align-items:flex-end; justify-content:center; height:100%; }
+.vbar { width: 18px; height: var(--h, 0%); border-radius: 9px; background: #10b981; transition: height .2s ease; }
+.vbar.neg { background: #ef4444; }
+.vchart-x { display:grid; grid-template-columns: repeat(var(--cols, 1), minmax(0,1fr)); gap:10px; margin-top: 6px; }
+.vchart-x .xlabel { text-align:center; font-size:12px; color:#6b7280; }
+.vchart-grid { position:absolute; inset:12px 12px auto 60px; height:180px; display:flex; flex-direction:column; justify-content:space-between; pointer-events:none; }
+.vchart-grid .yline { height:1px; background: repeating-linear-gradient(90deg, #e5e7eb, #e5e7eb 8px, transparent 8px, transparent 16px); }
+.vchart-y { position:absolute; top:12px; bottom:auto; left:12px; width:48px; height:180px; display:flex; flex-direction:column; justify-content:space-between; color:#6b7280; font-size:12px; }
+.vchart-y .ytick { text-align:right; }
