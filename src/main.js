@@ -1,4 +1,6 @@
-// Hash-Router + aktive Tabs — stabile Version (ohne externe Libs)
+// Hash-Router + aktive Tabs + LIVE-REFRESH bei State-Changes
+import { addStateListener } from "./data/storageLocal.js";
+
 const ROUTES = ["dashboard", "plan", "eingaben", "export", "debug"];
 const DEFAULT_ROUTE = "dashboard";
 const appEl = document.getElementById("app");
@@ -56,8 +58,22 @@ function bindNav() {
     });
   });
 }
+
 window.addEventListener("DOMContentLoaded", () => {
   bindNav();
   render(getRoute());
+
+  // LIVE-REFRESH: wenn state sich ändert und wir gerade auf dem Dashboard sind → neu rendern
+  addStateListener(() => {
+    if (getRoute() === "dashboard") {
+      render("dashboard");
+    }
+  });
+
+  // Optional: bei Fenstergröße ändern Charts neu zeichnen, wenn Dashboard offen
+  window.addEventListener("resize", () => {
+    if (getRoute() === "dashboard") render("dashboard");
+  });
 });
+
 window.addEventListener("hashchange", () => render(getRoute()));
