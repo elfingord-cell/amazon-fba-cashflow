@@ -1,5 +1,9 @@
-// FBA-CF-0004 — Export/Import (JSON) + Testdaten
-import { loadState, saveState, storage } from "../data/storageLocal.js";
+// FBA-CF-0004a — Export/Import (JSON) Fixes:
+// - quickValidate hinzugefügt
+// - BOM-Strip + präzisere Fehlermeldungen
+// - Paste-Import ("Aus Text übernehmen")
+
+import { loadState, saveState } from "../data/storageLocal.js";
 import { fmtEUR } from "../domain/metrics.js";
 
 export async function render(root) {
@@ -26,12 +30,14 @@ export async function render(root) {
           <h3>Import</h3>
           <input id="file-input" type="file" accept="application/json" />
           <div id="import-meta" class="muted" style="margin-top:8px"></div>
-          <div class="row" style="gap:8px; margin-top:8px">
+          <div class="row" style="gap:8px; margin-top:8px; flex-wrap: wrap">
             <button class="btn" id="btn-apply" disabled>Import übernehmen</button>
             <button class="btn" id="btn-clear" style="display:none">Vorschau verwerfen</button>
+            <button class="btn" id="btn-paste">Aus Zwischenablage einfügen</button>
+            <button class="btn" id="btn-apply-text">Aus Text übernehmen</button>
           </div>
-          <h4 style="margin-top:16px">Vorschau (Import-Datei)</h4>
-          <textarea id="ta-import" class="inpt" style="min-height:220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace" readonly></textarea>
+          <h4 style="margin-top:16px">Vorschau / Text-Import</h4>
+          <textarea id="ta-import" class="inpt" style="min-height:220px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace"></textarea>
         </div>
       </div>
     </section>
@@ -47,6 +53,8 @@ export async function render(root) {
   const btnSample = $("#btn-load-sample", root);
   const btnApply = $("#btn-apply", root);
   const btnClear = $("#btn-clear", root);
+  const btnPaste = $("#btn-paste", root);
+  const btnApplyText = $("#btn-apply-text", root);
   const elMeta = $("#import-meta", root);
 
   // --- Initial: Summary + JSON-Dump
@@ -67,14 +75,14 @@ export async function render(root) {
       await navigator.clipboard.writeText(pretty(loadState()));
       toast("JSON in die Zwischenablage kopiert.");
     } catch {
-      toast("Kopieren nicht möglich (Browserrecht). Bitte die JSON-Vorschau manuell markieren und kopieren.");
+      toast("Kopieren nicht möglich (Berechtigung). Bitte JSON manuell markieren und kopieren.");
     }
   });
 
   // Testdaten laden
   btnSample.addEventListener("click", () => {
     const next = withTestdata(loadState());
-    saveState(next); // löst live-refresh aus
+    saveState(next); // triggert live-refresh
     taJson.value = pretty(next);
     elSummary.innerHTML = renderSummary(next);
     toast("Testdaten geladen.");
@@ -91,7 +99,8 @@ export async function render(root) {
     const f = inFile.files && inFile.files[0];
     if (!f) return;
     try {
-      const txt = await f.text();
+      const raw = await f.text();
+      const txt = stripBOM(raw);
       const obj = JSON.parse(txt);
       const { ok, msg } = quickValidate(obj);
       if (!ok) {
@@ -104,23 +113,14 @@ export async function render(root) {
       btnApply.disabled = false;
       btnClear.style.display = "inline-block";
     } catch (e) {
-      elMeta.innerHTML = `<span style="color:#b00020">Ungültige JSON-Datei.</span>`;
+      elMeta.innerHTML = `<span style="color:#b00020">Ungültige JSON-Datei: ${escapeHtml(e?.message || e)}</span>`;
     }
   });
 
-  // Import anwenden
+  // Import anwenden (aus Datei-Vorschau)
   btnApply.addEventListener("click", () => {
     if (!importObj) return;
-    // Vollständiger Replace ist hier beabsichtigt (einfach, nachvollziehbar)
-    saveState(importObj);
-    taJson.value = pretty(importObj);
-    elSummary.innerHTML = renderSummary(importObj);
-    taImport.value = "";
-    elMeta.textContent = "Import übernommen.";
-    btnApply.disabled = true;
-    btnClear.style.display = "none";
-    inFile.value = "";
-    toast("Import übernommen. Dashboard aktualisiert sich automatisch.");
+    applyImport(importObj, "Import übernommen.");
   });
 
   // Vorschau verwerfen
@@ -133,10 +133,38 @@ export async function render(root) {
     inFile.value = "";
   });
 
+  // Paste-Import (Zwischenablage → Textarea)
+  btnPaste.addEventListener("click", async () => {
+    try {
+      const txt = await navigator.clipboard.readText();
+      taImport.value = txt;
+      elMeta.textContent = "Zwischenablage eingefügt. Prüfe und übernehme ggf. aus Text.";
+    } catch {
+      toast("Zwischenablage nicht verfügbar. Bitte Text manuell in das Feld einfügen.");
+    }
+  });
+
+  // Aus Text übernehmen
+  btnApplyText.addEventListener("click", () => {
+    try {
+      const txt = stripBOM(String(taImport.value || ""));
+      const obj = JSON.parse(txt);
+      const { ok, msg } = quickValidate(obj);
+      if (!ok) {
+        elMeta.innerHTML = `<span style="color:#b00020">${escapeHtml(msg)}</span>`;
+        return;
+      }
+      applyImport(obj, "Import (aus Text) übernommen.");
+    } catch (e) {
+      elMeta.innerHTML = `<span style="color:#b00020">Ungültige JSON (Text): ${escapeHtml(e?.message || e)}</span>`;
+    }
+  });
+
   // ---- Helfer
   function $(sel, el = document) { return el.querySelector(sel); }
   function pretty(obj) { return JSON.stringify(obj, null, 2); }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function stripBOM(s) { return s.replace(/^\uFEFF/, "").trim(); }
   function tsName() {
     const d = new Date();
     const z = (n) => String(n).padStart(2, "0");
@@ -167,7 +195,6 @@ export async function render(root) {
     const v = p > 1 ? p : p * 100;
     return v.toLocaleString("de-DE", { maximumFractionDigits: 2 }) + " %";
   }
-
   function renderSummary(s) {
     const opening = (s.openingEur != null) ? s.openingEur : toNum(s.settings?.openingBalance || 0);
     const monthly = s.monthlyAmazonEur || 0;
@@ -185,10 +212,8 @@ export async function render(root) {
         <li>Startmonat: <b>${start}</b> • Horizont: <b>${horizon}</b> Monate</li>
       </ul>`;
   }
-
   function withTestdata(s) {
-    // setzt/überschreibt nur relevante Felder
-    const next = {
+    return {
       ...s,
       openingEur: 50000.25,
       monthlyAmazonEur: 22500,
@@ -203,13 +228,36 @@ export async function render(root) {
         { month: "2025-04", label: "Sonderausgabe", amountEur: "1.000,00" }
       ]
     };
-    return next;
   }
-
-  function toast(msg) {
-    // sehr einfache Einblendung
+  function quickValidate(obj) {
+    if (typeof obj !== "object" || obj === null) {
+      return { ok: false, msg: "Root muss ein Objekt sein." };
+    }
+    // Sehr tolerant: prüfe nur erwartete Typen, wenn vorhanden
+    if (obj.settings && typeof obj.settings !== "object") {
+      return { ok: false, msg: "settings muss ein Objekt sein." };
+    }
+    ["extras", "outgoings", "incomings"].forEach(k => {
+      if (k in obj && !Array.isArray(obj[k])) {
+        return { ok: false, msg: `${k} muss Array sein.` };
+      }
+    });
+    return { ok: true, msg: "ok" };
+  }
+  function applyImport(obj, msg) {
+    saveState(obj);
+    taJson.value = pretty(obj);
+    elSummary.innerHTML = renderSummary(obj);
+    taImport.value = "";
+    elMeta.textContent = msg;
+    btnApply.disabled = true;
+    btnClear.style.display = "none";
+    inFile.value = "";
+    toast(msg + " Dashboard aktualisiert sich automatisch.");
+  }
+  function toast(txt) {
     const div = document.createElement("div");
-    div.textContent = msg;
+    div.textContent = txt;
     div.style.cssText = "position:fixed;right:12px;bottom:12px;background:#111;color:#fff;padding:8px 10px;border-radius:10px;opacity:.95;z-index:9999";
     document.body.appendChild(div);
     setTimeout(()=> div.remove(), 1800);
