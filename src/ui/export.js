@@ -1,6 +1,7 @@
-// FBA-CF-0004e — Export/Import-View (konsistente Normalisierung)
+// FBA-CF-0004f — Export/Import-View (konsistente Normalisierung + Fix für doppelte $-Deklaration)
 // - Vorschau/Export zeigen immer dieselbe Zahl als openingEur & openingBalance (de-DE)
 // - arbeitet mit storageLocal (Events) zusammen
+// - FIX: nur eine einzige $-Helper-Funktion
 
 import { loadState, saveState, addStateListener } from "../data/storageLocal.js";
 import { fmtEUR } from "../domain/metrics.js";
@@ -41,19 +42,21 @@ export async function render(root) {
     </section>
   `;
 
-  const $ = (sel, el = root) => el.querySelector(sel);
-  const elSummary = $("#summary");
-  const taJson = $("#ta-json");
-  const taImport = $("#ta-import");
-  const inFile = $("#file-input");
-  const btnExport = $("#btn-export-file");
-  const btnCopy = $("#btn-copy-json");
-  const btnSample = $("#btn-load-sample");
-  const btnApply = $("#btn-apply");
-  const btnClear = $("#btn-clear");
-  const btnPaste = $("#btn-paste");
-  const btnApplyText = $("#btn-apply-text");
-  const elMeta = $("#import-meta");
+  // Einziger Query-Helper:
+  function $(sel, el = root) { return el.querySelector(sel); }
+
+  const elSummary   = $("#summary");
+  const taJson      = $("#ta-json");
+  const taImport    = $("#ta-import");
+  const inFile      = $("#file-input");
+  const btnExport   = $("#btn-export-file");
+  const btnCopy     = $("#btn-copy-json");
+  const btnSample   = $("#btn-load-sample");
+  const btnApply    = $("#btn-apply");
+  const btnClear    = $("#btn-clear");
+  const btnPaste    = $("#btn-paste");
+  const btnApplyText= $("#btn-apply-text");
+  const elMeta      = $("#import-meta");
 
   // Initial & Live-Refresh
   const redraw = () => {
@@ -180,7 +183,7 @@ export async function render(root) {
       const txt = stripBOM(String(taImport.value || ""));
       const obj = JSON.parse(txt);
       const { ok, msg } = quickValidate(obj);
-      if (!ok) { elMeta.innerHTML = `<span style="color:#b00020">${escapeHtml(msg)}</span>`; return; }
+      if (!ok) { elMeta.innerHTML = `<span style="color:#b00020">Ungültige JSON (Text): ${escapeHtml(msg)}</span>`; return; }
       saveState(obj);
       taImport.value = "";
       elMeta.textContent = "Import (aus Text) übernommen.";
@@ -199,7 +202,6 @@ export async function render(root) {
   // ---- Helpers ----
   function normalizeForExport(s) {
     const out = structuredClone(s || {});
-    // Konsistente Kanonisierung: Zahl = primär
     let n = NaN;
     if (typeof out.openingEur === "number" && isFinite(out.openingEur)) n = out.openingEur;
     else if (out?.settings?.openingBalance) n = toNum(out.settings.openingBalance);
@@ -209,7 +211,6 @@ export async function render(root) {
     out.settings.openingBalance = n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     return out;
   }
-  function $(sel, el = document) { return (root || document).querySelector(sel); }
   function pretty(obj) { return JSON.stringify(obj, null, 2); }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function stripBOM(s) { return s.replace(/^\uFEFF/, "").trim(); }
@@ -219,6 +220,13 @@ export async function render(root) {
   function toNum(x){ if(x==null) return 0; if(typeof x==="number") return x; return Number(String(x).replace(/\./g,"").replace(",", "."))||0; }
   function sum(arr) { return (arr||[]).reduce((a,r)=> a + toNum(r.amountEur), 0); }
   function pctStr(p){ if(p==null||!isFinite(p)) return "—"; const v=p>1?p:p*100; return v.toLocaleString("de-DE",{maximumFractionDigits:2})+" %"; }
+  function toast(txt) {
+    const div = document.createElement("div");
+    div.textContent = txt;
+    div.style.cssText = "position:fixed;right:12px;bottom:12px;background:#111;color:#fff;padding:8px 10px;border-radius:10px;opacity:.95;z-index:9999";
+    document.body.appendChild(div);
+    setTimeout(()=> div.remove(), 1800);
+  }
   function renderSummary(s) {
     const opening = (typeof s.openingEur === "number" && isFinite(s.openingEur)) ? s.openingEur : toNum(s.settings?.openingBalance || 0);
     const monthly = s.monthlyAmazonEur || 0;
@@ -235,12 +243,5 @@ export async function render(root) {
         <li>Extras gesamt: <b>${fmtEUR(extras)}</b> • Ausgaben gesamt: <b>${fmtEUR(outs)}</b></li>
         <li>Startmonat: <b>${start}</b> • Horizont: <b>${horizon}</b> Monate</li>
       </ul>`;
-  }
-  function toast(txt) {
-    const div = document.createElement("div");
-    div.textContent = txt;
-    div.style.cssText = "position:fixed;right:12px;bottom:12px;background:#111;color:#fff;padding:8px 10px;border-radius:10px;opacity:.95;z-index:9999";
-    document.body.appendChild(div);
-    setTimeout(()=> div.remove(), 1800);
   }
 }
