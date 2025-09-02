@@ -82,3 +82,17 @@ canvas.chart{
 
 /* === Optional active-state helper for router (if it sets [data-route]) === */
 .topnav .navbtn[data-active="true"]{background:var(--mint-500); color:#fff; border-color:transparent}
+
+/* Dashboard KPIs */
+.kpi { background: var(--surface-2,#16181d); border: 1px solid var(--border,#2a2f3a); border-radius: 12px; padding: 12px; }
+.kpi-label { font-size: 12px; color: #9aa3b2; }
+.kpi-value { font-size: 18px; font-weight: 600; }
+
+/* Dashboard Bars */
+.bars { display: grid; gap: 6px; }
+.bar-row { display: grid; grid-template-columns: 86px 1fr 110px; align-items: center; gap: 8px; }
+.bar-label { font-size: 12px; color: #9aa3b2; }
+.bar { height: 10px; border-radius: 6px; }
+.bar-pos { background: linear-gradient(90deg, #1bbf75, #0f9960); width: var(--w,0%); }
+.bar-neg { background: linear-gradient(90deg, #e25555, #c23636); width: var(--w,0%); }
+.bar-val { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; color: #c9d1d9; }

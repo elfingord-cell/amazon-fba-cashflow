@@ -1,114 +1,167 @@
-// FBA-CF-0003 — Dashboard liest Eingaben, zeigt KPIs und Charts
-import { loadState, saveState } from "../data/storageLocal.js";
-import { buildSeries, fmtEUR } from "../domain/metrics.js";
+// FBA-CF-0005 — Reaktives Dashboard (local-first, ohne Libs)
+// Aggregiert je Monat: (Sales * payout) + Extras – Ausgaben
+
+import { loadState, addStateListener } from "../data/storageLocal.js";
+import { fmtEUR } from "../domain/metrics.js";
 
 export async function render(root) {
-  const state = loadState();
-  const s = buildSeries(state);
-
   root.innerHTML = `
-    <section class="grid two">
-      <div class="card">
-        <div class="kpi">Opening heute</div>
-        <h1>${fmtEUR(s.opening)}</h1>
-        <div class="muted">Start: ${s.start}, Horizont: ${s.horizon} Monate</div>
-      </div>
-      <div class="card">
-        <div class="kpi">Min. Closing (Zeitraum)</div>
-        <h1>${fmtEUR(Math.min(...s.closing))}</h1>
-        <div class="muted">Berechnet aus Umsatz × Payout ± Extras − Ausgaben</div>
-      </div>
-    </section>
-
     <section class="card">
-      <div class="row">
-        <h3>Closing-Saldo (Linie)</h3>
+      <h2>Dashboard</h2>
+      <div id="kpis" class="grid three" style="gap:12px"></div>
+      <div class="row" style="align-items:center;margin-top:8px;margin-bottom:6px">
+        <h3 style="margin:0">Monatsübersicht</h3>
+        <div class="muted" id="range" style="margin-left:8px"></div>
         <div style="flex:1"></div>
-        <button class="btn" id="btn-testdata">Testdaten laden</button>
+        <small class="muted">grün = Netto+</small>
+        <small class="muted" style="margin-left:8px">rot = Netto−</small>
       </div>
-      <canvas class="chart" id="chart-line" aria-label="Closing über Zeit" role="img"></canvas>
-    </section>
-
-    <section class="card">
-      <h3>Netto je Monat (Balken)</h3>
-      <canvas class="chart" id="chart-bars" aria-label="Monatlicher Netto-Cashflow" role="img"></canvas>
-      <div class="muted" style="margin-top:6px">Grün = positiv, Rot = negativ</div>
+      <div id="bars"></div>
     </section>
   `;
 
-  // Charts
-  drawLine($("#chart-line", root), s.months, s.closing);
-  drawBars($("#chart-bars", root), s.months, s.net);
+  const elKPIs  = root.querySelector("#kpis");
+  const elRange = root.querySelector("#range");
+  const elBars  = root.querySelector("#bars");
 
-  // Testdaten laden
-  $("#btn-testdata", root).addEventListener("click", () => {
-    const st = loadState();
-    const next = {
-      ...st,
-      openingEur: 50000.25,
-      monthlyAmazonEur: 22500,
-      payoutPct: 0.85
-    };
-    saveState(next);
-    // neu aufbauen
-    render(root);
-  });
+  const off = addStateListener(redraw);
+  await redraw();
+  root._cleanup = () => { try { off && off(); } catch {} };
 
-  // --- Helpers ---
-  function $(sel, el = document) { return el.querySelector(sel); }
+  async function redraw() {
+    const s = loadState();
 
-  function drawLine(canvas, labels, data) {
-    const ctx = canvas.getContext("2d");
-    const W = canvas.width = canvas.clientWidth || 600;
-    const H = canvas.height = canvas.clientHeight || 220;
-    ctx.clearRect(0,0,W,H);
+    const startMonth   = s?.settings?.startMonth || "2025-02";
+    const horizon      = Number(s?.settings?.horizonMonths || 18);
+    const opening      = Number(s?.openingEur || 0);
+    const monthlySales = Number(s?.monthlyAmazonEur || 0);
+    const payoutPct    = Number(s?.payoutPct ?? 0.85);
+    const extras       = Array.isArray(s?.extras) ? s.extras : [];
+    const outs         = Array.isArray(s?.outgoings) ? s.outgoings : [];
 
-    const max = Math.max(...data), min = Math.min(...data);
-    const pad = 10;
-    const innerW = W - pad*2, innerH = H - pad*2;
-    const xStep = innerW / (labels.length - 1 || 1);
-    const toY = v => pad + innerH - ((v - min) / (max - min || 1)) * innerH;
+    const months   = buildMonths(startMonth, horizon);
+    const perMonth = aggregate(months, monthlySales, payoutPct, extras, outs);
 
-    // Achse
-    ctx.strokeStyle = "rgba(0,0,0,.15)"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(pad, H - pad); ctx.lineTo(W - pad, H - pad); ctx.stroke();
+    const sumExtras = perMonth.reduce((a,m)=>a+m.extras,0);
+    const sumOuts   = perMonth.reduce((a,m)=>a+m.out,0);
+    const avgNet    = perMonth.reduce((a,m)=>a+m.net,0) / (months.length || 1);
+    const firstNeg  = findFirstNegative(opening, perMonth);
 
-    // Linie
-    ctx.strokeStyle = "#3BC2A7"; ctx.lineWidth = 2;
-    ctx.beginPath();
-    data.forEach((v,i)=>{
-      const x = pad + i * xStep;
-      const y = toY(v);
-      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    });
-    ctx.stroke();
-  }
+    elKPIs.innerHTML = `
+      ${kpi("Opening", fmtEUR(opening))}
+      ${kpi("Extras (Σ)", fmtEUR(sumExtras))}
+      ${kpi("Ausgaben (Σ)", fmtEUR(sumOuts))}
+      ${kpi("Ø Netto/Monat", fmtEUR(avgNet))}
+      ${kpi("Erster negativer Monat", firstNeg || "—")}
+      ${kpi("Sales × Payout", fmtEUR(monthlySales * payoutPct))}
+    `;
 
-  function drawBars(canvas, labels, data) {
-    const ctx = canvas.getContext("2d");
-    const W = canvas.width = canvas.clientWidth || 600;
-    const H = canvas.height = canvas.clientHeight || 220;
-    ctx.clearRect(0,0,W,H);
+    elRange.textContent = `${months[0] || "—"} … ${months[months.length - 1] || "—"}`;
 
-    const max = Math.max(0, ...data), min = Math.min(0, ...data);
-    const pad = 10;
-    const innerW = W - pad*2, innerH = H - pad*2;
-    const zeroY = pad + innerH - ((0 - min) / (max - min || 1)) * innerH;
-
-    const gap = 6;
-    const barW = Math.max(8, (innerW - (labels.length - 1) * gap) / labels.length);
-
-    labels.forEach((_, i) => {
-      const v = data[i];
-      const x = pad + i * (barW + gap);
-      const y = pad + innerH - ((v - min) / (max - min || 1)) * innerH;
-      const h = zeroY - y;
-      ctx.fillStyle = v >= 0 ? "#2BAE66" : "#E45858";
-      ctx.fillRect(x, h >= 0 ? y : zeroY, barW, Math.abs(h));
-    });
-
-    // Nulllinie
-    ctx.strokeStyle = "rgba(0,0,0,.15)"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(pad, zeroY); ctx.lineTo(W - pad, zeroY); ctx.stroke();
+    const maxAbs = Math.max(1, ...perMonth.map(m => Math.abs(m.net)));
+    elBars.innerHTML = `
+      <div class="bars">
+        ${perMonth.map(m => barRow(m, maxAbs)).join("")}
+      </div>
+    `;
+    attachTooltips(elBars, perMonth);
   }
 }
+
+// ---- helpers ----
+function kpi(label, value){
+  return `
+    <div class="kpi">
+      <div class="kpi-label">${escapeHtml(label)}</div>
+      <div class="kpi-value">${escapeHtml(String(value))}</div>
+    </div>
+  `;
+}
+
+function buildMonths(startYYYYMM, n){
+  const [y0, m0] = String(startYYYYMM||"").split("-").map(Number);
+  if (!y0 || !m0) return [];
+  const out=[];
+  for (let i=0;i<Math.max(0, Number(n||0));i++){
+    const d=new Date(y0,(m0-1)+i,1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+  return out;
+}
+
+// inflow = sales*payout + extras; out = outgoings; net = inflow - out
+function aggregate(months, monthlySales, payout, extras, outs){
+  const idx = new Map(months.map((m,i)=>[m,i]));
+  const rows = months.map(m => ({ month:m, inflow: monthlySales*payout, extras:0, out:0, net:0 }));
+
+  const toNum = (x) => {
+    if (x==null) return 0;
+    if (typeof x === "number") return x;
+    return Number(String(x).replace(/\./g,"").replace(",", ".")) || 0;
+  };
+  const toMonth = (r) => {
+    if (r?.month && /^\d{4}-\d{2}$/.test(r.month)) return r.month;
+    if (r?.date){
+      const d=new Date(r.date);
+      if (!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    }
+    return null;
+  };
+
+  for (const e of extras||[]){
+    const m = toMonth(e); if (!m || !idx.has(m)) continue;
+    rows[idx.get(m)].extras += toNum(e.amountEur);
+  }
+  for (const o of outs||[]){
+    const m = toMonth(o); if (!m || !idx.has(m)) continue;
+    rows[idx.get(m)].out += Math.abs(toNum(o.amountEur));
+  }
+  for (const r of rows){
+    const inflow = (r.inflow||0) + (r.extras||0);
+    const out    = (r.out||0);
+    r.net = inflow - out;
+  }
+  return rows;
+}
+
+function findFirstNegative(opening, rows){
+  let bal = Number(opening||0);
+  for (const r of rows){
+    bal += r.net || 0;
+    if (bal < 0) return r.month;
+  }
+  return null;
+}
+
+function barRow(m, maxAbs){
+  const pct = Math.min(100, Math.round((Math.abs(m.net)/maxAbs)*100));
+  const isPos = (m.net||0) >= 0;
+  const cls = isPos ? "bar bar-pos" : "bar bar-neg";
+  return `
+    <div class="bar-row" data-month="${escapeHtml(m.month)}" data-net="${String(m.net)}"
+         data-inflow="${String(m.inflow)}" data-extras="${String(m.extras)}" data-out="${String(m.out)}">
+      <div class="bar-label">${escapeHtml(m.month)}</div>
+      <div class="${cls}" style="--w:${pct}%"></div>
+      <div class="bar-val">${escapeHtml(fmtEUR(m.net||0))}</div>
+    </div>
+  `;
+}
+
+function attachTooltips(container, rows){
+  const map = new Map(rows.map(r=>[r.month,r]));
+  container.querySelectorAll(".bar-row").forEach(el=>{
+    const m = el.getAttribute("data-month");
+    const r = map.get(m);
+    if (!r) return;
+    const txt = [
+      `${m}`,
+      `Inflow (Sales×Payout): ${fmtEUR(r.inflow||0)}`,
+      `Extras: ${fmtEUR(r.extras||0)}`,
+      `Outflows: ${fmtEUR(r.out||0)}`,
+      `Netto: ${fmtEUR(r.net||0)}`
+    ].join("\n");
+    el.setAttribute("title", txt);
+  });
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
