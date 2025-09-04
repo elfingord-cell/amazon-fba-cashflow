@@ -1,170 +1,171 @@
-// FBA-CF-0008 — Export/Import View
-// - DE-Zahlenformat stabil (z.B. 2.000,00), kein Reset auf 0
-// - Inputs speichern auf change/blur (Enter optional)
-// - Vorschau & Summary aktualisieren ohne komplettes Re-Render
+// FBA-CF-0012 — Export/Import nur Management + Validierung
+// - Keine Editor-Felder mehr hier (Eingaben passieren im Tab "Eingaben")
+// - Kurzübersicht, Validierung, JSON-Vorschau, Download/Upload
 
-import {
-  loadState,
-  saveState,
-  exportState,
-  importStateFile,
-} from "../data/storageLocal.js";
+import { loadState, saveState, exportState, importStateFile } from "../data/storageLocal.js";
 
-// ---------- Helpers ----------
-const $ = (sel, r = document) => r.querySelector(sel);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const $  = (sel, r=document)=> r.querySelector(sel);
+const esc = (s)=> String(s??"").replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-// DE-Parsing: "1.234,56" -> 1234.56
-function parseDE(str){
-  if (str == null) return 0;
-  const s = String(str).trim();
-  if (!s) return 0;
-  const n = Number(s.replace(/\./g,"").replace(",","."));
-  return Number.isFinite(n) ? n : 0;
+// ---- Zahl & Format-Helfer (DE) --------------------------------------------
+function parseDE(x){ return Number(String(x??0).replace(/\./g,"").replace(",", ".")) || 0; }
+function sumDE(list, pick){
+  return (list||[]).reduce((acc, r)=> acc + (parseDE(pick(r))||0), 0);
 }
-// DE-Format: 1234.56 -> "1.234,56"
-function fmtDE(num){
-  const n = Number(num) || 0;
-  return n.toLocaleString("de-DE", { minimumFractionDigits:2, maximumFractionDigits:2 });
-}
-function fmtEUR(num){ return `${fmtDE(num)} €`; }
-function sumDE(rows, prop){
-  return (rows||[]).reduce((a,r)=> a + parseDE(r?.[prop] ?? 0), 0);
+function fmtDE(n){ return (Number(n)||0).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+// ---- Validierung -----------------------------------------------------------
+function validateState(s){
+  const errors = [];
+  const warns  = [];
+
+  // Opening plausibel
+  if (parseDE(s.openingEur) < 0) errors.push("Opening darf nicht negativ sein.");
+
+  // Settings vorhanden
+  if (!s?.settings?.startMonth) errors.push("Startmonat fehlt (settings.startMonth).");
+  if (!s?.settings?.horizonMonths) errors.push("Zeitraum (Monate) fehlt (settings.horizonMonths).");
+
+  // Incomings (Umsatz × Quote) prüfen
+  (s.incomings||[]).forEach((r,i)=>{
+    if (!r.month) errors.push(`Umsatz-Zeile ${i+1}: Monat fehlt.`);
+    const rev = parseDE(r.revenueEur);
+    if (!Number.isFinite(rev) || rev<0) errors.push(`Umsatz-Zeile ${i+1}: Umsatz ungültig.`);
+    let pct = r.payoutPct;
+    if (pct>1) pct = pct/100; // Toleranz
+    if (!(pct>=0 && pct<=1)) errors.push(`Umsatz-Zeile ${i+1}: Quote muss zwischen 0 und 1 liegen (oder 0–100%).`);
+  });
+
+  // Extras / Outgoings Beträge prüfbar
+  (s.extras||[]).forEach((r,i)=>{
+    if (!r.month) warns.push(`Extras-Zeile ${i+1}: Monat fehlt (wird beim Import/Export dennoch übernommen).`);
+    if (!Number.isFinite(parseDE(r.amountEur))) errors.push(`Extras-Zeile ${i+1}: Betrag ungültig.`);
+  });
+  (s.outgoings||[]).forEach((r,i)=>{
+    if (!r.month) warns.push(`Ausgaben-Zeile ${i+1}: Monat fehlt (wird beim Import/Export dennoch übernommen).`);
+    if (!Number.isFinite(parseDE(r.amountEur))) errors.push(`Ausgaben-Zeile ${i+1}: Betrag ungültig.`);
+  });
+
+  return { errors, warns };
 }
 
-// ---------- View ----------
+// ---- JSON aufbereiten (Clean) ---------------------------------------------
+function buildCleanJson(s){
+  // internen Kram entfernen, Zahlen als String belassen (DE-Format bleibt erhalten)
+  const { _computed, ...clean } = s || {};
+  return clean;
+}
+
+// ---- Render ---------------------------------------------------------------
 export async function render(root){
-  let state = loadState();              // aktuelle App-Daten
-  let s = structuredClone(state);       // lokale, veränderliche Kopie
+  let s = loadState();
+  // Fallback-Struktur
+  s.settings  = s.settings  || { startMonth:"2025-02", horizonMonths:18, openingBalance:"50.000,00" };
+  s.incomings = Array.isArray(s.incomings) ? s.incomings : [];
+  s.extras    = Array.isArray(s.extras)    ? s.extras    : [];
+  s.outgoings = Array.isArray(s.outgoings) ? s.outgoings : [];
+
+  const totalPayout = (s.incomings||[]).reduce((acc, r)=>{
+    const rev = parseDE(r.revenueEur);
+    let pct = r.payoutPct;
+    if (pct>1) pct = pct/100;
+    return acc + rev * (pct||0);
+  }, 0);
+  const totalExtras = sumDE(s.extras,   r=>r.amountEur);
+  const totalOut    = sumDE(s.outgoings,r=>r.amountEur);
+
+  const { errors, warns } = validateState(s);
+  const canDownload = errors.length===0;
+
+  const clean = buildCleanJson(s);
+  const pretty = JSON.stringify(clean, null, 2);
 
   root.innerHTML = `
     <section class="card">
       <h2>Export / Import</h2>
 
-      <div class="row" style="gap:8px">
-        <button id="btn-dl" class="btn">JSON herunterladen</button>
-        <label class="btn" for="file-imp" style="cursor:pointer;">JSON importieren</label>
-        <input id="file-imp" type="file" accept="application/json" style="display:none" />
+      <div class="row" style="gap:8px; flex-wrap:wrap">
+        <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}">
+          JSON herunterladen
+        </button>
+        <label class="btn" for="file-imp" style="cursor:pointer">JSON importieren</label>
+        <input id="file-imp" type="file" accept="application/json" class="hidden" />
+        <button id="btn-seed" class="btn secondary">Testdaten laden</button>
+        <span class="muted">Namespace: localStorage</span>
       </div>
 
       <div class="grid two" style="margin-top:12px">
         <div class="card soft">
           <h3 class="muted">Aktueller Stand (kurz)</h3>
-          <ul id="summary" class="muted"></ul>
+          <ul class="simple">
+            <li>Opening: <b>${fmtDE(parseDE(s.openingEur))} €</b></li>
+            <li>Sales × Payout: <b>${fmtDE(totalPayout)} €</b></li>
+            <li>Extras (Σ): <b>${fmtDE(totalExtras)} €</b></li>
+            <li>Ausgaben (Σ): <b>${fmtDE(totalOut)} €</b></li>
+            <li>Zeitraum: <b>${esc(s?.settings?.startMonth || "—")}, ${esc(s?.settings?.horizonMonths || 0)} Monate</b></li>
+          </ul>
         </div>
 
-        <div class="card soft" id="extras-card">
-          <h3 class="muted">Extras (Editor)</h3>
-          <div id="extras"></div>
-          <button id="btn-add" class="btn" style="margin-top:8px">+ Zeile</button>
-          <p class="muted" style="margin-top:6px">Hinweis: Extras werden in einem späteren Schritt in den Reiter „Eingaben“ verschoben.</p>
+        <div class="card soft">
+          <h3 class="muted">Validierung</h3>
+          ${errors.length===0 && warns.length===0 ? `
+            <div class="ok">✔︎ Keine Probleme gefunden.</div>
+          `:`
+            ${errors.length ? `<div class="danger" style="margin-bottom:6px"><b>Fehler</b><ul class="simple">${errors.map(e=>`<li>${esc(e)}</li>`).join("")}</ul></div>`:""}
+            ${warns.length  ? `<div class="warn"><b>Hinweise</b><ul class="simple">${warns.map(w=>`<li>${esc(w)}</li>`).join("")}</ul></div>`:""}
+          `}
         </div>
       </div>
 
       <div class="card soft" style="margin-top:12px">
         <h3 class="muted">JSON Vorschau</h3>
-        <pre id="json" style="white-space:pre-wrap;background:#fff;border:1px solid #eee;border-radius:8px;padding:8px;max-height:45vh;overflow:auto"></pre>
+        <pre style="white-space:pre-wrap;background:#fff;border:1px solid #eee;border-radius:8px;padding:8px;max-height:420px;overflow:auto">${esc(pretty)}</pre>
       </div>
     </section>
   `;
 
-  $("#btn-dl").addEventListener("click", () => exportState(s));
-  $("#file-imp").addEventListener("change", (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    importStateFile(f, (merged) => {
-      s = structuredClone(merged);
-      drawSummary(); drawExtras(); drawJSON();
-    });
-    e.target.value = "";
+  // ---- Events --------------------------------------------------------------
+  $("#btn-dl")?.addEventListener("click", ()=>{
+    if (!canDownload) return;
+    exportState(s); // nutzt bestehenden Export (Dateiname mit Timestamp)
   });
 
-  $("#btn-add").addEventListener("click", () => {
-    s.extras = Array.isArray(s.extras) ? s.extras : [];
-    s.extras.push({ month:"2025-06", label:"", amountEur:"0,00" });
-    drawExtras(); drawJSON();
+  $("#file-imp")?.addEventListener("change", (ev)=>{
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    importStateFile(file, (stateOrError)=>{
+      if (!stateOrError || stateOrError.__error){
+        alert("Ungültige JSON-Datei." + (stateOrError?.__error? `\n${stateOrError.__error}` : ""));
+        return;
+      }
+      // Soft-merge + speichern
+      saveState(stateOrError);
+      // Info & Reload der View
+      alert("Import übernommen.");
+      render(root);
+    });
+    // reset input
+    ev.target.value = "";
   });
 
-  drawSummary(); drawExtras(); drawJSON();
-
-  // ---------- Drawer ----------
-  function drawSummary(){
-    const opening = parseDE(s.openingEur ?? s?.settings?.openingBalance ?? 0);
-    const sales   = parseDE(s.monthlyAmazonEur ?? 0);
-    const payout  = Number(s.payoutPct ?? 0.85) || 0;
-    const sxp     = sales * payout;
-    const extrasΣ = sumDE(s.extras, "amountEur");
-    const outΣ    = sumDE(s.outgoings, "amountEur");
-    const range   = `${s?.settings?.startMonth || "—"}, ${s?.settings?.horizonMonths || 18} Monate`;
-
-    $("#summary").innerHTML = `
-      <li>Opening: <b>${fmtEUR(opening)}</b></li>
-      <li>Sales × Payout: <b>${fmtEUR(sxp)}</b></li>
-      <li>Extras (Σ): <b>${fmtEUR(extrasΣ)}</b></li>
-      <li>Ausgaben (Σ): <b>${fmtEUR(outΣ)}</b></li>
-      <li>Zeitraum: <b>${esc(range)}</b></li>
-    `;
-  }
-
-  function drawJSON(){
-    $("#json").textContent = JSON.stringify(s, null, 2);
-  }
-
-  function drawExtras(){
-    const box = $("#extras");
-    const rows = Array.isArray(s.extras) ? s.extras : [];
-    box.innerHTML = rows.map((r, i) => rowTpl(r, i)).join("");
-
-    rows.forEach((r, i) => {
-      const m = box.querySelector(`[data-i="${i}"][data-f="m"]`);
-      const l = box.querySelector(`[data-i="${i}"][data-f="l"]`);
-      const a = box.querySelector(`[data-i="${i}"][data-f="a"]`);
-      const x = box.querySelector(`[data-i="${i}"][data-f="x"]`);
-
-      // Monat
-      m.addEventListener("change", () => {
-        s.extras[i].month = m.value;
-        saveState(s); drawSummary(); drawJSON();
-      });
-      m.addEventListener("blur", () => m.dispatchEvent(new Event("change")));
-
-      // Label
-      l.addEventListener("change", () => {
-        s.extras[i].label = l.value;
-        saveState(s); drawSummary(); drawJSON();
-      });
-      l.addEventListener("blur", () => l.dispatchEvent(new Event("change")));
-
-      // Betrag (DE)
-      a.addEventListener("change", () => {
-        const val = parseDE(a.value);
-        const pretty = fmtDE(val);        // <<< KEIN zusätzliches Ersetzen!
-        s.extras[i].amountEur = pretty;   // z.B. "2.000,00"
-        a.value = pretty;
-        saveState(s); drawSummary(); drawJSON();
-      });
-      a.addEventListener("blur", () => a.dispatchEvent(new Event("change")));
-      a.addEventListener("keydown", (ev) => { if (ev.key === "Enter") a.blur(); });
-
-      // Remove
-      x.addEventListener("click", () => {
-        s.extras.splice(i, 1);
-        saveState(s); drawExtras(); drawSummary(); drawJSON();
-      });
-    });
-  }
-
-  function rowTpl(r, i){
-    const m = esc(r?.month ?? "");
-    const l = esc(r?.label ?? "");
-    const a = esc(r?.amountEur ?? "");
-    return `
-      <div class="row" style="gap:8px;align-items:center;margin-bottom:6px">
-        <input class="in" type="month" value="${m}" data-i="${i}" data-f="m" />
-        <input class="in" type="text"  placeholder="Label" value="${l}" data-i="${i}" data-f="l" />
-        <input class="in" type="text"  placeholder="Betrag (z.B. 1.234,56)" value="${a}" data-i="${i}" data-f="a" style="max-width:160px" />
-        <button class="btn danger" data-i="${i}" data-f="x">✕</button>
-      </div>
-    `;
-  }
+  $("#btn-seed")?.addEventListener("click", ()=>{
+    // einfache Testdaten (nicht invasiv)
+    const demo = {
+      ...s,
+      openingEur: "10.000,00",
+      incomings: [
+        { month: s?.settings?.startMonth || "2025-02", revenueEur: "20.000,00", payoutPct: 0.85 },
+        { month: "2025-03", revenueEur: "22.000,00", payoutPct: 0.85 },
+      ],
+      extras: [
+        { month: "2025-04", label: "USt-Erstattung", amountEur: "1.500,00" }
+      ],
+      outgoings: [
+        { month: "2025-03", label: "Fixkosten", amountEur: "2.000,00" }
+      ]
+    };
+    saveState(demo);
+    alert("Testdaten geladen.");
+    render(root);
+  });
 }
