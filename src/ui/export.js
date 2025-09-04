@@ -51,8 +51,16 @@ function validateState(s){
 
 // ---- JSON aufbereiten (Clean) ---------------------------------------------
 function buildCleanJson(s){
-  // internen Kram entfernen, Zahlen als String belassen (DE-Format bleibt erhalten)
   const { _computed, ...clean } = s || {};
+
+  // Migration: falls ein altes Backup nur settings.openingBalance hatte
+  if (!clean.openingEur && clean?.settings?.openingBalance) {
+    clean.openingEur = clean.settings.openingBalance;
+  }
+  // Alt-Feld konsequent entfernen, damit es in der Vorschau nicht mehr auftaucht
+  if (clean?.settings) {
+    delete clean.settings.openingBalance;
+  }
   return clean;
 }
 
