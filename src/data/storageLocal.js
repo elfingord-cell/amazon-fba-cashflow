@@ -88,6 +88,13 @@ export function importStateFile(file, onOk) {
   fr.onload = () => {
     try {
       const obj = JSON.parse(String(fr.result || "{}"));
+      // ---- kleine Migration: openingBalance (alt) -> openingEur (neu)
+if (!obj.openingEur && obj?.settings?.openingBalance) {
+  obj.openingEur = obj.settings.openingBalance;
+}
+if (obj?.settings?.openingBalance !== undefined) {
+  delete obj.settings.openingBalance;
+}
       const merged = { ...structuredClone(defaults), ...obj };
       migrate(merged);
       saveState(merged);
