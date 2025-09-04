@@ -1,4 +1,6 @@
-/* Mint UI Skin v1.0 — desktop/iPad focus (no SW, static) */
+/* Mint UI Skin v1.1 — desktop/iPad focus (no SW, static) */
+/* =================================================================== */
+/* Farben & Tokens */
 :root{
   --mint-50:#f0fbf7; --mint-100:#e5f7f2; --mint-300:#b8efe2;
   --mint-500:#3BC2A7; --mint-700:#1fb59c; --teal-800:#127b69;
@@ -9,7 +11,10 @@
   --radius-lg:16px; --radius-md:12px; --radius-sm:10px;
   color-scheme: light;
 }
-*{box-sizing:border-box} html,body{height:100%}
+
+/* Base */
+*{box-sizing:border-box}
+html,body{height:100%}
 body{
   margin:0;
   background: radial-gradient(1200px 800px at 20% -10%, var(--mint-100) 0%, var(--mint-50) 60%);
@@ -18,15 +23,17 @@ body{
 }
 h1,h2,h3{margin:0 0 8px}
 h1{font-size:28px} h2{font-size:20px} h3{font-size:16px; letter-spacing:.2px}
+.muted{color:var(--muted)}
 
-/* === Page frame (zentriert) === */
+/* =================================================================== */
+/* Page frame (zentriert) */
 .page{max-width:1200px; margin:0 auto; padding:14px 18px;}
 .page-header{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:8px;}
 .brand-title{font-weight:800; letter-spacing:.2px}
 .badges{display:flex; gap:8px; flex-wrap:wrap; margin-top:6px}
 .tag{font-size:12px; color:var(--ink); background:#fff; border:1px solid rgba(15,27,45,.1); border-radius:999px; padding:4px 10px; box-shadow:var(--shadow)}
 
-/* === Top navigation as buttons === */
+/* Top navigation as buttons */
 .topnav{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
 .btn{
   padding:8px 12px; border-radius:var(--radius-md);
@@ -40,14 +47,15 @@ h1{font-size:28px} h2{font-size:20px} h3{font-size:16px; letter-spacing:.2px}
 .btn.primary{background:var(--mint-500); color:#fff; border-color:transparent}
 .btn.primary:hover{filter:brightness(.98)}
 .btn.danger{border-color:var(--bad); color:var(--bad)}
-.navbtn.active{background:var(--mint-500); color:#fff; border-color:transparent}
+.navbtn.active,
+.topnav .navbtn[data-active="true"]{background:var(--mint-500); color:#fff; border-color:transparent}
 .navbtn.ghost{background:#fff; color:var(--ink); opacity:.85}
 .navbtn.ghost:hover{opacity:1}
 
-/* === Cards & grids === */
+/* Cards & grids */
 .card{
   background:var(--panel); border:1px solid rgba(15,27,45,0.06);
-  border-radius:var(--radius-lg); padding:14px; box-shadow:var(--shadow); margin-bottom:14px
+  border-radius:var(--radius-lg); padding:14px; box-shadow:var(--shadow); margin-bottom:14px;
 }
 .card.warn{border-color:var(--warn)}
 .grid{display:grid; gap:14px}
@@ -55,10 +63,7 @@ h1{font-size:28px} h2{font-size:20px} h3{font-size:16px; letter-spacing:.2px}
 .grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media (max-width:1100px){.grid.two,.grid.three{grid-template-columns:1fr}}
 
-.kpi{font-size:28px; font-weight:800}
-.kpi .muted{display:block; color:var(--muted); font-weight:500; font-size:12px; margin-top:4px}
-
-/* === Forms === */
+/* Forms */
 label{font-size:12px; color:var(--muted); margin-bottom:4px; display:block}
 input,select,textarea{
   width:100%; height:40px; border-radius:var(--radius-md);
@@ -69,95 +74,89 @@ table{width:100%; border-collapse:collapse}
 th,td{padding:10px; border-bottom:1px solid rgba(15,27,45,.08); text-align:left}
 thead th{font-size:12px; color:var(--muted); font-weight:700}
 
-/* === Charts (Canvas) === */
+/* Canvas-Fallback (nicht im Einsatz, aber behalten) */
 canvas.chart{
   width:100%; height:200px;
   background:linear-gradient(180deg, var(--mint-50) 0%, #ffffff 100%);
   border-radius:var(--radius-lg); border:1px solid rgba(15,27,45,.06)
 }
 
-/* === Footer === */
+/* Footer */
 .footer{padding:10px 0; color:var(--muted)}
-.muted{color:var(--muted)}
 
-/* === Optional active-state helper for router (if it sets [data-route]) === */
-.topnav .navbtn[data-active="true"]{background:var(--mint-500); color:#fff; border-color:transparent}
-
-/* Dashboard KPIs */
-.kpi { background: var(--surface-2,#16181d); border: 1px solid var(--border,#2a2f3a); border-radius: 12px; padding: 12px; }
-.kpi-label { font-size: 12px; color: #9aa3b2; }
-.kpi-value { font-size: 18px; font-weight: 600; }
-
-/* Dashboard Bars */
-.bars { display: grid; gap: 6px; }
-.bar-row { display: grid; grid-template-columns: 86px 1fr 110px; align-items: center; gap: 8px; }
-.bar-label { font-size: 12px; color: #9aa3b2; }
-.bar { height: 10px; border-radius: 6px; }
-.bar-pos { background: linear-gradient(90deg, #1bbf75, #0f9960); width: var(--w,0%); }
-.bar-neg { background: linear-gradient(90deg, #e25555, #c23636); width: var(--w,0%); }
-.bar-val { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; color: #c9d1d9; }
-
-/* FBA-CF-0006 — hellere KPI-Karten + vertikale Balken */
-
-.kpi {
-  background: #fff;               /* vorher dunkel → jetzt hell */
-  border: 1px solid #e6e9ef;
-  border-radius: 12px;
-  padding: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+/* =================================================================== */
+/* KPI-Karten — hell */
+.kpi{
+  background:#fff;
+  border:1px solid #e6e9ef;
+  border-radius:12px;
+  padding:12px;
+  box-shadow:0 1px 2px rgba(0,0,0,.04);
 }
-.kpi-label { font-size: 12px; color: #6b7280; }
-.kpi-value { font-size: 20px; font-weight: 700; color: #0f172a; }
+.kpi-label{font-size:12px; color:#6b7280}
+.kpi-value{font-size:20px; font-weight:700; color:#0f172a}
 
-/* Vertikal-Chart Layout */
-.vchart {
-  position: relative;
-  background: #fff;
-  border: 1px solid #e6e9ef;
-  border-radius: 12px;
-  padding: 12px 12px 6px 52px; /* Platz links für Y-Achse */
-  min-height: 280px;
-  overflow: hidden;
-}
-.vchart-y {
-  position: absolute; left: 8px; top: 10px; bottom: 40px;
-  display: grid; grid-template-rows: repeat(5,1fr); align-items: end;
-  width: 40px; color: #6b7280; font-size: 11px; text-align: right; gap: 0;
-}
-.vchart-grid {
-  position: absolute; left: 52px; right: 12px; top: 10px; bottom: 40px;
-  display: grid; grid-template-rows: repeat(5,1fr);
-}
-.vchart-grid .yline { border-top: 1px dashed #e5e7eb; }
-.vchart-bars {
-  position: absolute; left: 52px; right: 12px; top: 10px; height: 200px;
-  display: grid; grid-template-columns: repeat(var(--cols,12), 1fr); align-items: end; gap: 6px;
-}
-.vbar-wrap { display:flex; align-items:flex-end; justify-content:center; height: 100%; }
-.vbar { width: 14px; border-radius: 6px 6px 0 0; height: calc(var(--h,0) * 1%); }
-.vbar.pos { background: linear-gradient(180deg, #1bbf75, #0f9960); }
-.vbar.neg { background: linear-gradient(180deg, #ef4444, #dc2626); }
+/* =================================================================== */
+/* Horizontale Balken (falls irgendwo verwendet) */
+.bars{display:grid; gap:6px}
+.bar-row{display:grid; grid-template-columns:86px 1fr 110px; align-items:center; gap:8px}
+.bar-label{font-size:12px; color:#9aa3b2}
+.bar{height:10px; border-radius:6px}
+.bar-pos{background:linear-gradient(90deg,#1bbf75,#0f9960); width:var(--w,0%)}
+.bar-neg{background:linear-gradient(90deg,#e25555,#c23636); width:var(--w,0%)}
+.bar-val{font-variant-numeric:tabular-nums; text-align:right; font-size:12px; color:#3a4150}
 
-.vchart-x {
-  position: absolute; left: 52px; right: 12px; bottom: 8px;
-  display: grid; grid-template-columns: repeat(var(--cols,12), 1fr); gap: 6px;
+/* =================================================================== */
+/* Vertikal-Chart (einzige, kanonische Version) */
+.vchart{
+  position:relative;
+  background:#fff;
+  border:1px solid #e6e9ef;
+  border-radius:12px;
+  padding:12px 12px 6px 52px; /* Platz links für Y-Achse */
+  min-height:280px;
+  overflow:hidden;
 }
-.vchart-x .xlabel { font-size: 11px; color: #6b7280; text-align: center; }
 
-/* FBA-CF-0007 — Balken-Fallback, falls vorher nicht vorhanden */
-.vchart { position: relative; height: 280px; background:#fff; border:1px solid #eee; border-radius:12px; padding:12px; }
-.vchart-bars { display:grid; grid-template-columns: repeat(var(--cols, 1), minmax(0,1fr)); align-items:end; gap:10px; height: 180px; margin-top: 8px; }
-.vbar-wrap { display:flex; align-items:flex-end; justify-content:center; height:100%; }
-.vbar { width: 18px; height: var(--h, 0%); border-radius: 9px; background: #10b981; transition: height .2s ease; }
-.vbar.neg { background: #ef4444; }
-.vchart-x { display:grid; grid-template-columns: repeat(var(--cols, 1), minmax(0,1fr)); gap:10px; margin-top: 6px; }
-.vchart-x .xlabel { text-align:center; font-size:12px; color:#6b7280; }
-.vchart-grid { position:absolute; inset:12px 12px auto 60px; height:180px; display:flex; flex-direction:column; justify-content:space-between; pointer-events:none; }
-.vchart-grid .yline { height:1px; background: repeating-linear-gradient(90deg, #e5e7eb, #e5e7eb 8px, transparent 8px, transparent 16px); }
-.vchart-y { position:absolute; top:12px; bottom:auto; left:12px; width:48px; height:180px; display:flex; flex-direction:column; justify-content:space-between; color:#6b7280; font-size:12px; }
-.vchart-y .ytick { text-align:right; }
+/* Y-Achse + Hilfslinien */
+.vchart-y{
+  position:absolute; left:12px; top:12px; height:180px;
+  display:flex; flex-direction:column; justify-content:space-between;
+  width:48px; color:#6b7280; font-size:12px;
+}
+.vchart-y .ytick{ text-align:right; white-space:nowrap; }
 
-/* FBA-CF-0008 — Charts-Polish */
-.vbar { border-radius: 10px 10px 0 0; }            /* nur oben rund, unten gerade */
-.vchart-y .ytick { white-space: nowrap; }          /* keine 2 Zeilen mit € */
-.vchart-x .xlabel { white-space: nowrap; }         /* Monatslabels einzeilig */
+.vchart-grid{
+  position:absolute; inset:12px 12px auto 60px; height:180px;
+  display:flex; flex-direction:column; justify-content:space-between; pointer-events:none;
+}
+.vchart-grid .yline{height:1px; background:repeating-linear-gradient(90deg,#e5e7eb,#e5e7eb 8px,transparent 8px,transparent 16px)}
+
+/* Bars */
+.vchart-bars{
+  position:absolute; left:52px; right:12px; top:12px; height:180px;
+  display:grid; grid-template-columns:repeat(var(--cols,12),1fr); align-items:end; gap:8px;
+}
+.vbar-wrap{display:flex; align-items:flex-end; justify-content:center; height:100%}
+
+/* EINZIGE vbar-Definition:
+   - Höhe via CSS-Var --h (z.B. "--h: 74%")
+   - unten gerade, oben rund → sticht nie unter die 0-Linie
+*/
+.vbar{
+  width:18px;
+  height:var(--h, 0%);
+  border-radius:10px 10px 0 0;     /* nur oben rund */
+  background:linear-gradient(180deg,#34d399,#10b981);
+  transition:height .2s ease;
+}
+.vbar.neg{ background:linear-gradient(180deg,#ef4444,#dc2626); }
+
+/* X-Achse */
+.vchart-x{
+  position:absolute; left:52px; right:12px; bottom:8px;
+  display:grid; grid-template-columns:repeat(var(--cols,12),1fr); gap:8px;
+}
+.vchart-x .xlabel{ text-align:center; font-size:11px; color:#6b7280; white-space:nowrap; }
+
+/* =================================================================== */
