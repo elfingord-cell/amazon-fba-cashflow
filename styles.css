@@ -141,12 +141,8 @@ canvas.chart{
 .vbar-wrap{ display:flex; align-items:flex-end; justify-content:center; height:100% }
 
 /* EINZIGE vbar-Definition: unten gerade, oben rund — ragt nie unter 0 */
-.vbar{
-  width:18px; height:var(--h,0%);
-  border-radius:10px 10px 0 0; /* nur oben rund */
-  background:linear-gradient(180deg,#34d399,#10b981);
-  transition:height .2s ease;
-}
+/* korrigierte vbar-Höhe: nutzt number → % */
+.vbar { width: 14px; height: calc(var(--h, 0) * 1%); border-radius: 10px 10px 0 0; background: #10b981; transition: height .2s ease; }
 .vbar.neg{ background:linear-gradient(180deg,#ef4444,#dc2626); }
 
 /* X-Achse — dichter an die 0-Linie */
