@@ -1,44 +1,36 @@
 <!doctype html>
 <html lang="de">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Amazon FBA · Cashflow Planung</title>
-    <link rel="stylesheet" href="./styles.css" />
-    <link rel="icon" href="data:,">
-  </head>
-  <body>
-    <!-- App-Shell -->
-    <div class="page">
-      <header class="page-header">
-        <div class="brand">
-          <div class="brand-title">Amazon FBA · Cashflow Planung</div>
-          <div class="badges">
-            <span class="tag">Phase 1 · static · local-first</span>
-            <span class="tag">JSON Export/Import</span>
-            <span class="tag">Sync-Adapter vorbereitet</span>
-          </div>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Amazon FBA · Cashflow Planung</title>
+  <link rel="stylesheet" href="./styles.css"/>
+  <meta http-equiv="Cache-Control" content="no-store" />
+</head>
+<body>
+  <div class="page">
+    <header class="page-header">
+      <div>
+        <div class="brand-title">Amazon FBA · Cashflow Planung</div>
+        <div class="badges">
+          <span class="tag">Phase 1 · static · local-first</span>
+          <span class="tag">JSON Export/Import</span>
+          <span class="tag">Sync-Adapter vorbereitet</span>
         </div>
-
-        <!-- Sichtbare Tabs (Buttons) -->
-        <nav class="topnav" aria-label="Hauptnavigation">
-          <a class="btn navbtn" href="#" data-route="dashboard" id="nav-dashboard">Dashboard</a>
-          <a class="btn navbtn" href="#" data-route="plan" id="nav-plan">Plan</a>
-          <a class="btn navbtn" href="#" data-route="eingaben" id="nav-eingaben">Eingaben</a>
-          <a class="btn navbtn" href="#" data-route="export" id="nav-export">Export/Import</a>
-          <a class="btn navbtn ghost" href="#" data-route="debug" id="nav-debug">Debug</a>
-        </nav>
-      </header>
-
-      <!-- App-Content -->
-      <main id="app" class="app"></main>
-
-      <footer class="footer">
-        <span class="muted">local-first · kein Service Worker (No-SW) · Mint UI</span>
-      </footer>
-    </div>
-
-    <!-- Router/Boot -->
-    <script type="module" src="./src/main.js"></script>
-  </body>
+      </div>
+      <nav class="topnav">
+        <a href="#dashboard" class="btn navbtn" data-route="dashboard">Dashboard</a>
+        <a href="#plan"      class="btn navbtn" data-route="plan">Plan</a>
+        <a href="#po"        class="btn navbtn" data-route="po">PO</a>
+        <a href="#fo"        class="btn navbtn" data-route="fo">FO</a>
+        <a href="#eingaben"  class="btn navbtn" data-route="eingaben">Eingaben</a>
+        <a href="#export"    class="btn navbtn" data-route="export">Export/Import</a>
+        <a href="#debug"     class="btn navbtn ghost" data-route="debug">Debug</a>
+      </nav>
+    </header>
+    <main id="app" class="page-body"></main>
+    <footer class="footer">local-first · kein Service Worker (No-SW) · Mint UI</footer>
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
 </html>
