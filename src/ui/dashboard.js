@@ -1,4 +1,4 @@
-// UI: Dashboard – Netto-Balken + Closing-Linie + Tooltips
+// UI: Dashboard – Netto-Balken + Closing-Linie + Tooltips (mit sauberer Y-Skala & Headroom)
 import { loadState, addStateListener } from "../data/storageLocal.js";
 import { computeSeries, fmtEUR } from "../domain/cashflow.js";
 
@@ -9,16 +9,15 @@ export async function render(root) {
   const state = loadState();
   const { months, series, kpis, closings } = computeSeries(state);
 
-  // Skala: nutze das Maximum aus NET und CLOSING
+  // === Skala: 5k-Ticks + 10% Headroom ===
   const maxNet = Math.max(0, ...series.map(r => r.net));
   const maxClosing = Math.max(0, ...closings.map(c => c.closing));
-  const maxVal = Math.max(1, maxNet, maxClosing);
-  const step = 5000; // 5k-Schritte für bessere Lesbarkeit
-  const top = Math.max(step, Math.ceil(maxVal / step) * step);
-  const steps = 5;
-  const yTicks = Array.from({ length: steps + 1 }, (_, i) => Math.round((top / steps) * i));
+  const rawMax = Math.max(1, maxNet, maxClosing) * 1.10;        // +10% Luft
+  const STEP = 5000;
+  const TOP = Math.ceil(rawMax / STEP) * STEP;                   // nach oben auf 5k runden
+  const yTicks = [];
+  for (let v = 0; v <= TOP; v += STEP) yTicks.push(v);           // 0, 5k, 10k, ...
 
-  // HTML
   root.innerHTML = `
     <section class="card">
       <h2>Dashboard</h2>
@@ -29,18 +28,20 @@ export async function render(root) {
       </div>
 
       <div class="vchart" style="--cols:${months.length}">
+        <!-- horizontale Linien -->
         <div class="vchart-grid">
           ${yTicks.map(() => `<div class="yline"></div>`).join("")}
         </div>
+        <!-- Y-Labels (exakt auf Linien) -->
         <div class="vchart-y">
           ${yTicks.slice().reverse().map(v => `<div class="ytick">${v >= 1000 ? Math.round(v/1000) + "k" : "0"}</div>`).join("")}
         </div>
 
+        <!-- Balken (Netto je Monat) -->
         <div class="vchart-bars">
           ${series.map((r, i) => {
-            const h = top ? Math.max(0, Math.min(100, (r.net / top) * 100)) : 0;
+            const h = TOP ? Math.max(0, Math.min(100, (r.net / TOP) * 100)) : 0;
             const cls = r.net >= 0 ? "pos" : "neg";
-            // Daten für Tooltip in Dataset
             const data = {
               month: r.month,
               inflow: r.inflow,
@@ -51,15 +52,16 @@ export async function render(root) {
             };
             const ds = encodeURIComponent(JSON.stringify(data));
             return `
-            <div class="vbar-wrap">
-              <div class="vbar ${cls}" style="--h:${h}" data-row="${ds}" aria-label="${r.month}"></div>
-            </div>`;
+              <div class="vbar-wrap">
+                <div class="vbar ${cls}" style="--h:${h}" data-row="${ds}" aria-label="${r.month}"></div>
+              </div>`;
           }).join("")}
         </div>
 
-        <!-- Canvas für Closing-Linie -->
+        <!-- Closing-Linie -->
         <canvas class="linecanvas" aria-hidden="true"></canvas>
 
+        <!-- X-Achse -->
         <div class="vchart-x">
           ${months.map(m => `<div class="xlabel">${m}</div>`).join("")}
         </div>
@@ -70,7 +72,7 @@ export async function render(root) {
     </section>
   `;
 
-  // Draw Closing Line auf Canvas (über den Balken)
+  // === Linie zeichnen (Canvas) ===
   const canvas = $(".linecanvas", root);
   const barsArea = $(".vchart-bars", root);
   if (canvas && barsArea) {
@@ -94,11 +96,11 @@ export async function render(root) {
 
       const n = months.length;
       const colW = cssW / n;
-      const yScale = (v) => cssH - (top ? (v / top) * cssH : 0);
+      const yScale = (v) => cssH - (TOP ? (v / TOP) * cssH : 0);
 
       // Linie
       ctx.lineWidth = 2;
-      ctx.strokeStyle = "#1fb59c"; // Mint-700
+      ctx.strokeStyle = "#1fb59c";
       ctx.beginPath();
       for (let i = 0; i < n; i++) {
         const x = i * colW + colW / 2;
@@ -120,7 +122,7 @@ export async function render(root) {
     }
   }
 
-  // Tooltips
+  // === Tooltips ===
   const tip = $(".chart-tip", root);
   function showTip(el, ev) {
     if (!tip) return;
@@ -137,10 +139,10 @@ export async function render(root) {
       tip.hidden = false;
       const parent = $(".vchart", root);
       const pr = parent.getBoundingClientRect();
-      const x = ev.clientX - pr.left + 12;
-      const y = ev.clientY - pr.top + 12;
+      const x = (ev.clientX ?? 0) - pr.left + 12;
+      const y = (ev.clientY ?? 0) - pr.top + 12;
       tip.style.left = Math.max(8, Math.min(x, pr.width - 180)) + "px";
-      tip.style.top = Math.max(8, Math.min(y, pr.height - 100)) + "px";
+      tip.style.top  = Math.max(8, Math.min(y, pr.height - 100)) + "px";
     } catch {}
   }
   function hideTip() { if (tip) tip.hidden = true; }
@@ -154,12 +156,12 @@ export async function render(root) {
     el.addEventListener("touchend", hideTip, { passive: true });
   });
 
-  // Live-Refresh bei State-Änderung
+  // Live-Refresh
   const off = addStateListener(() => {
     if (location.hash.replace("#", "") === "dashboard") render(root);
   });
 
-  // Bei Resize neu zeichnen (main.js triggert bereits render auf resize, doppelt ok)
+  // Bei Resize einmal neu zeichnen
   window.addEventListener("resize", () => {
     if (location.hash.replace("#", "") === "dashboard") render(root);
   }, { once: true });

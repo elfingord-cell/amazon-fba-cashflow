@@ -118,20 +118,18 @@ canvas.chart{
   overflow:hidden;
 }
 
-/* Y-Achse + Hilfslinien: alle teilen sich dieselben Ankerpunkte */
-.vchart-y{
-  position:absolute; left:12px; top:12px; bottom:40px; /* <— keine fixe Höhe mehr */
-  display:grid; grid-template-rows:repeat(5,1fr);
-  align-items:center; /* Ticks mittig pro Raster */
-  width:48px; color:#6b7280; font-size:12px;
+/* Y-Achse: Labels exakt auf den Linien (dynamische Anzahl) */
+.vchart-y {
+  position: absolute; left: 8px; top: 10px; bottom: 40px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  width: 40px; color: #6b7280; font-size: 11px; text-align: right;
 }
-.vchart-y .ytick{ text-align:right; white-space:nowrap; transform:translateY(-0.5px); } /* pixel-korrektur */
 
-.vchart-grid{
-  position:absolute; left:52px; right:12px; top:12px; bottom:40px; /* <— identische Vertikal-Anker */
-  display:grid; grid-template-rows:repeat(5,1fr);
+/* Horizontale Linien: dynamisch über Flex verteilt */
+.vchart-grid {
+  position: absolute; left: 52px; right: 12px; top: 10px; bottom: 40px;
+  display: flex; flex-direction: column; justify-content: space-between;
 }
-.vchart-grid .yline{ border-top:1px dashed #e5e7eb; }
 
 .vchart-bars{
   position:absolute; left:52px; right:12px; top:12px; bottom:40px; /* <— identische Vertikal-Anker */
