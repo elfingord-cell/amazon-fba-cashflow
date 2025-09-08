@@ -125,10 +125,16 @@ canvas.chart{
   width: 40px; color: #6b7280; font-size: 11px; text-align: right;
 }
 
-/* Horizontale Linien: dynamisch über Flex verteilt */
-.vchart-grid {
-  position: absolute; left: 52px; right: 12px; top: 10px; bottom: 40px;
-  display: flex; flex-direction: column; justify-content: space-between;
+/* horizontale Referenzlinien pro Y-Tick (gestrichelt) */
+.vchart-grid .yline{
+  height: 0;
+  border-top: 1px dashed #e5e7eb; /* hell-grau, unaufdringlich */
+}
+
+/* 0-Linie (unten) leicht betont */
+.vchart-grid .yline:last-child{
+  border-top-color: #cbd5e1;      /* etwas dunkler */
+  border-top-style: solid;        /* unten durchgezogen für klare Basis */
 }
 
 .vchart-bars{
