@@ -1,36 +1,42 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Amazon FBA · Cashflow Planung</title>
-  <link rel="stylesheet" href="./styles.css"/>
-  <meta http-equiv="Cache-Control" content="no-store" />
+  <!-- WICHTIG: styles.css liegt im Repo-Root -->
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <div class="page">
     <header class="page-header">
       <div>
-        <div class="brand-title">Amazon FBA · Cashflow Planung</div>
+        <h1 class="brand-title">Amazon FBA · Cashflow Planung</h1>
         <div class="badges">
-          <span class="tag">Phase 1 · static · local-first</span>
+          <span class="tag">Phase 1 · static</span>
           <span class="tag">JSON Export/Import</span>
           <span class="tag">Sync-Adapter vorbereitet</span>
         </div>
       </div>
-      <nav class="topnav">
-        <a href="#dashboard" class="btn navbtn" data-route="dashboard">Dashboard</a>
-        <a href="#plan"      class="btn navbtn" data-route="plan">Plan</a>
-        <a href="#po"        class="btn navbtn" data-route="po">PO</a>
-        <a href="#fo"        class="btn navbtn" data-route="fo">FO</a>
-        <a href="#eingaben"  class="btn navbtn" data-route="eingaben">Eingaben</a>
-        <a href="#export"    class="btn navbtn" data-route="export">Export/Import</a>
-        <a href="#debug"     class="btn navbtn ghost" data-route="debug">Debug</a>
+      <nav class="topnav" aria-label="Hauptnavigation">
+        <a href="#dashboard" class="navbtn btn" data-route="dashboard">Dashboard</a>
+        <a href="#plan"       class="navbtn btn" data-route="plan">Plan</a>
+        <a href="#po"         class="navbtn btn" data-route="po">PO</a>
+        <a href="#fo"         class="navbtn btn" data-route="fo">FO</a>
+        <a href="#eingaben"   class="navbtn btn" data-route="eingaben">Eingaben</a>
+        <a href="#export"     class="navbtn btn" data-route="export">Export/Import</a>
+        <a href="#debug"      class="navbtn btn" data-route="debug">Debug</a>
       </nav>
     </header>
-    <main id="app" class="page-body"></main>
-    <footer class="footer">local-first · kein Service Worker (No-SW) · Mint UI</footer>
+
+    <main id="app"></main>
+
+    <footer class="footer">
+      local-first · kein Service Worker (No-SW) · Mint UI
+    </footer>
   </div>
+
+  <!-- Dein Router/Bootstrapping -->
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>
