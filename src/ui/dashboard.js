@@ -1,22 +1,28 @@
-// UI: Dashboard – Netto-Balken + Closing-Linie + Tooltips (mit sauberer Y-Skala & Headroom)
+// UI: Dashboard – Balken + Topline + Tooltip, Y-Skala exakt ausgerichtet
 import { loadState, addStateListener } from "../data/storageLocal.js";
 import { computeSeries, fmtEUR } from "../domain/cashflow.js";
 
-function $(sel, r = document) { return r.querySelector(sel); }
-function $all(sel, r = document) { return [...r.querySelectorAll(sel)]; }
-
 export async function render(root) {
   const state = loadState();
-  const { months, series, kpis, closings } = computeSeries(state);
+  const { months, series, kpis } = computeSeries(state);
 
-  // === Skala: 5k-Ticks + 10% Headroom ===
-  const maxNet = Math.max(0, ...series.map(r => r.net));
-  const maxClosing = Math.max(0, ...closings.map(c => c.closing));
-  const rawMax = Math.max(1, maxNet, maxClosing) * 1.10;        // +10% Luft
-  const STEP = 5000;
-  const TOP = Math.ceil(rawMax / STEP) * STEP;                   // nach oben auf 5k runden
-  const yTicks = [];
-  for (let v = 0; v <= TOP; v += STEP) yTicks.push(v);           // 0, 5k, 10k, ...
+  // Skala (0 .. top) in runden 5k-Schritten, 6 Ticks inkl. 0
+  const max = Math.max(1, ...series.map(r => Math.max(0, r.net)));
+  const step = 5000;
+  const top = Math.max(step, Math.ceil(max / step) * step);
+  const steps = 5; // ergibt 6 Ticks inkl. 0
+  const yTicks = Array.from({ length: steps + 1 }, (_, i) => Math.round((top / steps) * i));
+
+  // Tooltip-HTML
+  function tipHtml(m, row) {
+    return `
+      <div class="tip-title">${m}</div>
+      <div class="tip-row"><span>Netto</span><b>${fmtEUR(row.net)}</b></div>
+      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(row.inflow)}</b></div>
+      <div class="tip-row"><span>Extras</span><b>${fmtEUR(row.extras)}</b></div>
+      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-Math.abs(row.out))}</b></div>
+    `;
+  }
 
   root.innerHTML = `
     <section class="card">
@@ -27,142 +33,61 @@ export async function render(root) {
         <div class="kpi"><div class="kpi-label">Erster negativer Monat</div><div class="kpi-value">${kpis.firstNegativeMonth || "—"}</div></div>
       </div>
 
-      <div class="vchart" style="--cols:${months.length}">
-        <!-- horizontale Linien -->
+      <div class="vchart" style="--cols:${months.length}; --rows:${yTicks.length}">
         <div class="vchart-grid">
           ${yTicks.map(() => `<div class="yline"></div>`).join("")}
         </div>
-        <!-- Y-Labels (exakt auf Linien) -->
         <div class="vchart-y">
           ${yTicks.slice().reverse().map(v => `<div class="ytick">${v >= 1000 ? Math.round(v/1000) + "k" : "0"}</div>`).join("")}
         </div>
 
-        <!-- Balken (Netto je Monat) -->
         <div class="vchart-bars">
-          ${series.map((r, i) => {
-            const h = TOP ? Math.max(0, Math.min(100, (r.net / TOP) * 100)) : 0;
+          ${series.map((r,i) => {
+            const h = top ? Math.max(0, Math.min(100, (r.net / top) * 100)) : 0;
             const cls = r.net >= 0 ? "pos" : "neg";
-            const data = {
-              month: r.month,
-              inflow: r.inflow,
-              extras: r.extras,
-              out: r.out,
-              net: r.net,
-              closing: closings[i]?.closing ?? 0
-            };
-            const ds = encodeURIComponent(JSON.stringify(data));
             return `
               <div class="vbar-wrap">
-                <div class="vbar ${cls}" style="--h:${h}" data-row="${ds}" aria-label="${r.month}"></div>
+                <div class="vbar ${cls}" style="--h:${h}" data-idx="${i}" aria-label="${months[i]}"></div>
               </div>`;
           }).join("")}
         </div>
 
-        <!-- Closing-Linie -->
-        <canvas class="linecanvas" aria-hidden="true"></canvas>
-
-        <!-- X-Achse -->
         <div class="vchart-x">
           ${months.map(m => `<div class="xlabel">${m}</div>`).join("")}
         </div>
 
-        <!-- Tooltip -->
-        <div class="chart-tip" hidden></div>
+        <div class="chart-tip" id="chart-tip" role="tooltip" hidden></div>
       </div>
     </section>
   `;
 
-  // === Linie zeichnen (Canvas) ===
-  const canvas = $(".linecanvas", root);
-  const barsArea = $(".vchart-bars", root);
-  if (canvas && barsArea) {
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const rect = barsArea.getBoundingClientRect();
-    const cssW = Math.max(10, Math.floor(rect.width));
-    const cssH = Math.max(10, Math.floor(rect.height));
-    canvas.width = Math.floor(cssW * dpr);
-    canvas.height = Math.floor(cssH * dpr);
-    canvas.style.position = "absolute";
-    canvas.style.left = barsArea.style.left || "52px";
-    canvas.style.right = barsArea.style.right || "12px";
-    canvas.style.top = barsArea.style.top || "10px";
-    canvas.style.height = barsArea.style.height || (cssH + "px");
-    canvas.style.pointerEvents = "none";
+  // Tooltip Logik (Delegation)
+  const tip = root.querySelector("#chart-tip");
+  const barsWrap = root.querySelector(".vchart-bars");
 
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, cssW, cssH);
+  function showTip(ev) {
+    const el = ev.target.closest(".vbar");
+    if (!el) return;
+    const i = Number(el.getAttribute("data-idx"));
+    const row = series[i];
+    tip.innerHTML = tipHtml(months[i], row);
+    tip.hidden = false;
 
-      const n = months.length;
-      const colW = cssW / n;
-      const yScale = (v) => cssH - (TOP ? (v / TOP) * cssH : 0);
-
-      // Linie
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#1fb59c";
-      ctx.beginPath();
-      for (let i = 0; i < n; i++) {
-        const x = i * colW + colW / 2;
-        const y = yScale(closings[i]?.closing || 0);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // Punkte
-      ctx.fillStyle = "#0f8f79";
-      for (let i = 0; i < n; i++) {
-        const x = i * colW + colW / 2;
-        const y = yScale(closings[i]?.closing || 0);
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
+    // Position neben dem Balken
+    const barRect = el.getBoundingClientRect();
+    const hostRect = root.getBoundingClientRect();
+    const left = Math.min(hostRect.width - 180, barRect.left - hostRect.left + 10);
+    const topPos = Math.max(0, barRect.top - hostRect.top - 10);
+    tip.style.transform = `translate(${left}px, ${topPos}px)`;
   }
+  function hideTip() { tip.hidden = true; }
 
-  // === Tooltips ===
-  const tip = $(".chart-tip", root);
-  function showTip(el, ev) {
-    if (!tip) return;
-    try {
-      const data = JSON.parse(decodeURIComponent(el.getAttribute("data-row") || "%7B%7D"));
-      tip.innerHTML = `
-        <div><strong>${data.month}</strong></div>
-        <div>Inflow: ${fmtEUR(data.inflow || 0)}</div>
-        <div>Extras: ${fmtEUR(data.extras || 0)}</div>
-        <div>Out: ${fmtEUR(data.out || 0)}</div>
-        <div><strong>Netto: ${fmtEUR(data.net || 0)}</strong></div>
-        <div>Closing: <strong>${fmtEUR(data.closing || 0)}</strong></div>
-      `;
-      tip.hidden = false;
-      const parent = $(".vchart", root);
-      const pr = parent.getBoundingClientRect();
-      const x = (ev.clientX ?? 0) - pr.left + 12;
-      const y = (ev.clientY ?? 0) - pr.top + 12;
-      tip.style.left = Math.max(8, Math.min(x, pr.width - 180)) + "px";
-      tip.style.top  = Math.max(8, Math.min(y, pr.height - 100)) + "px";
-    } catch {}
-  }
-  function hideTip() { if (tip) tip.hidden = true; }
+  barsWrap.addEventListener("pointerenter", showTip, true);
+  barsWrap.addEventListener("pointermove", showTip, true);
+  barsWrap.addEventListener("pointerleave", hideTip, true);
 
-  $all(".vbar", root).forEach(el => {
-    el.addEventListener("mouseenter", (ev) => showTip(el, ev));
-    el.addEventListener("mousemove", (ev) => showTip(el, ev));
-    el.addEventListener("mouseleave", hideTip);
-    el.addEventListener("touchstart", (ev) => showTip(el, ev.touches[0]), { passive: true });
-    el.addEventListener("touchmove", (ev) => showTip(el, ev.touches[0]), { passive: true });
-    el.addEventListener("touchend", hideTip, { passive: true });
-  });
-
-  // Live-Refresh
+  // Live-Refresh, wenn sich der State ändert und wir auf dem Dashboard sind
   const off = addStateListener(() => {
     if (location.hash.replace("#", "") === "dashboard") render(root);
   });
-
-  // Bei Resize einmal neu zeichnen
-  window.addEventListener("resize", () => {
-    if (location.hash.replace("#", "") === "dashboard") render(root);
-  }, { once: true });
 }
