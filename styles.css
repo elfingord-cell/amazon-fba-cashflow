@@ -1,176 +1,69 @@
-/* Mint UI Skin v1.1 — desktop/iPad focus (no SW, static) */
-/* =================================================================== */
-/* Farben & Tokens */
-:root{
-  --mint-50:#f0fbf7; --mint-100:#e5f7f2; --mint-300:#b8efe2;
-  --mint-500:#3BC2A7; --mint-700:#1fb59c; --teal-800:#127b69;
-  --ink:#0f1b2d; --muted:#6b7a85; --panel:#ffffff;
-  --warn:#FFD45A; --ok:#2BAE66; --bad:#E45858;
-  --ring: rgba(59,194,167,.35);
-  --shadow: 0 10px 24px rgba(15,27,45,.06), 0 2px 8px rgba(15,27,45,.04);
-  --radius-lg:16px; --radius-md:12px; --radius-sm:10px;
-  color-scheme: light;
+/* === Charts (Vertical Bars) — canonical v2 === */
+:root { --chartH: 220px; }
+
+.vchart {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  border-radius: 12px;
+  padding: 12px 12px 6px 60px; /* links Platz für Y-Achse */
+  min-height: calc(var(--chartH) + 40px); /* Achsen + Labels */
+  overflow: hidden;
 }
 
-/* Base */
-*{box-sizing:border-box}
-html,body{height:100%}
-body{
-  margin:0;
-  background: radial-gradient(1200px 800px at 20% -10%, var(--mint-100) 0%, var(--mint-50) 60%);
-  color:var(--ink);
-  font:16px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-}
-h1,h2,h3{margin:0 0 8px}
-h1{font-size:28px} h2{font-size:20px} h3{font-size:16px; letter-spacing:.2px}
-.muted{color:var(--muted)}
-
-/* =================================================================== */
-/* Page frame (zentriert) */
-.page{max-width:1200px; margin:0 auto; padding:14px 18px;}
-.page-header{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:8px;}
-.brand-title{font-weight:800; letter-spacing:.2px}
-.badges{display:flex; gap:8px; flex-wrap:wrap; margin-top:6px}
-.tag{font-size:12px; color:var(--ink); background:#fff; border:1px solid rgba(15,27,45,.1); border-radius:999px; padding:4px 10px; box-shadow:var(--shadow)}
-
-/* Top navigation as buttons */
-.topnav{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
-.btn{
-  padding:8px 12px; border-radius:var(--radius-md);
-  border:1px solid rgba(15,27,45,.12); background:#fff; cursor:pointer;
-  box-shadow:var(--shadow);
-  transition:transform .12s ease, border-color .12s, background-color .12s;
-  text-decoration:none; color:var(--ink); font-weight:600;
-}
-.btn:hover{border-color:var(--mint-500); transform:translateY(-1px)}
-.btn:focus{outline:none; box-shadow:0 0 0 4px var(--ring), var(--shadow)}
-.btn.primary{background:var(--mint-500); color:#fff; border-color:transparent}
-.btn.primary:hover{filter:brightness(.98)}
-.btn.danger{border-color:var(--bad); color:var(--bad)}
-.navbtn.active,
-.topnav .navbtn[data-active="true"]{background:var(--mint-500); color:#fff; border-color:transparent}
-.navbtn.ghost{background:#fff; color:var(--ink); opacity:.85}
-.navbtn.ghost:hover{opacity:1}
-
-/* Cards & grids */
-.card{
-  background:var(--panel); border:1px solid rgba(15,27,45,0.06);
-  border-radius:var(--radius-lg); padding:14px; box-shadow:var(--shadow); margin-bottom:14px;
-}
-.card.warn{border-color:var(--warn)}
-.grid{display:grid; gap:14px}
-.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
-.grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
-@media (max-width:1100px){.grid.two,.grid.three{grid-template-columns:1fr}}
-
-/* Forms */
-label{font-size:12px; color:var(--muted); margin-bottom:4px; display:block}
-input,select,textarea{
-  width:100%; height:40px; border-radius:var(--radius-md);
-  border:1px solid rgba(15,27,45,.12); background:#fff; padding:0 10px;
-}
-input:focus,select:focus,textarea:focus{outline:none; box-shadow:0 0 0 4px var(--ring)}
-table{width:100%; border-collapse:collapse}
-th,td{padding:10px; border-bottom:1px solid rgba(15,27,45,.08); text-align:left}
-thead th{font-size:12px; color:var(--muted); font-weight:700}
-
-/* Canvas-Fallback (nicht im Einsatz, aber behalten) */
-canvas.chart{
-  width:100%; height:200px;
-  background:linear-gradient(180deg, var(--mint-50) 0%, #ffffff 100%);
-  border-radius:var(--radius-lg); border:1px solid rgba(15,27,45,.06)
-}
-
-/* Footer */
-.footer{padding:10px 0; color:var(--muted)}
-
-/* =================================================================== */
-/* KPI-Karten — hell */
-.kpi{
-  background:#fff;
-  border:1px solid #e6e9ef;
-  border-radius:12px;
-  padding:12px;
-  box-shadow:0 1px 2px rgba(0,0,0,.04);
-}
-.kpi-label{font-size:12px; color:#6b7280}
-.kpi-value{font-size:20px; font-weight:700; color:#0f172a}
-
-/* =================================================================== */
-/* Horizontale Balken (falls irgendwo verwendet) */
-.bars{display:grid; gap:6px}
-.bar-row{display:grid; grid-template-columns:86px 1fr 110px; align-items:center; gap:8px}
-.bar-label{font-size:12px; color:#9aa3b2}
-.bar{height:10px; border-radius:6px}
-.bar-pos{background:linear-gradient(90deg,#1bbf75,#0f9960); width:var(--w,0%)}
-.bar-neg{background:linear-gradient(90deg,#e25555,#c23636); width:var(--w,0%)}
-.bar-val{font-variant-numeric:tabular-nums; text-align:right; font-size:12px; color:#3a4150}
-
-/* =================================================================== */
-/* Vertikal-Chart (einzige, kanonische Version) */
-.vchart{
-  position:relative;
-  background:#fff;
-  border:1px solid #e6e9ef;
-  border-radius:12px;
-  padding:12px 12px 6px 52px; /* Platz links für Y-Achse */
-  min-height:280px;
-  overflow:hidden;
-}
-
-/* Y-Achse: Labels exakt auf den Linien (dynamische Anzahl) */
-.vchart-y {
-  position: absolute; left: 8px; top: 10px; bottom: 40px;
+/* Y-Skala (Labels) */
+.vchart-y{
+  position: absolute;
+  left: 12px; top: 12px;
+  height: var(--chartH);
   display: flex; flex-direction: column; justify-content: space-between;
-  width: 40px; color: #6b7280; font-size: 11px; text-align: right;
+  width: 44px;
+  color: #6b7280; font-size: 11px; text-align: right;
 }
+.vchart-y .ytick{ white-space: nowrap; }
 
-/* horizontale Referenzlinien pro Y-Tick (gestrichelt) */
+/* Y-Referenzlinien */
+.vchart-grid{
+  position: absolute;
+  left: 60px; right: 12px; top: 12px;
+  height: var(--chartH);
+  display: flex; flex-direction: column; justify-content: space-between;
+  pointer-events: none;
+}
 .vchart-grid .yline{
+  width: 100%;
   height: 0;
-  border-top: 1px dashed #e5e7eb; /* hell-grau, unaufdringlich */
+  border-top: 1px dashed #e5e7eb;
 }
-
-/* 0-Linie (unten) leicht betont */
 .vchart-grid .yline:last-child{
-  border-top-color: #cbd5e1;      /* etwas dunkler */
-  border-top-style: solid;        /* unten durchgezogen für klare Basis */
+  border-top: 1px solid #cbd5e1; /* 0-Linie betont */
 }
 
+/* Bars */
 .vchart-bars{
-  position:absolute; left:52px; right:12px; top:12px; bottom:40px; /* <— identische Vertikal-Anker */
-  display:grid; grid-template-columns:repeat(var(--cols,12),1fr);
-  align-items:end; gap:8px;
+  position: absolute;
+  left: 60px; right: 12px; top: 12px;
+  height: var(--chartH);
+  display: grid;
+  grid-template-columns: repeat(var(--cols,12), 1fr);
+  align-items: end; gap: 8px;
 }
-.vbar-wrap{ display:flex; align-items:flex-end; justify-content:center; height:100% }
+.vbar-wrap{ display: flex; align-items: end; justify-content: center; height: 100%; }
+.vbar{
+  width: 16px;
+  height: calc(var(--h,0) * 1%); /* 0..100 */
+  border-radius: 10px 10px 0 0;   /* unten gerade, oben rund */
+  transition: height .18s ease;
+}
+.vbar.pos{ background: linear-gradient(180deg, #22c55e, #16a34a); }
+.vbar.neg{ background: linear-gradient(180deg, #ef4444, #dc2626); }
 
-/* EINZIGE vbar-Definition: unten gerade, oben rund — ragt nie unter 0 */
-/* korrigierte vbar-Höhe: nutzt number → % */
-.vbar { width: 14px; height: calc(var(--h, 0) * 1%); border-radius: 10px 10px 0 0; background: #10b981; transition: height .2s ease; }
-.vbar.neg{ background:linear-gradient(180deg,#ef4444,#dc2626); }
-
-/* X-Achse — dichter an die 0-Linie */
+/* X-Skala (Monate) */
 .vchart-x{
-  position:absolute; left:52px; right:12px; bottom:4px; /* <— weniger Weißraum */
-  display:grid; grid-template-columns:repeat(var(--cols,12),1fr); gap:8px;
+  position: absolute;
+  left: 60px; right: 12px; bottom: 8px;
+  display: grid;
+  grid-template-columns: repeat(var(--cols,12), 1fr);
+  gap: 8px;
 }
-.vchart-x .xlabel{ text-align:center; font-size:11px; color:#6b7280; white-space:nowrap; }
-
-/* =================================================================== */
-
-/* === Dashboard Tooltip (Closing/Net) === */
-.chart-tip{
-  position:absolute;
-  min-width:160px;
-  max-width:220px;
-  background:#fff;
-  border:1px solid #e6e9ef;
-  box-shadow: 0 8px 20px rgba(15,27,45,.08);
-  border-radius:10px;
-  padding:8px 10px;
-  color:#0f172a;
-  font-size:12px;
-  pointer-events:none;
-  z-index:3;
-}
-.chart-tip strong{ font-weight:700 }
+.vchart-x .xlabel{ font-size: 11px; color: #6b7280; text-align: center; white-space: nowrap; }
