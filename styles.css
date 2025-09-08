@@ -153,3 +153,20 @@ canvas.chart{
 .vchart-x .xlabel{ text-align:center; font-size:11px; color:#6b7280; white-space:nowrap; }
 
 /* =================================================================== */
+
+/* === Dashboard Tooltip (Closing/Net) === */
+.chart-tip{
+  position:absolute;
+  min-width:160px;
+  max-width:220px;
+  background:#fff;
+  border:1px solid #e6e9ef;
+  box-shadow: 0 8px 20px rgba(15,27,45,.08);
+  border-radius:10px;
+  padding:8px 10px;
+  color:#0f172a;
+  font-size:12px;
+  pointer-events:none;
+  z-index:3;
+}
+.chart-tip strong{ font-weight:700 }
