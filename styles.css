@@ -1,3 +1,6 @@
+/* SMOKE-TEST – nach Prüfung wieder löschen */
+body { outline: 4px solid #27ae60; }
+
 /* === Charts (Vertical Bars) — canonical v2 === */
 :root { --chartH: 220px; }
 
