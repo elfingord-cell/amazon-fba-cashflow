@@ -177,11 +177,13 @@ export function computeSeries(state) {
   }
 
   // 6) KPIs
-  const inflowOnly = months.map((m, i) => map.get(m)?.inflow || 0);
-  const inflowAvgC =
-    inflowOnly.length > 0
-      ? Math.round(inflowOnly.reduce((a, b) => a + b, 0) / inflowOnly.length)
-      : 0;
+// 6) KPIs — Ø nur über aktive Monate (inflow > 0)
+const inflowOnly = months.map(m => map.get(m)?.inflow || 0);
+const inflowActive = inflowOnly.filter(v => v > 0);
+const inflowAvgC =
+  inflowActive.length > 0
+    ? Math.round(inflowActive.reduce((a, b) => a + b, 0) / inflowActive.length)
+    : 0;
 
   let firstNeg = null;
   {
