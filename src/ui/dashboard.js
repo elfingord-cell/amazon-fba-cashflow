@@ -1,4 +1,4 @@
-// UI: Dashboard – Balken + Kontostands-Linie + globaler Tooltip, gemeinsame Y-Skala
+// UI: Dashboard – Balken + Kontostands-Linie + globaler Tooltip, gemeinsame Y-Skala + Baseline
 import { loadState, addStateListener } from "../data/storageLocal.js";
 import { computeSeries, fmtEUR } from "../domain/cashflow.js";
 
@@ -28,7 +28,7 @@ export async function render(root) {
 
   // --- SVG-Mapping ---
   const cols = months.length || 1;
-  const X = i => ((i + 0.5) * 1000) / cols;                       // Spaltenmitte
+  const X = i => ((i + 0.5) * 1000) / cols;                       // Spaltenmitte (0..1000)
   const Y = v => 1000 - Math.max(0, Math.min(1000, (Number(v || 0) / top) * 1000));
   const points = closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
   const dots = closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="10"></circle>`).join("");
@@ -44,13 +44,20 @@ export async function render(root) {
       </div>
 
       <div class="vchart" style="--cols:${months.length}; --rows:${yTicks.length}">
+        <!-- Raster (dahinter) -->
         <div class="vchart-grid">
           ${yTicks.map(() => `<div class="yline"></div>`).join("")}
         </div>
+
+        <!-- Y-Achse (Labels) -->
         <div class="vchart-y">
           ${yTicks.slice().reverse().map(v => `<div class="ytick">${v >= 1000 ? Math.round(v/1000) + "k" : "0"}</div>`).join("")}
         </div>
 
+        <!-- Baseline (0-Linie, durchgezogen) -->
+        <div class="vchart-zero"></div>
+
+        <!-- Balken -->
         <div class="vchart-bars">
           ${series.map((r,i) => {
             const h = top ? Math.max(0, Math.min(100, (Number(r.net || 0) / top) * 100)) : 0;
@@ -62,6 +69,7 @@ export async function render(root) {
           }).join("")}
         </div>
 
+        <!-- Kontostands-Linie (oberste Ebene) -->
         <div class="vchart-lines" aria-hidden="true">
           <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
             <polyline class="line" points="${points}"></polyline>
@@ -69,6 +77,7 @@ export async function render(root) {
           </svg>
         </div>
 
+        <!-- X-Achse -->
         <div class="vchart-x">
           ${months.map(m => `<div class="xlabel">${m}</div>`).join("")}
         </div>
@@ -113,7 +122,6 @@ export async function render(root) {
     tip.innerHTML = tipHtml(months[i], row, eom);
     tip.hidden = false;
 
-    // Position im Viewport (fixed), sicher innerhalb des Fensters
     const br = el.getBoundingClientRect();
     const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
     const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);

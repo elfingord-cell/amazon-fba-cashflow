@@ -146,3 +146,42 @@ thead th{font-size:12px; color:var(--muted); font-weight:700}
 }
 .chart-tip .tip-title{font-weight:800; margin-bottom:6px}
 .chart-tip .tip-row{display:flex; justify-content:space-between; gap:8px; font-size:12px}
+
+/* === Dashboard Ebenen-Reihenfolge === */
+.vchart-grid  { position:absolute; left:52px; right:12px; top:10px; bottom:40px; display:grid; grid-template-rows: repeat(5,1fr); z-index:1; }
+.vchart-y     { position:absolute; left:8px;  top:10px; bottom:40px; width:40px; display:grid; grid-template-rows: repeat(5,1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
+.vchart-bars  { position:absolute; left:52px; right:12px; top:10px; height:200px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); align-items:end; gap:6px; z-index:2; }
+.vchart-lines { position:absolute; left:52px; right:12px; top:10px; bottom:40px; pointer-events:none; z-index:3; }
+.vchart-x     { position:absolute; left:52px; right:12px; bottom:8px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); gap:6px; z-index:4; }
+
+/* Raster-Linien (gestrichelt) */
+.vchart-grid .yline { border-top:1px dashed #e5e7eb; }
+
+/* 0-Baseline (durchgezogen) – liegt exakt unten im Balkenbereich */
+.vchart-zero {
+  position:absolute; left:52px; right:12px;
+  top: calc(10px + 200px); /* top + height der Balkensektion */
+  border-top: 2px solid #cfd7e3;
+  z-index:3; /* über dem Raster, unter der Linie ok */
+}
+
+/* Balken */
+.vbar-wrap { display:flex; align-items:flex-end; justify-content:center; height: 100%; }
+.vbar { width: 14px; height: calc(var(--h,0) * 1%); border-radius: 6px 6px 0 0; }
+.vbar.pos { background: linear-gradient(180deg, #1bbf75, #0f9960); }
+.vbar.neg { background: linear-gradient(180deg, #ef4444, #dc2626); }
+
+/* Linie & Punkte – ausdrücklich ohne Dash */
+.vchart-lines svg{width:100%; height:100%}
+.vchart-lines .line{fill:none; stroke:#14b8a6; stroke-width:20; stroke-linejoin:round; stroke-linecap:round; stroke-dasharray:none}
+.vchart-lines .dot{fill:#14b8a6; stroke:#ffffff; stroke-width:18}
+
+/* Tooltip (global, fixed) */
+.chart-tip{
+  position: fixed; z-index: 9999;
+  background:#fff; border:1px solid #e6e9ef; border-radius:12px;
+  padding:10px 12px; box-shadow: var(--shadow);
+  pointer-events:none; min-width:220px; color:var(--ink);
+}
+.chart-tip .tip-title{font-weight:800; margin-bottom:6px}
+.chart-tip .tip-row{display:flex; justify-content:space-between; gap:8px; font-size:12px}
