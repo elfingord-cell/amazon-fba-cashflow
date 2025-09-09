@@ -1,20 +1,26 @@
 // src/domain/po.js
-// FBA-CF-0023 — Purchase Orders: Domain + Event expansion (robuste ES-Fassung)
+// FBA-CF-0024 — Prozent-Policy: Eingabe 0–100 (mit Komma), Legacy ≤1 bleibt gültig
 
 // --- Helpers ---
-function clamp01(x){
-  var n = Number(x || 0);
-  return n > 1 ? n / 100 : n;
-}
 function parseDE(x){
   var s = (x === undefined || x === null) ? "0" : String(x);
   return Number(s.replace(/\./g,"").replace(",", ".")) || 0;
+}
+// Prozent flexibel: 0–100 -> /100; Legacy (<=1) direkt
+function pct(x){
+  var v = parseDE(x);
+  return v <= 1 ? v : (v / 100);
+}
+function pctLabelRaw(x){
+  var v = parseDE(x); // 70 -> 70 ; 6,5 -> 6.5 ; 0,7 -> 0.7
+  if (v <= 1) v = v * 100; // Legacy zu Prozent für Anzeige
+  try { return v.toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " %"; }
+  catch(e){ return (Math.round(v*10)/10) + " %"; }
 }
 export function fmtEUR(n){
   try{
     return new Intl.NumberFormat("de-DE",{style:"currency",currency:"EUR",maximumFractionDigits:2}).format(n || 0);
   }catch(e){
-    // Fallback
     return (Math.round((n||0)*100)/100).toFixed(2) + " €";
   }
 }
@@ -41,16 +47,22 @@ export function expandPO(po, settings){
   var num   = (po.number || "").trim() || "(ohne Nr.)";
   var date0 = po.orderDate || new Date().toISOString().slice(0,10);
   var goods = parseDE(po.goodsEur);
-  var dep   = clamp01(po.depositPct != null ? po.depositPct : 0.30);
-  var bal   = clamp01(po.balancePct  != null ? po.balancePct  : 0.70);
+
+  // Prozentfelder strikt 0–100, Legacy ≤1 ok
+  var depPctVal = (po.depositPct != null ? po.depositPct : 30);
+  var balPctVal = (po.balancePct  != null ? po.balancePct  : 70);
+  var dep = pct(depPctVal);
+  var bal = pct(balPctVal);
 
   var prodDays   = Number(po.productionDays != null ? po.productionDays : 30);
   var mode       = po.transportMode || "sea";
   var transpDays = Number(po.transportDays != null ? po.transportDays : (TRANSPORT_DAYS[mode] || 60));
 
   var freight    = parseDE(po.freightEur);
-  var dutyPct    = clamp01(po.dutyPct != null ? po.dutyPct : 0.06);
-  var vatPct     = clamp01(po.vatPct  != null ? po.vatPct  : 0.19);
+  var dutyPctVal = (po.dutyPct != null ? po.dutyPct : 6);   // Anzeige-Einheit %
+  var vatPctVal  = (po.vatPct  != null ? po.vatPct  : 19);  // Anzeige-Einheit %
+  var dutyPct    = pct(dutyPctVal); // intern 0–1
+  var vatPct     = pct(vatPctVal);  // intern 0–1
 
   var vatRefund  = !!(po.vatRefund !== false); // default true
   var vatLagM    = Number(po.vatLagMonths != null ? po.vatLagMonths : 2);
@@ -68,7 +80,7 @@ export function expandPO(po, settings){
   ev.push({
     date: tOrder,
     type: "PO_MS",
-    label: num + " · Deposit " + Math.round(dep*100) + "%",
+    label: num + " · Deposit " + pctLabelRaw(depPctVal),
     amount: -(goods * dep)
   });
 
@@ -76,7 +88,7 @@ export function expandPO(po, settings){
   ev.push({
     date: tProdEnd,
     type: "PO_MS",
-    label: num + " · Balance " + Math.round(bal*100) + "%",
+    label: num + " · Balance " + pctLabelRaw(balPctVal),
     amount: -(goods * bal)
   });
 
@@ -88,13 +100,13 @@ export function expandPO(po, settings){
   // 4) Zoll (Duty) bei Ankunft
   var duty = goods * dutyPct;
   if (duty){
-    ev.push({ date:tArrive, type:"DUTY", label: num + " · Zoll", amount: -Math.abs(duty) });
+    ev.push({ date:tArrive, type:"DUTY", label: num + " · Zoll " + pctLabelRaw(dutyPctVal), amount: -Math.abs(duty) });
   }
 
   // 5) EUSt und (optional) Erstattung
   var eust = goods * vatPct;
   if (eust){
-    ev.push({ date:tArrive, type:"EUST", label: num + " · EUSt", amount: -Math.abs(eust) });
+    ev.push({ date:tArrive, type:"EUST", label: num + " · EUSt " + pctLabelRaw(vatPctVal), amount: -Math.abs(eust) });
     if (vatRefund){
       ev.push({ date:tVatBack, type:"VAT_REFUND", label: num + " · USt-Erstattung", amount: Math.abs(eust) });
     }
@@ -124,14 +136,14 @@ export function newPO(){
     number: "",
     orderDate: today,
     goodsEur: "0,00",
-    depositPct: 0.30,
-    balancePct: 0.70,
+    depositPct: 30,     // Prozent
+    balancePct: 70,     // Prozent
     productionDays: 30,
     transportMode: "sea",
     transportDays: TRANSPORT_DAYS.sea,
     freightEur: "0,00",
-    dutyPct: 0.06,
-    vatPct: 0.19,
+    dutyPct: 6,         // Prozent
+    vatPct: 19,         // Prozent
     vatRefund: true,
     vatLagMonths: 2
   };
