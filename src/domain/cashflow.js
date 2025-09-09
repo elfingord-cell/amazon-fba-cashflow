@@ -1,5 +1,5 @@
 // src/domain/cashflow.js
-// Cashflow-Aggregation (Monats-Netto) inkl. PO-Events – robuste ES-Fassung
+// FBA-CF-0024 — Prozent-Policy bei Incomings (payoutPct als 0–100, Legacy ≤1 ok)
 
 import { expandAllPOEvents, fmtEUR } from "./po.js";
 
@@ -7,7 +7,10 @@ function parseDE(x){
   var s = (x === undefined || x === null) ? "0" : String(x);
   return Number(s.replace(/\./g,"").replace(",", ".")) || 0;
 }
-function clamp01(x){ var n=Number(x||0); return n>1 ? n/100 : n; }
+function pct(x){
+  var v = parseDE(x);
+  return v <= 1 ? v : (v / 100);
+}
 
 function monthSeq(startYm, n){
   startYm = startYm || "2025-02";
@@ -30,13 +33,14 @@ export function computeSeries(state){
   var map = new Map();
   for (var i=0;i<months.length;i++) map.set(months[i], { inflow:0, out:0 });
 
-  // a) incomings
+  // a) incomings (revenue × payoutPct)
+  var defaultPayout = (state.payoutPct != null ? state.payoutPct : 85); // Prozent
   var incomings = Array.isArray(state.incomings) ? state.incomings : [];
   incomings.forEach(function(r){
     var m = r && r.month; if (!map.has(m)) return;
     var rev = parseDE(r && r.revenueEur);
-    var pct = clamp01((r && r.payoutPct)!=null ? r.payoutPct : state.payoutPct || 0.85);
-    map.get(m).inflow += rev * pct;
+    var pay = (r && r.payoutPct != null) ? r.payoutPct : defaultPayout; // 0–100 oder ≤1
+    map.get(m).inflow += rev * pct(pay);
   });
 
   // b) extras
