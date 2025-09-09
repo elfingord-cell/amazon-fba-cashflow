@@ -1,21 +1,18 @@
 // src/domain/po.js
-// FBA-CF-0024 — Prozent-Policy: Eingabe 0–100 (mit Komma), Legacy ≤1 bleibt gültig
+// FBA-CF-0025 — Prozent-Parser akzeptiert „6,5“, „6,5%“, „70“, „0,85“ (Legacy)
 
-// --- Helpers ---
-function parseDE(x){
-  var s = (x === undefined || x === null) ? "0" : String(x);
-  return Number(s.replace(/\./g,"").replace(",", ".")) || 0;
+function toNumberDE(x){
+  var s = (x == null) ? "0" : String(x);
+  // alles außer Ziffern, Punkt, Komma, Minus entfernen (z.B. "%", Leerzeichen, Buchstaben)
+  s = s.replace(/[^0-9.,-]/g, "");
+  // deutsche Schreibweise: Tausenderpunkte raus, Komma => Dezimalpunkt
+  s = s.replace(/\./g, "").replace(",", ".");
+  var v = Number(s);
+  return isFinite(v) ? v : 0;
 }
-// Prozent flexibel: 0–100 -> /100; Legacy (<=1) direkt
-function pct(x){
-  var v = parseDE(x);
-  return v <= 1 ? v : (v / 100);
-}
-function pctLabelRaw(x){
-  var v = parseDE(x); // 70 -> 70 ; 6,5 -> 6.5 ; 0,7 -> 0.7
-  if (v <= 1) v = v * 100; // Legacy zu Prozent für Anzeige
-  try { return v.toLocaleString("de-DE", { maximumFractionDigits: 1 }) + " %"; }
-  catch(e){ return (Math.round(v*10)/10) + " %"; }
+function toPercent(x){
+  var v = toNumberDE(x);        // z.B. "6,5%" -> 6.5
+  return v <= 1 ? v : v/100;    // Legacy (0,85) bleibt gültig; 6.5 => 0.065
 }
 export function fmtEUR(n){
   try{
@@ -36,38 +33,42 @@ function addMonths(dateStr, months){
 }
 function rid(){ return "po-" + Math.random().toString(36).slice(2,10); }
 
-// Transport-Defaults
 var TRANSPORT_DAYS = { sea: 60, rail: 30, air: 10 };
 
-// --- Expand one PO into cash events (EUR, signed) ---
+function pctLabelRaw(x){
+  var v = toNumberDE(x);
+  if (v <= 1) v = v * 100;
+  try { return v.toLocaleString("de-DE",{ maximumFractionDigits: 1 }) + " %"; }
+  catch(e){ return (Math.round(v*10)/10) + " %"; }
+}
+
+// --- Expand one PO into cash events (EUR) ---
 export function expandPO(po, settings){
   settings = settings || {};
   po = po || {};
 
   var num   = (po.number || "").trim() || "(ohne Nr.)";
   var date0 = po.orderDate || new Date().toISOString().slice(0,10);
-  var goods = parseDE(po.goodsEur);
+  var goods = toNumberDE(po.goodsEur);
 
-  // Prozentfelder strikt 0–100, Legacy ≤1 ok
   var depPctVal = (po.depositPct != null ? po.depositPct : 30);
   var balPctVal = (po.balancePct  != null ? po.balancePct  : 70);
-  var dep = pct(depPctVal);
-  var bal = pct(balPctVal);
+  var dep = toPercent(depPctVal);
+  var bal = toPercent(balPctVal);
 
   var prodDays   = Number(po.productionDays != null ? po.productionDays : 30);
   var mode       = po.transportMode || "sea";
   var transpDays = Number(po.transportDays != null ? po.transportDays : (TRANSPORT_DAYS[mode] || 60));
 
-  var freight    = parseDE(po.freightEur);
-  var dutyPctVal = (po.dutyPct != null ? po.dutyPct : 6);   // Anzeige-Einheit %
-  var vatPctVal  = (po.vatPct  != null ? po.vatPct  : 19);  // Anzeige-Einheit %
-  var dutyPct    = pct(dutyPctVal); // intern 0–1
-  var vatPct     = pct(vatPctVal);  // intern 0–1
+  var freight    = toNumberDE(po.freightEur);
+  var dutyPctVal = (po.dutyPct != null ? po.dutyPct : 6);   // % Eingabe (z.B. 6,5 oder „6,5%“)
+  var vatPctVal  = (po.vatPct  != null ? po.vatPct  : 19);  // % Eingabe
+  var dutyPct    = toPercent(dutyPctVal);
+  var vatPct     = toPercent(vatPctVal);
 
-  var vatRefund  = !!(po.vatRefund !== false); // default true
+  var vatRefund  = !!(po.vatRefund !== false);
   var vatLagM    = Number(po.vatLagMonths != null ? po.vatLagMonths : 2);
 
-  // timeline
   var tOrder   = date0;
   var tProdEnd = addDays(date0, prodDays);
   var tShip    = tProdEnd;
@@ -76,7 +77,6 @@ export function expandPO(po, settings){
 
   var ev = [];
 
-  // 1) Deposit am Bestelltag
   ev.push({
     date: tOrder,
     type: "PO_MS",
@@ -84,7 +84,6 @@ export function expandPO(po, settings){
     amount: -(goods * dep)
   });
 
-  // 2) Balance bei Produktionsende
   ev.push({
     date: tProdEnd,
     type: "PO_MS",
@@ -92,18 +91,15 @@ export function expandPO(po, settings){
     amount: -(goods * bal)
   });
 
-  // 3) Freight bei Ankunft
   if (freight){
     ev.push({ date:tArrive, type:"FREIGHT", label: num + " · Freight", amount: -Math.abs(freight) });
   }
 
-  // 4) Zoll (Duty) bei Ankunft
-  var duty = goods * dutyPct;
+  var duty = goods * dutyPct;  // z.B. 8000 * 0.065 = 520
   if (duty){
     ev.push({ date:tArrive, type:"DUTY", label: num + " · Zoll " + pctLabelRaw(dutyPctVal), amount: -Math.abs(duty) });
   }
 
-  // 5) EUSt und (optional) Erstattung
   var eust = goods * vatPct;
   if (eust){
     ev.push({ date:tArrive, type:"EUST", label: num + " · EUSt " + pctLabelRaw(vatPctVal), amount: -Math.abs(eust) });
@@ -116,7 +112,6 @@ export function expandPO(po, settings){
   return ev;
 }
 
-// --- Expand all POs from state ---
 export function expandAllPOEvents(state){
   state = state || {};
   var list = Array.isArray(state.pos) ? state.pos : [];
@@ -128,7 +123,6 @@ export function expandAllPOEvents(state){
   return out;
 }
 
-// --- PO factory (default template) ---
 export function newPO(){
   var today = new Date().toISOString().slice(0,10);
   return {
@@ -136,7 +130,7 @@ export function newPO(){
     number: "",
     orderDate: today,
     goodsEur: "0,00",
-    depositPct: 30,     // Prozent
+    depositPct: 30,     // Prozent (0–100)
     balancePct: 70,     // Prozent
     productionDays: 30,
     transportMode: "sea",
