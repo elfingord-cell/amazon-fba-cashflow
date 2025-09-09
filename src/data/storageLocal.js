@@ -1,34 +1,39 @@
-// src/data/storageLocal.js
-// Local-first storage (namespace + debounce-free simple API)
-
+// FBA-CF-0027 — Local Storage Layer (schlank, mit Listenern)
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 
 const defaults = {
-  settings: { startMonth: "2025-02", horizonMonths: 18 },
-  openingEur: "5.000,00",
-  payoutPct: 0.85,
-  incomings: [ { month:"2025-02", revenueEur:"10.000,00", payoutPct:0.85 } ],
-  outgoings: [ { month:"2025-03", label:"Fixkosten", amountEur:"2.000,00" } ],
-  extras:    [ { month:"2025-04", label:"USt-Erstattung", amountEur:"1.500,00" } ],
-  pos: [] // <— neu: Purchase Orders
+  settings: { startMonth: "2025-02", horizonMonths: 18, openingBalance: "50.000,00" },
+  incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
+  extras:    [ ],
+  outgoings: [ ],
+  pos:       [ ],
+  fos:       [ ]
 };
 
-export function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(defaults);
-    const obj = JSON.parse(raw);
-    return { ...structuredClone(defaults), ...obj };
-  }catch{ return structuredClone(defaults); }
-}
-
-export function saveState(state){
-  const { _computed, ...clean } = state || {};
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(clean)); }catch{}
-}
-
-// optional simple subscribe for live refresh
+let _state = null;
 const listeners = new Set();
-export function addStateListener(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
-// small helper any view can call after it saved:
-export function notifyStateChanged(){ listeners.forEach(fn=>fn()); }
+
+export function loadState(){
+  if (_state) return _state;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    _state = raw ? { ...structuredClone(defaults), ...JSON.parse(raw) } : structuredClone(defaults);
+  } catch {
+    _state = structuredClone(defaults);
+  }
+  return _state;
+}
+
+export function saveState(s){
+  _state = s || _state || structuredClone(defaults);
+  try {
+    const { _computed, ...clean } = _state;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+  } catch {}
+  for (const fn of listeners) try { fn(_state); } catch {}
+}
+
+export function addStateListener(fn){
+  listeners.add(fn);
+  return ()=>listeners.delete(fn);
+}
