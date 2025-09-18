@@ -1,39 +1,49 @@
 // src/domain/cashflow.js
-// computeSeries: Monatsaggregation (Sales×Payout + Extras – Outgoings – PO – FO)
+// Monatsaggregation (Sales×Payout + Extras – Outgoings – PO – FO)
+// + Utils als Named Exports: fmtEUR, fmtPct, parseEuro, parsePct
 
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 
-function parseEuro(str) {
+// ---------- Utils (exportiert) ----------
+function _num(n) { return Number.isFinite(n) ? n : 0; }
+
+export function parseEuro(str) {
   if (typeof str === 'number') return str;
   if (!str) return 0;
   const s = String(str).trim().replace(/\./g, '').replace(',', '.');
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
-function parsePct(p) {
+
+export function parsePct(p) {
   if (p === '' || p === null || p === undefined) return 0;
   const n = Number(String(p).replace(',', '.'));
   return Number.isFinite(n) ? n : 0;
 }
+
+export function fmtEUR(val) {
+  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
+    .format(_num(Number(val)));
+}
+
+export function fmtPct(val) {
+  const n = parsePct(val);
+  return `${String(n).replace('.', ',')}%`;
+}
+
+// ---------- interne Helper ----------
 function addMonths(yyyymm, delta) {
   const [y, m] = yyyymm.split('-').map(Number);
   const d = new Date(y, (m - 1) + delta, 1);
-  const yy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${yy}-${mm}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 function monthRange(startMonth, n) { const out = []; for (let i = 0; i < n; i++) out.push(addMonths(startMonth, i)); return out; }
-function toMonthKey(date) {
-  const d = new Date(date);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}
+function toMonthKey(date) { const d = new Date(date); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function addDays(date, days) { const d = new Date(date.getTime()); d.setDate(d.getDate() + (days || 0)); return d; }
 function anchorsFor(row) {
   const od = row.orderDate ? new Date(row.orderDate) : new Date();
   const prodDone = addDays(od, Number(row.prodDays || 0));
-  const etd = prodDone; // simple convention
+  const etd = prodDone; // einfache Konvention
   const eta = addDays(etd, Number(row.transitDays || 0));
   return { ORDER_DATE: od, PROD_DONE: prodDone, ETD: etd, ETA: eta };
 }
@@ -57,46 +67,40 @@ function expandMilestones(row) {
   });
 }
 
+// ---------- Aggregation ----------
 export function computeSeries(state) {
   const s = state || {};
   const startMonth = (s.settings && s.settings.startMonth) || '2025-01';
   const horizon = Number((s.settings && s.settings.horizonMonths) || 12);
   const months = monthRange(startMonth, horizon);
 
-  // buckets
   const bucket = {};
   months.forEach(m => { bucket[m] = { inflow: 0, outflow: 0, itemsIn: [], itemsOut: [] }; });
 
-  // Sales × Payout
+  // Inflows
   (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
-    const m = row.month;
-    if (!bucket[m]) return;
-    const rev = parseEuro(row.revenueEur);
-    const pct = parsePct(row.payoutPct);
-    const amt = rev * (pct / 100);
+    const m = row.month; if (!bucket[m]) return;
+    const amt = parseEuro(row.revenueEur) * (parsePct(row.payoutPct) / 100);
     bucket[m].inflow += amt;
     bucket[m].itemsIn.push({ kind: 'sales-payout', label: 'Sales×Payout', amount: amt });
   });
 
-  // Extras (positiv)
   (Array.isArray(s.extras) ? s.extras : []).forEach(row => {
-    const m = row.month;
-    if (!bucket[m]) return;
+    const m = row.month; if (!bucket[m]) return;
     const amt = parseEuro(row.amountEur);
     bucket[m].inflow += amt;
     bucket[m].itemsIn.push({ kind: 'extra', label: row.label || 'Extra', amount: amt });
   });
 
-  // Outgoings (Fixkosten etc.)
+  // Outflows (fixe Kosten)
   (Array.isArray(s.outgoings) ? s.outgoings : []).forEach(row => {
-    const m = row.month;
-    if (!bucket[m]) return;
+    const m = row.month; if (!bucket[m]) return;
     const amt = parseEuro(row.amountEur);
     bucket[m].outflow += amt;
     bucket[m].itemsOut.push({ kind: 'outgoing', label: row.label || 'Kosten', amount: amt });
   });
 
-  // PO-Milestones (Outflow)
+  // PO-Milestones
   (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
     expandMilestones(po).forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
@@ -105,7 +109,7 @@ export function computeSeries(state) {
     });
   });
 
-  // FO-Milestones (Outflow) — NEU
+  // FO-Milestones
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
     expandMilestones(fo).forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
@@ -114,14 +118,12 @@ export function computeSeries(state) {
     });
   });
 
-  // series
   const series = months.map(m => {
     const b = bucket[m];
-    const net = b.inflow - b.outflow;
-    return { month: m, inflow: b.inflow, outflow: b.outflow, net, itemsIn: b.itemsIn, itemsOut: b.itemsOut };
+    return { month: m, inflow: b.inflow, outflow: b.outflow, net: b.inflow - b.outflow, itemsIn: b.itemsIn, itemsOut: b.itemsOut };
   });
 
-  // KPIs (leichtgewichtig)
+  // KPIs
   const opening = parseEuro(s.settings && s.settings.openingBalance);
   const firstNeg = months.find(m => {
     const idx = months.indexOf(m);
@@ -133,19 +135,10 @@ export function computeSeries(state) {
   const salesIn = series.map(x => x.itemsIn.filter(i => i.kind === 'sales-payout').reduce((a, b) => a + b.amount, 0));
   const avgSalesPayout = salesIn.length ? (salesIn.reduce((a, b) => a + b, 0) / (salesIn.filter(v => v > 0).length || 1)) : 0;
 
-  return {
-    startMonth,
-    horizon,
-    months,
-    series,
-    kpis: {
-      openingToday: opening,
-      avgSalesPayout,
-      firstNegativeMonth: firstNeg,
-    },
-  };
+  return { startMonth, horizon, months, series, kpis: { openingToday: opening, avgSalesPayout, firstNegativeMonth: firstNeg } };
 }
 
+// ---------- State ----------
 export function loadState() {
   try { return JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch { return {}; }
 }
