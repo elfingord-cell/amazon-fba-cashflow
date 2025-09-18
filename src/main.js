@@ -1,5 +1,7 @@
 // src/main.js
 // Hash-Router, Active Tabs, Live-Refresh (storage + custom event)
+// Toleranter Modul-Loader: akzeptiert default export FUNCTION, named export render FUNCTION,
+// oder default-Objekt mit .render FUNCTION.
 
 const APP = document.getElementById('app');
 const STATE_KEY = 'amazon_fba_cashflow_v1';
@@ -33,19 +35,37 @@ function setActiveTab(hash) {
   });
 }
 
+// akzeptiert verschiedene Modul-Formen
+function pickRenderer(mod) {
+  if (!mod) return null;
+  if (typeof mod.default === 'function') return mod.default;
+  if (typeof mod.render === 'function') return mod.render;
+  if (mod.default && typeof mod.default.render === 'function') return mod.default.render;
+  if (typeof mod.mount === 'function') return mod.mount;
+  return null;
+}
+
 function renderRoute() {
   const hash = location.hash || '#dashboard';
   const loader = routes[hash] || routes['#dashboard'];
   setActiveTab(hash);
   loader()
     .then(mod => {
-      const fn = mod && mod.default;
-      if (typeof fn === 'function') fn(APP);
-      else APP.innerHTML = `<section class="panel"><p>Route ${hash} hat kein gültiges Modul.</p></section>`;
+      const fn = pickRenderer(mod);
+      if (typeof fn === 'function') {
+        fn(APP);
+      } else {
+        console.warn('Route-Modul ohne passenden Export. Verfügbare Keys:', Object.keys(mod || {}));
+        APP.innerHTML = `<section class="panel">
+          <h2>Hinweis</h2>
+          <p>Route <code>${hash}</code> hat kein gültiges Modul-Export-Muster.</p>
+          <p>Erwartet: <code>export default function(el){...}</code> <em>oder</em> <code>export function render(el){...}</code>.</p>
+        </section>`;
+      }
     })
     .catch(err => {
       console.error(err);
-      APP.innerHTML = `<section class="panel"><p>Fehler beim Laden: ${err?.message || err}</p></section>`;
+      APP.innerHTML = `<section class="panel"><p>Fehler beim Laden: ${escapeHtml(err?.message || String(err))}</p></section>`;
     });
 }
 
@@ -53,6 +73,6 @@ window.addEventListener('hashchange', renderRoute);
 window.addEventListener('storage', (e) => {
   if (!e || e.key === STATE_KEY) renderRoute();
 });
-window.addEventListener('state:changed', renderRoute); // optionaler Custom-Event
+window.addEventListener('state:changed', renderRoute);
 
 renderRoute();
