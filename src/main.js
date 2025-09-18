@@ -1,56 +1,58 @@
 // src/main.js
-import { addStateListener } from "./data/storageLocal.js";
+// Hash-Router, Active Tabs, Live-Refresh (storage + custom event)
 
-const ROUTES = ["dashboard","plan","po","fo","eingaben","export","debug"];
-const DEFAULT_ROUTE = "dashboard";
-const appEl = document.getElementById("app");
+const APP = document.getElementById('app');
+const STATE_KEY = 'amazon_fba_cashflow_v1';
 
-function $all(sel, root=document){ return [...root.querySelectorAll(sel)]; }
-function getRoute(){ const h = location.hash.replace(/^#/, "").trim(); return ROUTES.includes(h) ? h : DEFAULT_ROUTE; }
-function markActive(route){
-  $all(".topnav .navbtn").forEach(a=>{
-    const r = a.getAttribute("data-route");
-    const on = r === route;
-    a.classList.toggle("active", on);
-    if (on) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current");
-  });
-}
-async function render(route){
-  markActive(route);
-  const map = {
-    dashboard: "./ui/dashboard.js",
-    plan: "./ui/plan.js",
-    po: "./ui/po.js",
-    fo: "./ui/fo.js",
-    eingaben: "./ui/eingaben.js",
-    export: "./ui/export.js",
-    debug: "./ui/debug.js",
-  };
-  try{
-    const mod = await import(map[route]);
-    if (mod && typeof mod.render === "function"){ await mod.render(appEl); return; }
-    appEl.innerHTML = `<section class="card"><h2>${route}</h2><p class="muted">Kein View-Modul gefunden.</p></section>`;
-  }catch(e){
-    console.error(e);
-    appEl.innerHTML = `
-      <section class="card">
-        <h2>${route}</h2>
-        <p class="muted">Fehler beim Laden der Ansicht.</p>
-        <pre style="white-space:pre-wrap;background:#fff;padding:8px;border:1px solid #eee;border-radius:8px">${String(e)}</pre>
-      </section>`;
-  }
-}
-function goto(route){ const r = ROUTES.includes(route) ? route : DEFAULT_ROUTE; if (getRoute()!==r) location.hash="#"+r; else render(r); }
-function bindNav(){
-  $all(".topnav .navbtn").forEach(a=>{
-    a.addEventListener("click", ev=>{ ev.preventDefault(); goto(a.getAttribute("data-route")||DEFAULT_ROUTE); });
+const routes = {
+  '#dashboard': () => import('./ui/dashboard.js'),
+  '#eingaben': () => import('./ui/eingaben.js'),
+  '#po': () => import('./ui/po.js'),
+  '#fo': () => import('./ui/fo.js'),
+  '#export': () => import('./ui/export.js'),
+  '#plan': () =>
+    import('./ui/plan.js').catch(() => ({
+      default: (el) => { el.innerHTML = `<section class="panel"><h2>Plan</h2><p>Stub – folgt.</p></section>`; }
+    })),
+  '#debug': () =>
+    import('./ui/debug.js').catch(() => ({
+      default: (el) => {
+        let json = {};
+        try { json = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch {}
+        el.innerHTML = `<section class="panel"><h2>Debug</h2><pre class="mono">${escapeHtml(JSON.stringify(json, null, 2))}</pre></section>`;
+      }
+    })),
+};
+
+function escapeHtml(str){return String(str).replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));}
+
+function setActiveTab(hash) {
+  document.querySelectorAll('a[data-tab]').forEach(a => {
+    if (a.getAttribute('href') === hash) a.classList.add('active');
+    else a.classList.remove('active');
   });
 }
 
-window.addEventListener("DOMContentLoaded", ()=>{
-  bindNav();
-  render(getRoute());
-  addStateListener(()=>{ if (getRoute()==="dashboard") render("dashboard"); });
-  window.addEventListener("resize", ()=>{ if (getRoute()==="dashboard") render("dashboard"); });
+function renderRoute() {
+  const hash = location.hash || '#dashboard';
+  const loader = routes[hash] || routes['#dashboard'];
+  setActiveTab(hash);
+  loader()
+    .then(mod => {
+      const fn = mod && mod.default;
+      if (typeof fn === 'function') fn(APP);
+      else APP.innerHTML = `<section class="panel"><p>Route ${hash} hat kein gültiges Modul.</p></section>`;
+    })
+    .catch(err => {
+      console.error(err);
+      APP.innerHTML = `<section class="panel"><p>Fehler beim Laden: ${err?.message || err}</p></section>`;
+    });
+}
+
+window.addEventListener('hashchange', renderRoute);
+window.addEventListener('storage', (e) => {
+  if (!e || e.key === STATE_KEY) renderRoute();
 });
-window.addEventListener("hashchange", ()=> render(getRoute()));
+window.addEventListener('state:changed', renderRoute); // optionaler Custom-Event
+
+renderRoute();
