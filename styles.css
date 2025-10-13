@@ -148,15 +148,17 @@ thead th{font-size:12px; color:var(--muted); font-weight:700}
 .vchart-lines .dot{fill:#0f9b86; stroke:#ffffff; stroke-width:4}
 .vchart-closing-labels{
   position:absolute; left:52px; right:12px; top:10px; bottom:40px;
-  pointer-events:none; font-size:11px; color:#0f3654; display:block; z-index:4;
+  pointer-events:none; font-size:10px; color:#0f3654; display:block; z-index:4;
 }
 .closing-label{
   position:absolute; left:calc(var(--x) * 1%); top:calc(var(--y) * 1%);
   transform:translate(-50%, -120%);
   background:rgba(255,255,255,0.92); border:1px solid rgba(15,27,45,0.12);
   border-radius:10px; padding:2px 6px; box-shadow:0 4px 8px rgba(15,27,45,0.08);
-  white-space:nowrap;
+  white-space:nowrap; text-align:center;
 }
+.closing-label.edge-start{transform:translate(0, -120%); text-align:left;}
+.closing-label.edge-end{transform:translate(-100%, -120%); text-align:right;}
 
 /* Globaler Tooltip (fixed, nicht clipbar) */
 .chart-tip{
@@ -206,14 +208,14 @@ thead th{font-size:12px; color:var(--muted); font-weight:700}
 .net-strip{
   margin-top:12px; margin-left:52px; margin-right:12px;
   display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:8px;
-  font-size:12px;
+  font-size:11px;
 }
 .net-strip-label{
   margin:18px 12px 6px 52px; font-size:12px; font-weight:600; color:#0f3654;
 }
 .net-strip .net{
   text-align:center; padding:6px 4px; border-radius:10px; background:rgba(15,155,134,0.08);
-  font-weight:600; color:#0f3654;
+  font-weight:600; color:#0f3654; font-size:11px;
 }
 .net-strip .net.neg{background:rgba(239,68,68,0.12); color:#991b1b;}
 

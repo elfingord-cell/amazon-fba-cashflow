@@ -2,6 +2,14 @@
 import { loadState, addStateListener } from "../data/storageLocal.js";
 import { computeSeries, fmtEUR } from "../domain/cashflow.js";
 
+const fmtEUR0 = val =>
+  new Intl.NumberFormat("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  }).format(Number(val || 0));
+
 function niceStepSize(range) {
   if (!Number.isFinite(range) || range <= 0) return 1;
   const exponent = Math.floor(Math.log10(range));
@@ -65,13 +73,19 @@ export async function render(root) {
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
   const points = closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
   const dots = closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("");
+  const colWidth = 100 / cols;
+  const edgeThreshold = colWidth * 0.75;
   const closingLabels = closing
-    .map((v, i) => `
-      <div class="closing-label" style="--x:${XPct(i)}; --y:${YPct(v)};">${fmtEUR(v)}</div>
-    `)
+    .map((v, i) => {
+      const xp = XPct(i);
+      const edgeClass = xp < edgeThreshold ? " edge-start" : xp > 100 - edgeThreshold ? " edge-end" : "";
+      return `
+        <div class="closing-label${edgeClass}" style="--x:${xp}; --y:${YPct(v)};">${fmtEUR0(v)}</div>
+      `;
+    })
     .join("");
   const netStrip = series
-    .map(r => `<div class="net ${Number(r.net || 0) >= 0 ? "pos" : "neg"}">${fmtEUR(r.net || 0)}</div>`)
+    .map(r => `<div class="net ${Number(r.net || 0) >= 0 ? "pos" : "neg"}">${fmtEUR0(r.net || 0)}</div>`)
     .join("");
 
   // --- Render ---
