@@ -23,6 +23,13 @@ function parseDE(x) {
 function fmtEUR(n){ return Number(n||0).toLocaleString("de-DE",{style:"currency",currency:"EUR"}) }
 function clampPct(x){ const v=parseDE(x); if (v<0) return 0; if (v>100) return 100; return v; }
 function addDays(date, days){ const d=new Date(date); d.setDate(d.getDate()+Number(days||0)); return d; }
+function isoDate(date){
+  if (!(date instanceof Date)) return null;
+  const ms = date.getTime();
+  if (Number.isNaN(ms)) return null;
+  const normalized = new Date(ms - date.getTimezoneOffset() * 60000);
+  return normalized.toISOString().slice(0,10);
+}
 
 function defaultPO(){
   const today = new Date().toISOString().slice(0,10);
@@ -56,6 +63,60 @@ function msSum100(ms){
   return Math.round(s*10)/10;
 }
 
+function poEvents(po){
+  const goods = parseDE(po.goodsEur);
+  const base = {
+    orderDate: po.orderDate,
+    prodDays: Number(po.prodDays || 0),
+    transport: po.transport,
+    transitDays: Number(po.transitDays || 0),
+  };
+  const events = (po.milestones || []).map((m) => {
+    const pct = clampPct(m.percent);
+    const baseDate = anchorDate(base, m.anchor || "ORDER_DATE");
+    if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) return null;
+    const due = addDays(baseDate, Number(m.lagDays || 0));
+    const dueIso = isoDate(due);
+    if (!dueIso) return null;
+    const amount = -(goods * (pct / 100));
+    if (!Number.isFinite(amount)) return null;
+    return {
+      id: m.id,
+      label: m.label || "Zahlung",
+      date: dueIso,
+      amount,
+    };
+  });
+  return events
+    .filter((evt) => evt && Number.isFinite(evt.amount))
+    .sort((a, b) => (a.date === b.date ? (a.label || "").localeCompare(b.label || "") : a.date.localeCompare(b.date)));
+}
+
+function buildEventList(events){
+  const wrapper = el("div", { class: "po-event-table" });
+  if (!events.length) {
+    wrapper.append(el("div", { class: "muted" }, ["Keine Ereignisse definiert."]));
+    return wrapper;
+  }
+  wrapper.append(
+    el("div", { class: "po-event-head" }, [
+      el("span", { class: "po-event-col" }, ["Name"]),
+      el("span", { class: "po-event-col" }, ["Datum"]),
+      el("span", { class: "po-event-col amount" }, ["Betrag"]),
+    ]),
+  );
+  for (const evt of events) {
+    wrapper.append(
+      el("div", { class: "po-event-row" }, [
+        el("span", { class: "po-event-col" }, [evt.label]),
+        el("span", { class: "po-event-col" }, [evt.date]),
+        el("span", { class: "po-event-col amount" }, [fmtEUR(evt.amount)]),
+      ]),
+    );
+  }
+  return wrapper;
+}
+
 function renderList(container, pos, onEdit, onDelete){
   container.innerHTML = "";
   const table = el("table", {}, [
@@ -67,19 +128,30 @@ function renderList(container, pos, onEdit, onDelete){
       el("th",{},["Transport"]),
       el("th",{},["Aktionen"])
     ])]),
-    el("tbody",{}, pos.map(p => {
-      return el("tr",{},[
-        el("td",{},[p.poNo||"—"]),
-        el("td",{},[p.orderDate||"—"]),
-        el("td",{},[fmtEUR(parseDE(p.goodsEur))]),
-        el("td",{},[String((p.milestones||[]).length)]),
-        el("td",{},[`${p.transport||"sea"} · ${p.transitDays||0}d`]),
-        el("td",{},[
-          el("button",{class:"btn", onclick:()=>onEdit(p)},["Bearbeiten"]),
-          " ",
-          el("button",{class:"btn danger", onclick:()=>onDelete(p)},["Löschen"])
+    el("tbody",{}, pos.flatMap(p => {
+      const events = poEvents(p);
+      return [
+        el("tr",{},[
+          el("td",{},[p.poNo||"—"]),
+          el("td",{},[p.orderDate||"—"]),
+          el("td",{},[fmtEUR(parseDE(p.goodsEur))]),
+          el("td",{},[String((p.milestones||[]).length)]),
+          el("td",{},[`${p.transport||"sea"} · ${p.transitDays||0}d`]),
+          el("td",{},[
+            el("button",{class:"btn", onclick:()=>onEdit(p)},["Bearbeiten"]),
+            " ",
+            el("button",{class:"btn danger", onclick:()=>onDelete(p)},["Löschen"])
+          ])
+        ]),
+        el("tr",{ class:"po-events-row" },[
+          el("td",{colspan:6},[
+            el("div",{class:"po-events-wrapper"},[
+              el("div",{class:"muted"},["Ereignisse"]),
+              buildEventList(events)
+            ])
+          ])
         ])
-      ]);
+      ];
     }))
   ]);
   container.append(table);
@@ -105,6 +177,7 @@ function renderMsTable(container, po, onChange){
       const pct = clampPct(m.percent);
       const base = anchorDate(po, m.anchor||"ORDER_DATE");
       const due  = addDays(base, Number(m.lagDays||0));
+      const dueIso = isoDate(due);
       const amount = goods * (pct/100);
 
       return el("tr",{},[
@@ -129,7 +202,7 @@ function renderMsTable(container, po, onChange){
         el("td",{},[
           el("input",{type:"number", value:String(m.lagDays||0), oninput:(e)=>{ m.lagDays = Number(e.target.value||0); onChange(); }})
         ]),
-        el("td",{},[ due.toISOString().slice(0,10) ]),
+        el("td",{},[ dueIso ?? "—" ]),
         el("td",{},[ fmtEUR(amount) ]),
         el("td",{},[
           el("button",{class:"btn danger", onclick:()=>{ po.milestones.splice(i,1); onChange(); }},["Entfernen"])
@@ -202,7 +275,7 @@ export async function render(root){
         <button class="btn" id="new">Neue PO</button>
         <button class="btn danger" id="delete">Löschen</button>
       </div>
-      <div id="preview" class="muted" style="margin-top:6px"></div>
+      <div id="preview" class="po-event-preview"></div>
     </section>
   `;
 
@@ -243,19 +316,20 @@ export async function render(root){
   }
 
   function updatePreview(){
-    const goodsV = parseDE(goods.value);
-    const rows = (editing.milestones||[]).map(m=>{
-      const pct = clampPct(m.percent);
-      const base = anchorDate({
-        orderDate: orderDate.value,
-        prodDays: Number(prod.value||0),
-        transport: transport.value,
-        transitDays: Number(transit.value||0)
-      }, m.anchor||"ORDER_DATE");
-      const due  = addDays(base, Number(m.lagDays||0));
-      return `${due.toISOString().slice(0,10)} · ${m.label||"Zahlung"} — ${fmtEUR(goodsV*(pct/100))}`;
-    });
-    preview.textContent = rows.length ? rows.join(" | ") : "Keine Zahlungen definiert.";
+    const tempPO = {
+      id: editing.id,
+      poNo: poNo.value,
+      orderDate: orderDate.value,
+      goodsEur: goods.value,
+      prodDays: Number(prod.value || 0),
+      transport: transport.value,
+      transitDays: Number(transit.value || 0),
+      milestones: editing.milestones,
+    };
+    const events = poEvents(tempPO);
+    preview.innerHTML = "";
+    preview.append(el("h4",{},["Ereignisse"]));
+    preview.append(buildEventList(events));
   }
 
   function updateSaveEnabled(){
