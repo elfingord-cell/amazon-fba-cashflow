@@ -135,7 +135,15 @@ export function computeSeries(state) {
   const salesIn = series.map(x => x.itemsIn.filter(i => i.kind === 'sales-payout').reduce((a, b) => a + b.amount, 0));
   const avgSalesPayout = salesIn.length ? (salesIn.reduce((a, b) => a + b, 0) / (salesIn.filter(v => v > 0).length || 1)) : 0;
 
-  return { startMonth, horizon, months, series, kpis: { openingToday: opening, avgSalesPayout, firstNegativeMonth: firstNeg } };
+  const kpis = {
+    opening,
+    openingToday: opening,
+    salesPayoutAvg: avgSalesPayout,
+    avgSalesPayout,
+    firstNegativeMonth: firstNeg,
+  };
+
+  return { startMonth, horizon, months, series, kpis };
 }
 
 // ---------- State ----------

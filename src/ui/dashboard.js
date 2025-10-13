@@ -2,6 +2,18 @@
 import { loadState, addStateListener } from "../data/storageLocal.js";
 import { computeSeries, fmtEUR } from "../domain/cashflow.js";
 
+function niceStepSize(range) {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  const exponent = Math.floor(Math.log10(range));
+  const fraction = range / Math.pow(10, exponent);
+  let niceFraction;
+  if (fraction <= 1) niceFraction = 1;
+  else if (fraction <= 2) niceFraction = 2;
+  else if (fraction <= 5) niceFraction = 5;
+  else niceFraction = 10;
+  return niceFraction * Math.pow(10, exponent);
+}
+
 export async function render(root) {
   const state = loadState();
   const { months, series, kpis } = computeSeries(state);
@@ -15,21 +27,39 @@ export async function render(root) {
     closing.push(run);
   }
 
-  // --- Gemeinsame Y-Skala mit +10% Luft ---
-  const step = 5000;
-  const netMax = Math.max(1, ...series.map(r => Math.max(0, Number(r.net || 0))));
-  const closeMax = Math.max(opening, ...closing);
-  const rawTop = Math.max(netMax, closeMax);
-  const padded = rawTop * 1.10; // 10% Headroom
-  const top = Math.max(step, Math.ceil(padded / step) * step);
+  // --- Gemeinsame Y-Skala (positiv & negativ) ---
+  const netValues = series.map(r => Number(r.net || 0));
+  const closingValues = [opening, ...closing];
+  const rawTop = Math.max(0, ...netValues, ...closingValues);
+  const rawBottom = Math.min(0, ...netValues, ...closingValues);
+  const paddedTop = rawTop === 0 ? 0 : rawTop * 1.1;
+  const paddedBottom = rawBottom === 0 ? 0 : rawBottom * 1.1;
 
-  const steps = 5; // 0..Top in 6 Ticks
-  const yTicks = Array.from({ length: steps + 1 }, (_, i) => Math.round((top / steps) * i));
+  const steps = 5;
+  const niceStep = niceStepSize((paddedTop - paddedBottom) / steps || 1);
+  const top = Math.max(niceStep, Math.ceil(paddedTop / niceStep) * niceStep);
+  const bottom = rawBottom < 0 ? Math.floor(paddedBottom / niceStep) * niceStep : 0;
+  const span = (top - bottom) || niceStep;
+
+  const yTicks = Array.from({ length: steps + 1 }, (_, i) => top - (span / steps) * i);
+
+  const fmtTick = v => {
+    const abs = Math.abs(v);
+    if (abs >= 1_000_000) return `${Math.round(v / 1_000_000)}M`;
+    if (abs >= 1_000) return `${Math.round(v / 1_000)}k`;
+    return `${Math.round(v)}`;
+  };
 
   // --- SVG-Mapping ---
   const cols = months.length || 1;
-  const X = i => ((i + 0.5) * 1000) / cols;                       // Spaltenmitte (0..1000)
-  const Y = v => 1000 - Math.max(0, Math.min(1000, (Number(v || 0) / top) * 1000));
+  const X = i => ((i + 0.5) * 1000) / cols; // Spaltenmitte (0..1000)
+  const Y = v => {
+    const val = Number(v || 0);
+    const norm = (top - val) / span;
+    const clamped = Math.max(0, Math.min(1, norm));
+    return clamped * 1000;
+  };
+  const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
   const points = closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
   const dots = closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="10"></circle>`).join("");
 
@@ -43,7 +73,7 @@ export async function render(root) {
         <div class="kpi"><div class="kpi-label">Erster negativer Monat</div><div class="kpi-value">${kpis.firstNegativeMonth || "—"}</div></div>
       </div>
 
-      <div class="vchart" style="--cols:${months.length}; --rows:${yTicks.length}">
+      <div class="vchart" style="--cols:${months.length}; --rows:${yTicks.length}; --zero:${zeroPct.toFixed(2)}">
         <!-- Raster (dahinter) -->
         <div class="vchart-grid">
           ${yTicks.map(() => `<div class="yline"></div>`).join("")}
@@ -51,7 +81,7 @@ export async function render(root) {
 
         <!-- Y-Achse (Labels) -->
         <div class="vchart-y">
-          ${yTicks.slice().reverse().map(v => `<div class="ytick">${v >= 1000 ? Math.round(v/1000) + "k" : "0"}</div>`).join("")}
+          ${yTicks.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}
         </div>
 
         <!-- Baseline (0-Linie, durchgezogen) -->
@@ -60,11 +90,14 @@ export async function render(root) {
         <!-- Balken -->
         <div class="vchart-bars">
           ${series.map((r,i) => {
-            const h = top ? Math.max(0, Math.min(100, (Number(r.net || 0) / top) * 100)) : 0;
-            const cls = (Number(r.net || 0) >= 0) ? "pos" : "neg";
+            const val = Number(r.net || 0);
+            const valuePct = Math.max(0, Math.min(100, Y(val) / 10));
+            const topPct = Math.min(zeroPct, valuePct);
+            const heightPct = Math.abs(zeroPct - valuePct);
+            const cls = val >= 0 ? "pos" : "neg";
             return `
               <div class="vbar-wrap">
-                <div class="vbar ${cls}" style="--h:${h}" data-idx="${i}" aria-label="${months[i]}"></div>
+                <div class="vbar ${cls}" style="--top:${topPct.toFixed(2)}; --height:${heightPct.toFixed(2)}" data-idx="${i}" aria-label="${months[i]}"></div>
               </div>`;
           }).join("")}
         </div>
@@ -100,12 +133,18 @@ export async function render(root) {
   const tip = ensureGlobalTip();
 
   function tipHtml(m, row, eom) {
+    const extras = (row.itemsIn || [])
+      .filter(item => item && item.kind === "extra")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const inflow = Number(row.inflow || 0);
+    const outflow = Number(row.outflow || 0);
+
     return `
       <div class="tip-title">${m}</div>
       <div class="tip-row"><span>Netto</span><b>${fmtEUR(row.net)}</b></div>
-      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(row.inflow)}</b></div>
-      <div class="tip-row"><span>Extras</span><b>${fmtEUR(row.extras)}</b></div>
-      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-Math.abs(row.out))}</b></div>
+      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(inflow)}</b></div>
+      <div class="tip-row"><span>Extras</span><b>${fmtEUR(extras)}</b></div>
+      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-outflow)}</b></div>
       <div class="tip-row"><span>Kontostand (EOM)</span><b>${fmtEUR(eom)}</b></div>
     `;
   }
@@ -140,9 +179,11 @@ export async function render(root) {
   }
   function hideTip(){ tip.hidden = true; }
 
-  barsWrap.addEventListener("pointerenter", showTip, true);
-  barsWrap.addEventListener("pointermove", showTip, true);
-  barsWrap.addEventListener("pointerleave", hideTip, true);
+  if (barsWrap) {
+    barsWrap.addEventListener("pointerenter", showTip, true);
+    barsWrap.addEventListener("pointermove", showTip, true);
+    barsWrap.addEventListener("pointerleave", hideTip, true);
+  }
 
   // Live-Refresh
   const off = addStateListener(() => {

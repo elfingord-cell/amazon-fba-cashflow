@@ -13,6 +13,10 @@ const defaults = {
 let _state = null;
 const listeners = new Set();
 
+export function createEmptyState(){
+  return structuredClone(defaults);
+}
+
 export function loadState(){
   if (_state) return _state;
   try {
