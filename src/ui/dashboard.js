@@ -26,6 +26,7 @@ export async function render(root) {
     run += Number(series[i]?.net || 0);
     closing.push(run);
   }
+  const monthOpening = series.map((_, idx) => (idx === 0 ? opening : closing[idx - 1]));
 
   // --- Gemeinsame Y-Skala (positiv & negativ) ---
   const netValues = series.map(r => Number(r.net || 0));
@@ -53,15 +54,25 @@ export async function render(root) {
   // --- SVG-Mapping ---
   const cols = months.length || 1;
   const X = i => ((i + 0.5) * 1000) / cols; // Spaltenmitte (0..1000)
+  const XPct = i => ((i + 0.5) * 100) / cols; // Spaltenmitte (0..100%)
   const Y = v => {
     const val = Number(v || 0);
     const norm = (top - val) / span;
     const clamped = Math.max(0, Math.min(1, norm));
     return clamped * 1000;
   };
+  const YPct = v => (Y(v) / 1000) * 100;
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
   const points = closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
-  const dots = closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="10"></circle>`).join("");
+  const dots = closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("");
+  const closingLabels = closing
+    .map((v, i) => `
+      <div class="closing-label" style="--x:${XPct(i)}; --y:${YPct(v)};">${fmtEUR(v)}</div>
+    `)
+    .join("");
+  const netStrip = series
+    .map(r => `<div class="net ${Number(r.net || 0) >= 0 ? "pos" : "neg"}">${fmtEUR(r.net || 0)}</div>`)
+    .join("");
 
   // --- Render ---
   root.innerHTML = `
@@ -110,10 +121,19 @@ export async function render(root) {
           </svg>
         </div>
 
+        <div class="vchart-closing-labels" aria-hidden="true">
+          ${closingLabels}
+        </div>
+
         <!-- X-Achse -->
         <div class="vchart-x">
           ${months.map(m => `<div class="xlabel">${m}</div>`).join("")}
         </div>
+      </div>
+
+      <div class="net-strip-label">Netto je Monat</div>
+      <div class="net-strip" style="--cols:${months.length};">
+        ${netStrip}
       </div>
     </section>
   `;
@@ -132,20 +152,22 @@ export async function render(root) {
   }
   const tip = ensureGlobalTip();
 
-  function tipHtml(m, row, eom) {
+  function tipHtml(m, row, eom, monthStart) {
     const extras = (row.itemsIn || [])
       .filter(item => item && item.kind === "extra")
       .reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const inflow = Number(row.inflow || 0);
     const outflow = Number(row.outflow || 0);
+    const baseInflow = inflow - extras;
 
     return `
       <div class="tip-title">${m}</div>
-      <div class="tip-row"><span>Netto</span><b>${fmtEUR(row.net)}</b></div>
-      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(inflow)}</b></div>
-      <div class="tip-row"><span>Extras</span><b>${fmtEUR(extras)}</b></div>
-      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-outflow)}</b></div>
-      <div class="tip-row"><span>Kontostand (EOM)</span><b>${fmtEUR(eom)}</b></div>
+      <div class="tip-row"><span>Monatsanfang</span><b>${fmtEUR(monthStart)}</b></div>
+      <div class="tip-row"><span>+ Inflow</span><b>${fmtEUR(baseInflow)}</b></div>
+      <div class="tip-row"><span>+ Extras</span><b>${fmtEUR(extras)}</b></div>
+      <div class="tip-row"><span>− Outflow</span><b>${fmtEUR(outflow)}</b></div>
+      <div class="tip-row total"><span>= Netto</span><b>${fmtEUR(row.net)}</b></div>
+      <div class="tip-row"><span>Kontostand (Monatsende)</span><b>${fmtEUR(eom)}</b></div>
     `;
   }
 
@@ -157,8 +179,9 @@ export async function render(root) {
     const i = Number(el.getAttribute("data-idx"));
     const row = series[i];
     const eom = closing[i];
+    const mos = monthOpening[i];
 
-    tip.innerHTML = tipHtml(months[i], row, eom);
+    tip.innerHTML = tipHtml(months[i], row, eom, mos);
     tip.hidden = false;
 
     const br = el.getBoundingClientRect();
