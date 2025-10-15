@@ -9,14 +9,16 @@
 </head>
 <body>
   <header class="topbar">
-    <nav class="tabs">
-      <a href="#dashboard" data-tab>Dashboard</a>
-      <a href="#eingaben" data-tab>Eingaben</a>
-      <a href="#po" data-tab>PO</a>
-      <a href="#fo" data-tab>FO</a>
-      <a href="#export" data-tab>Export/Import</a>
-      <a href="#debug" data-tab>Debug</a>
-    </nav>
+    <div class="topbar-inner">
+      <nav class="topnav" aria-label="Hauptnavigation">
+        <a class="btn navbtn active" href="#dashboard" data-tab>Dashboard</a>
+        <a class="btn navbtn" href="#eingaben" data-tab>Eingaben</a>
+        <a class="btn navbtn" href="#po" data-tab>PO</a>
+        <a class="btn navbtn" href="#fo" data-tab>FO</a>
+        <a class="btn navbtn" href="#export" data-tab>Export/Import</a>
+        <a class="btn navbtn" href="#debug" data-tab>Debug</a>
+      </nav>
+    </div>
   </header>
 
   <main id="app" class="app"></main>
