@@ -128,36 +128,25 @@ function renderList(container, pos, onEdit, onDelete){
       el("th",{},["Transport"]),
       el("th",{},["Aktionen"])
     ])]),
-    el("tbody",{}, pos.flatMap(p => {
-      const events = poEvents(p);
-      return [
-        el("tr",{},[
-          el("td",{},[p.poNo||"—"]),
-          el("td",{},[p.orderDate||"—"]),
-          el("td",{},[fmtEUR(parseDE(p.goodsEur))]),
-          el("td",{},[String((p.milestones||[]).length)]),
-          el("td",{},[`${p.transport||"sea"} · ${p.transitDays||0}d`]),
-          el("td",{},[
-            el("button",{class:"btn", onclick:()=>onEdit(p)},["Bearbeiten"]),
-            " ",
-            el("button",{class:"btn danger", onclick:()=>onDelete(p)},["Löschen"])
-          ])
-        ]),
-        el("tr",{ class:"po-events-row" },[
-          el("td",{colspan:6},[
-            el("div",{class:"po-events-wrapper"},[
-              el("div",{class:"muted"},["Ereignisse"]),
-              buildEventList(events)
-            ])
-          ])
+    el("tbody",{}, pos.map(p =>
+      el("tr",{},[
+        el("td",{},[p.poNo||"—"]),
+        el("td",{},[p.orderDate||"—"]),
+        el("td",{},[fmtEUR(parseDE(p.goodsEur))]),
+        el("td",{},[String((p.milestones||[]).length)]),
+        el("td",{},[`${p.transport||"sea"} · ${p.transitDays||0}d`]),
+        el("td",{},[
+          el("button",{class:"btn", onclick:()=>onEdit(p)},["Bearbeiten"]),
+          " ",
+          el("button",{class:"btn danger", onclick:()=>onDelete(p)},["Löschen"])
         ])
-      ];
-    }))
+      ])
+    ))
   ]);
   container.append(table);
 }
 
-function renderMsTable(container, po, onChange){
+function renderMsTable(container, po, onChange, focusInfo){
   container.innerHTML = "";
   const hdr = el("div", {class:"muted", style:"margin-bottom:6px"}, ["Zahlungsmeilensteine (Summe muss 100 % sein)"]);
   container.append(hdr);
@@ -180,16 +169,16 @@ function renderMsTable(container, po, onChange){
       const dueIso = isoDate(due);
       const amount = goods * (pct/100);
 
-      return el("tr",{},[
+      return el("tr",{dataset:{msId:m.id}},[
         el("td",{},[
-          el("input",{value:m.label||"", oninput:(e)=>{ m.label = e.target.value; onChange(); }})
+          el("input",{value:m.label||"", dataset:{field:"label"}, oninput:(e)=>{ m.label = e.target.value; onChange(); }})
         ]),
         el("td",{},[
-          el("input",{type:"text", value:String(m.percent ?? 0), oninput:(e)=>{ m.percent = e.target.value; onChange(); }})
+          el("input",{type:"text", value:String(m.percent ?? 0), dataset:{field:"percent"}, oninput:(e)=>{ m.percent = e.target.value; onChange(); }})
         ]),
         el("td",{},[
           (()=>{
-            const s = el("select",{ onchange:(e)=>{ m.anchor = e.target.value; onChange(); }},[
+            const s = el("select",{ dataset:{field:"anchor"}, onchange:(e)=>{ m.anchor = e.target.value; onChange(); }},[
               el("option",{value:"ORDER_DATE"},["ORDER_DATE"]),
               el("option",{value:"PROD_DONE"},["PROD_DONE"]),
               el("option",{value:"ETD"},["ETD"]),
@@ -200,10 +189,10 @@ function renderMsTable(container, po, onChange){
           })()
         ]),
         el("td",{},[
-          el("input",{type:"number", value:String(m.lagDays||0), oninput:(e)=>{ m.lagDays = Number(e.target.value||0); onChange(); }})
+          el("input",{type:"number", value:String(m.lagDays||0), dataset:{field:"lag"}, oninput:(e)=>{ m.lagDays = Number(e.target.value||0); onChange(); }})
         ]),
-        el("td",{},[ dueIso ?? "—" ]),
-        el("td",{},[ fmtEUR(amount) ]),
+        el("td",{dataset:{role:"ms-date"}},[ dueIso ?? "—" ]),
+        el("td",{dataset:{role:"ms-amount"}},[ fmtEUR(amount) ]),
         el("td",{},[
           el("button",{class:"btn danger", onclick:()=>{ po.milestones.splice(i,1); onChange(); }},["Entfernen"])
         ])
@@ -214,17 +203,27 @@ function renderMsTable(container, po, onChange){
 
   const addBtn = el("button",{class:"btn", style:"margin-top:8px", onclick:()=>{
     const nextN = (po.milestones||[]).length;
-    po.milestones.push({ id: Math.random().toString(36).slice(2,9), label:`Balance ${nextN}`, percent:0, anchor:"ETA", lagDays:0 });
+    po.milestones.push({ id: Math.random().toString(36).slice(2,9), label:`Milestone ${nextN+1}`, percent:0, anchor:"ETA", lagDays:0 });
     onChange();
   }},["+ Zahlung hinzufügen"]);
   container.append(addBtn);
 
   const sum = msSum100(po.milestones);
   const warn = sum !== 100;
-  const note = el("div",{style:`margin-top:8px;font-weight:600;${warn?'color:#c23636':'color:#0f9960'}`},[
+  const note = el("div",{dataset:{role:"ms-sum"},style:`margin-top:8px;font-weight:600;${warn?'color:#c23636':'color:#0f9960'}`},[
     warn ? `Summe: ${sum}% — Bitte auf 100% anpassen.` : `Summe: 100% ✓`
   ]);
   container.append(note);
+
+  if (focusInfo && focusInfo.id && focusInfo.field) {
+    const target = container.querySelector(`[data-ms-id="${focusInfo.id}"] [data-field="${focusInfo.field}"]`);
+    if (target) {
+      target.focus();
+      if (focusInfo.selectionStart != null && focusInfo.selectionEnd != null && target.setSelectionRange) {
+        target.setSelectionRange(focusInfo.selectionStart, focusInfo.selectionEnd);
+      }
+    }
+  }
 }
 
 export async function render(root){
@@ -307,10 +306,33 @@ export async function render(root){
     updateSaveEnabled();
   }
 
+  function syncEditingFromForm(){
+    editing.poNo = poNo.value.trim();
+    editing.orderDate = orderDate.value;
+    editing.goodsEur = goods.value;
+    editing.prodDays = Number(prod.value || 0);
+    editing.transport = transport.value;
+    editing.transitDays = Number(transit.value || 0);
+  }
+
   function onAnyChange(){
+    const active = document.activeElement;
+    let focusInfo = null;
+    if (active && active.closest && active.closest("[data-ms-id]")) {
+      const row = active.closest("[data-ms-id]");
+      focusInfo = {
+        id: row?.dataset?.msId,
+        field: active.dataset?.field || null,
+        selectionStart: active.selectionStart,
+        selectionEnd: active.selectionEnd,
+      };
+    }
+    syncEditingFromForm();
     if (!transit.value) {
       transit.value = editing.transport==="air"? "10" : (editing.transport==="rail"?"30":"60");
     }
+    syncEditingFromForm();
+    renderMsTable(msZone, editing, onAnyChange, focusInfo);
     updatePreview();
     updateSaveEnabled();
   }
