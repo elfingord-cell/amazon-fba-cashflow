@@ -16,8 +16,10 @@ function el(tag, attrs = {}, children = []) {
 }
 function parseDE(x) {
   if (x == null) return 0;
-  const s = String(x).trim().replace(/\./g,"").replace(",",".");
-  const n = Number(s);
+  const cleaned = String(x).trim().replace(/[^0-9,.-]+/g, "");
+  let normalized = cleaned.replace(/\.(?=\d{3}(\D|$))/g, "");
+  normalized = normalized.replace(",", ".");
+  const n = Number(normalized);
   return Number.isFinite(n) ? n : 0;
 }
 function fmtEUR(n){ return Number(n||0).toLocaleString("de-DE",{style:"currency",currency:"EUR"}) }
@@ -60,7 +62,7 @@ function anchorDate(po, anchor){
 }
 function msSum100(ms){
   const s = (ms||[]).reduce((a,b)=> a + clampPct(b.percent||0), 0);
-  return Math.round(s*10)/10;
+  return Math.round(s * 10) / 10;
 }
 
 function poEvents(po){
@@ -203,8 +205,9 @@ function renderMsTable(container, po, onChange, focusInfo){
 
   const addBtn = el("button",{class:"btn", style:"margin-top:8px", onclick:()=>{
     const nextN = (po.milestones||[]).length;
-    po.milestones.push({ id: Math.random().toString(36).slice(2,9), label:`Milestone ${nextN+1}`, percent:0, anchor:"ETA", lagDays:0 });
-    onChange();
+    const id = Math.random().toString(36).slice(2,9);
+    po.milestones.push({ id, label:`Milestone ${nextN+1}`, percent:0, anchor:"ETA", lagDays:0 });
+    onChange({ focusInfo: { id, field: "label" } });
   }},["+ Zahlung hinzufügen"]);
   container.append(addBtn);
 
@@ -315,17 +318,19 @@ export async function render(root){
     editing.transitDays = Number(transit.value || 0);
   }
 
-  function onAnyChange(){
-    const active = document.activeElement;
-    let focusInfo = null;
-    if (active && active.closest && active.closest("[data-ms-id]")) {
-      const row = active.closest("[data-ms-id]");
-      focusInfo = {
-        id: row?.dataset?.msId,
-        field: active.dataset?.field || null,
-        selectionStart: active.selectionStart,
-        selectionEnd: active.selectionEnd,
-      };
+  function onAnyChange(opts = {}){
+    let focusInfo = opts.focusInfo || null;
+    if (!focusInfo) {
+      const active = document.activeElement;
+      if (active && active.closest && active.closest("[data-ms-id]")) {
+        const row = active.closest("[data-ms-id]");
+        focusInfo = {
+          id: row?.dataset?.msId,
+          field: active.dataset?.field || null,
+          selectionStart: active.selectionStart,
+          selectionEnd: active.selectionEnd,
+        };
+      }
     }
     syncEditingFromForm();
     if (!transit.value) {
