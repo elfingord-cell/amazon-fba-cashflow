@@ -51,6 +51,7 @@ const plState = {
   showScenario: false,
   search: "",
   categories: new Set(),
+  collapsedMonths: new Set(),
 };
 
 let plData = null;
@@ -84,6 +85,7 @@ function formatDateLabel(iso) {
 
 function ensureSelection(months) {
   const available = Array.isArray(months) ? months : [];
+  pruneCollapsed(available);
   const previous = Array.isArray(plState.selectedMonths)
     ? plState.selectedMonths.filter(m => available.includes(m))
     : [];
@@ -131,6 +133,30 @@ function applyControlSelection(control, months) {
     default:
       return plState.selectedMonths || [];
   }
+}
+
+function getCollapsedSet() {
+  if (!plState.collapsedMonths) plState.collapsedMonths = new Set();
+  return plState.collapsedMonths;
+}
+
+function pruneCollapsed(months) {
+  const set = getCollapsedSet();
+  if (!Array.isArray(months) || !months.length) {
+    set.clear();
+    return;
+  }
+  const allowed = new Set(months);
+  for (const value of Array.from(set)) {
+    if (!allowed.has(value)) set.delete(value);
+  }
+}
+
+function toggleMonthCollapse(month) {
+  if (!month) return;
+  const set = getCollapsedSet();
+  if (set.has(month)) set.delete(month);
+  else set.add(month);
 }
 
 function aggregateEntries(entries) {
@@ -278,36 +304,44 @@ function buildMonthCard(row) {
   const closing = row.opening + cardNet;
   const scenarioNet = cardScenario;
   const scenarioDelta = scenarioNet - cardNet;
+  const collapsedSet = getCollapsedSet();
+  const collapsed = collapsedSet.has(row.month);
+  const bodyId = `pl-body-${row.month.replace(/[^0-9A-Za-z]/g, "")}`;
 
   return `
-    <article class="pl-card" data-month="${escapeHtml(row.month)}">
+    <article class="pl-card${collapsed ? " is-collapsed" : ""}" data-month="${escapeHtml(row.month)}">
       <header class="pl-card-header">
-        <div>
-          <h3>${escapeHtml(formatMonthLabel(row.month))}</h3>
-          <p class="pl-card-sub">Saldo Monatsende: ${fmtSigned(closing)}</p>
-        </div>
-        <div class="pl-card-metrics">
-          <div class="pl-metric">
-            <span class="pl-metric-label">P/L gesamt</span>
-            <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
-          </div>
-          <div class="pl-metric">
-            <span class="pl-metric-label">Sales × Payout</span>
-            <span class="pl-metric-value">${fmtSigned(salesSum)}</span>
-          </div>
-          <div class="pl-metric">
-            <span class="pl-metric-label">Netto-Cash</span>
-            <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
-          </div>
-          ${plState.showScenario ? `
-            <div class="pl-metric">
-              <span class="pl-metric-label">Δ Szenario</span>
-              <span class="pl-metric-value">${fmtSigned(scenarioDelta)}</span>
+        <button type="button" class="pl-card-toggle" data-month="${escapeHtml(row.month)}" aria-expanded="${collapsed ? "false" : "true"}" aria-controls="${escapeHtml(bodyId)}">
+          <div class="pl-card-main">
+            <div class="pl-card-info">
+              <h3>${escapeHtml(formatMonthLabel(row.month))}</h3>
+              <p class="pl-card-sub">Saldo Monatsende: ${fmtSigned(closing)}</p>
             </div>
-          ` : ""}
-        </div>
+            <div class="pl-card-metrics">
+              <div class="pl-metric">
+                <span class="pl-metric-label">P/L gesamt</span>
+                <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
+              </div>
+              <div class="pl-metric">
+                <span class="pl-metric-label">Sales × Payout</span>
+                <span class="pl-metric-value">${fmtSigned(salesSum)}</span>
+              </div>
+              <div class="pl-metric">
+                <span class="pl-metric-label">Netto-Cash</span>
+                <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
+              </div>
+              ${plState.showScenario ? `
+                <div class="pl-metric">
+                  <span class="pl-metric-label">Δ Szenario</span>
+                  <span class="pl-metric-value">${fmtSigned(scenarioDelta)}</span>
+                </div>
+              ` : ""}
+            </div>
+          </div>
+          <span class="pl-card-chevron" aria-hidden="true">${collapsed ? "▶" : "▼"}</span>
+        </button>
       </header>
-      <div class="pl-card-body">
+      <div class="pl-card-body" id="${escapeHtml(bodyId)}" ${collapsed ? "hidden" : ""}>
         ${sections.join("") || '<p class="pl-empty">Keine Daten in diesem Monat.</p>'}
       </div>
     </article>
@@ -456,6 +490,14 @@ function attachPLHandlers(plRoot) {
   const cards = plRoot.querySelector(".pl-cards");
   if (cards) {
     cards.addEventListener("click", ev => {
+      const toggle = ev.target.closest(".pl-card-toggle");
+      if (toggle) {
+        ev.preventDefault();
+        const month = toggle.getAttribute("data-month");
+        toggleMonthCollapse(month);
+        updatePLSection(plRoot);
+        return;
+      }
       const row = ev.target.closest(".pl-row");
       if (!row) return;
       const id = row.getAttribute("data-entry-id");
@@ -463,6 +505,14 @@ function attachPLHandlers(plRoot) {
     });
     cards.addEventListener("keydown", ev => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
+      const toggle = ev.target.closest(".pl-card-toggle");
+      if (toggle) {
+        ev.preventDefault();
+        const month = toggle.getAttribute("data-month");
+        toggleMonthCollapse(month);
+        updatePLSection(plRoot);
+        return;
+      }
       const row = ev.target.closest(".pl-row");
       if (!row) return;
       ev.preventDefault();
