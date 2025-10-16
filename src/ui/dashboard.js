@@ -834,6 +834,10 @@ export async function render(root) {
     .map((row, i) => `<div class="vbar-group">${BAR_TYPES.map(type => renderBar(type, row, i)).join("")}</div>`)
     .join("");
 
+  const xLabelsHtml = months
+    .map(monthKey => `<div class="xlabel">${escapeHtml(formatMonthLabel(monthKey))}</div>`)
+    .join("");
+
   const legendHtml = `
     <div class="chart-legend" role="list">
       <span class="legend-item" role="listitem"><span class="legend-swatch swatch-inflow-paid"></span>Inflow bezahlt</span>
@@ -869,7 +873,7 @@ export async function render(root) {
           </svg>
         </div>
         <div class="vchart-closing-labels" aria-hidden="true">${closingLabels}</div>
-        <div class="vchart-x">${months.map(m => `<div class="xlabel">${m}</div>`).join("")}</div>
+        <div class="vchart-x">${xLabelsHtml}</div>
       </div>
       ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>

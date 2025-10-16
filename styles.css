@@ -135,17 +135,31 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* Balkenbereich – gleiche Höhe/Offsets wie Raster/Y-Skala */
 .vchart-bars{
   position:absolute; left:52px; right:12px; top:10px; bottom:40px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch; gap:28px;
+  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch;
+  gap:clamp(24px, 4vw, 32px);
 }
-.vbar-group{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; align-items:stretch; height:100%;}
-.vbar-wrap{position:relative; display:flex; align-items:stretch; justify-content:center; height:100%}
+.vbar-group{
+  position:relative;
+  display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; align-items:stretch; height:100%;
+}
+.vbar-group::before{
+  content:""; position:absolute; inset:-8px -10px; background:rgba(15,27,45,0.05);
+  border-radius:14px; pointer-events:none; z-index:0;
+}
+.vbar-group::after{
+  content:""; position:absolute; inset:-8px -10px; pointer-events:none;
+  border-left:1px solid rgba(15,27,45,0.08);
+  border-right:1px solid rgba(15,27,45,0.08);
+  border-radius:14px; z-index:1;
+}
+.vbar-wrap{position:relative; display:flex; align-items:stretch; justify-content:center; height:100%; z-index:2;}
 .vbar{
   position:absolute;
   top:0;
   bottom:0;
   left:50%;
   transform:translateX(-50%);
-  width:20px;
+  width:24px;
   outline:none;
 }
 .vbar.empty{pointer-events:none;}
@@ -169,9 +183,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* X-Achse */
 .vchart-x{
   position:absolute; left:52px; right:12px; bottom:8px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:28px;
+  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:clamp(24px, 4vw, 32px);
 }
-.vchart-x .xlabel{font-size:11px; color:#6b7280; text-align:center; white-space:nowrap}
+.vchart-x .xlabel{font-size:11px; color:#6b7280; text-align:center; white-space:nowrap; display:flex; justify-content:center; align-items:center;}
 
 /* Overlay für Kontostands-Linie */
 .vchart-lines{
