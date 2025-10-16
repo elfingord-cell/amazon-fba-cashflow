@@ -135,9 +135,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* Balkenbereich – gleiche Höhe/Offsets wie Raster/Y-Skala */
 .vchart-bars{
   position:absolute; left:52px; right:12px; top:10px; bottom:40px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch; gap:22px;
+  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch; gap:28px;
 }
-.vbar-group{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:3px; align-items:stretch; height:100%;}
+.vbar-group{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; align-items:stretch; height:100%;}
 .vbar-wrap{position:relative; display:flex; align-items:stretch; justify-content:center; height:100%}
 .vbar{
   position:absolute;
@@ -145,18 +145,18 @@ tr.auto-ms.disabled select{opacity:0.8;}
   bottom:0;
   left:50%;
   transform:translateX(-50%);
-  width:18px;
+  width:20px;
   outline:none;
 }
 .vbar.empty{pointer-events:none;}
-.vbar:focus-visible{outline:2px solid var(--mint-500); outline-offset:4px; border-radius:8px;}
+.vbar:focus-visible{outline:2px solid var(--mint-500); outline-offset:4px; border-radius:0;}
 .vbar-segment{
   position:absolute;
   left:0;
   right:0;
   top:calc(var(--seg-top,100) * 1%);
   height:calc(var(--seg-height,0) * 1%);
-  border-radius:8px;
+  border-radius:0;
   transition:height .2s ease;
 }
 .segment-inflow-paid{background:#2CA02C; color:#fff;}
@@ -169,7 +169,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* X-Achse */
 .vchart-x{
   position:absolute; left:52px; right:12px; bottom:8px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:8px;
+  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:28px;
 }
 .vchart-x .xlabel{font-size:11px; color:#6b7280; text-align:center; white-space:nowrap}
 
