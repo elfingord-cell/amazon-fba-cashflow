@@ -159,6 +159,19 @@ function toggleMonthCollapse(month) {
   else set.add(month);
 }
 
+function collapseAllMonths(months) {
+  const set = getCollapsedSet();
+  set.clear();
+  if (!Array.isArray(months)) return;
+  for (const month of months) {
+    if (month) set.add(month);
+  }
+}
+
+function expandAllMonths() {
+  getCollapsedSet().clear();
+}
+
 function aggregateEntries(entries) {
   const result = new Map();
   for (const entry of entries) {
@@ -390,6 +403,10 @@ function buildPLSectionHTML(data) {
           ${CONTROL_PRESETS.map(preset => `<button type="button" class="chip secondary" data-control="${preset.key}">${preset.label}</button>`).join("")}
         </div>
         <div class="pl-selection-count">Ausgewählt: ${selectionCount} ${selectionCount === 1 ? "Monat" : "Monate"}</div>
+        <div class="pl-collapse-controls" role="group" aria-label="Monatsdetails">
+          <button type="button" class="chip tertiary" data-collapse="expand">Alle öffnen</button>
+          <button type="button" class="chip tertiary" data-collapse="collapse">Alle schließen</button>
+        </div>
       </div>
       <div class="pl-month-chips" role="listbox" aria-label="Monate wählen">
         ${chips}
@@ -486,6 +503,16 @@ function attachPLHandlers(plRoot) {
       exportPLCsv();
     });
   }
+
+  plRoot.querySelectorAll(".pl-collapse-controls [data-collapse]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const action = btn.getAttribute("data-collapse");
+      const targetMonths = plState.selectedMonths || [];
+      if (action === "collapse") collapseAllMonths(targetMonths);
+      else expandAllMonths();
+      updatePLSection(plRoot);
+    });
+  });
 
   const cards = plRoot.querySelector(".pl-cards");
   if (cards) {
