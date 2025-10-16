@@ -40,6 +40,14 @@ function addMonths(yyyymm, delta) {
 function monthRange(startMonth, n) { const out = []; for (let i = 0; i < n; i++) out.push(addMonths(startMonth, i)); return out; }
 function toMonthKey(date) { const d = new Date(date); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 function addDays(date, days) { const d = new Date(date.getTime()); d.setDate(d.getDate() + (days || 0)); return d; }
+function isoDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+function monthEndFromKey(yyyymm) {
+  const [y, m] = yyyymm.split('-').map(Number);
+  return new Date(y, m, 0);
+}
 function anchorsFor(row) {
   const od = row.orderDate ? new Date(row.orderDate) : new Date();
   const prodDone = addDays(od, Number(row.prodDays || 0));
@@ -150,7 +158,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
   const prefix = ref ? `${prefixBase} ${ref}` : prefixBase;
   const events = [];
 
-  for (const ms of manual) {
+  for (const [idx, ms] of manual.entries()) {
     const pct = parsePct(ms.percent);
     const baseDate = anchors[ms.anchor || 'ORDER_DATE'] || anchors.ORDER_DATE;
     const due = addDays(baseDate, Number(ms.lagDays || 0));
@@ -161,6 +169,14 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       month: toMonthKey(due),
       direction: 'out',
       type: 'manual',
+      anchor: ms.anchor || 'ORDER_DATE',
+      lagDays: Number(ms.lagDays || 0) || 0,
+      percent: pct,
+      sourceType: prefixBase,
+      sourceNumber: ref,
+      sourceId: row.id,
+      id: `${row.id || prefixBase}-${idx}-${ms.id || 'manual'}`,
+      tooltip: `Fälligkeit: ${ms.anchor || 'ORDER_DATE'} + ${Number(ms.lagDays || 0)} Tage`,
     });
   }
 
@@ -191,6 +207,14 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         month: toMonthKey(due),
         direction: 'out',
         type: 'duty',
+        anchor: auto.anchor || 'ETA',
+        lagDays: Number(auto.lagDays || 0) || 0,
+        percent,
+        sourceType: prefixBase,
+        sourceNumber: ref,
+        sourceId: row.id,
+        id: `${row.id || prefixBase}-auto-duty`,
+        tooltip: `Zoll = ${percent}% × (Warenwert${dutyIncludeFreight ? ' + Fracht' : ''})`,
       });
       continue;
     }
@@ -209,6 +233,14 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         month: toMonthKey(due),
         direction: 'out',
         type: 'eust',
+        anchor: auto.anchor || 'ETA',
+        lagDays: Number(auto.lagDays || 0) || 0,
+        percent,
+        sourceType: prefixBase,
+        sourceNumber: ref,
+        sourceId: row.id,
+        id: `${row.id || prefixBase}-auto-eust`,
+        tooltip: `EUSt = ${percent}% × (Warenwert + Fracht + Zoll)`,
       });
       continue;
     }
@@ -228,6 +260,14 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         month: toMonthKey(due),
         direction: 'in',
         type: 'vat_refund',
+        anchor: auto.anchor || 'ETA',
+        lagMonths: months,
+        percent,
+        sourceType: prefixBase,
+        sourceNumber: ref,
+        sourceId: row.id,
+        id: `${row.id || prefixBase}-auto-vat`,
+        tooltip: `Erstattung am Monatsende nach ${months} Monaten`,
       });
       continue;
     }
@@ -244,6 +284,14 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         month: toMonthKey(due),
         direction: 'out',
         type: 'fx_fee',
+        anchor: auto.anchor || 'ORDER_DATE',
+        lagDays: Number(auto.lagDays || 0) || 0,
+        percent,
+        sourceType: prefixBase,
+        sourceNumber: ref,
+        sourceId: row.id,
+        id: `${row.id || prefixBase}-auto-fx`,
+        tooltip: `FX-Gebühr = ${percent}% × Warenwert`,
       });
     }
   }
@@ -259,37 +307,115 @@ export function computeSeries(state) {
   const months = monthRange(startMonth, horizon);
 
   const bucket = {};
-  months.forEach(m => { bucket[m] = { inflow: 0, outflow: 0, itemsIn: [], itemsOut: [] }; });
+  months.forEach(m => { bucket[m] = { entries: [] }; });
+
+  function pushEntry(month, entry) {
+    if (!bucket[month]) return;
+    bucket[month].entries.push(entry);
+  }
+
+  function baseEntry(overrides) {
+    const baseId = overrides.id || `${overrides.month || ''}-${overrides.label || ''}-${overrides.date || ''}`;
+    return {
+      id: baseId,
+      direction: overrides.direction || 'in',
+      amount: Math.abs(overrides.amount || 0),
+      label: overrides.label || '',
+      month: overrides.month,
+      date: overrides.date,
+      kind: overrides.kind,
+      group: overrides.group,
+      paid: overrides.paid === true,
+      source: overrides.source || null,
+      anchor: overrides.anchor,
+      lagDays: overrides.lagDays,
+      lagMonths: overrides.lagMonths,
+      percent: overrides.percent,
+      scenarioDelta: overrides.scenarioDelta || 0,
+      scenarioAmount: overrides.scenarioAmount || overrides.amount || 0,
+      meta: overrides.meta || {},
+      tooltip: overrides.tooltip,
+      sourceTab: overrides.sourceTab,
+      sourceNumber: overrides.sourceNumber,
+    };
+  }
 
   // Inflows
   (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
     const m = row.month; if (!bucket[m]) return;
     const amt = parseEuro(row.revenueEur) * (parsePct(row.payoutPct) / 100);
-    bucket[m].inflow += amt;
-    bucket[m].itemsIn.push({ kind: 'sales-payout', label: 'Sales×Payout', amount: amt });
+    const date = monthEndFromKey(m);
+    pushEntry(m, baseEntry({
+      id: `sales-${m}`,
+      direction: amt >= 0 ? 'in' : 'out',
+      amount: Math.abs(amt),
+      label: 'Amazon Payout',
+      month: m,
+      date: isoDate(date),
+      kind: 'sales-payout',
+      group: amt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+      source: 'sales',
+      sourceTab: '#eingaben',
+    }));
   });
 
   (Array.isArray(s.extras) ? s.extras : []).forEach(row => {
-    const m = row.month; if (!bucket[m]) return;
+    const month = row.month || (row.date ? toMonthKey(row.date) : null);
+    if (!month || !bucket[month]) return;
     const amt = parseEuro(row.amountEur);
-    bucket[m].inflow += amt;
-    bucket[m].itemsIn.push({ kind: 'extra', label: row.label || 'Extra', amount: amt });
+    const direction = amt >= 0 ? 'in' : 'out';
+    const entryMonth = month;
+    const dateSource = row.date ? new Date(row.date) : monthEndFromKey(entryMonth);
+    pushEntry(entryMonth, baseEntry({
+      id: `extra-${row.id || row.label || entryMonth}-${row.date || ''}`,
+      direction,
+      amount: Math.abs(amt),
+      label: row.label || 'Extra',
+      month: entryMonth,
+      date: isoDate(dateSource),
+      kind: 'extra',
+      group: direction === 'in' ? 'Extras (In)' : 'Extras (Out)',
+      source: 'extras',
+      sourceTab: '#eingaben',
+    }));
   });
 
   // Outflows (fixe Kosten)
   (Array.isArray(s.outgoings) ? s.outgoings : []).forEach(row => {
     const m = row.month; if (!bucket[m]) return;
     const amt = parseEuro(row.amountEur);
-    bucket[m].outflow += amt;
-    bucket[m].itemsOut.push({ kind: 'outgoing', label: row.label || 'Kosten', amount: amt });
+    const date = row.date ? new Date(row.date) : monthEndFromKey(m);
+    pushEntry(m, baseEntry({
+      id: `fix-${row.id || row.label || m}`,
+      direction: 'out',
+      amount: Math.abs(amt),
+      label: row.label || 'Kosten',
+      month: m,
+      date: isoDate(date),
+      kind: 'outgoing',
+      group: 'Fixkosten',
+      source: 'outgoings',
+      sourceTab: '#eingaben',
+    }));
   });
 
   (Array.isArray(s.dividends) ? s.dividends : []).forEach(row => {
     const month = row.month || (row.date ? toMonthKey(row.date) : null);
     if (!month || !bucket[month]) return;
     const amt = parseEuro(row.amountEur);
-    bucket[month].outflow += amt;
-    bucket[month].itemsOut.push({ kind: 'dividend', label: row.label || 'Dividende', amount: amt });
+    const date = row.date ? new Date(row.date) : monthEndFromKey(month);
+    pushEntry(month, baseEntry({
+      id: `div-${row.id || row.label || month}`,
+      direction: amt >= 0 ? 'out' : 'in',
+      amount: Math.abs(amt),
+      label: row.label || 'Dividende',
+      month,
+      date: isoDate(date),
+      kind: 'dividend',
+      group: 'Dividende & KapESt',
+      source: 'dividends',
+      sourceTab: '#eingaben',
+    }));
   });
 
   const settingsNorm = normaliseSettings(s.settings);
@@ -298,14 +424,31 @@ export function computeSeries(state) {
   (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
     expandOrderEvents(po, settingsNorm, 'PO', 'poNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
-      if (ev.direction === 'in') {
-        bucket[m].inflow += ev.amount;
-        bucket[m].itemsIn.push({ kind: ev.type === 'vat_refund' ? 'po-refund' : 'po', label: ev.label, amount: ev.amount });
-      } else {
-        bucket[m].outflow += ev.amount;
-        const kind = ev.type === 'manual' ? 'po' : 'po-import';
-        bucket[m].itemsOut.push({ kind, label: ev.label, amount: ev.amount });
-      }
+      const kind = ev.type === 'manual' ? 'po' : (ev.type === 'vat_refund' ? 'po-refund' : 'po-import');
+      const group =
+        kind === 'po'
+          ? 'PO/FO-Zahlungen'
+          : kind === 'po-refund'
+          ? 'Importkosten'
+          : 'Importkosten';
+      pushEntry(m, baseEntry({
+        id: ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`,
+        direction: ev.direction === 'in' ? 'in' : 'out',
+        amount: Math.abs(ev.amount || 0),
+        label: ev.label,
+        month: m,
+        date: isoDate(ev.due),
+        kind,
+        group,
+        source: 'po',
+        sourceTab: '#po',
+        anchor: ev.anchor,
+        lagDays: ev.lagDays,
+        lagMonths: ev.lagMonths,
+        percent: ev.percent,
+        sourceNumber: ev.sourceNumber || po.poNo,
+        tooltip: ev.tooltip,
+      }));
     });
   });
 
@@ -313,20 +456,50 @@ export function computeSeries(state) {
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
     expandOrderEvents(fo, settingsNorm, 'FO', 'foNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
-      if (ev.direction === 'in') {
-        bucket[m].inflow += ev.amount;
-        bucket[m].itemsIn.push({ kind: ev.type === 'vat_refund' ? 'fo-refund' : 'fo', label: ev.label, amount: ev.amount });
-      } else {
-        bucket[m].outflow += ev.amount;
-        const kind = ev.type === 'manual' ? 'fo' : 'fo-import';
-        bucket[m].itemsOut.push({ kind, label: ev.label, amount: ev.amount });
-      }
+      const kind = ev.type === 'manual' ? 'fo' : (ev.type === 'vat_refund' ? 'fo-refund' : 'fo-import');
+      const group =
+        kind === 'fo'
+          ? 'PO/FO-Zahlungen'
+          : kind === 'fo-refund'
+          ? 'Importkosten'
+          : 'Importkosten';
+      pushEntry(m, baseEntry({
+        id: ev.id || `fo-${fo.id || ''}-${ev.type}-${ev.month}`,
+        direction: ev.direction === 'in' ? 'in' : 'out',
+        amount: Math.abs(ev.amount || 0),
+        label: ev.label,
+        month: m,
+        date: isoDate(ev.due),
+        kind,
+        group,
+        source: 'fo',
+        sourceTab: '#fo',
+        anchor: ev.anchor,
+        lagDays: ev.lagDays,
+        lagMonths: ev.lagMonths,
+        percent: ev.percent,
+        sourceNumber: ev.sourceNumber || fo.foNo,
+        tooltip: ev.tooltip,
+      }));
     });
   });
 
   const series = months.map(m => {
     const b = bucket[m];
-    return { month: m, inflow: b.inflow, outflow: b.outflow, net: b.inflow - b.outflow, itemsIn: b.itemsIn, itemsOut: b.itemsOut };
+    const entries = b.entries || [];
+    const inflowEntries = entries.filter(e => e.direction === 'in');
+    const outflowEntries = entries.filter(e => e.direction === 'out');
+    const inflow = inflowEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
+    const outflow = outflowEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
+    return {
+      month: m,
+      inflow,
+      outflow,
+      net: inflow - outflow,
+      itemsIn: inflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),
+      itemsOut: outflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),
+      entries,
+    };
   });
 
   // KPIs
@@ -349,7 +522,23 @@ export function computeSeries(state) {
     firstNegativeMonth: firstNeg,
   };
 
-  return { startMonth, horizon, months, series, kpis };
+  let running = opening;
+  const breakdown = months.map((m, idx) => {
+    const row = series[idx];
+    const openingBalance = running;
+    running += row.net;
+    return {
+      month: m,
+      opening: openingBalance,
+      closing: running,
+      inflow: row.inflow,
+      outflow: row.outflow,
+      net: row.net,
+      entries: row.entries,
+    };
+  });
+
+  return { startMonth, horizon, months, series, kpis, breakdown };
 }
 
 // ---------- State ----------
