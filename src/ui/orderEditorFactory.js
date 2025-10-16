@@ -58,6 +58,35 @@ function clampPct(value) {
   return pct;
 }
 
+function highestNumberInfo(records, field) {
+  let best = null;
+  const regex = /(\d+)(?!.*\d)/;
+  for (const record of records || []) {
+    const raw = record?.[field];
+    if (!raw) continue;
+    const match = regex.exec(String(raw));
+    if (!match) continue;
+    const numeric = Number(match[1]);
+    if (!Number.isFinite(numeric)) continue;
+    if (!best || numeric > best.numeric) {
+      best = {
+        raw: String(raw),
+        numeric,
+        digits: match[1],
+        index: match.index ?? (String(raw).lastIndexOf(match[1])),
+      };
+    }
+  }
+
+  if (!best) return { raw: null, next: null };
+
+  const nextDigits = String(best.numeric + 1).padStart(best.digits.length, "0");
+  const prefix = best.raw.slice(0, best.index);
+  const suffix = best.raw.slice(best.index + best.digits.length);
+  const next = `${prefix}${nextDigits}${suffix}`;
+  return { raw: best.raw, next };
+}
+
 function addDays(date, days) {
   const d = new Date(date);
   d.setDate(d.getDate() + Number(days || 0));
@@ -327,6 +356,9 @@ export function renderOrderModule(root, config) {
     create: `${config.slug}-create`,
     remove: `${config.slug}-remove`,
   };
+  if (config.convertTo) {
+    ids.convert = `${config.slug}-convert`;
+  }
 
   root.innerHTML = `
     <section class="card">
@@ -369,6 +401,7 @@ export function renderOrderModule(root, config) {
       <div style="display:flex; gap:8px; margin-top:10px">
         <button class="btn" id="${ids.save}">Speichern</button>
         <button class="btn" id="${ids.create}">${config.newButtonLabel}</button>
+        ${config.convertTo ? `<button class="btn secondary" id="${ids.convert}">${config.convertTo.buttonLabel || "In PO umwandeln"}</button>` : ""}
         <button class="btn danger" id="${ids.remove}">Löschen</button>
       </div>
       <div id="${ids.preview}" class="po-event-preview"></div>
@@ -387,6 +420,7 @@ export function renderOrderModule(root, config) {
   const createBtn = $(`#${ids.create}`, root);
   const deleteBtn = $(`#${ids.remove}`, root);
   const preview = $(`#${ids.preview}`, root);
+  const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
   let editing = defaultRecord(config);
 
@@ -414,6 +448,7 @@ export function renderOrderModule(root, config) {
       && (parseDE(goodsInput.value) > 0)
       && !!orderDateInput.value;
     saveBtn.disabled = !ok;
+    if (convertBtn) convertBtn.disabled = !ok;
   }
 
   function syncEditingFromForm() {
@@ -476,6 +511,54 @@ export function renderOrderModule(root, config) {
     window.dispatchEvent(new Event("state:changed"));
   }
 
+  function convertRecord() {
+    if (!config.convertTo) return;
+    syncEditingFromForm();
+    if (saveBtn.disabled) {
+      window.alert("Bitte gültige Daten eingeben, bevor die FO umgewandelt wird.");
+      return;
+    }
+
+    saveRecord();
+
+    const st = loadState();
+    if (!Array.isArray(st[config.convertTo.entityKey])) st[config.convertTo.entityKey] = [];
+
+    const existing = st[config.convertTo.entityKey];
+    const info = highestNumberInfo(existing, config.convertTo.numberField);
+    const label = config.convertTo.targetLabel || config.convertTo.numberField || "PO";
+    const intro = info.raw
+      ? `Aktuell höchste ${label}-Nummer: ${info.raw}`
+      : `Es existiert noch keine ${label}-Nummer.`;
+    const suggestion = info.next || "";
+    const input = window.prompt(`${intro}\nBitte neue ${label}-Nummer eingeben:`, suggestion);
+    if (input == null) return;
+    const trimmed = input.trim();
+    if (!trimmed) {
+      window.alert("Bitte eine gültige Nummer eingeben.");
+      return;
+    }
+
+    const clash = existing.some(item => (item?.[config.convertTo.numberField] || "").toLowerCase() === trimmed.toLowerCase());
+    if (clash) {
+      window.alert(`${label}-Nummer ${trimmed} ist bereits vergeben.`);
+      return;
+    }
+
+    const copy = JSON.parse(JSON.stringify(editing));
+    const newRecord = {
+      ...copy,
+      id: Math.random().toString(36).slice(2, 9),
+      [config.convertTo.numberField]: trimmed,
+    };
+    delete newRecord[config.numberField];
+
+    existing.push(newRecord);
+    saveState(st);
+    window.dispatchEvent(new Event("state:changed"));
+    window.alert(`${label} ${trimmed} wurde angelegt.`);
+  }
+
   function onEdit(record) {
     loadForm(record);
   }
@@ -514,6 +597,7 @@ export function renderOrderModule(root, config) {
   saveBtn.addEventListener("click", saveRecord);
   createBtn.addEventListener("click", () => loadForm(defaultRecord(config)));
   deleteBtn.addEventListener("click", () => onDelete(editing));
+  if (convertBtn) convertBtn.addEventListener("click", convertRecord);
 
   renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
   loadForm(defaultRecord(config));
