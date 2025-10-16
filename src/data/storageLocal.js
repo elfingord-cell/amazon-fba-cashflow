@@ -2,7 +2,19 @@
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 
 const defaults = {
-  settings: { startMonth: "2025-02", horizonMonths: 18, openingBalance: "50.000,00" },
+  settings: {
+    startMonth: "2025-02",
+    horizonMonths: 18,
+    openingBalance: "50.000,00",
+    fxRate: "1,08",
+    fxFeePct: "0,5",
+    dutyRatePct: "6,5",
+    dutyIncludeFreight: true,
+    eustRatePct: "19",
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
+    freightLagDays: 14,
+  },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
   extras:    [ ],
   outgoings: [ ],

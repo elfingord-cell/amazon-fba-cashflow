@@ -101,6 +101,13 @@ thead th{font-size:12px; color:var(--muted); font-weight:700}
 .po-event-preview{margin-top:14px; padding:14px; border:1px solid rgba(15,27,45,.08); border-radius:var(--radius-md); background:rgba(232,247,242,0.6); display:flex; flex-direction:column; gap:8px;}
 .po-event-preview h4{margin:0; font-size:12px; letter-spacing:.4px; text-transform:uppercase; color:var(--muted);}
 
+.inline-checkbox{display:inline-flex; align-items:center; gap:6px; font-size:0.85rem; color:#4d5c68;}
+.inline-checkbox input{margin:0;}
+.checkbox-line{display:flex; align-items:center; min-height:44px;}
+tr.auto-ms.disabled{opacity:0.55;}
+tr.auto-ms.disabled input,
+tr.auto-ms.disabled select{opacity:0.8;}
+
 /* Footer */
 .footer{padding:10px 0; color:var(--muted)}
 

@@ -47,24 +47,208 @@ function anchorsFor(row) {
   const eta = addDays(etd, Number(row.transitDays || 0));
   return { ORDER_DATE: od, PROD_DONE: prodDone, ETD: etd, ETA: eta };
 }
-function expandMilestones(row) {
-  const base = anchorsFor(row);
+function addMonthsDate(date, months) {
+  const d = new Date(date.getTime());
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+
+function monthEndDate(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+function normaliseSettings(raw) {
+  const settings = raw || {};
+  return {
+    dutyRatePct: parsePct(settings.dutyRatePct ?? 0),
+    dutyIncludeFreight: settings.dutyIncludeFreight !== false,
+    eustRatePct: parsePct(settings.eustRatePct ?? 0),
+    vatRefundLagMonths: Number(settings.vatRefundLagMonths ?? 0) || 0,
+    vatRefundEnabled: settings.vatRefundEnabled !== false,
+    freightLagDays: Number(settings.freightLagDays ?? 0) || 0,
+    fxFeePct: parsePct(settings.fxFeePct ?? 0),
+  };
+}
+
+function normaliseAutoEvents(row, settings, manual) {
+  const order = ['duty', 'eust', 'vat_refund', 'fx_fee'];
+  const clones = Array.isArray(row.autoEvents)
+    ? row.autoEvents.filter(Boolean).map(evt => ({ ...evt }))
+    : [];
+  const map = new Map();
+  for (const evt of clones) {
+    if (!evt || !evt.type) continue;
+    if (!evt.id) evt.id = `auto-${evt.type}`;
+    map.set(evt.type, evt);
+  }
+
+  const firstManual = (manual || [])[0] || null;
+
+  function ensure(type, defaults) {
+    if (!map.has(type)) {
+      const created = { id: `auto-${type}`, type, ...defaults };
+      clones.push(created);
+      map.set(type, created);
+      return created;
+    }
+    const existing = map.get(type);
+    if (!existing.id) existing.id = `auto-${type}`;
+    for (const [key, value] of Object.entries(defaults)) {
+      if (existing[key] === undefined) existing[key] = value;
+    }
+    return existing;
+  }
+
+  ensure('duty', {
+    label: 'Zoll',
+    percent: settings.dutyRatePct,
+    anchor: 'ETA',
+    lagDays: settings.freightLagDays,
+  });
+  ensure('eust', {
+    label: 'EUSt',
+    percent: settings.eustRatePct,
+    anchor: 'ETA',
+    lagDays: settings.freightLagDays,
+  });
+  ensure('vat_refund', {
+    label: 'EUSt-Erstattung',
+    percent: 100,
+    anchor: 'ETA',
+    lagMonths: settings.vatRefundLagMonths,
+    enabled: settings.vatRefundEnabled,
+  });
+  ensure('fx_fee', {
+    label: 'FX-Gebühr',
+    percent: settings.fxFeePct,
+    anchor: (firstManual && firstManual.anchor) || 'ORDER_DATE',
+    lagDays: (firstManual && Number(firstManual.lagDays || 0)) || 0,
+  });
+
+  clones.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
+
+  if (row.ddp) {
+    for (const evt of clones) {
+      if (evt.type === 'duty' || evt.type === 'eust' || evt.type === 'vat_refund') {
+        evt.enabled = false;
+      }
+    }
+  }
+
+  return clones;
+}
+
+function expandOrderEvents(row, settings, entityLabel, numberField) {
+  if (!row) return [];
   const goods = parseEuro(row.goodsEur);
-  const ms = Array.isArray(row.milestones) ? row.milestones : [];
-  return ms.map(m => {
-    const pct = parsePct(m.percent);
-    const amount = goods * (pct / 100);
-    const d0 = base[m.anchor || 'ORDER_DATE'] || base.ORDER_DATE;
-    const due = addDays(d0, Number(m.lagDays || 0));
-    return {
-      label: m.label || '',
-      amount,
+  const freight = parseEuro(row.freightEur);
+  const anchors = anchorsFor(row);
+  const manual = Array.isArray(row.milestones) ? row.milestones : [];
+  const autoEvents = normaliseAutoEvents(row, settings, manual);
+  const prefixBase = entityLabel || 'PO';
+  const ref = row[numberField];
+  const prefix = ref ? `${prefixBase} ${ref}` : prefixBase;
+  const events = [];
+
+  for (const ms of manual) {
+    const pct = parsePct(ms.percent);
+    const baseDate = anchors[ms.anchor || 'ORDER_DATE'] || anchors.ORDER_DATE;
+    const due = addDays(baseDate, Number(ms.lagDays || 0));
+    events.push({
+      label: `${prefix}${ms.label ? ` – ${ms.label}` : ''}`,
+      amount: goods * (pct / 100),
       due,
       month: toMonthKey(due),
-      anchor: m.anchor || 'ORDER_DATE',
-      lagDays: Number(m.lagDays || 0),
-    };
-  });
+      direction: 'out',
+      type: 'manual',
+    });
+  }
+
+  const dutyIncludeFreight = row.dutyIncludeFreight !== false;
+  const dutyRate = parsePct(row.dutyRatePct ?? settings.dutyRatePct ?? 0);
+  const eustRate = parsePct(row.eustRatePct ?? settings.eustRatePct ?? 0);
+  const fxFeePct = parsePct(row.fxFeePct ?? settings.fxFeePct ?? 0);
+  const vatLagMonths = Number(row.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0);
+  const vatEnabled = row.vatRefundEnabled !== false;
+
+  const autoResults = {};
+  for (const auto of autoEvents) {
+    if (!auto || auto.enabled === false) continue;
+    const anchor = auto.anchor || 'ETA';
+    const baseDate = anchors[anchor] || anchors.ETA;
+    if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
+
+    if (auto.type === 'duty') {
+      const percent = parsePct(auto.percent ?? dutyRate);
+      const due = addDays(baseDate, Number(auto.lagDays || 0));
+      const baseValue = goods + (dutyIncludeFreight ? freight : 0);
+      const amount = baseValue * (percent / 100);
+      autoResults.duty = { amount, due };
+      events.push({
+        label: `${prefix} – ${auto.label || 'Zoll'}`,
+        amount,
+        due,
+        month: toMonthKey(due),
+        direction: 'out',
+        type: 'duty',
+      });
+      continue;
+    }
+
+    if (auto.type === 'eust') {
+      const percent = parsePct(auto.percent ?? eustRate);
+      const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
+      const baseValue = goods + freight + dutyAbs;
+      const due = addDays(baseDate, Number(auto.lagDays || 0));
+      const amount = baseValue * (percent / 100);
+      autoResults.eust = { amount, due };
+      events.push({
+        label: `${prefix} – ${auto.label || 'EUSt'}`,
+        amount,
+        due,
+        month: toMonthKey(due),
+        direction: 'out',
+        type: 'eust',
+      });
+      continue;
+    }
+
+    if (auto.type === 'vat_refund') {
+      const eust = autoResults.eust;
+      if (!vatEnabled || !eust || eust.amount === 0) continue;
+      const percent = parsePct(auto.percent ?? 100);
+      const months = Number(auto.lagMonths ?? vatLagMonths || 0);
+      const baseDay = addDays(eust.due || baseDate, Number(auto.lagDays || 0));
+      const due = monthEndDate(addMonthsDate(baseDay, months));
+      const amount = Math.abs(eust.amount) * (percent / 100);
+      events.push({
+        label: `${prefix} – ${auto.label || 'EUSt-Erstattung'}`,
+        amount,
+        due,
+        month: toMonthKey(due),
+        direction: 'in',
+        type: 'vat_refund',
+      });
+      continue;
+    }
+
+    if (auto.type === 'fx_fee') {
+      const percent = parsePct(auto.percent ?? fxFeePct);
+      if (!percent) continue;
+      const due = addDays(baseDate, Number(auto.lagDays || 0));
+      const amount = goods * (percent / 100);
+      events.push({
+        label: `${prefix} – ${auto.label || 'FX-Gebühr'}`,
+        amount,
+        due,
+        month: toMonthKey(due),
+        direction: 'out',
+        type: 'fx_fee',
+      });
+    }
+  }
+
+  return events;
 }
 
 // ---------- Aggregation ----------
@@ -108,21 +292,35 @@ export function computeSeries(state) {
     bucket[month].itemsOut.push({ kind: 'dividend', label: row.label || 'Dividende', amount: amt });
   });
 
-  // PO-Milestones
+  const settingsNorm = normaliseSettings(s.settings);
+
+  // PO-Events (Milestones & Importkosten)
   (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
-    expandMilestones(po).forEach(ev => {
+    expandOrderEvents(po, settingsNorm, 'PO', 'poNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
-      bucket[m].outflow += ev.amount;
-      bucket[m].itemsOut.push({ kind: 'po', label: (po.poNo ? `PO ${po.poNo}` : 'PO') + (ev.label ? ` – ${ev.label}` : ''), amount: ev.amount });
+      if (ev.direction === 'in') {
+        bucket[m].inflow += ev.amount;
+        bucket[m].itemsIn.push({ kind: ev.type === 'vat_refund' ? 'po-refund' : 'po', label: ev.label, amount: ev.amount });
+      } else {
+        bucket[m].outflow += ev.amount;
+        const kind = ev.type === 'manual' ? 'po' : 'po-import';
+        bucket[m].itemsOut.push({ kind, label: ev.label, amount: ev.amount });
+      }
     });
   });
 
-  // FO-Milestones
+  // FO-Events (Milestones & Importkosten)
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
-    expandMilestones(fo).forEach(ev => {
+    expandOrderEvents(fo, settingsNorm, 'FO', 'foNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
-      bucket[m].outflow += ev.amount;
-      bucket[m].itemsOut.push({ kind: 'fo', label: (fo.foNo ? `FO ${fo.foNo}` : 'FO') + (ev.label ? ` – ${ev.label}` : ''), amount: ev.amount });
+      if (ev.direction === 'in') {
+        bucket[m].inflow += ev.amount;
+        bucket[m].itemsIn.push({ kind: ev.type === 'vat_refund' ? 'fo-refund' : 'fo', label: ev.label, amount: ev.amount });
+      } else {
+        bucket[m].outflow += ev.amount;
+        const kind = ev.type === 'manual' ? 'fo' : 'fo-import';
+        bucket[m].itemsOut.push({ kind, label: ev.label, amount: ev.amount });
+      }
     });
   });
 

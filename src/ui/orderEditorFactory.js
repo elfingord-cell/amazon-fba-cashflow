@@ -58,6 +58,108 @@ function clampPct(value) {
   return pct;
 }
 
+function getSettings() {
+  const state = loadState();
+  const raw = (state && state.settings) || {};
+  return {
+    fxRate: parseDE(raw.fxRate ?? 0) || 0,
+    fxFeePct: parseDE(raw.fxFeePct ?? 0) || 0,
+    dutyRatePct: parseDE(raw.dutyRatePct ?? 0) || 0,
+    dutyIncludeFreight: raw.dutyIncludeFreight !== false,
+    eustRatePct: parseDE(raw.eustRatePct ?? 0) || 0,
+    vatRefundEnabled: raw.vatRefundEnabled !== false,
+    vatRefundLagMonths: Number(raw.vatRefundLagMonths ?? 0) || 0,
+    freightLagDays: Number(raw.freightLagDays ?? 0) || 0,
+  };
+}
+
+function addMonths(date, months) {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const target = new Date(Date.UTC(year, month + months, 1));
+  return target;
+}
+
+function monthEnd(date) {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  return new Date(Date.UTC(year, month + 1, 0));
+}
+
+function ensureAutoEvents(record, settings, manualMilestones = []) {
+  if (!record.autoEvents) record.autoEvents = [];
+  const map = new Map(record.autoEvents.map(evt => [evt.type, evt]));
+  const ensure = (type, defaults) => {
+    if (!map.has(type)) {
+      const created = { id: `auto-${type}`, type, ...defaults };
+      record.autoEvents.push(created);
+      map.set(type, created);
+    } else {
+      const current = map.get(type);
+      Object.assign(current, { type, ...defaults, ...current });
+    }
+    return map.get(type);
+  };
+
+  ensure("duty", {
+    label: "Zoll",
+    percent: settings.dutyRatePct || 0,
+    anchor: "ETA",
+    lagDays: settings.freightLagDays || 0,
+    enabled: true,
+  });
+
+  ensure("eust", {
+    label: "EUSt",
+    percent: settings.eustRatePct || 0,
+    anchor: "ETA",
+    lagDays: settings.freightLagDays || 0,
+    enabled: true,
+  });
+
+  ensure("vat_refund", {
+    label: "EUSt-Erstattung",
+    percent: 100,
+    anchor: "ETA",
+    lagMonths: settings.vatRefundLagMonths || 0,
+    enabled: settings.vatRefundEnabled !== false,
+  });
+
+  const firstMs = manualMilestones[0];
+  ensure("fx_fee", {
+    label: "FX-Gebühr",
+    percent: settings.fxFeePct || 0,
+    anchor: firstMs?.anchor || "ORDER_DATE",
+    lagDays: firstMs?.lagDays || 0,
+    enabled: settings.fxFeePct > 0,
+  });
+
+  record.autoEvents = [
+    "duty",
+    "eust",
+    "vat_refund",
+    "fx_fee",
+  ].map(type => map.get(type)).filter(Boolean);
+
+  if (record.ddp) {
+    for (const evt of record.autoEvents) {
+      if (evt.type === "duty" || evt.type === "eust" || evt.type === "vat_refund") {
+        if (evt.enabled !== false) evt._ddpEnabledBackup = evt.enabled !== false;
+        evt.enabled = false;
+      }
+    }
+  } else {
+    for (const evt of record.autoEvents) {
+      if ((evt.type === "duty" || evt.type === "eust" || evt.type === "vat_refund") && evt._ddpEnabledBackup != null) {
+        evt.enabled = evt._ddpEnabledBackup;
+        delete evt._ddpEnabledBackup;
+      }
+    }
+  }
+
+  return record.autoEvents;
+}
+
 function highestNumberInfo(records, field) {
   let best = null;
   const regex = /(\d+)(?!.*\d)/;
@@ -101,21 +203,31 @@ function isoDate(date) {
   return normalised.toISOString().slice(0, 10);
 }
 
-function defaultRecord(config) {
+function defaultRecord(config, settings = getSettings()) {
   const today = new Date().toISOString().slice(0, 10);
-  return {
+  const record = {
     id: Math.random().toString(36).slice(2, 9),
     [config.numberField]: "",
     orderDate: today,
     goodsEur: "0,00",
+    freightEur: "0,00",
     prodDays: 60,
     transport: "sea",
     transitDays: 60,
+    ddp: false,
+    dutyRatePct: settings.dutyRatePct || 0,
+    dutyIncludeFreight: settings.dutyIncludeFreight !== false,
+    eustRatePct: settings.eustRatePct || 0,
+    vatRefundLagMonths: settings.vatRefundLagMonths || 0,
+    vatRefundEnabled: settings.vatRefundEnabled !== false,
+    fxFeePct: settings.fxFeePct || 0,
     milestones: [
       { id: Math.random().toString(36).slice(2, 9), label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
       { id: Math.random().toString(36).slice(2, 9), label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
     ],
   };
+  ensureAutoEvents(record, settings, record.milestones);
+  return record;
 }
 
 function anchorDate(record, anchor) {
@@ -134,17 +246,22 @@ function msSum100(ms) {
   return Math.round(sum * 10) / 10;
 }
 
-function orderEvents(record, config) {
+function orderEvents(record, config, settings) {
   const goods = parseDE(record.goodsEur);
+  const freight = parseDE(record.freightEur);
+  const prefix = record[config.numberField] ? `${config.entityLabel} ${record[config.numberField]} – ` : "";
+  const manual = Array.isArray(record.milestones) ? record.milestones : [];
+  const auto = ensureAutoEvents(record, settings, manual);
+
+  const events = [];
   const base = {
     orderDate: record.orderDate,
     prodDays: Number(record.prodDays || 0),
     transport: record.transport,
     transitDays: Number(record.transitDays || 0),
   };
-  const prefix = record[config.numberField] ? `${config.entityLabel} ${record[config.numberField]} – ` : "";
 
-  const events = (record.milestones || []).map(m => {
+  const manualComputed = manual.map(m => {
     const pct = clampPct(m.percent);
     const baseDate = anchorDate(base, m.anchor || "ORDER_DATE");
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) return null;
@@ -158,8 +275,97 @@ function orderEvents(record, config) {
       label: `${prefix}${m.label || "Zahlung"}`.trim(),
       date: dueIso,
       amount,
+      type: "manual",
+      due,
     };
-  });
+  }).filter(Boolean);
+
+  events.push(...manualComputed.map(evt => ({ id: evt.id, label: evt.label, date: evt.date, amount: evt.amount })));
+
+  const dutyIncludeFreight = record.dutyIncludeFreight !== false;
+  const stateDutyRate = typeof record.dutyRatePct === "number" ? record.dutyRatePct : clampPct(record.dutyRatePct);
+  const stateEustRate = typeof record.eustRatePct === "number" ? record.eustRatePct : clampPct(record.eustRatePct);
+  const stateFxFee = typeof record.fxFeePct === "number" ? record.fxFeePct : clampPct(record.fxFeePct);
+  const vatLagMonths = Number(record.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0) || 0;
+
+  const autoResults = {};
+  for (const autoEvt of auto) {
+    if (!autoEvt || autoEvt.enabled === false) continue;
+    const anchor = autoEvt.anchor || "ETA";
+    const baseDate = anchorDate(base, anchor);
+    if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
+
+    if (autoEvt.type === "duty") {
+      const percent = clampPct(autoEvt.percent ?? stateDutyRate ?? settings.dutyRatePct ?? 0);
+      const baseValue = goods + (dutyIncludeFreight ? freight : 0);
+      const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+      const amount = -(baseValue * (percent / 100));
+      const dueIso = isoDate(due);
+      if (!dueIso) continue;
+      autoResults.duty = { amount, due };
+      events.push({
+        id: autoEvt.id,
+        label: `${prefix}${autoEvt.label || "Zoll"}`.trim(),
+        date: dueIso,
+        amount,
+      });
+      continue;
+    }
+
+    if (autoEvt.type === "eust") {
+      const percent = clampPct(autoEvt.percent ?? stateEustRate ?? settings.eustRatePct ?? 0);
+      const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
+      const baseValue = goods + freight + dutyAbs;
+      const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+      const amount = -(baseValue * (percent / 100));
+      const dueIso = isoDate(due);
+      if (!dueIso) continue;
+      autoResults.eust = { amount, due };
+      events.push({
+        id: autoEvt.id,
+        label: `${prefix}${autoEvt.label || "EUSt"}`.trim(),
+        date: dueIso,
+        amount,
+      });
+      continue;
+    }
+
+    if (autoEvt.type === "vat_refund") {
+      const eust = autoResults.eust;
+      if (!eust || eust.amount === 0 || record.vatRefundEnabled === false) continue;
+      const percent = clampPct(autoEvt.percent ?? 100);
+      const months = Number(autoEvt.lagMonths ?? vatLagMonths || 0);
+      const baseDay = addDays(eust.due || baseDate, Number(autoEvt.lagDays || 0));
+      const shifted = addMonths(baseDay, months);
+      const due = monthEnd(shifted);
+      const dueIso = isoDate(due);
+      if (!dueIso) continue;
+      const amount = Math.abs(eust.amount) * (percent / 100);
+      autoResults.vat = { amount, due };
+      events.push({
+        id: autoEvt.id,
+        label: `${prefix}${autoEvt.label || "EUSt-Erstattung"}`.trim(),
+        date: dueIso,
+        amount,
+      });
+      continue;
+    }
+
+    if (autoEvt.type === "fx_fee") {
+      const percent = clampPct(autoEvt.percent ?? stateFxFee ?? settings.fxFeePct ?? 0);
+      const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+      const dueIso = isoDate(due);
+      if (!dueIso) continue;
+      const amount = -(goods * (percent / 100));
+      events.push({
+        id: autoEvt.id,
+        label: `${prefix}${autoEvt.label || "FX"}`.trim(),
+        date: dueIso,
+        amount,
+      });
+      continue;
+    }
+  }
 
   return events
     .filter(evt => evt && Number.isFinite(evt.amount))
@@ -222,9 +428,13 @@ function renderList(container, records, config, onEdit, onDelete) {
   container.append(table);
 }
 
-function renderMsTable(container, record, onChange, focusInfo) {
+function renderMsTable(container, record, config, onChange, focusInfo, settings) {
   container.innerHTML = "";
-  container.append(el("div", { class: "muted", style: "margin-bottom:6px" }, ["Zahlungsmeilensteine (Summe muss 100 % sein)"]));
+  container.append(el("div", { class: "muted", style: "margin-bottom:6px" }, ["Zahlungsmeilensteine & Importkosten"]));
+
+  ensureAutoEvents(record, settings, record.milestones || []);
+  const previewEvents = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
+  const previewMap = new Map(previewEvents.map(evt => [evt.id, evt]));
 
   const table = el("table", {}, [
     el("thead", {}, [
@@ -232,78 +442,172 @@ function renderMsTable(container, record, onChange, focusInfo) {
         el("th", {}, ["Label"]),
         el("th", {}, ["%"]),
         el("th", {}, ["Anker"]),
-        el("th", {}, ["Lag (Tage)"]),
+        el("th", {}, ["Lag"]),
         el("th", {}, ["Datum"]),
         el("th", {}, ["Betrag (€)"]),
-        el("th", {}, [""]),
+        el("th", {}, ["Aktion"]),
       ]),
     ]),
-    el("tbody", {}, (record.milestones || []).map((ms, index) => {
-      const goods = parseDE(record.goodsEur);
-      const pct = clampPct(ms.percent);
-      const base = anchorDate(record, ms.anchor || "ORDER_DATE");
-      const due = addDays(base, Number(ms.lagDays || 0));
-      const dueIso = isoDate(due);
-      const amount = goods * (pct / 100);
-
-      return el("tr", { dataset: { msId: ms.id } }, [
-        el("td", {}, [
-          el("input", {
-            value: ms.label || "",
-            dataset: { field: "label" },
-            oninput: (e) => { ms.label = e.target.value; onChange(); },
-            onblur: (e) => { ms.label = e.target.value.trim(); onChange(); },
-          }),
-        ]),
-        el("td", {}, [
-          el("input", {
-            type: "text",
-            inputmode: "decimal",
-            value: fmtPercent(ms.percent ?? 0),
-            dataset: { field: "percent" },
-            oninput: (e) => { ms.percent = e.target.value; onChange(); },
-            onblur: (e) => {
-              const next = clampPct(e.target.value);
-              ms.percent = next;
-              e.target.value = fmtPercent(next);
-              onChange();
-            },
-          }),
-        ]),
-        el("td", {}, [
-          (() => {
-            const select = el("select", { dataset: { field: "anchor" }, onchange: (e) => { ms.anchor = e.target.value; onChange(); } }, [
-              el("option", { value: "ORDER_DATE" }, ["ORDER_DATE"]),
-              el("option", { value: "PROD_DONE" }, ["PROD_DONE"]),
-              el("option", { value: "ETD" }, ["ETD"]),
-              el("option", { value: "ETA" }, ["ETA"]),
-            ]);
-            select.value = ms.anchor || "ORDER_DATE";
-            return select;
-          })(),
-        ]),
-        el("td", {}, [
-          el("input", {
-            type: "number",
-            value: String(ms.lagDays || 0),
-            dataset: { field: "lag" },
-            oninput: (e) => { ms.lagDays = Number(e.target.value || 0); onChange(); },
-            onblur: (e) => {
-              const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
-              e.target.value = String(next);
-              ms.lagDays = next;
-              onChange();
-            },
-          }),
-        ]),
-        el("td", { dataset: { role: "ms-date" } }, [dueIso ?? "—"]),
-        el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
-        el("td", {}, [
-          el("button", { class: "btn danger", onclick: () => { record.milestones.splice(index, 1); onChange(); } }, ["Entfernen"]),
-        ]),
-      ]);
-    })),
   ]);
+
+  const tbody = el("tbody", {});
+  table.append(tbody);
+
+  const goods = parseDE(record.goodsEur);
+
+  (record.milestones || []).forEach((ms, index) => {
+    const computed = previewMap.get(ms.id);
+    const dueText = computed?.date ?? "—";
+    const amount = computed?.amount ?? -(goods * (clampPct(ms.percent) / 100));
+
+    const row = el("tr", { dataset: { msId: ms.id } }, [
+      el("td", {}, [
+        el("input", {
+          value: ms.label || "",
+          dataset: { field: "label" },
+          oninput: (e) => { ms.label = e.target.value; onChange(); },
+          onblur: (e) => { ms.label = e.target.value.trim(); onChange(); },
+        }),
+      ]),
+      el("td", {}, [
+        el("input", {
+          type: "text",
+          inputmode: "decimal",
+          value: fmtPercent(ms.percent ?? 0),
+          dataset: { field: "percent" },
+          oninput: (e) => { ms.percent = e.target.value; onChange(); },
+          onblur: (e) => {
+            const next = clampPct(e.target.value);
+            ms.percent = next;
+            e.target.value = fmtPercent(next);
+            onChange();
+          },
+        }),
+      ]),
+      el("td", {}, [
+        (() => {
+          const select = el("select", { dataset: { field: "anchor" }, onchange: (e) => { ms.anchor = e.target.value; onChange(); } }, [
+            el("option", { value: "ORDER_DATE" }, ["ORDER_DATE"]),
+            el("option", { value: "PROD_DONE" }, ["PROD_DONE"]),
+            el("option", { value: "ETD" }, ["ETD"]),
+            el("option", { value: "ETA" }, ["ETA"]),
+          ]);
+          select.value = ms.anchor || "ORDER_DATE";
+          return select;
+        })(),
+      ]),
+      el("td", {}, [
+        el("input", {
+          type: "number",
+          value: String(ms.lagDays || 0),
+          dataset: { field: "lag" },
+          oninput: (e) => { ms.lagDays = Number(e.target.value || 0); onChange(); },
+          onblur: (e) => {
+            const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
+            e.target.value = String(next);
+            ms.lagDays = next;
+            onChange();
+          },
+        }),
+      ]),
+      el("td", { dataset: { role: "ms-date" } }, [dueText ?? "—"]),
+      el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
+      el("td", {}, [
+        el("button", { class: "btn danger", onclick: () => { record.milestones.splice(index, 1); onChange(); } }, ["Entfernen"]),
+      ]),
+    ]);
+    tbody.append(row);
+  });
+
+  (record.autoEvents || []).forEach((autoEvt) => {
+    const computed = previewMap.get(autoEvt.id);
+    const dueText = computed?.date ?? "—";
+    const amount = computed?.amount ?? 0;
+    const active = autoEvt.enabled !== false;
+    const lagValue = autoEvt.type === "vat_refund"
+      ? Number(autoEvt.lagMonths ?? record.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0)
+      : Number(autoEvt.lagDays || 0);
+
+    const row = el("tr", { dataset: { msId: autoEvt.id }, class: `auto-ms${active ? "" : " disabled"}` }, [
+      el("td", {}, [
+        el("input", {
+          value: autoEvt.label || "",
+          dataset: { field: "label" },
+          oninput: (e) => { autoEvt.label = e.target.value; onChange(); },
+          onblur: (e) => { autoEvt.label = e.target.value.trim(); onChange(); },
+        }),
+      ]),
+      el("td", {}, [
+        el("input", {
+          type: "text",
+          inputmode: "decimal",
+          value: fmtPercent(autoEvt.percent ?? 0),
+          dataset: { field: "percent" },
+          oninput: (e) => { autoEvt.percent = e.target.value; onChange(); },
+          onblur: (e) => {
+            const next = clampPct(e.target.value);
+            autoEvt.percent = next;
+            e.target.value = fmtPercent(next);
+            onChange();
+          },
+        }),
+      ]),
+      el("td", {}, [
+        (() => {
+          const select = el("select", { dataset: { field: "anchor" }, onchange: (e) => { autoEvt.anchor = e.target.value; onChange(); } }, [
+            el("option", { value: "ORDER_DATE" }, ["ORDER_DATE"]),
+            el("option", { value: "PROD_DONE" }, ["PROD_DONE"]),
+            el("option", { value: "ETD" }, ["ETD"]),
+            el("option", { value: "ETA" }, ["ETA"]),
+          ]);
+          select.value = autoEvt.anchor || "ETA";
+          return select;
+        })(),
+      ]),
+      el("td", {}, [
+        autoEvt.type === "vat_refund"
+          ? el("input", {
+              type: "number",
+              min: "0",
+              value: String(lagValue),
+              dataset: { field: "lagMonths" },
+              oninput: (e) => { autoEvt.lagMonths = Number(e.target.value || 0); onChange(); },
+            })
+          : el("input", {
+              type: "number",
+              value: String(lagValue),
+              dataset: { field: "lag" },
+              oninput: (e) => { autoEvt.lagDays = Number(e.target.value || 0); onChange(); },
+              onblur: (e) => {
+                const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
+                e.target.value = String(next);
+                autoEvt.lagDays = next;
+                onChange();
+              },
+            }),
+      ]),
+      el("td", { dataset: { role: "ms-date" } }, [dueText ?? "—"]),
+      el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
+      el("td", {}, [
+        el("label", { class: "inline-checkbox" }, [
+          el("input", {
+            type: "checkbox",
+            checked: active,
+            onchange: (e) => {
+              const checked = e.target.checked;
+              autoEvt.enabled = checked;
+              if (!checked) autoEvt._ddpEnabledBackup = false;
+              else delete autoEvt._ddpEnabledBackup;
+              onChange();
+            },
+          }),
+          " Aktiv",
+        ]),
+      ]),
+    ]);
+
+    tbody.append(row);
+  });
 
   container.append(table);
 
@@ -347,9 +651,17 @@ export function renderOrderModule(root, config) {
     number: `${config.slug}-number`,
     orderDate: `${config.slug}-order-date`,
     goods: `${config.slug}-goods`,
+    freight: `${config.slug}-freight`,
     prod: `${config.slug}-prod`,
     transport: `${config.slug}-transport`,
     transit: `${config.slug}-transit`,
+    dutyRate: `${config.slug}-duty-rate`,
+    dutyInclude: `${config.slug}-duty-include`,
+    eustRate: `${config.slug}-eust-rate`,
+    fxFee: `${config.slug}-fx-fee`,
+    vatLag: `${config.slug}-vat-lag`,
+    vatToggle: `${config.slug}-vat-toggle`,
+    ddp: `${config.slug}-ddp`,
     msZone: `${config.slug}-ms-zone`,
     preview: `${config.slug}-preview`,
     save: `${config.slug}-save`,
@@ -381,6 +693,10 @@ export function renderOrderModule(root, config) {
           <input id="${ids.goods}" placeholder="z. B. 8.000,00" />
         </div>
         <div>
+          <label>Fracht (€)</label>
+          <input id="${ids.freight}" placeholder="z. B. 4.800,00" />
+        </div>
+        <div>
           <label>Produktionstage</label>
           <input id="${ids.prod}" type="number" value="60" />
         </div>
@@ -395,6 +711,29 @@ export function renderOrderModule(root, config) {
         <div>
           <label>Transit-Tage</label>
           <input id="${ids.transit}" type="number" value="60" />
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:12px">
+        <div>
+          <label>Zollsatz (%)</label>
+          <input id="${ids.dutyRate}" placeholder="z. B. 6,5" />
+          <label class="inline-checkbox"><input type="checkbox" id="${ids.dutyInclude}" /> Freight einbeziehen</label>
+        </div>
+        <div>
+          <label>EUSt (%)</label>
+          <input id="${ids.eustRate}" placeholder="z. B. 19" />
+        </div>
+        <div>
+          <label>FX-Gebühr (%)</label>
+          <input id="${ids.fxFee}" placeholder="z. B. 0,5" />
+        </div>
+        <div>
+          <label>EUSt-Erstattung (Monate)</label>
+          <input id="${ids.vatLag}" type="number" min="0" step="1" />
+          <label class="inline-checkbox"><input type="checkbox" id="${ids.vatToggle}" /> Erstattung aktiv</label>
+        </div>
+        <div class="checkbox-line">
+          <label><input type="checkbox" id="${ids.ddp}" /> DDP (Importkosten enthalten)</label>
         </div>
       </div>
       <div id="${ids.msZone}" style="margin-top:10px"></div>
@@ -412,9 +751,17 @@ export function renderOrderModule(root, config) {
   const numberInput = $(`#${ids.number}`, root);
   const orderDateInput = $(`#${ids.orderDate}`, root);
   const goodsInput = $(`#${ids.goods}`, root);
+  const freightInput = $(`#${ids.freight}`, root);
   const prodInput = $(`#${ids.prod}`, root);
   const transportSelect = $(`#${ids.transport}`, root);
   const transitInput = $(`#${ids.transit}`, root);
+  const dutyRateInput = $(`#${ids.dutyRate}`, root);
+  const dutyIncludeToggle = $(`#${ids.dutyInclude}`, root);
+  const eustRateInput = $(`#${ids.eustRate}`, root);
+  const fxFeeInput = $(`#${ids.fxFee}`, root);
+  const vatLagInput = $(`#${ids.vatLag}`, root);
+  const vatToggle = $(`#${ids.vatToggle}`, root);
+  const ddpToggle = $(`#${ids.ddp}`, root);
   const msZone = $(`#${ids.msZone}`, root);
   const saveBtn = $(`#${ids.save}`, root);
   const createBtn = $(`#${ids.create}`, root);
@@ -422,20 +769,19 @@ export function renderOrderModule(root, config) {
   const preview = $(`#${ids.preview}`, root);
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
-  let editing = defaultRecord(config);
+  let editing = defaultRecord(config, getSettings());
 
-  function updatePreview() {
-    const draft = {
-      id: editing.id,
+  function updatePreview(settings) {
+    const draft = JSON.parse(JSON.stringify({
+      ...editing,
       [config.numberField]: numberInput.value,
       orderDate: orderDateInput.value,
       goodsEur: goodsInput.value,
       prodDays: Number(prodInput.value || 0),
       transport: transportSelect.value,
       transitDays: Number(transitInput.value || 0),
-      milestones: editing.milestones,
-    };
-    const events = orderEvents(draft, config);
+    }));
+    const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
     preview.append(el("h4", {}, ["Ereignisse"]));
     preview.append(buildEventList(events));
@@ -455,9 +801,17 @@ export function renderOrderModule(root, config) {
     editing[config.numberField] = numberInput.value.trim();
     editing.orderDate = orderDateInput.value;
     editing.goodsEur = fmtCurrencyInput(goodsInput.value);
+    editing.freightEur = fmtCurrencyInput(freightInput.value);
     editing.prodDays = Number(prodInput.value || 0);
     editing.transport = transportSelect.value;
     editing.transitDays = Number(transitInput.value || 0);
+    editing.dutyRatePct = clampPct(dutyRateInput.value);
+    editing.dutyIncludeFreight = dutyIncludeToggle.checked;
+    editing.eustRatePct = clampPct(eustRateInput.value);
+    editing.fxFeePct = clampPct(fxFeeInput.value);
+    editing.vatRefundLagMonths = Number(vatLagInput.value || 0);
+    editing.vatRefundEnabled = vatToggle.checked;
+    editing.ddp = ddpToggle.checked;
   }
 
   function onAnyChange(opts = {}) {
@@ -479,21 +833,33 @@ export function renderOrderModule(root, config) {
       transitInput.value = editing.transport === "air" ? "10" : (editing.transport === "rail" ? "30" : "60");
     }
     syncEditingFromForm();
-    renderMsTable(msZone, editing, onAnyChange, focusInfo);
-    updatePreview();
+    const settings = getSettings();
+    ensureAutoEvents(editing, settings, editing.milestones);
+    renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
+    updatePreview(settings);
     updateSaveEnabled();
   }
 
   function loadForm(record) {
+    const settings = getSettings();
     editing = JSON.parse(JSON.stringify(record));
+    ensureAutoEvents(editing, settings, editing.milestones);
     numberInput.value = editing[config.numberField] || "";
     orderDateInput.value = editing.orderDate || new Date().toISOString().slice(0, 10);
     goodsInput.value = fmtCurrencyInput(editing.goodsEur ?? "0,00");
+    freightInput.value = fmtCurrencyInput(editing.freightEur ?? "0,00");
     prodInput.value = String(editing.prodDays ?? 60);
     transportSelect.value = editing.transport || "sea";
     transitInput.value = String(editing.transitDays ?? (editing.transport === "air" ? 10 : editing.transport === "rail" ? 30 : 60));
-    renderMsTable(msZone, editing, onAnyChange);
-    updatePreview();
+    dutyRateInput.value = fmtPercent(editing.dutyRatePct ?? settings.dutyRatePct ?? 0);
+    dutyIncludeToggle.checked = editing.dutyIncludeFreight !== false;
+    eustRateInput.value = fmtPercent(editing.eustRatePct ?? settings.eustRatePct ?? 0);
+    fxFeeInput.value = fmtPercent(editing.fxFeePct ?? settings.fxFeePct ?? 0);
+    vatLagInput.value = String(editing.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0);
+    vatToggle.checked = editing.vatRefundEnabled !== false;
+    ddpToggle.checked = !!editing.ddp;
+    renderMsTable(msZone, editing, config, onAnyChange, null, settings);
+    updatePreview(settings);
     updateSaveEnabled();
   }
 
@@ -572,7 +938,7 @@ export function renderOrderModule(root, config) {
     });
     saveState(st);
     renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
-    loadForm(defaultRecord(config));
+    loadForm(defaultRecord(config, getSettings()));
     window.dispatchEvent(new Event("state:changed"));
   }
 
@@ -581,6 +947,33 @@ export function renderOrderModule(root, config) {
     goodsInput.value = fmtCurrencyInput(goodsInput.value);
     onAnyChange();
   });
+  freightInput.addEventListener("input", onAnyChange);
+  freightInput.addEventListener("blur", () => {
+    freightInput.value = fmtCurrencyInput(freightInput.value);
+    onAnyChange();
+  });
+  dutyRateInput.addEventListener("input", onAnyChange);
+  dutyRateInput.addEventListener("blur", () => {
+    const next = clampPct(dutyRateInput.value);
+    dutyRateInput.value = fmtPercent(next);
+    onAnyChange();
+  });
+  dutyIncludeToggle.addEventListener("change", onAnyChange);
+  eustRateInput.addEventListener("input", onAnyChange);
+  eustRateInput.addEventListener("blur", () => {
+    const next = clampPct(eustRateInput.value);
+    eustRateInput.value = fmtPercent(next);
+    onAnyChange();
+  });
+  fxFeeInput.addEventListener("input", onAnyChange);
+  fxFeeInput.addEventListener("blur", () => {
+    const next = clampPct(fxFeeInput.value);
+    fxFeeInput.value = fmtPercent(next);
+    onAnyChange();
+  });
+  vatLagInput.addEventListener("input", onAnyChange);
+  vatToggle.addEventListener("change", onAnyChange);
+  ddpToggle.addEventListener("change", onAnyChange);
   prodInput.addEventListener("input", (e) => { editing.prodDays = Number(e.target.value || 0); onAnyChange(); });
   transportSelect.addEventListener("change", (e) => {
     editing.transport = e.target.value;
@@ -595,12 +988,12 @@ export function renderOrderModule(root, config) {
   orderDateInput.addEventListener("input", onAnyChange);
 
   saveBtn.addEventListener("click", saveRecord);
-  createBtn.addEventListener("click", () => loadForm(defaultRecord(config)));
+  createBtn.addEventListener("click", () => loadForm(defaultRecord(config, getSettings())));
   deleteBtn.addEventListener("click", () => onDelete(editing));
   if (convertBtn) convertBtn.addEventListener("click", convertRecord);
 
   renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
-  loadForm(defaultRecord(config));
+  loadForm(defaultRecord(config, getSettings()));
 }
 
 export const orderEditorUtils = {

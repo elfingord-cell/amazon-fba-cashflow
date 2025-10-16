@@ -9,6 +9,11 @@ function buildDemoState(){
     openingBalance: "75.000,00",
     fxRate: 1.08,
     fxFeePct: "0,6",
+    dutyRatePct: "6,5",
+    dutyIncludeFreight: true,
+    eustRatePct: "19",
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
     freightLagDays: 14,
   };
 
