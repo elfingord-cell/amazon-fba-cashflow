@@ -135,9 +135,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* Balkenbereich – gleiche Höhe/Offsets wie Raster/Y-Skala */
 .vchart-bars{
   position:absolute; left:52px; right:12px; top:10px; bottom:40px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch; gap:12px;
+  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch; gap:22px;
 }
-.vbar-group{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; align-items:stretch; height:100%;}
+.vbar-group{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:3px; align-items:stretch; height:100%;}
 .vbar-wrap{position:relative; display:flex; align-items:stretch; justify-content:center; height:100%}
 .vbar{
   position:absolute;
