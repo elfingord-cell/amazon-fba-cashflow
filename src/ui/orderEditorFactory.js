@@ -334,7 +334,7 @@ function orderEvents(record, config, settings) {
       const eust = autoResults.eust;
       if (!eust || eust.amount === 0 || record.vatRefundEnabled === false) continue;
       const percent = clampPct(autoEvt.percent ?? 100);
-      const months = Number(autoEvt.lagMonths ?? vatLagMonths || 0);
+      const months = Number((autoEvt.lagMonths ?? vatLagMonths) || 0);
       const baseDay = addDays(eust.due || baseDate, Number(autoEvt.lagDays || 0));
       const shifted = addMonths(baseDay, months);
       const due = monthEnd(shifted);

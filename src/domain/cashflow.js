@@ -217,7 +217,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const eust = autoResults.eust;
       if (!vatEnabled || !eust || eust.amount === 0) continue;
       const percent = parsePct(auto.percent ?? 100);
-      const months = Number(auto.lagMonths ?? vatLagMonths || 0);
+      const months = Number((auto.lagMonths ?? vatLagMonths) || 0);
       const baseDay = addDays(eust.due || baseDate, Number(auto.lagDays || 0));
       const due = monthEndDate(addMonthsDate(baseDay, months));
       const amount = Math.abs(eust.amount) * (percent / 100);
