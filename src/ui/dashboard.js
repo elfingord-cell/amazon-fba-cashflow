@@ -594,10 +594,30 @@ export async function render(root) {
   const opening = Number(kpis.opening || 0);
   const closing = breakdown.map(b => b.closing);
   const monthOpening = breakdown.map(b => b.opening);
-  const netValues = series.map(r => Number(r.net || 0));
+  const netTotals = series.map(r => Number(r.net?.total || 0));
   const closingValues = [opening, ...closing];
-  const rawTop = Math.max(0, ...netValues, ...closingValues);
-  const rawBottom = Math.min(0, ...netValues, ...closingValues);
+  const inflowTotals = series.map(r => Number(r.inflow?.total || 0));
+  const outflowTotals = series.map(r => -Number(r.outflow?.total || 0));
+  const netPaidTotals = series.map(r => Number(r.net?.paid || 0));
+  const netOpenTotals = series.map(r => Number(r.net?.open || 0));
+
+  const rawTop = Math.max(
+    0,
+    ...inflowTotals,
+    ...netTotals.filter(v => v > 0),
+    ...netPaidTotals.filter(v => v > 0),
+    ...netOpenTotals.filter(v => v > 0),
+    ...closingValues,
+  );
+
+  const rawBottom = Math.min(
+    0,
+    ...outflowTotals,
+    ...netTotals.filter(v => v < 0),
+    ...netPaidTotals.filter(v => v < 0),
+    ...netOpenTotals.filter(v => v < 0),
+    ...closingValues,
+  );
   const paddedTop = rawTop === 0 ? 0 : rawTop * 1.1;
   const paddedBottom = rawBottom === 0 ? 0 : rawBottom * 1.1;
   const steps = 5;
@@ -631,8 +651,122 @@ export async function render(root) {
     })
     .join("");
   const netStrip = series
-    .map(r => `<div class="net ${Number(r.net || 0) >= 0 ? "pos" : "neg"}">${fmtEUR0(r.net || 0)}</div>`)
+    .map(r => `<div class="net ${Number(r.net?.total || 0) >= 0 ? "pos" : "neg"}">${fmtEUR0(r.net?.total || 0)}</div>`)
     .join("");
+
+  const BAR_TYPES = ["inflow", "outflow", "net"];
+
+  function valuesFor(type, row) {
+    if (type === "inflow") {
+      return [
+        { key: "paid", value: Number(row.inflow?.paid || 0) },
+        { key: "open", value: Number(row.inflow?.open || 0) },
+      ];
+    }
+    if (type === "outflow") {
+      return [
+        { key: "paid", value: -Number(row.outflow?.paid || 0) },
+        { key: "open", value: -Number(row.outflow?.open || 0) },
+      ];
+    }
+    return [
+      { key: "paid", value: Number(row.net?.paid || 0) },
+      { key: "open", value: Number(row.net?.open || 0) },
+    ];
+  }
+
+  function stackSegments(values) {
+    const segments = [];
+    let posBase = 0;
+    let negBase = 0;
+    for (const seg of values) {
+      const val = Number(seg.value || 0);
+      if (!Number.isFinite(val) || val === 0) continue;
+      if (val >= 0) {
+        const start = posBase;
+        posBase += val;
+        segments.push({ ...seg, start, end: posBase });
+      } else {
+        const start = negBase;
+        negBase += val;
+        segments.push({ ...seg, start, end: negBase });
+      }
+    }
+    return segments;
+  }
+
+  function fmtBarValue(type, value) {
+    const numeric = Number(value || 0);
+    if (type === "outflow") return fmtEUR(-numeric);
+    return fmtEUR(numeric);
+  }
+
+  function ariaForBar(type, row, monthKey) {
+    const prettyMonth = formatMonthLabel(monthKey);
+    const target = type === "inflow" ? row.inflow : type === "outflow" ? row.outflow : row.net;
+    if (!target) return prettyMonth;
+    const label = type === "inflow" ? "Inflow" : type === "outflow" ? "Outflow" : "Netto";
+    return `${prettyMonth}: ${label} gesamt ${fmtBarValue(type, target.total)} – bezahlt ${fmtBarValue(type, target.paid)} – offen ${fmtBarValue(type, target.open)}`;
+  }
+
+  function renderSegment(type, seg) {
+    const yStart = Y(seg.start);
+    const yEnd = Y(seg.end);
+    const topPct = Math.min(yStart, yEnd) / 10;
+    const heightPct = Math.abs(yStart - yEnd) / 10;
+    if (heightPct <= 0.1) return "";
+    const classes = `vbar-segment segment-${type}-${seg.key}`;
+    return `<div class="${classes}" style="--seg-top:${topPct.toFixed(2)}; --seg-height:${heightPct.toFixed(2)}"></div>`;
+  }
+
+  function renderBar(type, row, monthIndex) {
+    const stacked = stackSegments(valuesFor(type, row));
+    if (!stacked.length) {
+      return `<div class="vbar-wrap"><div class="vbar ${type} empty" aria-hidden="true"></div></div>`;
+    }
+    const aria = escapeHtml(ariaForBar(type, row, months[monthIndex]));
+    const segmentsHtml = stacked.map(seg => renderSegment(type, seg)).join("");
+    return `<div class="vbar-wrap"><div class="vbar ${type}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${aria}">${segmentsHtml}</div></div>`;
+  }
+
+  function barTipHtml(type, monthKey, row, closingValue, openingValue) {
+    const prettyMonth = formatMonthLabel(monthKey);
+    const label = type === "inflow" ? "Inflow" : type === "outflow" ? "Outflow" : "Netto";
+    const target = type === "inflow" ? row.inflow : type === "outflow" ? row.outflow : row.net;
+    if (!target) return `<div class="tip-title">${prettyMonth}</div><div class="tip-row"><span>${label}</span><b>${fmtEUR(0)}</b></div>`;
+    const totalDisplay = type === "outflow" ? -Number(target.total || 0) : Number(target.total || 0);
+    const paidDisplay = type === "outflow" ? -Number(target.paid || 0) : Number(target.paid || 0);
+    const openDisplay = type === "outflow" ? -Number(target.open || 0) : Number(target.open || 0);
+    const denom = Math.abs(totalDisplay) || (Math.abs(paidDisplay) + Math.abs(openDisplay)) || 1;
+    const paidPct = (Math.abs(paidDisplay) / denom) * 100;
+    const openPct = (Math.abs(openDisplay) / denom) * 100;
+    const extra =
+      type === "net"
+        ? `<div class="tip-row"><span>Monatsanfang</span><b>${fmtEUR(openingValue)}</b></div><div class="tip-row"><span>Kontostand Monatsende</span><b>${fmtEUR(closingValue)}</b></div>`
+        : "";
+    return `
+      <div class="tip-title">${prettyMonth} – ${label}</div>
+      <div class="tip-row"><span>Gesamt</span><b>${fmtEUR(totalDisplay)}</b></div>
+      <div class="tip-row"><span>Bezahlt (${Math.round(paidPct)}%)</span><b>${fmtEUR(paidDisplay)}</b></div>
+      <div class="tip-row"><span>Offen (${Math.round(openPct)}%)</span><b>${fmtEUR(openDisplay)}</b></div>
+      ${extra}
+    `;
+  }
+
+  const barGroupsHtml = series
+    .map((row, i) => `<div class="vbar-group">${BAR_TYPES.map(type => renderBar(type, row, i)).join("")}</div>`)
+    .join("");
+
+  const legendHtml = `
+    <div class="chart-legend" role="list">
+      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-inflow-paid"></span>Inflow bezahlt</span>
+      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-inflow-open"></span>Inflow offen</span>
+      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-outflow-paid"></span>Outflow bezahlt</span>
+      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-outflow-open"></span>Outflow offen</span>
+      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-net-paid"></span>Netto bezahlt</span>
+      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-net-open"></span>Netto offen</span>
+    </div>
+  `;
 
   root.innerHTML = `
     <section class="card">
@@ -649,19 +783,7 @@ export async function render(root) {
         <div class="vchart-y">${yTicks.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
         <div class="vchart-zero"></div>
         <div class="vchart-bars">
-          ${series
-            .map((r, i) => {
-              const val = Number(r.net || 0);
-              const valuePct = Math.max(0, Math.min(100, Y(val) / 10));
-              const topPct = Math.min(zeroPct, valuePct);
-              const heightPct = Math.abs(zeroPct - valuePct);
-              const cls = val >= 0 ? "pos" : "neg";
-              return `
-                <div class="vbar-wrap">
-                  <div class="vbar ${cls}" style="--top:${topPct.toFixed(2)}; --height:${heightPct.toFixed(2)}" data-idx="${i}" aria-label="${months[i]}"></div>
-                </div>`;
-            })
-            .join("")}
+          ${barGroupsHtml}
         </div>
         <div class="vchart-lines" aria-hidden="true">
           <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
@@ -672,6 +794,7 @@ export async function render(root) {
         <div class="vchart-closing-labels" aria-hidden="true">${closingLabels}</div>
         <div class="vchart-x">${months.map(m => `<div class="xlabel">${m}</div>`).join("")}</div>
       </div>
+      ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>
       <div class="net-strip" style="--cols:${months.length};">${netStrip}</div>
     </section>
@@ -680,34 +803,15 @@ export async function render(root) {
 
   const tip = ensureGlobalTip();
 
-  function tipHtml(m, row, eom, monthStart) {
-    const extrasIn = (row.itemsIn || []).filter(item => item && item.kind === "extra").reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    const extrasOut = (row.itemsOut || []).filter(item => item && item.kind === "extra").reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    const inflow = Number(row.inflow || 0);
-    const outflow = Number(row.outflow || 0);
-    const baseInflow = inflow - extrasIn;
-
-    return `
-      <div class="tip-title">${m}</div>
-      <div class="tip-row"><span>Monatsanfang</span><b>${fmtEUR(monthStart)}</b></div>
-      <div class="tip-row"><span>+ Inflow</span><b>${fmtEUR(baseInflow)}</b></div>
-      <div class="tip-row"><span>+ Extras</span><b>${fmtEUR(extrasIn - extrasOut)}</b></div>
-      <div class="tip-row"><span>− Outflow</span><b>${fmtEUR(outflow)}</b></div>
-      <div class="tip-row total"><span>= Netto</span><b>${fmtEUR(row.net)}</b></div>
-      <div class="tip-row"><span>Kontostand (Monatsende)</span><b>${fmtEUR(eom)}</b></div>
-    `;
-  }
-
-  const barsWrap = root.querySelector(".vchart-bars");
-
-  function showTip(ev) {
-    const el = ev.target.closest(".vbar");
+  function showBarTip(el) {
     if (!el) return;
     const i = Number(el.getAttribute("data-idx"));
+    const type = el.getAttribute("data-type");
+    if (!Number.isFinite(i) || !type) return;
     const row = series[i];
     const eom = closing[i];
     const mos = monthOpening[i];
-    tip.innerHTML = tipHtml(months[i], row, eom, mos);
+    tip.innerHTML = barTipHtml(type, months[i], row, eom, mos);
     tip.hidden = false;
     const br = el.getBoundingClientRect();
     const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
@@ -721,15 +825,40 @@ export async function render(root) {
     tip.style.left = `${left}px`;
     tip.style.top = `${topPx}px`;
   }
-  function hideTip() {
+  function hideTip(force = false) {
+    if (!force) {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains("vbar")) {
+        return;
+      }
+    }
     tip.hidden = true;
   }
 
+  const barsWrap = root.querySelector(".vchart-bars");
   if (barsWrap) {
-    barsWrap.addEventListener("pointerenter", showTip, true);
-    barsWrap.addEventListener("pointermove", showTip, true);
-    barsWrap.addEventListener("pointerleave", hideTip, true);
+    barsWrap.addEventListener("pointerenter", ev => {
+      const el = ev.target.closest(".vbar");
+      if (el) showBarTip(el);
+    }, true);
+    barsWrap.addEventListener("pointermove", ev => {
+      const el = ev.target.closest(".vbar");
+      if (el) showBarTip(el);
+    }, true);
+    barsWrap.addEventListener("pointerleave", () => hideTip(), true);
   }
+
+  const barNodes = root.querySelectorAll(".vbar[data-type]");
+  barNodes.forEach(node => {
+    node.addEventListener("focus", () => showBarTip(node));
+    node.addEventListener("blur", () => hideTip(true));
+    node.addEventListener("keydown", ev => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        showBarTip(node);
+        ev.preventDefault();
+      }
+    });
+  });
 
   const plRoot = root.querySelector("#pl-root");
   if (plRoot) updatePLSection(plRoot);

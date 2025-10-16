@@ -491,11 +491,22 @@ export function computeSeries(state) {
     const outflowEntries = entries.filter(e => e.direction === 'out');
     const inflow = inflowEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
     const outflow = outflowEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
+    const inflowPaid = inflowEntries
+      .filter(item => item.paid)
+      .reduce((sum, item) => sum + (item.amount || 0), 0);
+    const outflowPaid = outflowEntries
+      .filter(item => item.paid)
+      .reduce((sum, item) => sum + (item.amount || 0), 0);
+    const inflowOpen = Math.max(0, inflow - inflowPaid);
+    const outflowOpen = Math.max(0, outflow - outflowPaid);
+    const netTotal = inflow - outflow;
+    const netPaid = inflowPaid - outflowPaid;
+    const netOpen = netTotal - netPaid;
     return {
       month: m,
-      inflow,
-      outflow,
-      net: inflow - outflow,
+      inflow: { total: inflow, paid: inflowPaid, open: inflowOpen },
+      outflow: { total: outflow, paid: outflowPaid, open: outflowOpen },
+      net: { total: netTotal, paid: netPaid, open: netOpen },
       itemsIn: inflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),
       itemsOut: outflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),
       entries,
@@ -507,7 +518,7 @@ export function computeSeries(state) {
   const firstNeg = months.find(m => {
     const idx = months.indexOf(m);
     let bal = opening;
-    for (let i = 0; i <= idx; i++) bal += series[i].net;
+    for (let i = 0; i <= idx; i++) bal += series[i].net.total;
     return bal < 0;
   }) || null;
 
@@ -526,14 +537,14 @@ export function computeSeries(state) {
   const breakdown = months.map((m, idx) => {
     const row = series[idx];
     const openingBalance = running;
-    running += row.net;
+    running += row.net.total;
     return {
       month: m,
       opening: openingBalance,
       closing: running,
-      inflow: row.inflow,
-      outflow: row.outflow,
-      net: row.net,
+      inflow: row.inflow.total,
+      outflow: row.outflow.total,
+      net: row.net.total,
       entries: row.entries,
     };
   });
