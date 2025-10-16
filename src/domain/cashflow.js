@@ -100,6 +100,14 @@ export function computeSeries(state) {
     bucket[m].itemsOut.push({ kind: 'outgoing', label: row.label || 'Kosten', amount: amt });
   });
 
+  (Array.isArray(s.dividends) ? s.dividends : []).forEach(row => {
+    const month = row.month || (row.date ? toMonthKey(row.date) : null);
+    if (!month || !bucket[month]) return;
+    const amt = parseEuro(row.amountEur);
+    bucket[month].outflow += amt;
+    bucket[month].itemsOut.push({ kind: 'dividend', label: row.label || 'Dividende', amount: amt });
+  });
+
   // PO-Milestones
   (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
     expandMilestones(po).forEach(ev => {

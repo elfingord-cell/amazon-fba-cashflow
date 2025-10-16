@@ -6,6 +6,7 @@ const defaults = {
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
   extras:    [ ],
   outgoings: [ ],
+  dividends: [ ],
   pos:       [ ],
   fos:       [ ]
 };
@@ -40,4 +41,34 @@ export function saveState(s){
 export function addStateListener(fn){
   listeners.add(fn);
   return ()=>listeners.delete(fn);
+}
+
+export function exportState(state){
+  const payload = state || loadState();
+  const fileName = `amazon-fba-cashflow-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function importStateFile(file, cb){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const json = JSON.parse(reader.result || '{}');
+      cb(json);
+    } catch (err) {
+      cb({ __error: err?.message || 'Ungültige JSON-Datei' });
+    }
+  };
+  reader.onerror = () => {
+    cb({ __error: reader.error?.message || 'Datei konnte nicht gelesen werden' });
+  };
+  reader.readAsText(file, 'utf-8');
 }

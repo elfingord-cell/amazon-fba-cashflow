@@ -1,15 +1,9 @@
 // src/ui/fo.js
 // Forecast Orders (FO) Editor – analog zum PO-Editor
 
-const STATE_KEY = 'amazon_fba_cashflow_v1';
+import { loadState, saveState } from "../data/storageLocal.js";
 
 // ---------- helpers ----------
-function loadState() {
-  const raw = localStorage.getItem(STATE_KEY);
-  if (!raw) return {};
-  try { return JSON.parse(raw) || {}; } catch { return {}; }
-}
-function saveState(state) { localStorage.setItem(STATE_KEY, JSON.stringify(state)); }
 function ensureArray(v) { return Array.isArray(v) ? v : []; }
 
 function parseEuro(str) {
@@ -190,8 +184,6 @@ function renderEditor(state, fo) {
     </section>
   `;
 }
-
-function monthKeyFromDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
 
 // ---------- main render ----------
 export default function render(container) {
