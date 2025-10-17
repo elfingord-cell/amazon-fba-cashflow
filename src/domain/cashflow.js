@@ -65,6 +65,231 @@ function monthEndDate(date) {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0);
 }
 
+function monthIndex(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym || '')) return null;
+  const [y, m] = ym.split('-').map(Number);
+  return y * 12 + (m - 1);
+}
+
+function clampDay(year, monthIndexValue, day) {
+  const max = new Date(year, monthIndexValue + 1, 0).getDate();
+  const safeDay = Math.min(Math.max(1, day), max);
+  return new Date(year, monthIndexValue, safeDay);
+}
+
+function dueDateFromAnchor(monthKey, anchor) {
+  const idx = monthIndex(monthKey);
+  if (idx == null) return null;
+  const year = Math.floor(idx / 12);
+  const monthZero = idx % 12;
+  if (!anchor || anchor === 'LAST' || anchor === 'Letzter Tag' || anchor === 'EOM') {
+    return new Date(year, monthZero + 1, 0);
+  }
+  const numeric = Number(anchor);
+  if (Number.isFinite(numeric)) {
+    return clampDay(year, monthZero, numeric);
+  }
+  return new Date(year, monthZero + 1, 0);
+}
+
+// Daily proration multiplies the share of active days in the start and end
+// months. When a contract begins or ends within the target month we scale the
+// base amount by the remaining/elapsed days, keeping mid-term months at 100 %.
+function applyProrationDaily(baseAmount, master, monthKey, dueDate) {
+  if (!master || !master.proration || master.proration.enabled !== true) {
+    return { amount: baseAmount, applied: false };
+  }
+  if (master.proration.method !== 'daily') {
+    return { amount: baseAmount, applied: false };
+  }
+  const idx = monthIndex(monthKey);
+  if (idx == null) return { amount: baseAmount, applied: false };
+  const year = Math.floor(idx / 12);
+  const monthZero = idx % 12;
+  const totalDays = new Date(year, monthZero + 1, 0).getDate();
+  const due = (dueDate instanceof Date && !Number.isNaN(dueDate.getTime())) ? dueDate : dueDateFromAnchor(monthKey, master.anchor);
+  const dueDay = due instanceof Date ? due.getDate() : totalDays;
+  let ratio = 1;
+  if (master.startMonth && master.startMonth === monthKey) {
+    ratio *= Math.max(0, totalDays - dueDay + 1) / totalDays;
+  }
+  if (master.endMonth && master.endMonth === monthKey) {
+    ratio *= Math.max(0, dueDay) / totalDays;
+  }
+  const amount = Math.round((baseAmount * ratio) * 100) / 100;
+  if (!Number.isFinite(amount) || amount === baseAmount) {
+    return { amount: baseAmount, applied: false };
+  }
+  return { amount, applied: true };
+}
+
+function evaluatePaidState({ statusRecord, autoEligible, autoManualCheck, entryTime, todayTime, defaultPaid }) {
+  const manual = typeof statusRecord?.manual === 'boolean' ? statusRecord.manual : undefined;
+  let paid = false;
+  let autoApplied = false;
+  if (typeof manual === 'boolean') {
+    paid = manual;
+  } else if (autoEligible && !autoManualCheck && entryTime != null && entryTime <= todayTime) {
+    paid = true;
+    autoApplied = true;
+  } else {
+    paid = Boolean(defaultPaid);
+  }
+  const autoSuppressed = autoEligible && autoManualCheck && !autoApplied;
+  let autoTooltip = null;
+  if (autoEligible) {
+    if (autoApplied) autoTooltip = 'Automatisch bezahlt am Fälligkeitstag';
+    else if (autoManualCheck) autoTooltip = 'Automatische Zahlung – manuelle Prüfung aktiv';
+    else autoTooltip = 'Automatische Zahlung';
+  }
+  return {
+    paid,
+    autoApplied,
+    manualOverride: typeof manual === 'boolean',
+    autoSuppressed,
+    autoTooltip,
+  };
+}
+
+export function expandFixcostInstances(state, opts = {}) {
+  const s = state || {};
+  const startMonth = opts.startMonth || (s.settings && s.settings.startMonth) || '2025-01';
+  const horizon = Number(opts.horizon || (s.settings && s.settings.horizonMonths) || 12);
+  const months = Array.isArray(opts.months) && opts.months.length ? opts.months : monthRange(startMonth, horizon);
+  const fixcosts = Array.isArray(s.fixcosts) ? s.fixcosts : [];
+  const overridesRaw = (s.fixcostOverrides && typeof s.fixcostOverrides === 'object') ? s.fixcostOverrides : {};
+  const statusState = (opts.status && typeof opts.status === 'object') ? opts.status : (s.status || {});
+  const statusEvents = (opts.statusEvents && typeof opts.statusEvents === 'object') ? opts.statusEvents : (statusState.events || {});
+  const autoManualCheck = opts.autoManualCheck != null ? opts.autoManualCheck === true : statusState.autoManualCheck === true;
+  const today = opts.today ? new Date(opts.today) : new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayTime = today.getTime();
+  const results = [];
+
+  const monthSet = new Set(months);
+
+  fixcosts.forEach((master, idx) => {
+    if (!master) return;
+    const fcId = master.id || `fix-${idx}`;
+    const start = master.startMonth || startMonth;
+    const startIdx = monthIndex(start);
+    if (startIdx == null) return;
+    const end = master.endMonth || null;
+    const endIdx = end ? monthIndex(end) : null;
+    const freq = (master.frequency || 'monthly').toLowerCase();
+    let interval = 1;
+    if (freq === 'quarterly') interval = 3;
+    else if (freq === 'semiannual' || freq === 'halbjährlich') interval = 6;
+    else if (freq === 'annual' || freq === 'jährlich' || freq === 'yearly') interval = 12;
+    else if (freq === 'custom' || freq === 'benutzerdefiniert') {
+      interval = Number(master.intervalMonths || master.everyMonths || 1) || 1;
+    }
+    if (interval < 1) interval = 1;
+
+    const anchorRaw = master.anchor;
+    const anchor = (!anchorRaw || anchorRaw === 'Letzter Tag') ? 'LAST' : String(anchorRaw);
+    const overrideMap = (overridesRaw[fcId] && typeof overridesRaw[fcId] === 'object') ? overridesRaw[fcId] : {};
+    const name = master.name || 'Fixkosten';
+    const category = master.category || 'Sonstiges';
+    const baseAmount = Math.abs(parseEuro(master.amount));
+    const notes = master.notes || '';
+    const autoPaid = master.autoPaid === true;
+
+    months.forEach(monthKey => {
+      if (!monthSet.has(monthKey)) return;
+      const currentIdx = monthIndex(monthKey);
+      if (currentIdx == null) return;
+      if (currentIdx < startIdx) return;
+      if (endIdx != null && currentIdx > endIdx) return;
+      const diff = currentIdx - startIdx;
+      if (diff % interval !== 0) return;
+
+      const baseDue = dueDateFromAnchor(monthKey, anchor);
+      const override = (overrideMap[monthKey] && typeof overrideMap[monthKey] === 'object') ? overrideMap[monthKey] : {};
+      let due = baseDue;
+      if (override.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(override.dueDate)) {
+        const od = new Date(override.dueDate);
+        if (!Number.isNaN(od.getTime())) {
+          due = od;
+        }
+      }
+
+      let amount = baseAmount;
+      let overrideApplied = false;
+      if (override.amount != null && String(override.amount).trim() !== '') {
+        amount = Math.abs(parseEuro(override.amount));
+        overrideApplied = true;
+      }
+
+      let prorationApplied = false;
+      if (!overrideApplied) {
+        const proration = applyProrationDaily(baseAmount, master, monthKey, due);
+        amount = proration.amount;
+        prorationApplied = proration.applied;
+      }
+
+      const eventId = `fix-${fcId}-${monthKey}`;
+      const dueTime = due instanceof Date && !Number.isNaN(due.getTime()) ? due.getTime() : null;
+      const statusRecord = statusEvents[eventId];
+      const paidMeta = evaluatePaidState({
+        statusRecord,
+        autoEligible: autoPaid,
+        autoManualCheck,
+        entryTime: dueTime,
+        todayTime,
+        defaultPaid: false,
+      });
+
+      const dueIso = due instanceof Date && !Number.isNaN(due.getTime()) ? isoDate(due) : null;
+      const overrideNote = override.note || '';
+      const tooltipParts = [name];
+      if (overrideApplied) tooltipParts.push('Override aktiv');
+      if (prorationApplied) tooltipParts.push('Proratiert');
+      const tooltip = tooltipParts.length > 1 ? tooltipParts.join(' · ') : null;
+
+      results.push({
+        id: eventId,
+        month: monthKey,
+        amount,
+        baseAmount,
+        label: name,
+        category,
+        dueDate: due,
+        dueDateIso: dueIso,
+        fixedCostId: fcId,
+        autoPaid,
+        notes,
+        override: {
+          amount: override.amount || '',
+          dueDate: override.dueDate || '',
+          note: overrideNote,
+        },
+        overrideActive: overrideApplied || Boolean(override.dueDate) || Boolean(overrideNote),
+        prorationApplied,
+        paid: paidMeta.paid,
+        autoApplied: paidMeta.autoApplied,
+        manualOverride: paidMeta.manualOverride,
+        autoTooltip: paidMeta.autoTooltip,
+        autoSuppressed: paidMeta.autoSuppressed,
+        anchor,
+        frequency: freq,
+        tooltip,
+      });
+    });
+  });
+
+  results.sort((a, b) => {
+    if (a.month === b.month) {
+      const at = a.dueDate instanceof Date ? a.dueDate.getTime() : 0;
+      const bt = b.dueDate instanceof Date ? b.dueDate.getTime() : 0;
+      return at - bt;
+    }
+    return monthIndex(a.month) - monthIndex(b.month);
+  });
+
+  return results;
+}
+
 function normaliseSettings(raw) {
   const settings = raw || {};
   return {
@@ -324,31 +549,19 @@ export function computeSeries(state) {
   function baseEntry(overrides, meta = {}) {
     const baseId = overrides.id || `${overrides.month || ''}-${overrides.label || ''}-${overrides.date || ''}`;
     const statusRecord = statusEvents[baseId];
-    const manual = typeof statusRecord?.manual === 'boolean' ? statusRecord.manual : undefined;
     const entryDate = overrides.date ? new Date(overrides.date) : null;
     const entryTime = entryDate && Number.isFinite(entryDate.getTime()) ? new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate()).getTime() : null;
     const isAuto = meta.auto === true;
     const autoEligible = isAuto && meta.autoEligible !== false;
     const defaultPaid = typeof overrides.paid === 'boolean' ? overrides.paid : Boolean(meta.defaultPaid);
-    let paid = false;
-    let autoApplied = false;
-
-    if (typeof manual === 'boolean') {
-      paid = manual;
-    } else if (autoEligible && !autoManualCheck && entryTime != null && entryTime <= todayTime) {
-      paid = true;
-      autoApplied = true;
-    } else {
-      paid = defaultPaid;
-    }
-
-    const autoSuppressed = autoEligible && autoManualCheck && !autoApplied;
-    const autoTooltip = (() => {
-      if (!autoEligible) return null;
-      if (autoApplied) return 'Automatisch bezahlt am Fälligkeitstag';
-      if (autoManualCheck) return 'Automatische Zahlung – manuelle Prüfung aktiv';
-      return 'Automatische Zahlung';
-    })();
+    const paidMeta = evaluatePaidState({
+      statusRecord,
+      autoEligible,
+      autoManualCheck,
+      entryTime,
+      todayTime,
+      defaultPaid,
+    });
 
     return {
       id: baseId,
@@ -359,7 +572,7 @@ export function computeSeries(state) {
       date: overrides.date,
       kind: overrides.kind,
       group: overrides.group,
-      paid,
+      paid: paidMeta.paid,
       source: overrides.source || null,
       anchor: overrides.anchor,
       lagDays: overrides.lagDays,
@@ -374,13 +587,44 @@ export function computeSeries(state) {
       statusId: baseId,
       auto: isAuto,
       autoEligible,
-      autoApplied,
+      autoApplied: paidMeta.autoApplied,
       autoManualCheck,
-      manualOverride: typeof manual === 'boolean',
-      autoSuppressed,
-      autoTooltip,
+      manualOverride: paidMeta.manualOverride,
+      autoSuppressed: paidMeta.autoSuppressed,
+      autoTooltip: paidMeta.autoTooltip,
     };
   }
+
+  const fixcostEntries = expandFixcostInstances(s, { months, statusEvents, autoManualCheck, today }).map(inst => ({
+    id: inst.id,
+    direction: 'out',
+    amount: inst.amount,
+    label: inst.label,
+    month: inst.month,
+    date: inst.dueDateIso,
+    kind: 'fixcost',
+    group: 'Fixkosten',
+    source: 'fixcosts',
+    sourceTab: '#fixkosten',
+    meta: {
+      fixedCostId: inst.fixedCostId,
+      category: inst.category,
+      override: inst.overrideActive,
+      overrideAmount: inst.override.amount,
+      overrideDueDate: inst.override.dueDate,
+      overrideNote: inst.override.note,
+      notes: inst.notes,
+      baseAmount: inst.baseAmount,
+      prorationApplied: inst.prorationApplied,
+    },
+    tooltip: inst.tooltip,
+    auto: inst.autoPaid,
+    autoEligible: inst.autoPaid,
+  }));
+
+  fixcostEntries.forEach(entry => {
+    pushEntry(entry.month, baseEntry(entry, { auto: entry.auto, autoEligible: entry.autoEligible }));
+  });
 
   // Inflows
   (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
@@ -420,25 +664,6 @@ export function computeSeries(state) {
       source: 'extras',
       sourceTab: '#eingaben',
     }, { auto: row.autoPaid === true, autoEligible: row.autoPaid === true }));
-  });
-
-  // Outflows (fixe Kosten)
-  (Array.isArray(s.outgoings) ? s.outgoings : []).forEach(row => {
-    const m = row.month; if (!bucket[m]) return;
-    const amt = parseEuro(row.amountEur);
-    const date = row.date ? new Date(row.date) : monthEndFromKey(m);
-    pushEntry(m, baseEntry({
-      id: `fix-${row.id || row.label || m}`,
-      direction: 'out',
-      amount: Math.abs(amt),
-      label: row.label || 'Kosten',
-      month: m,
-      date: isoDate(date),
-      kind: 'outgoing',
-      group: 'Fixkosten',
-      source: 'outgoings',
-      sourceTab: '#eingaben',
-    }, { auto: row.autoPaid !== false, autoEligible: row.autoPaid !== false }));
   });
 
   (Array.isArray(s.dividends) ? s.dividends : []).forEach(row => {
@@ -531,6 +756,22 @@ export function computeSeries(state) {
     const entries = b.entries || [];
     const inflowEntries = entries.filter(e => e.direction === 'in');
     const outflowEntries = entries.filter(e => e.direction === 'out');
+    const fixcostEntries = outflowEntries.filter(e => e.group === 'Fixkosten');
+    const fixcostTotal = fixcostEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
+    const fixcostPaid = fixcostEntries
+      .filter(item => item.paid)
+      .reduce((sum, item) => sum + (item.amount || 0), 0);
+    const fixcostOpen = Math.max(0, fixcostTotal - fixcostPaid);
+    const fixcostTop = fixcostEntries
+      .slice()
+      .sort((a, b) => (b.amount || 0) - (a.amount || 0))
+      .slice(0, 3)
+      .map(item => ({
+        label: item.label,
+        amount: item.amount,
+        paid: item.paid,
+        category: item.meta && item.meta.category ? item.meta.category : null,
+      }));
     const inflow = inflowEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
     const outflow = outflowEntries.reduce((sum, item) => sum + (item.amount || 0), 0);
     const inflowPaid = inflowEntries
@@ -549,6 +790,7 @@ export function computeSeries(state) {
       inflow: { total: inflow, paid: inflowPaid, open: inflowOpen },
       outflow: { total: outflow, paid: outflowPaid, open: outflowOpen },
       net: { total: netTotal, paid: netPaid, open: netOpen },
+      fixcost: { total: fixcostTotal, paid: fixcostPaid, open: fixcostOpen, top: fixcostTop },
       itemsIn: inflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),
       itemsOut: outflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),
       entries,

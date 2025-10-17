@@ -1,5 +1,6 @@
 // Eingaben-Tab mit deutschen Formaten und zusätzlichen Tabellen für Extras, Fixkosten und Dividenden
 import { loadState, saveState } from "../data/storageLocal.js";
+import { expandFixcostInstances } from "../domain/cashflow.js";
 
 function $(sel, root = document) { return root.querySelector(sel); }
 function ensureArray(v) { return Array.isArray(v) ? v : []; }
@@ -64,7 +65,6 @@ export async function render(root) {
   const state = loadState();
   state.incomings = ensureArray(state.incomings);
   state.extras = ensureArray(state.extras);
-  state.outgoings = ensureArray(state.outgoings);
   state.dividends = ensureArray(state.dividends);
   state.settings = state.settings || {};
 
@@ -104,12 +104,13 @@ export async function render(root) {
     </section>
 
     <section class="card">
-      <h3>Fixkosten (monatlich)</h3>
+      <h3>Fixkosten (Übersicht)</h3>
+      <p class="muted">Pflege und Detailbearbeitung im Tab <strong>Fixkosten</strong>. Übersicht der geplanten Zahlungen im aktuellen Planungshorizont.</p>
       <table class="table">
-        <thead><tr><th>Monat</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
-        <tbody id="outgoing-rows"></tbody>
+        <thead><tr><th>Monat</th><th>Summe (€)</th><th>Bezahlt (€)</th><th>Offen (€)</th></tr></thead>
+        <tbody id="fix-summary-rows"></tbody>
       </table>
-      <button class="btn" id="outgoing-add">+ Fixkosten hinzufügen</button>
+      <a class="btn secondary" href="#fixkosten">Zum Fixkosten-Tab</a>
     </section>
 
     <section class="card">
@@ -124,7 +125,7 @@ export async function render(root) {
 
   const incomeRows = $("#income-rows", root);
   const extrasRows = $("#extras-rows", root);
-  const outgoingRows = $("#outgoing-rows", root);
+  const fixSummaryRows = $("#fix-summary-rows", root);
   const dividendRows = $("#dividend-rows", root);
 
   function renderIncomes() {
@@ -164,21 +165,36 @@ export async function render(root) {
       .join("");
   }
 
-  function renderOutgoings() {
-    if (!state.outgoings.length) {
-      outgoingRows.innerHTML = `<tr><td colspan="4" class="muted">Keine Einträge</td></tr>`;
+  function renderFixSummary() {
+    const instances = expandFixcostInstances(state, { today: new Date() });
+    if (!instances.length) {
+      fixSummaryRows.innerHTML = `<tr><td colspan="4" class="muted">Keine Fixkosten geplant.</td></tr>`;
       return;
     }
-    outgoingRows.innerHTML = state.outgoings
-      .map((row, idx) => `
-        <tr data-idx="${idx}">
-          <td><input type="month" data-field="month" value="${row.month || ""}"></td>
-          <td><input type="text" data-field="label" value="${row.label || ""}"></td>
-          <td><input type="text" inputmode="decimal" data-field="amountEur" value="${fmtCurrency(row.amountEur)}"></td>
-          <td><button class="btn danger" data-remove="${idx}">Entfernen</button></td>
-        </tr>
-      `)
+    const grouped = new Map();
+    instances.forEach((inst) => {
+      if (!grouped.has(inst.month)) {
+        grouped.set(inst.month, { total: 0, paid: 0 });
+      }
+      const bucket = grouped.get(inst.month);
+      bucket.total += inst.amount || 0;
+      if (inst.paid) bucket.paid += inst.amount || 0;
+    });
+    const rows = Array.from(grouped.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([month, sums]) => {
+        const open = Math.max(0, sums.total - sums.paid);
+        return `
+          <tr>
+            <td>${month}</td>
+            <td>${fmtCurrency(sums.total)} €</td>
+            <td>${fmtCurrency(sums.paid)} €</td>
+            <td>${fmtCurrency(open)} €</td>
+          </tr>
+        `;
+      })
       .join("");
+    fixSummaryRows.innerHTML = rows;
   }
 
   function renderDividends() {
@@ -200,7 +216,7 @@ export async function render(root) {
 
   renderIncomes();
   renderExtras();
-  renderOutgoings();
+  renderFixSummary();
   renderDividends();
 
   $("#opening", root)?.addEventListener("blur", (ev) => {
@@ -227,12 +243,6 @@ export async function render(root) {
     state.extras.push({ date: "", month: state.settings.startMonth || "", label: "", amountEur: "0,00" });
     saveState(state);
     renderExtras();
-  });
-
-  $("#outgoing-add", root)?.addEventListener("click", () => {
-    state.outgoings.push({ month: state.settings.startMonth || "", label: "Fixkosten", amountEur: "0,00" });
-    saveState(state);
-    renderOutgoings();
   });
 
   $("#dividend-add", root)?.addEventListener("click", () => {
@@ -326,45 +336,6 @@ export async function render(root) {
     state.extras.splice(idx, 1);
     saveState(state);
     renderExtras();
-  });
-
-  outgoingRows?.addEventListener("input", (ev) => {
-    const tr = ev.target.closest("tr");
-    if (!tr) return;
-    const idx = Number(tr.dataset.idx);
-    const field = ev.target.dataset.field;
-    if (!(field && state.outgoings[idx])) return;
-    state.outgoings[idx][field] = ev.target.value;
-  });
-
-  outgoingRows?.addEventListener("focusout", (ev) => {
-    const input = ev.target.closest("input");
-    if (!input) return;
-    const tr = input.closest("tr");
-    if (!tr) return;
-    const idx = Number(tr.dataset.idx);
-    const field = input.dataset.field;
-    if (!(field && state.outgoings[idx])) return;
-    if (field === "amountEur") {
-      const formatted = fmtCurrency(input.value);
-      state.outgoings[idx][field] = formatted;
-      input.value = formatted;
-    } else {
-      state.outgoings[idx][field] = input.value.trim();
-    }
-  });
-
-  outgoingRows?.addEventListener("change", () => {
-    saveState(state);
-  });
-
-  outgoingRows?.addEventListener("click", (ev) => {
-    const btn = ev.target.closest("button[data-remove]");
-    if (!btn) return;
-    const idx = Number(btn.dataset.remove);
-    state.outgoings.splice(idx, 1);
-    saveState(state);
-    renderOutgoings();
   });
 
   dividendRows?.addEventListener("input", (ev) => {

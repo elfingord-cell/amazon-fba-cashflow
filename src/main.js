@@ -9,6 +9,7 @@ const STATE_KEY = 'amazon_fba_cashflow_v1';
 const routes = {
   '#dashboard': () => import('./ui/dashboard.js'),
   '#eingaben': () => import('./ui/eingaben.js'),
+  '#fixkosten': () => import('./ui/fixkosten.js'),
   '#po': () => import('./ui/po.js'),
   '#fo': () => import('./ui/fo.js'),
   '#export': () => import('./ui/export.js'),

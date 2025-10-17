@@ -906,12 +906,37 @@ export async function render(root) {
       type === "net"
         ? `<div class="tip-row"><span>Monatsanfang</span><b>${fmtEUR(openingValue)}</b></div><div class="tip-row"><span>Kontostand Monatsende</span><b>${fmtEUR(closingValue)}</b></div>`
         : "";
+    let fixcostSummary = "";
+    if (type === "outflow" && row.fixcost && row.fixcost.total) {
+      const fix = row.fixcost;
+      const totalFix = -Number(fix.total || 0);
+      const paidFix = -Number(fix.paid || 0);
+      const openFix = -Number(fix.open || 0);
+      const topRows = Array.isArray(fix.top) && fix.top.length
+        ? `<div class="tip-subtitle">Top-3 Fixkosten</div>${fix.top
+            .map(item => {
+              const status = item.paid ? "bezahlt" : "offen";
+              const cat = item.category ? ` (${escapeHtml(item.category)})` : "";
+              const labelText = `${escapeHtml(item.label || "Fixkosten")}${cat} – ${status}`;
+              return `<div class="tip-row mini"><span>${labelText}</span><b>${fmtEUR(-Number(item.amount || 0))}</b></div>`;
+            })
+            .join("")}`
+        : "";
+      fixcostSummary = `
+        <div class="tip-divider"></div>
+        <div class="tip-row"><span>Fixkosten gesamt</span><b>${fmtEUR(totalFix)}</b></div>
+        <div class="tip-row small"><span>Bezahlt</span><b>${fmtEUR(paidFix)}</b></div>
+        <div class="tip-row small"><span>Offen</span><b>${fmtEUR(openFix)}</b></div>
+        ${topRows}
+      `;
+    }
     return `
       <div class="tip-title">${prettyMonth} – ${label}</div>
       <div class="tip-row"><span>Gesamt</span><b>${fmtEUR(totalDisplay)}</b></div>
       <div class="tip-row"><span>Bezahlt (${Math.round(paidPct)}%)</span><b>${fmtEUR(paidDisplay)}</b></div>
       <div class="tip-row"><span>Offen (${Math.round(openPct)}%)</span><b>${fmtEUR(openDisplay)}</b></div>
       ${extra}
+      ${fixcostSummary}
     `;
   }
 

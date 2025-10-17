@@ -234,6 +234,10 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .chart-tip .tip-title{font-weight:800; margin-bottom:6px}
 .chart-tip .tip-row{display:flex; justify-content:space-between; gap:8px; font-size:12px}
 .chart-tip .tip-row.total{margin-top:4px; border-top:1px solid #e6e9ef; padding-top:4px; font-weight:700;}
+.chart-tip .tip-row.small{font-size:11px; color:#52606d;}
+.chart-tip .tip-row.mini{font-size:11px; color:#52606d;}
+.chart-tip .tip-divider{border-top:1px solid #d7dbe3; margin:6px 0;}
+.chart-tip .tip-subtitle{font-size:11px; font-weight:600; margin:4px 0 2px; color:#2f3b52;}
 
 /* === Dashboard Ebenen-Reihenfolge === */
 .vchart-grid  { position:absolute; left:52px; right:12px; top:10px; bottom:40px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
@@ -384,6 +388,35 @@ tr.auto-ms.disabled select{opacity:0.8;}
   font-weight:600; color:#0f3654; font-size:11px;
 }
 .net-strip .net.neg{background:rgba(239,68,68,0.12); color:#991b1b;}
+
+/* Fixkosten-Modul */
+.fix-master .table-scroll{margin-top:12px;}
+.fix-master-table input,.fix-master-table select{width:100%; box-sizing:border-box;}
+.fix-master-table .interval-input.hidden,.fix-master-table select.hidden{display:none;}
+.fix-master-table .checkbox{display:flex; gap:6px; align-items:center; font-size:0.9rem;}
+.fix-master-table .error{color:#d32f2f; font-size:0.8rem; display:block; margin-top:4px;}
+.fix-month-list{display:flex; flex-direction:column; gap:16px;}
+.fix-month-card{border:1px solid #d8e7df; border-radius:12px; background:#fff; overflow:hidden; box-shadow:0 2px 6px rgba(15,27,45,0.08);}
+.fix-month-card header{display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:12px 16px; background:#f2f8f4;}
+.fix-month-card .month-toggle{border:none; background:transparent; display:flex; align-items:center; gap:12px; cursor:pointer; font-size:1rem; font-weight:600; padding:0;}
+.fix-month-card .month-toggle:focus-visible{outline:2px solid #1976d2; outline-offset:2px; border-radius:4px;}
+.fix-month-card .month-actions{display:flex; gap:8px; flex-wrap:wrap;}
+.fix-month-card .month-body{padding:12px 16px 16px;}
+.fix-instance-table .instance-name{font-weight:600;}
+.fix-instance-table .instance-note{font-size:0.85rem;}
+.fix-instance-table .checkbox{display:flex; align-items:center; justify-content:center;}
+.fix-instance-table .checkbox input{width:20px; height:20px;}
+.badge.auto{background:#1976d2; color:#fff; border-radius:999px; font-size:0.75rem; padding:2px 8px; margin-left:6px;}
+.badge.override{background:#f57c00; color:#fff; border-radius:999px; font-size:0.75rem; padding:2px 8px; margin-left:6px;}
+.fix-edit-grid{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); align-items:end;}
+.fix-edit-grid label{display:flex; flex-direction:column; gap:4px; font-size:0.9rem;}
+.fix-edit-grid input{padding:8px; border:1px solid #c5d5cc; border-radius:6px;}
+.fix-edit-grid input:focus-visible{outline:2px solid #1976d2; border-color:#1976d2;}
+.fix-edit-grid .edit-actions{display:flex; gap:8px; align-items:center;}
+.fix-edit-grid .edit-error{color:#d32f2f; min-height:1.2em; font-size:0.85rem; grid-column:1 / -1;}
+.fix-month-card .badge{font-weight:600;}
+.fix-month-card .badge.info{background:#2ca02c; color:#fff; border-radius:999px; padding:2px 10px;}
+.fix-month-card .badge.warn{background:#d32f2f; color:#fff; border-radius:999px; padding:2px 10px;}
 
 /* === Plan Timeline === */
 .plan-card .plan-grid{display:grid; gap:12px; margin-top:14px;}

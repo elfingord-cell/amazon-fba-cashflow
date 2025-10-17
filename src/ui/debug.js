@@ -39,21 +39,76 @@ function buildDemoState(){
     { date: "2025-05-10", label: "Marketing-Offensive", amountEur: "-6.800,00" },
   ];
 
-  demo.outgoings = [
-    { month: "2024-10", label: "Fixkosten", amountEur: "-8.500,00" },
-    { month: "2024-11", label: "Fixkosten", amountEur: "-8.500,00" },
-    { month: "2024-12", label: "Fixkosten", amountEur: "-8.600,00" },
-    { month: "2025-01", label: "Fixkosten", amountEur: "-8.700,00" },
-    { month: "2025-02", label: "Fixkosten", amountEur: "-8.800,00" },
-    { month: "2025-03", label: "Fixkosten", amountEur: "-8.900,00" },
-    { month: "2025-04", label: "Fixkosten", amountEur: "-9.000,00" },
-    { month: "2025-05", label: "Fixkosten", amountEur: "-9.100,00" },
-    { month: "2025-06", label: "Fixkosten", amountEur: "-9.200,00" },
-    { month: "2025-07", label: "Fixkosten", amountEur: "-9.200,00" },
-    { month: "2025-08", label: "Fixkosten", amountEur: "-9.300,00" },
-    { month: "2025-09", label: "Fixkosten", amountEur: "-9.300,00" },
-    { month: "2025-10", label: "Fixkosten", amountEur: "-9.400,00" },
+  demo.fixcosts = [
+    {
+      id: "fix-steuerberatung",
+      name: "Steuerberatung",
+      category: "Steuerberatung",
+      amount: "2.400,00",
+      frequency: "monthly",
+      intervalMonths: 1,
+      anchor: "15",
+      startMonth: "2024-10",
+      endMonth: "",
+      proration: { enabled: false, method: "none" },
+      autoPaid: true,
+      notes: "Monatliches Honorar",
+    },
+    {
+      id: "fix-ventory",
+      name: "Ventory One Lizenz",
+      category: "Lizenz",
+      amount: "1.350,00",
+      frequency: "monthly",
+      intervalMonths: 1,
+      anchor: "1",
+      startMonth: "2024-10",
+      endMonth: "",
+      proration: { enabled: false, method: "none" },
+      autoPaid: false,
+      notes: "Softwarelizenz",
+    },
+    {
+      id: "fix-lager",
+      name: "Lager & Logistik",
+      category: "Miete",
+      amount: "5.800,00",
+      frequency: "monthly",
+      intervalMonths: 1,
+      anchor: "LAST",
+      startMonth: "2024-10",
+      endMonth: "",
+      proration: { enabled: false, method: "none" },
+      autoPaid: true,
+      notes: "Lagerhalle inkl. Nebenkosten",
+    },
+    {
+      id: "fix-versicherung",
+      name: "Betriebsversicherung",
+      category: "Versicherung",
+      amount: "2.400,00",
+      frequency: "quarterly",
+      intervalMonths: 3,
+      anchor: "15",
+      startMonth: "2024-10",
+      endMonth: "",
+      proration: { enabled: false, method: "none" },
+      autoPaid: false,
+      notes: "Quartalsweise Prämie",
+    },
   ];
+
+  demo.fixcostOverrides = {
+    "fix-steuerberatung": {
+      "2024-12": { amount: "3.800,00", note: "Jahresabschluss" },
+    },
+    "fix-lager": {
+      "2025-07": { amount: "6.300,00", note: "Index-Anpassung", dueDate: "2025-07-25" },
+    },
+    "fix-versicherung": {
+      "2025-04": { amount: "2.800,00", note: "Police erweitert" },
+    },
+  };
 
   demo.dividends = [
     { month: "2025-06", label: "Dividende", amountEur: "-12.500,00" },
