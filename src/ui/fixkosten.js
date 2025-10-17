@@ -353,7 +353,7 @@ function render(root) {
           ${inst.overrideActive ? `<button class="btn" data-action="reset">Zurücksetzen</button>` : ""}
         </td>
       </tr>
-      ${isEditing ? renderInstanceEditor(inst)}
+      ${isEditing ? renderInstanceEditor(inst) : ""}
     `;
   }
 
@@ -500,7 +500,7 @@ function render(root) {
   });
 
   monthContainer?.addEventListener("click", (event) => {
-    const toggle = event.target.closest("button[data-action="toggle"]");
+    const toggle = event.target.closest('button[data-action="toggle"]');
     if (toggle) {
       const section = toggle.closest("section.fix-month-card");
       const month = section?.dataset.month;
