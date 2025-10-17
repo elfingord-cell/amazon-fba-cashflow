@@ -53,6 +53,9 @@ const plState = {
   categories: new Set(),
   collapsedMonths: new Set(),
   autoManualCheck: false,
+  defaultCollapseApplied: false,
+  showDetails: false,
+  legend: { inflow: true, outflow: true, net: true },
 };
 
 let plData = null;
@@ -752,6 +755,16 @@ export async function render(root) {
   const { months, series, kpis, breakdown } = computeSeries(state);
   plData = { months, breakdown };
   ensureSelection(months);
+  if (!plState.defaultCollapseApplied) {
+    const collapsedSet = getCollapsedSet();
+    collapsedSet.clear();
+    const keepOpen = months.slice(-3);
+    const keepSet = new Set(keepOpen);
+    for (const month of months) {
+      if (!keepSet.has(month)) collapsedSet.add(month);
+    }
+    plState.defaultCollapseApplied = true;
+  }
 
   const opening = Number(kpis.opening || 0);
   const closing = breakdown.map(b => b.closing);
@@ -816,7 +829,8 @@ export async function render(root) {
     .map(r => `<div class="net ${Number(r.net?.total || 0) >= 0 ? "pos" : "neg"}">${fmtEUR0(r.net?.total || 0)}</div>`)
     .join("");
 
-  const BAR_TYPES = ["inflow", "outflow", "net"];
+  let BAR_TYPES = (plState.showDetails ? ["inflow", "outflow", "net"] : ["net"]).filter(t => plState.legend[t] !== false);
+  if (!BAR_TYPES.length) BAR_TYPES = ["net"];
 
   function valuesFor(type, row) {
     if (type === "inflow") {
@@ -948,16 +962,51 @@ export async function render(root) {
     .map(monthKey => `<div class="xlabel">${escapeHtml(formatMonthLabel(monthKey))}</div>`)
     .join("");
 
+  const legendRows = [
+    {
+      type: "inflow",
+      label: "Inflow",
+      swatches: [
+        { cls: "swatch-inflow-paid", text: "bezahlt" },
+        { cls: "swatch-inflow-open", text: "offen" },
+      ],
+    },
+    {
+      type: "outflow",
+      label: "Outflow",
+      swatches: [
+        { cls: "swatch-outflow-paid", text: "bezahlt" },
+        { cls: "swatch-outflow-open", text: "offen" },
+      ],
+    },
+    {
+      type: "net",
+      label: "Netto",
+      swatches: [
+        { cls: "swatch-net-paid", text: "bezahlt" },
+        { cls: "swatch-net-open", text: "offen" },
+      ],
+    },
+  ];
+
   const legendHtml = `
     <div class="chart-legend" role="list">
-      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-inflow-paid"></span>Inflow bezahlt</span>
-      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-inflow-open"></span>Inflow offen</span>
-      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-outflow-paid"></span>Outflow bezahlt</span>
-      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-outflow-open"></span>Outflow offen</span>
-      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-net-paid"></span>Netto bezahlt</span>
-      <span class="legend-item" role="listitem"><span class="legend-swatch swatch-net-open"></span>Netto offen</span>
+      ${legendRows
+        .map(row => `
+          <button type="button" class="legend-button ${plState.legend[row.type] === false ? "is-off" : ""}" data-legend="${row.type}" aria-pressed="${plState.legend[row.type] !== false}">
+            <span class="legend-label">${row.label}</span>
+            <span class="legend-swatches">
+              ${row.swatches
+                .map(s => `<span class="legend-swatch ${s.cls}" aria-hidden="true"></span><span class="legend-swatch-text">${s.text}</span>`)
+                .join("")}
+            </span>
+          </button>
+        `)
+        .join("")}
     </div>
   `;
+
+  const detailLabel = plState.showDetails ? "Details ausblenden" : "Details anzeigen";
 
   root.innerHTML = `
     <section class="card">
@@ -967,6 +1016,9 @@ export async function render(root) {
         <div class="kpi"><div class="kpi-label" title="Kontostand zu Beginn des Startmonats.">Opening heute</div><div class="kpi-value">${fmtEUR(opening)}</div></div>
         <div class="kpi"><div class="kpi-label" title="Durchschnittliche Amazon-Auszahlungsquote über die sichtbaren Monate.">Sales × Payout (Monat ∅)</div><div class="kpi-value">${fmtEUR(kpis.salesPayoutAvg || 0)}</div></div>
         <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${kpis.firstNegativeMonth || "—"}</div></div>
+      </div>
+      <div class="chart-toolbar">
+        <button type="button" class="btn secondary" data-chart-detail>${detailLabel}</button>
       </div>
 
       <div class="vchart" style="--cols:${months.length}; --rows:${yTicks.length}; --zero:${zeroPct.toFixed(2)}">
@@ -991,6 +1043,24 @@ export async function render(root) {
     </section>
     <section class="card pl-container" id="pl-root"></section>
   `;
+
+  const detailBtn = root.querySelector('[data-chart-detail]');
+  if (detailBtn) {
+    detailBtn.addEventListener('click', () => {
+      plState.showDetails = !plState.showDetails;
+      render(root);
+    });
+  }
+
+  root.querySelectorAll('.legend-button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.getAttribute('data-legend');
+      if (!type) return;
+      const current = plState.legend[type] !== false;
+      plState.legend[type] = current ? false : true;
+      render(root);
+    });
+  });
 
   const tip = ensureGlobalTip();
 

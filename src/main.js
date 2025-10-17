@@ -36,6 +36,47 @@ function setActiveTab(hash) {
   });
 }
 
+function initSidebarToggle() {
+  const toggle = document.querySelector('.sidebar-toggle');
+  const sidebar = document.querySelector('.sidebar');
+  const layout = document.querySelector('.layout');
+  if (!toggle || !sidebar || !layout) return;
+  const mq = window.matchMedia('(max-width: 960px)');
+  function applyMatch() {
+    if (mq.matches) {
+      toggle.setAttribute('aria-expanded', 'false');
+      layout.classList.add('sidebar-collapsed');
+      sidebar.setAttribute('data-collapsed', 'true');
+    } else {
+      toggle.setAttribute('aria-expanded', 'true');
+      layout.classList.remove('sidebar-collapsed');
+      sidebar.removeAttribute('data-collapsed');
+    }
+  }
+  applyMatch();
+  mq.addEventListener('change', applyMatch);
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    const next = !expanded;
+    toggle.setAttribute('aria-expanded', String(next));
+    layout.classList.toggle('sidebar-collapsed', !next);
+    if (!next) {
+      sidebar.setAttribute('data-collapsed', 'true');
+    } else {
+      sidebar.removeAttribute('data-collapsed');
+    }
+  });
+  sidebar.addEventListener('click', ev => {
+    const link = ev.target.closest('a[data-tab]');
+    if (!link) return;
+    if (window.matchMedia('(max-width: 960px)').matches) {
+      toggle.setAttribute('aria-expanded', 'false');
+      layout.classList.add('sidebar-collapsed');
+      sidebar.setAttribute('data-collapsed', 'true');
+    }
+  });
+}
+
 // akzeptiert verschiedene Modul-Formen
 function pickRenderer(mod) {
   if (!mod) return null;
@@ -76,4 +117,5 @@ window.addEventListener('storage', (e) => {
 });
 window.addEventListener('state:changed', renderRoute);
 
+initSidebarToggle();
 renderRoute();
