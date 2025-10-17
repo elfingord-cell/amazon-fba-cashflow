@@ -1,5 +1,5 @@
 // UI: Dashboard – Monatsübersicht & detaillierte Monats-P/L-Analyse
-import { loadState, addStateListener } from "../data/storageLocal.js";
+import { loadState, addStateListener, setEventManualPaid, setEventsManualPaid, setAutoManualCheck } from "../data/storageLocal.js";
 import { computeSeries, fmtEUR } from "../domain/cashflow.js";
 
 const fmtEUR0 = val =>
@@ -52,6 +52,7 @@ const plState = {
   search: "",
   categories: new Set(),
   collapsedMonths: new Set(),
+  autoManualCheck: false,
 };
 
 let plData = null;
@@ -190,6 +191,17 @@ function computeRowAmounts(entry) {
   return { baseline, scenario, delta };
 }
 
+function collectMonthEventIds(month, predicate) {
+  const ids = [];
+  if (!month) return ids;
+  plEntryLookup.forEach(record => {
+    if (!record || record.month !== month) return;
+    if (typeof predicate === "function" && !predicate(record)) return;
+    if (record.eventId) ids.push(record.eventId);
+  });
+  return ids;
+}
+
 function buildPLCards(data) {
   plEntryLookup = new Map();
   plExportRows = [];
@@ -230,6 +242,8 @@ function buildMonthCard(row) {
 
   const sections = [];
   let rowIndex = 0;
+  let paidSum = 0;
+  let openSum = 0;
 
   for (const groupKey of orderedGroups) {
     const records = grouped.get(groupKey);
@@ -244,6 +258,21 @@ function buildMonthCard(row) {
         groupBaseline += baseline;
         groupScenario += scenario;
         const entryKey = `${row.month}-${rowIndex++}-${entry.id || entry.label || "entry"}`;
+        const eventId = entry.statusId || entry.id || entryKey;
+        const ariaLabel = entry.autoApplied ? "Automatisch bezahlt" : "Bezahlt";
+        const tooltip = entry.autoTooltip ? ` title="${escapeHtml(entry.autoTooltip)}"` : "";
+        const autoIcon = entry.autoTooltip
+          ? `<span class="pl-auto-icon" aria-hidden="true">${entry.autoApplied ? "⏱" : "ⓘ"}</span>`
+          : "";
+        const statusCell = `
+          <td class="pl-row-status" data-label="Bezahlt">
+            <label class="pl-row-checkbox"${tooltip}>
+              <input type="checkbox" data-event-id="${escapeHtml(eventId)}" ${entry.paid ? "checked" : ""} aria-label="${escapeHtml(ariaLabel)}" />
+              ${autoIcon}
+            </label>
+          </td>`;
+        const signedValue = baseline;
+        if (entry.paid) paidSum += signedValue; else openSum += signedValue;
         plEntryLookup.set(entryKey, {
           entry,
           month: row.month,
@@ -254,6 +283,9 @@ function buildMonthCard(row) {
           delta,
           opening: row.opening,
           closing: row.closing,
+          eventId,
+          autoTooltip: entry.autoTooltip,
+          autoApplied: entry.autoApplied,
         });
         plExportRows.push({
           key: entryKey,
@@ -277,6 +309,7 @@ function buildMonthCard(row) {
               <span class="badge ${entry.paid ? "badge-paid" : "badge-plan"}">${entry.paid ? "Bezahlt" : "Geplant"}</span>
             </td>
             <td class="pl-row-date" data-label="Datum">${escapeHtml(formatDateLabel(entry.date))}</td>
+            ${statusCell}
             <td class="pl-row-amount" data-label="Betrag">${fmtSigned(baseline)}</td>
             ${plState.showScenario ? `<td class="pl-row-delta" data-label="Δ">${fmtSigned(delta)}</td>` : ""}
           </tr>
@@ -301,6 +334,7 @@ function buildMonthCard(row) {
                 <th scope="col">Kategorie</th>
                 <th scope="col">Label</th>
                 <th scope="col">Datum</th>
+                <th scope="col">Bezahlt</th>
                 <th scope="col">Betrag</th>
                 ${plState.showScenario ? "<th scope=\"col\">Δ</th>" : ""}
               </tr>
@@ -349,12 +383,25 @@ function buildMonthCard(row) {
                   <span class="pl-metric-value">${fmtSigned(scenarioDelta)}</span>
                 </div>
               ` : ""}
+              <div class="pl-metric">
+                <span class="pl-metric-label">Offen</span>
+                <span class="pl-metric-value">${fmtSigned(openSum)}</span>
+              </div>
+              <div class="pl-metric">
+                <span class="pl-metric-label">Bezahlt</span>
+                <span class="pl-metric-value">${fmtSigned(paidSum)}</span>
+              </div>
             </div>
           </div>
           <span class="pl-card-chevron" aria-hidden="true">${collapsed ? "▶" : "▼"}</span>
         </button>
       </header>
       <div class="pl-card-body" id="${escapeHtml(bodyId)}" ${collapsed ? "hidden" : ""}>
+        ${filtered.length ? `
+          <div class="pl-card-actions">
+            <button type="button" class="chip secondary" data-action="confirm-month" data-month="${escapeHtml(row.month)}">Alle offenen Zahlungen dieses Monats bestätigen</button>
+          </div>
+        ` : ""}
         ${sections.join("") || '<p class="pl-empty">Keine Daten in diesem Monat.</p>'}
       </div>
     </article>
@@ -424,6 +471,10 @@ function buildPLSectionHTML(data) {
         <input type="checkbox" id="pl-scenario-toggle" ${plState.showScenario ? "checked" : ""} />
         <span>Δ-Szenario anzeigen</span>
       </label>
+      <label class="pl-auto-manual">
+        <input type="checkbox" id="pl-auto-manual" ${plState.autoManualCheck ? "checked" : ""} />
+        <span>Automatische Zahlungen manuell prüfen</span>
+      </label>
       <button type="button" class="pl-export" id="pl-export">Export (CSV)</button>
     </div>
     <div class="pl-category-filter" aria-label="Kategorie-Filter">
@@ -480,6 +531,15 @@ function attachPLHandlers(plRoot) {
     });
   }
 
+  const autoManualToggle = plRoot.querySelector("#pl-auto-manual");
+  if (autoManualToggle) {
+    autoManualToggle.addEventListener("change", () => {
+      plState.autoManualCheck = autoManualToggle.checked;
+      setAutoManualCheck(autoManualToggle.checked);
+      updatePLSection(plRoot);
+    });
+  }
+
   const searchInput = plRoot.querySelector("#pl-search");
   if (searchInput) {
     searchInput.addEventListener("input", () => {
@@ -517,6 +577,16 @@ function attachPLHandlers(plRoot) {
   const cards = plRoot.querySelector(".pl-cards");
   if (cards) {
     cards.addEventListener("click", ev => {
+      const confirmBtn = ev.target.closest("[data-action='confirm-month']");
+      if (confirmBtn) {
+        ev.preventDefault();
+        const month = confirmBtn.getAttribute("data-month");
+        if (!month) return;
+        if (!confirm("Möchten Sie wirklich alle offenen Zahlungen für diesen Monat als bezahlt markieren?")) return;
+        const ids = collectMonthEventIds(month, record => record && record.entry && !record.entry.paid && !record.entry.auto);
+        if (ids.length) setEventsManualPaid(ids, true);
+        return;
+      }
       const toggle = ev.target.closest(".pl-card-toggle");
       if (toggle) {
         ev.preventDefault();
@@ -525,10 +595,21 @@ function attachPLHandlers(plRoot) {
         updatePLSection(plRoot);
         return;
       }
+      if (ev.target.closest(".pl-row-checkbox")) return;
       const row = ev.target.closest(".pl-row");
       if (!row) return;
       const id = row.getAttribute("data-entry-id");
       showDrawer(id, plRoot);
+    });
+    cards.addEventListener("change", ev => {
+      const checkbox = ev.target.closest(".pl-row-checkbox input[type='checkbox']");
+      if (!checkbox) return;
+      const row = checkbox.closest(".pl-row");
+      if (!row) return;
+      const entryId = row.getAttribute("data-entry-id");
+      const record = plEntryLookup.get(entryId);
+      if (!record || !record.eventId) return;
+      setEventManualPaid(record.eventId, checkbox.checked);
     });
     cards.addEventListener("keydown", ev => {
       if (ev.key !== "Enter" && ev.key !== " ") return;
@@ -540,6 +621,8 @@ function attachPLHandlers(plRoot) {
         updatePLSection(plRoot);
         return;
       }
+      if (ev.target.closest("[data-action='confirm-month']")) return;
+      if (ev.target.closest(".pl-row-checkbox")) return;
       const row = ev.target.closest(".pl-row");
       if (!row) return;
       ev.preventDefault();
@@ -575,6 +658,7 @@ function buildDrawerHtml(record) {
     rows.push({ label: "Δ", value: fmtSigned(delta) });
   }
   rows.push({ label: "Status", value: entry.paid ? "Bezahlt" : "Geplant" });
+  if (entry.autoTooltip) rows.push({ label: "Hinweis", value: entry.autoTooltip });
   if (entry.anchor) rows.push({ label: "Anchor", value: entry.anchor });
   if (entry.lagDays != null) rows.push({ label: "Lag (Tage)", value: String(entry.lagDays) });
   if (entry.lagMonths != null) rows.push({ label: "Lag (Monate)", value: String(entry.lagMonths) });
@@ -664,6 +748,7 @@ function updatePLSection(plRoot) {
 export async function render(root) {
   dashboardRoot = root;
   const state = loadState();
+  plState.autoManualCheck = state?.status?.autoManualCheck === true;
   const { months, series, kpis, breakdown } = computeSeries(state);
   plData = { months, breakdown };
   ensureSelection(months);

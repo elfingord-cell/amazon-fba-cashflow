@@ -20,14 +20,34 @@ const defaults = {
   outgoings: [ ],
   dividends: [ ],
   pos:       [ ],
-  fos:       [ ]
+  fos:       [ ],
+  status: {
+    autoManualCheck: false,
+    events: {},
+  },
 };
+
+function ensureStatusSection(state){
+  const target = state || {};
+  if (!target.status || typeof target.status !== "object") {
+    target.status = { autoManualCheck: false, events: {} };
+  }
+  if (typeof target.status.autoManualCheck !== "boolean") {
+    target.status.autoManualCheck = false;
+  }
+  if (!target.status.events || typeof target.status.events !== "object") {
+    target.status.events = {};
+  }
+  return target.status;
+}
 
 let _state = null;
 const listeners = new Set();
 
 export function createEmptyState(){
-  return structuredClone(defaults);
+  const clone = structuredClone(defaults);
+  ensureStatusSection(clone);
+  return clone;
 }
 
 export function loadState(){
@@ -38,6 +58,7 @@ export function loadState(){
   } catch {
     _state = structuredClone(defaults);
   }
+  ensureStatusSection(_state);
   return _state;
 }
 
@@ -83,4 +104,61 @@ export function importStateFile(file, cb){
     cb({ __error: reader.error?.message || 'Datei konnte nicht gelesen werden' });
   };
   reader.readAsText(file, 'utf-8');
+}
+
+export function getStatusSnapshot(){
+  const state = loadState();
+  return ensureStatusSection(state);
+}
+
+export function setAutoManualCheck(enabled){
+  const state = loadState();
+  const status = ensureStatusSection(state);
+  const next = enabled === true;
+  if (status.autoManualCheck === next) return;
+  status.autoManualCheck = next;
+  saveState(state);
+}
+
+export function setEventManualPaid(eventId, paid){
+  if (!eventId) return;
+  const state = loadState();
+  const status = ensureStatusSection(state);
+  const map = status.events;
+  if (!map[eventId]) map[eventId] = {};
+  const record = map[eventId];
+  const next = typeof paid === "boolean" ? paid : Boolean(paid);
+  if (record.manual === next) return;
+  record.manual = next;
+  saveState(state);
+}
+
+export function clearEventManualPaid(eventId){
+  if (!eventId) return;
+  const state = loadState();
+  const status = ensureStatusSection(state);
+  const map = status.events;
+  if (!map[eventId] || typeof map[eventId].manual === "undefined") return;
+  delete map[eventId].manual;
+  if (!Object.keys(map[eventId]).length) delete map[eventId];
+  saveState(state);
+}
+
+export function setEventsManualPaid(eventIds, paid){
+  if (!Array.isArray(eventIds) || !eventIds.length) return;
+  const state = loadState();
+  const status = ensureStatusSection(state);
+  const map = status.events;
+  let changed = false;
+  for (const id of eventIds) {
+    if (!id) continue;
+    if (!map[id]) map[id] = {};
+    const record = map[id];
+    const next = typeof paid === "boolean" ? paid : Boolean(paid);
+    if (record.manual !== next) {
+      record.manual = next;
+      changed = true;
+    }
+  }
+  if (changed) saveState(state);
 }

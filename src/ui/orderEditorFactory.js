@@ -1,4 +1,4 @@
-import { loadState, saveState } from "../data/storageLocal.js";
+import { loadState, saveState, getStatusSnapshot, setEventManualPaid } from "../data/storageLocal.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -277,10 +277,21 @@ function orderEvents(record, config, settings) {
       amount,
       type: "manual",
       due,
+      auto: false,
+      direction: amount <= 0 ? "out" : "in",
     };
   }).filter(Boolean);
 
-  events.push(...manualComputed.map(evt => ({ id: evt.id, label: evt.label, date: evt.date, amount: evt.amount })));
+  events.push(...manualComputed.map(evt => ({
+    id: evt.id,
+    label: evt.label,
+    date: evt.date,
+    amount: evt.amount,
+    type: evt.type,
+    auto: false,
+    due: evt.due,
+    direction: evt.direction,
+  })));
 
   const dutyIncludeFreight = record.dutyIncludeFreight !== false;
   const stateDutyRate = typeof record.dutyRatePct === "number" ? record.dutyRatePct : clampPct(record.dutyRatePct);
@@ -308,6 +319,10 @@ function orderEvents(record, config, settings) {
         label: `${prefix}${autoEvt.label || "Zoll"}`.trim(),
         date: dueIso,
         amount,
+        type: "duty",
+        auto: true,
+        due,
+        direction: amount <= 0 ? "out" : "in",
       });
       continue;
     }
@@ -326,6 +341,10 @@ function orderEvents(record, config, settings) {
         label: `${prefix}${autoEvt.label || "EUSt"}`.trim(),
         date: dueIso,
         amount,
+        type: "eust",
+        auto: true,
+        due,
+        direction: amount <= 0 ? "out" : "in",
       });
       continue;
     }
@@ -347,6 +366,10 @@ function orderEvents(record, config, settings) {
         label: `${prefix}${autoEvt.label || "EUSt-Erstattung"}`.trim(),
         date: dueIso,
         amount,
+        type: "vat_refund",
+        auto: true,
+        due,
+        direction: amount <= 0 ? "out" : "in",
       });
       continue;
     }
@@ -362,6 +385,10 @@ function orderEvents(record, config, settings) {
         label: `${prefix}${autoEvt.label || "FX"}`.trim(),
         date: dueIso,
         amount,
+        type: "fx_fee",
+        auto: true,
+        due,
+        direction: amount <= 0 ? "out" : "in",
       });
       continue;
     }
@@ -372,25 +399,74 @@ function orderEvents(record, config, settings) {
     .sort((a, b) => (a.date === b.date ? (a.label || "").localeCompare(b.label || "") : a.date.localeCompare(b.date)));
 }
 
-function buildEventList(events) {
+function buildEventList(events, onStatusChange) {
   const wrapper = el("div", { class: "po-event-table" });
   if (!events.length) {
     wrapper.append(el("div", { class: "muted" }, ["Keine Ereignisse definiert."]));
     return wrapper;
   }
+  const status = getStatusSnapshot();
+  const statusMap = status.events || {};
+  const autoManual = status.autoManualCheck === true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayTime = today.getTime();
   wrapper.append(
     el("div", { class: "po-event-head" }, [
       el("span", { class: "po-event-col" }, ["Name"]),
       el("span", { class: "po-event-col" }, ["Datum"]),
       el("span", { class: "po-event-col amount" }, ["Betrag"]),
+      el("span", { class: "po-event-col status" }, ["Bezahlt"]),
     ]),
   );
   for (const evt of events) {
+    const statusRec = statusMap[evt.id] || {};
+    const manual = typeof statusRec.manual === "boolean" ? statusRec.manual : undefined;
+    const baseDue = evt.due instanceof Date ? evt.due : (evt.date ? new Date(evt.date) : null);
+    const dueTime = baseDue && !Number.isNaN(baseDue.getTime())
+      ? new Date(baseDue.getFullYear(), baseDue.getMonth(), baseDue.getDate()).getTime()
+      : null;
+    const isAuto = evt.auto === true;
+    let autoApplied = false;
+    let checked;
+    if (typeof manual === "boolean") {
+      checked = manual;
+    } else if (isAuto && !autoManual && dueTime != null && dueTime <= todayTime) {
+      checked = true;
+      autoApplied = true;
+    } else {
+      checked = false;
+    }
+    const checkbox = el("input", {
+      type: "checkbox",
+      class: "po-paid-checkbox",
+      dataset: { eventId: evt.id },
+    });
+    checkbox.checked = checked;
+    checkbox.setAttribute("aria-label", autoApplied ? "Automatisch bezahlt" : "Bezahlt");
+    checkbox.addEventListener("change", (ev) => {
+      setEventManualPaid(evt.id, ev.target.checked);
+      if (typeof onStatusChange === "function") onStatusChange();
+    });
+    const autoTooltip = (() => {
+      if (!isAuto) return null;
+      if (autoApplied) return "Automatisch bezahlt am Fälligkeitstag";
+      if (autoManual) return "Automatische Zahlung – manuelle Prüfung aktiv";
+      return "Automatische Zahlung";
+    })();
+    const labelWrap = el("label", {
+      class: "po-paid-toggle",
+      title: autoTooltip || undefined,
+    }, [checkbox]);
+    if (autoTooltip) {
+      labelWrap.append(el("span", { class: "po-auto-indicator", "aria-hidden": "true" }, [autoApplied ? "⏱" : "ⓘ"]));
+    }
     wrapper.append(
       el("div", { class: "po-event-row" }, [
         el("span", { class: "po-event-col" }, [evt.label]),
         el("span", { class: "po-event-col" }, [evt.date]),
         el("span", { class: "po-event-col amount" }, [fmtEUR(evt.amount)]),
+        el("span", { class: "po-event-col status" }, [labelWrap]),
       ]),
     );
   }
@@ -784,7 +860,7 @@ export function renderOrderModule(root, config) {
     const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
     preview.append(el("h4", {}, ["Ereignisse"]));
-    preview.append(buildEventList(events));
+    preview.append(buildEventList(events, () => updatePreview(settings)));
   }
 
   function updateSaveEnabled() {

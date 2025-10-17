@@ -306,6 +306,13 @@ export function computeSeries(state) {
   const horizon = Number((s.settings && s.settings.horizonMonths) || 12);
   const months = monthRange(startMonth, horizon);
 
+  const statusState = (s.status && typeof s.status === 'object') ? s.status : {};
+  const statusEvents = (statusState.events && typeof statusState.events === 'object') ? statusState.events : {};
+  const autoManualCheck = statusState.autoManualCheck === true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayTime = today.getTime();
+
   const bucket = {};
   months.forEach(m => { bucket[m] = { entries: [] }; });
 
@@ -314,8 +321,35 @@ export function computeSeries(state) {
     bucket[month].entries.push(entry);
   }
 
-  function baseEntry(overrides) {
+  function baseEntry(overrides, meta = {}) {
     const baseId = overrides.id || `${overrides.month || ''}-${overrides.label || ''}-${overrides.date || ''}`;
+    const statusRecord = statusEvents[baseId];
+    const manual = typeof statusRecord?.manual === 'boolean' ? statusRecord.manual : undefined;
+    const entryDate = overrides.date ? new Date(overrides.date) : null;
+    const entryTime = entryDate && Number.isFinite(entryDate.getTime()) ? new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate()).getTime() : null;
+    const isAuto = meta.auto === true;
+    const autoEligible = isAuto && meta.autoEligible !== false;
+    const defaultPaid = typeof overrides.paid === 'boolean' ? overrides.paid : Boolean(meta.defaultPaid);
+    let paid = false;
+    let autoApplied = false;
+
+    if (typeof manual === 'boolean') {
+      paid = manual;
+    } else if (autoEligible && !autoManualCheck && entryTime != null && entryTime <= todayTime) {
+      paid = true;
+      autoApplied = true;
+    } else {
+      paid = defaultPaid;
+    }
+
+    const autoSuppressed = autoEligible && autoManualCheck && !autoApplied;
+    const autoTooltip = (() => {
+      if (!autoEligible) return null;
+      if (autoApplied) return 'Automatisch bezahlt am Fälligkeitstag';
+      if (autoManualCheck) return 'Automatische Zahlung – manuelle Prüfung aktiv';
+      return 'Automatische Zahlung';
+    })();
+
     return {
       id: baseId,
       direction: overrides.direction || 'in',
@@ -325,7 +359,7 @@ export function computeSeries(state) {
       date: overrides.date,
       kind: overrides.kind,
       group: overrides.group,
-      paid: overrides.paid === true,
+      paid,
       source: overrides.source || null,
       anchor: overrides.anchor,
       lagDays: overrides.lagDays,
@@ -337,6 +371,14 @@ export function computeSeries(state) {
       tooltip: overrides.tooltip,
       sourceTab: overrides.sourceTab,
       sourceNumber: overrides.sourceNumber,
+      statusId: baseId,
+      auto: isAuto,
+      autoEligible,
+      autoApplied,
+      autoManualCheck,
+      manualOverride: typeof manual === 'boolean',
+      autoSuppressed,
+      autoTooltip,
     };
   }
 
@@ -356,7 +398,7 @@ export function computeSeries(state) {
       group: amt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
       source: 'sales',
       sourceTab: '#eingaben',
-    }));
+    }, { auto: false }));
   });
 
   (Array.isArray(s.extras) ? s.extras : []).forEach(row => {
@@ -377,7 +419,7 @@ export function computeSeries(state) {
       group: direction === 'in' ? 'Extras (In)' : 'Extras (Out)',
       source: 'extras',
       sourceTab: '#eingaben',
-    }));
+    }, { auto: row.autoPaid === true, autoEligible: row.autoPaid === true }));
   });
 
   // Outflows (fixe Kosten)
@@ -396,7 +438,7 @@ export function computeSeries(state) {
       group: 'Fixkosten',
       source: 'outgoings',
       sourceTab: '#eingaben',
-    }));
+    }, { auto: row.autoPaid !== false, autoEligible: row.autoPaid !== false }));
   });
 
   (Array.isArray(s.dividends) ? s.dividends : []).forEach(row => {
@@ -415,7 +457,7 @@ export function computeSeries(state) {
       group: 'Dividende & KapESt',
       source: 'dividends',
       sourceTab: '#eingaben',
-    }));
+    }, { auto: false }));
   });
 
   const settingsNorm = normaliseSettings(s.settings);
@@ -448,7 +490,7 @@ export function computeSeries(state) {
         percent: ev.percent,
         sourceNumber: ev.sourceNumber || po.poNo,
         tooltip: ev.tooltip,
-      }));
+      }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
     });
   });
 
@@ -480,7 +522,7 @@ export function computeSeries(state) {
         percent: ev.percent,
         sourceNumber: ev.sourceNumber || fo.foNo,
         tooltip: ev.tooltip,
-      }));
+      }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
     });
   });
 
