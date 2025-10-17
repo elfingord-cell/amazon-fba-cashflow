@@ -36,6 +36,11 @@ function setActiveTab(hash) {
   });
 }
 
+function normalizeHash(hash) {
+  if (!hash) return '#dashboard';
+  return hash.startsWith('#') ? hash : `#${hash}`;
+}
+
 function initSidebarToggle() {
   const toggle = document.querySelector('.sidebar-toggle');
   const sidebar = document.querySelector('.sidebar');
@@ -69,6 +74,11 @@ function initSidebarToggle() {
   sidebar.addEventListener('click', ev => {
     const link = ev.target.closest('a[data-tab]');
     if (!link) return;
+    const targetHash = normalizeHash(link.getAttribute('href'));
+    if (targetHash === normalizeHash(location.hash)) {
+      ev.preventDefault();
+      renderRoute(targetHash);
+    }
     if (window.matchMedia('(max-width: 960px)').matches) {
       toggle.setAttribute('aria-expanded', 'false');
       layout.classList.add('sidebar-collapsed');
@@ -87,10 +97,12 @@ function pickRenderer(mod) {
   return null;
 }
 
-function renderRoute() {
-  const hash = location.hash || '#dashboard';
+function renderRoute(forcedHash) {
+  const candidate = typeof forcedHash === 'string' ? forcedHash : location.hash;
+  const hash = normalizeHash(candidate);
   const loader = routes[hash] || routes['#dashboard'];
   setActiveTab(hash);
+  APP.innerHTML = '';
   loader()
     .then(mod => {
       const fn = pickRenderer(mod);
