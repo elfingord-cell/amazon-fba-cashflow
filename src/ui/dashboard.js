@@ -19,6 +19,7 @@ const fmtEUR2 = val =>
   }).format(Number(val || 0));
 
 const monthFormatter = new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" });
+const monthShortFormatter = new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" });
 const dateFormatter = new Intl.DateTimeFormat("de-DE");
 
 const CATEGORY_ORDER = [
@@ -55,6 +56,7 @@ const plState = {
   autoManualCheck: false,
   defaultCollapseApplied: false,
   showDetails: false,
+  showAdvancedFilters: false,
   legend: { inflow: true, outflow: true, net: true },
 };
 
@@ -78,6 +80,13 @@ function formatMonthLabel(yyyymm) {
   const [y, m] = yyyymm.split("-").map(Number);
   const date = new Date(y, (m || 1) - 1, 1);
   return monthFormatter.format(date);
+}
+
+function formatMonthShortLabel(yyyymm) {
+  if (!yyyymm) return "";
+  const [y, m] = yyyymm.split("-").map(Number);
+  const date = new Date(y, (m || 1) - 1, 1);
+  return monthShortFormatter.format(date);
 }
 
 function formatDateLabel(iso) {
@@ -241,7 +250,6 @@ function buildMonthCard(row) {
 
   let cardNet = 0;
   let cardScenario = 0;
-  let salesSum = 0;
 
   const sections = [];
   let rowIndex = 0;
@@ -302,7 +310,6 @@ function buildMonthCard(row) {
           delta,
           status: entry.paid ? "Bezahlt" : "Geplant",
         });
-        if (groupKey === "Sales × Payout") salesSum += baseline;
         return `
           <tr class="pl-row" data-entry-id="${escapeHtml(entryKey)}" tabindex="0">
             <td class="pl-row-cat" data-label="Kategorie">${escapeHtml(groupKey)}</td>
@@ -372,14 +379,6 @@ function buildMonthCard(row) {
                 <span class="pl-metric-label">P/L gesamt</span>
                 <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
               </div>
-              <div class="pl-metric">
-                <span class="pl-metric-label">Sales × Payout</span>
-                <span class="pl-metric-value">${fmtSigned(salesSum)}</span>
-              </div>
-              <div class="pl-metric">
-                <span class="pl-metric-label">Netto-Cash</span>
-                <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
-              </div>
               ${plState.showScenario ? `
                 <div class="pl-metric">
                   <span class="pl-metric-label">Δ Szenario</span>
@@ -416,7 +415,8 @@ function buildMonthChips(months) {
   const chips = months
     .map(month => {
       const active = selected.has(month);
-      return `<button type="button" class="chip ${active ? "active" : ""}" data-month="${escapeHtml(month)}" aria-pressed="${active}">${escapeHtml(month)}</button>`;
+      const label = formatMonthShortLabel(month);
+      return `<button type="button" class="chip ${active ? "active" : ""}" data-month="${escapeHtml(month)}" aria-pressed="${active}">${escapeHtml(label)}</button>`;
     })
     .join("");
   return chips;
@@ -442,6 +442,7 @@ function buildPLSectionHTML(data) {
   const chips = buildMonthChips(data.months || []);
   const cards = buildPLCards(data);
   const selectionCount = plState.selectedMonths ? plState.selectedMonths.length : 0;
+  const panelOpen = plState.showAdvancedFilters;
   return `
     <div class="pl-headline">
       <h2>Monats-P/L</h2>
@@ -466,23 +467,32 @@ function buildPLSectionHTML(data) {
       <div class="pl-modes" role="group" aria-label="Modus">
         ${MODE_OPTIONS.map(option => `<button type="button" class="pl-mode ${plState.mode === option.key ? "active" : ""}" data-mode="${option.key}">${option.label}</button>`).join("")}
       </div>
-      <label class="pl-search">
-        <span class="pl-search-label">Suche</span>
-        <input type="search" id="pl-search" placeholder="Label durchsuchen" value="${escapeHtml(plState.search)}" />
-      </label>
-      <label class="pl-scenario">
-        <input type="checkbox" id="pl-scenario-toggle" ${plState.showScenario ? "checked" : ""} />
-        <span>Δ-Szenario anzeigen</span>
-      </label>
-      <label class="pl-auto-manual">
-        <input type="checkbox" id="pl-auto-manual" ${plState.autoManualCheck ? "checked" : ""} />
-        <span>Automatische Zahlungen manuell prüfen</span>
-      </label>
+      <button type="button" class="pl-filter-toggle" data-filter-toggle aria-expanded="${panelOpen}">Filter</button>
       <button type="button" class="pl-export" id="pl-export">Export (CSV)</button>
     </div>
-    <div class="pl-category-filter" aria-label="Kategorie-Filter">
-      ${buildCategoryFilters()}
-    </div>
+    <section class="pl-filter-panel${panelOpen ? " open" : ""}" data-filter-panel${panelOpen ? "" : " hidden"}>
+      <header class="pl-filter-head">
+        <h3>Filter &amp; Optionen</h3>
+        <button type="button" class="pl-filter-close" data-filter-toggle aria-label="Filter schließen">×</button>
+      </header>
+      <div class="pl-filter-grid">
+        <label class="pl-search">
+          <span class="pl-search-label">Suche</span>
+          <input type="search" id="pl-search" placeholder="Label durchsuchen" value="${escapeHtml(plState.search)}" />
+        </label>
+        <label class="pl-scenario">
+          <input type="checkbox" id="pl-scenario-toggle" ${plState.showScenario ? "checked" : ""} />
+          <span>Δ-Szenario anzeigen</span>
+        </label>
+        <label class="pl-auto-manual">
+          <input type="checkbox" id="pl-auto-manual" ${plState.autoManualCheck ? "checked" : ""} />
+          <span>Automatische Zahlungen manuell prüfen</span>
+        </label>
+        <div class="pl-category-filter" aria-label="Kategorie-Filter">
+          ${buildCategoryFilters()}
+        </div>
+      </div>
+    </section>
     <div class="pl-cards">
       ${cards || '<div class="pl-empty">Keine Monate ausgewählt. Wähle oben mindestens einen Monat.</div>'}
     </div>
@@ -514,6 +524,13 @@ function attachPLHandlers(plRoot) {
     btn.addEventListener("click", () => {
       const control = btn.getAttribute("data-control");
       plState.selectedMonths = applyControlSelection(control, plData?.months || []);
+      updatePLSection(plRoot);
+    });
+  });
+
+  plRoot.querySelectorAll("[data-filter-toggle]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      plState.showAdvancedFilters = !plState.showAdvancedFilters;
       updatePLSection(plRoot);
     });
   });
@@ -825,8 +842,16 @@ export async function render(root) {
       return `<div class="closing-label${edgeClass}" style="--x:${xp}; --y:${YPct(v)};">${fmtEUR0(v)}</div>`;
     })
     .join("");
+  const maxStripItems = 12;
+  const stripSlice = Math.min(series.length, maxStripItems);
+  const stripStart = Math.max(0, series.length - stripSlice);
   const netStrip = series
-    .map(r => `<div class="net ${Number(r.net?.total || 0) >= 0 ? "pos" : "neg"}">${fmtEUR0(r.net?.total || 0)}</div>`)
+    .slice(stripStart)
+    .map((r, idx) => {
+      const monthLabel = formatMonthShortLabel(months[stripStart + idx] || "");
+      const display = `${monthLabel} · ${fmtEUR0(r.net?.total || 0)}`;
+      return `<div class="net ${Number(r.net?.total || 0) >= 0 ? "pos" : "neg"}">${escapeHtml(display)}</div>`;
+    })
     .join("");
 
   let BAR_TYPES = (plState.showDetails ? ["inflow", "outflow", "net"] : ["net"]).filter(t => plState.legend[t] !== false);
@@ -958,11 +983,27 @@ export async function render(root) {
     .map((row, i) => `<div class="vbar-group">${BAR_TYPES.map(type => renderBar(type, row, i)).join("")}</div>`)
     .join("");
 
+  const maxXTicks = 8;
+  const step = Math.max(1, Math.ceil((months.length || 1) / maxXTicks));
   const xLabelsHtml = months
-    .map(monthKey => `<div class="xlabel">${escapeHtml(formatMonthLabel(monthKey))}</div>`)
+    .map((monthKey, idx) => {
+      const label = idx % step === 0 ? formatMonthShortLabel(monthKey) : "";
+      return `<div class="xlabel">${label ? escapeHtml(label) : "&nbsp;"}</div>`;
+    })
     .join("");
 
-  const legendRows = [
+  const baseLegendRows = [
+    {
+      type: "net",
+      label: "Netto",
+      swatches: [
+        { cls: "swatch-net-paid", text: "bezahlt" },
+        { cls: "swatch-net-open", text: "offen" },
+      ],
+    },
+  ];
+
+  const detailLegendRows = [
     {
       type: "inflow",
       label: "Inflow",
@@ -979,15 +1020,11 @@ export async function render(root) {
         { cls: "swatch-outflow-open", text: "offen" },
       ],
     },
-    {
-      type: "net",
-      label: "Netto",
-      swatches: [
-        { cls: "swatch-net-paid", text: "bezahlt" },
-        { cls: "swatch-net-open", text: "offen" },
-      ],
-    },
   ];
+
+  const legendRows = plState.showDetails
+    ? baseLegendRows.concat(detailLegendRows)
+    : baseLegendRows;
 
   const legendHtml = `
     <div class="chart-legend" role="list">
@@ -1008,6 +1045,8 @@ export async function render(root) {
 
   const detailLabel = plState.showDetails ? "Details ausblenden" : "Details anzeigen";
 
+  const firstNegativeDisplay = kpis.firstNegativeMonth ? formatMonthLabel(kpis.firstNegativeMonth) : "—";
+
   root.innerHTML = `
     <section class="card">
       <h2>Dashboard</h2>
@@ -1015,7 +1054,7 @@ export async function render(root) {
       <div class="grid three">
         <div class="kpi"><div class="kpi-label" title="Kontostand zu Beginn des Startmonats.">Opening heute</div><div class="kpi-value">${fmtEUR(opening)}</div></div>
         <div class="kpi"><div class="kpi-label" title="Durchschnittliche Amazon-Auszahlungsquote über die sichtbaren Monate.">Sales × Payout (Monat ∅)</div><div class="kpi-value">${fmtEUR(kpis.salesPayoutAvg || 0)}</div></div>
-        <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${kpis.firstNegativeMonth || "—"}</div></div>
+        <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${firstNegativeDisplay}</div></div>
       </div>
       <div class="chart-toolbar">
         <button type="button" class="btn secondary" data-chart-detail>${detailLabel}</button>
@@ -1039,7 +1078,7 @@ export async function render(root) {
       </div>
       ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>
-      <div class="net-strip" style="--cols:${months.length};">${netStrip}</div>
+      <div class="net-strip" style="--cols:${stripSlice || 1};">${netStrip}</div>
     </section>
     <section class="card pl-container" id="pl-root"></section>
   `;
@@ -1144,10 +1183,12 @@ function niceStepSize(range) {
 }
 
 function fmtTick(v) {
-  const abs = Math.abs(v);
-  if (abs >= 1_000_000) return `${Math.round(v / 1_000_000)}M`;
-  if (abs >= 1_000) return `${Math.round(v / 1_000)}k`;
-  return `${Math.round(v)}`;
+  return new Intl.NumberFormat("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  }).format(Number(v || 0));
 }
 
 export default { render };
