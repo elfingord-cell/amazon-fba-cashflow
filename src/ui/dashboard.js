@@ -18,9 +18,19 @@ const fmtEUR2 = val =>
     maximumFractionDigits: 2,
   }).format(Number(val || 0));
 
-const monthFormatter = new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" });
-const monthShortFormatter = new Intl.DateTimeFormat("de-DE", { month: "short", year: "numeric" });
-const dateFormatter = new Intl.DateTimeFormat("de-DE");
+const monthFormatter = new Intl.DateTimeFormat("de-DE", {
+  month: "long",
+  year: "numeric",
+});
+const monthShortFormatter = new Intl.DateTimeFormat("de-DE", {
+  month: "short",
+  year: "numeric",
+});
+const dateFormatter = new Intl.DateTimeFormat("de-DE", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
 
 const CATEGORY_ORDER = [
   "Sales × Payout",
@@ -810,8 +820,9 @@ export async function render(root) {
     ...netOpenTotals.filter(v => v < 0),
     ...closingValues,
   );
-  const paddedTop = rawTop === 0 ? 0 : rawTop * 1.1;
-  const paddedBottom = rawBottom === 0 ? 0 : rawBottom * 1.1;
+  const headroomFactor = 1.2;
+  const paddedTop = rawTop === 0 ? 0 : rawTop * headroomFactor;
+  const paddedBottom = rawBottom === 0 ? 0 : rawBottom * headroomFactor;
   const steps = 5;
   const range = (paddedTop - paddedBottom) / steps || 1;
   const niceStep = niceStepSize(range);
@@ -831,17 +842,35 @@ export async function render(root) {
   };
   const YPct = v => (Y(v) / 1000) * 100;
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
-  const points = closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ");
-  const dots = closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("");
+  const baselineGapPct = 0.8;
+  const points = showNetLine ? closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ") : "";
+  const dots = showNetLine ? closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("") : "";
   const colWidth = 100 / cols;
   const edgeThreshold = colWidth * 0.75;
-  const closingLabels = closing
-    .map((v, i) => {
-      const xp = XPct(i);
-      const edgeClass = xp < edgeThreshold ? " edge-start" : xp > 100 - edgeThreshold ? " edge-end" : "";
-      return `<div class="closing-label${edgeClass}" style="--x:${xp}; --y:${YPct(v)};">${fmtEUR0(v)}</div>`;
-    })
-    .join("");
+  const labelIndices = new Set();
+  if (closing.length) {
+    labelIndices.add(0);
+    labelIndices.add(closing.length - 1);
+    let minIdx = 0;
+    let maxIdx = 0;
+    for (let i = 0; i < closing.length; i += 1) {
+      if (closing[i] < closing[minIdx]) minIdx = i;
+      if (closing[i] > closing[maxIdx]) maxIdx = i;
+    }
+    labelIndices.add(minIdx);
+    labelIndices.add(maxIdx);
+  }
+
+  const closingLabels = showNetLine
+    ? closing
+        .map((v, i) => {
+          if (!labelIndices.has(i)) return "";
+          const xp = XPct(i);
+          const edgeClass = xp < edgeThreshold ? " edge-start" : xp > 100 - edgeThreshold ? " edge-end" : "";
+          return `<div class="closing-label${edgeClass}" style="--x:${xp}; --y:${YPct(v)};">${fmtEUR0(v)}</div>`;
+        })
+        .join("")
+    : "";
   const maxStripItems = 12;
   const stripSlice = Math.min(series.length, maxStripItems);
   const stripStart = Math.max(0, series.length - stripSlice);
@@ -854,21 +883,39 @@ export async function render(root) {
     })
     .join("");
 
-  let BAR_TYPES = (plState.showDetails ? ["inflow", "outflow", "net"] : ["net"]).filter(t => plState.legend[t] !== false);
-  if (!BAR_TYPES.length) BAR_TYPES = ["net"];
+  const showInflow = plState.legend.inflow !== false;
+  const showOutflow = plState.legend.outflow !== false;
+  const showNetLine = plState.legend.net !== false;
 
   function valuesFor(type, row) {
+    const showSegments = plState.showDetails;
     if (type === "inflow") {
+      if (!row.inflow) return [];
+      if (!showSegments) {
+        return [
+          { key: "total", value: Number(row.inflow?.total || 0) },
+        ];
+      }
       return [
         { key: "paid", value: Number(row.inflow?.paid || 0) },
         { key: "open", value: Number(row.inflow?.open || 0) },
       ];
     }
     if (type === "outflow") {
+      if (!row.outflow) return [];
+      if (!showSegments) {
+        return [
+          { key: "total", value: -Number(row.outflow?.total || 0) },
+        ];
+      }
       return [
         { key: "paid", value: -Number(row.outflow?.paid || 0) },
         { key: "open", value: -Number(row.outflow?.open || 0) },
       ];
+    }
+    if (!row.net) return [];
+    if (!showSegments) {
+      return [{ key: "total", value: Number(row.net?.total || 0) }];
     }
     return [
       { key: "paid", value: Number(row.net?.paid || 0) },
@@ -913,8 +960,17 @@ export async function render(root) {
   function renderSegment(type, seg) {
     const yStart = Y(seg.start);
     const yEnd = Y(seg.end);
-    const topPct = Math.min(yStart, yEnd) / 10;
-    const heightPct = Math.abs(yStart - yEnd) / 10;
+    let topPct = Math.min(yStart, yEnd) / 10;
+    let heightPct = Math.abs(yStart - yEnd) / 10;
+    const touchesBaseline = Math.abs(seg.start) < 1e-6 || Math.abs(seg.end) < 1e-6;
+    if (touchesBaseline) {
+      if (seg.end >= seg.start) {
+        heightPct = Math.max(0, heightPct - baselineGapPct);
+      } else {
+        topPct += baselineGapPct;
+        heightPct = Math.max(0, heightPct - baselineGapPct);
+      }
+    }
     if (heightPct <= 0.1) return "";
     const classes = `vbar-segment segment-${type}-${seg.key}`;
     return `<div class="${classes}" style="--seg-top:${topPct.toFixed(2)}; --seg-height:${heightPct.toFixed(2)}"></div>`;
@@ -923,11 +979,13 @@ export async function render(root) {
   function renderBar(type, row, monthIndex) {
     const stacked = stackSegments(valuesFor(type, row));
     if (!stacked.length) {
-      return `<div class="vbar-wrap"><div class="vbar ${type} empty" aria-hidden="true"></div></div>`;
+      const posClass = type === "inflow" ? "pos" : "neg";
+      return `<div class="vbar-wrap ${posClass}"><div class="vbar ${type} ${posClass} empty" aria-hidden="true"></div></div>`;
     }
     const aria = escapeHtml(ariaForBar(type, row, months[monthIndex]));
     const segmentsHtml = stacked.map(seg => renderSegment(type, seg)).join("");
-    return `<div class="vbar-wrap"><div class="vbar ${type}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${aria}">${segmentsHtml}</div></div>`;
+    const posClass = type === "inflow" ? "pos" : "neg";
+    return `<div class="vbar-wrap ${posClass}"><div class="vbar ${type} ${posClass}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${aria}">${segmentsHtml}</div></div>`;
   }
 
   function barTipHtml(type, monthKey, row, closingValue, openingValue) {
@@ -980,10 +1038,19 @@ export async function render(root) {
   }
 
   const barGroupsHtml = series
-    .map((row, i) => `<div class="vbar-group">${BAR_TYPES.map(type => renderBar(type, row, i)).join("")}</div>`)
+    .map((row, i) => {
+      const parts = [];
+      if (showInflow) parts.push(renderBar("inflow", row, i));
+      if (showOutflow) parts.push(renderBar("outflow", row, i));
+      if (!parts.length) {
+        return '<div class="vbar-group vbar-group-empty" aria-hidden="true"></div>';
+      }
+      return `<div class="vbar-group">${parts.join("")}</div>`;
+    })
     .join("");
 
-  const maxXTicks = 8;
+  const viewport = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
+  const maxXTicks = viewport && viewport < 900 ? 6 : 8;
   const step = Math.max(1, Math.ceil((months.length || 1) / maxXTicks));
   const xLabelsHtml = months
     .map((monthKey, idx) => {
@@ -992,39 +1059,33 @@ export async function render(root) {
     })
     .join("");
 
-  const baseLegendRows = [
+  const legendRows = [
     {
       type: "net",
       label: "Netto",
-      swatches: [
-        { cls: "swatch-net-paid", text: "bezahlt" },
-        { cls: "swatch-net-open", text: "offen" },
-      ],
+      swatches: [{ cls: "swatch-net-line", text: "Linie" }],
     },
-  ];
-
-  const detailLegendRows = [
     {
       type: "inflow",
       label: "Inflow",
-      swatches: [
-        { cls: "swatch-inflow-paid", text: "bezahlt" },
-        { cls: "swatch-inflow-open", text: "offen" },
-      ],
+      swatches: plState.showDetails
+        ? [
+            { cls: "swatch-inflow-paid", text: "bezahlt" },
+            { cls: "swatch-inflow-open", text: "offen" },
+          ]
+        : [{ cls: "swatch-inflow-total", text: "gesamt" }],
     },
     {
       type: "outflow",
       label: "Outflow",
-      swatches: [
-        { cls: "swatch-outflow-paid", text: "bezahlt" },
-        { cls: "swatch-outflow-open", text: "offen" },
-      ],
+      swatches: plState.showDetails
+        ? [
+            { cls: "swatch-outflow-paid", text: "bezahlt" },
+            { cls: "swatch-outflow-open", text: "offen" },
+          ]
+        : [{ cls: "swatch-outflow-total", text: "gesamt" }],
     },
   ];
-
-  const legendRows = plState.showDetails
-    ? baseLegendRows.concat(detailLegendRows)
-    : baseLegendRows;
 
   const legendHtml = `
     <div class="chart-legend" role="list">
@@ -1069,8 +1130,7 @@ export async function render(root) {
         </div>
         <div class="vchart-lines" aria-hidden="true">
           <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
-            <polyline class="line" points="${points}"></polyline>
-            ${dots}
+            ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}` : ""}
           </svg>
         </div>
         <div class="vchart-closing-labels" aria-hidden="true">${closingLabels}</div>

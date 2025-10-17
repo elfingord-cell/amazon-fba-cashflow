@@ -126,52 +126,59 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* ===== Charts (ohne Canvas) ===== */
 .vchart{
   position:relative; background:#fff; border:1px solid #e6e9ef; border-radius:12px;
-  padding:12px 12px 6px 52px; min-height:280px; overflow:hidden;
+  padding:24px 32px 56px 72px; min-height:300px; overflow:hidden;
+  --baseline-gap:0.8%;
 }
 
 /* Y-Skala – exakt gleiche Reihen wie Raster (via --rows) */
 .vchart-y{
-  position:absolute; left:8px; top:10px; bottom:40px;
+  position:absolute; left:16px; top:24px; bottom:56px;
   display:grid; grid-template-rows:repeat(var(--rows,6),1fr); align-items:end;
-  width:40px; color:#6b7280; font-size:11px; text-align:right; gap:0;
+  width:48px; color:#6b7280; font-size:11px; text-align:right; gap:0;
 }
-.vchart-y .ytick{line-height:1; transform:translateY(1px); white-space:nowrap}
+.vchart-y .ytick{line-height:1; transform:translateY(2px); white-space:nowrap}
 
 /* Rasterlinien – gleiche Reihen wie Y-Skala */
 .vchart-grid{
-  position:absolute; left:52px; right:12px; top:10px; bottom:40px;
+  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
   display:grid; grid-template-rows:repeat(var(--rows,6),1fr);
 }
 .vchart-grid .yline{border-top:1px dashed #e5e7eb}
 
 /* Balkenbereich – gleiche Höhe/Offsets wie Raster/Y-Skala */
 .vchart-bars{
-  position:absolute; left:52px; right:12px; top:10px; bottom:40px;
+  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
   display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch;
-  gap:clamp(24px, 4vw, 32px);
+  gap:clamp(28px, 6vw, 40px);
 }
 .vbar-group{
   position:relative;
-  display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:6px; align-items:stretch; height:100%;
+  display:flex; flex-direction:column; align-items:center; justify-content:space-between; height:100%;
 }
 .vbar-group::before{
-  content:""; position:absolute; inset:-8px -10px; background:rgba(15,27,45,0.05);
-  border-radius:14px; pointer-events:none; z-index:0;
+  content:""; position:absolute; inset:-10px -14px; background:rgba(15,27,45,0.04);
+  border-radius:16px; pointer-events:none; z-index:0;
 }
 .vbar-group::after{
-  content:""; position:absolute; inset:-8px -10px; pointer-events:none;
+  content:""; position:absolute; inset:-10px -14px; pointer-events:none;
   border-left:1px solid rgba(15,27,45,0.08);
   border-right:1px solid rgba(15,27,45,0.08);
-  border-radius:14px; z-index:1;
+  border-radius:16px; z-index:1;
 }
-.vbar-wrap{position:relative; display:flex; align-items:stretch; justify-content:center; height:100%; z-index:2;}
+.vbar-group-empty{min-height:100%;}
+.vbar-group-empty::before,.vbar-group-empty::after{display:none;}
+.vbar-wrap{position:relative; display:flex; align-items:stretch; justify-content:center; height:100%; z-index:2; width:100%;}
+.vbar-wrap.pos{align-items:flex-end;}
+.vbar-wrap.neg{align-items:flex-start;}
 .vbar{
   position:absolute;
   top:0;
   bottom:0;
   left:50%;
   transform:translateX(-50%);
-  width:24px;
+  width:60%;
+  max-width:32px;
+  min-width:18px;
   outline:none;
 }
 .vbar.empty{pointer-events:none;}
@@ -185,30 +192,30 @@ tr.auto-ms.disabled select{opacity:0.8;}
   border-radius:0;
   transition:height .2s ease;
 }
+.segment-inflow-total{background:#2CA02C; color:#fff;}
 .segment-inflow-paid{background:#2CA02C; color:#fff;}
 .segment-inflow-open{background:#A5D6A7;}
+.segment-outflow-total{background:#D32F2F; color:#fff;}
 .segment-outflow-paid{background:#D32F2F; color:#fff;}
 .segment-outflow-open{background:#EF9A9A;}
-.segment-net-paid{background:#1976D2; color:#fff;}
-.segment-net-open{background:#90CAF9;}
 
 /* X-Achse */
 .vchart-x{
-  position:absolute; left:52px; right:12px; bottom:8px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:clamp(24px, 4vw, 32px);
+  position:absolute; left:72px; right:32px; bottom:12px;
+  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:clamp(28px, 6vw, 40px);
 }
 .vchart-x .xlabel{font-size:11px; color:#6b7280; text-align:center; white-space:nowrap; display:flex; justify-content:center; align-items:center;}
 
 /* Overlay für Kontostands-Linie */
 .vchart-lines{
-  position:absolute; left:52px; right:12px; top:10px; bottom:40px;
+  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
   pointer-events:none; /* Tooltip bleibt über den Balken */
 }
 .vchart-lines svg{width:100%; height:100%}
 .vchart-lines .line{fill:none; stroke:#0f9b86; stroke-width:4; stroke-linejoin:round; stroke-linecap:round}
 .vchart-lines .dot{fill:#0f9b86; stroke:#ffffff; stroke-width:4}
 .vchart-closing-labels{
-  position:absolute; left:52px; right:12px; top:10px; bottom:40px;
+  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
   pointer-events:none; font-size:10px; color:#0f3654; display:block; z-index:4;
 }
 .closing-label{
@@ -221,22 +228,25 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .closing-label.edge-start{transform:translate(0, -120%); text-align:left;}
 .closing-label.edge-end{transform:translate(-100%, -120%); text-align:right;}
 
-.chart-toolbar{display:flex; justify-content:flex-end; margin:12px 0 0;} 
-.chart-toolbar .btn.secondary{min-width:200px;} 
-.chart-legend{margin:16px 12px 0; display:flex; flex-wrap:wrap; gap:12px; font-size:12px; color:var(--muted);} 
-.legend-button{display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px; border:1px solid rgba(15,27,45,0.08); background:#fff; cursor:pointer; transition:box-shadow .12s ease, border-color .12s;} 
-.legend-button:hover,.legend-button:focus{border-color:var(--mint-500); box-shadow:0 0 0 3px var(--ring);} 
-.legend-button.is-off{opacity:0.45;} 
-.legend-label{font-weight:600;} 
-.legend-swatches{display:inline-grid; grid-template-columns:auto auto; gap:4px 6px; align-items:center;} 
-.legend-swatch{width:14px; height:14px; border-radius:2px; border:1px solid rgba(15,27,45,0.18); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.3);} 
-.legend-swatch-text{font-size:11px;} 
-.legend-swatch.swatch-inflow-paid{background:#2CA02C;} 
-.legend-swatch.swatch-inflow-open{background:#A5D6A7;} 
-.legend-swatch.swatch-outflow-paid{background:#D32F2F;} 
-.legend-swatch.swatch-outflow-open{background:#EF9A9A;} 
-.legend-swatch.swatch-net-paid{background:#1976D2;} 
-.legend-swatch.swatch-net-open{background:#90CAF9;} 
+.chart-toolbar{display:flex; justify-content:flex-end; margin:12px 0 0;}
+.chart-toolbar .btn.secondary{min-width:200px;}
+.chart-legend{margin:20px 32px 0 72px; display:flex; flex-wrap:nowrap; gap:12px; font-size:12px; color:var(--muted); overflow-x:auto; padding-bottom:4px;}
+.chart-legend::-webkit-scrollbar{height:6px;}
+.chart-legend::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.12); border-radius:999px;}
+.legend-button{display:flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px; border:1px solid rgba(15,27,45,0.08); background:#fff; cursor:pointer; transition:box-shadow .12s ease, border-color .12s;}
+.legend-button:hover,.legend-button:focus{border-color:var(--mint-500); box-shadow:0 0 0 3px var(--ring);}
+.legend-button.is-off{opacity:0.45;}
+.legend-label{font-weight:600;}
+.legend-swatches{display:inline-grid; grid-auto-flow:column; gap:4px 6px; align-items:center;}
+.legend-swatch{width:14px; height:14px; border-radius:2px; border:1px solid rgba(15,27,45,0.18); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.3);}
+.legend-swatch-text{font-size:11px;}
+.legend-swatch.swatch-inflow-total{background:#2CA02C; color:#fff;}
+.legend-swatch.swatch-inflow-paid{background:#2CA02C;}
+.legend-swatch.swatch-inflow-open{background:#A5D6A7;}
+.legend-swatch.swatch-outflow-total{background:#D32F2F; color:#fff;}
+.legend-swatch.swatch-outflow-paid{background:#D32F2F;}
+.legend-swatch.swatch-outflow-open{background:#EF9A9A;}
+.legend-swatch.swatch-net-line{background:linear-gradient(90deg,#0f9b86,#0f9b86); height:4px; width:32px; margin-top:5px; border:none; box-shadow:none; border-radius:999px;}
 
 /* Globaler Tooltip (fixed, nicht clipbar) */
 .chart-tip{
@@ -254,11 +264,11 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .chart-tip .tip-subtitle{font-size:11px; font-weight:600; margin:4px 0 2px; color:#2f3b52;}
 
 /* === Dashboard Ebenen-Reihenfolge === */
-.vchart-grid  { position:absolute; left:52px; right:12px; top:10px; bottom:40px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
-.vchart-y     { position:absolute; left:8px;  top:10px; bottom:40px; width:40px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
-.vchart-bars  { position:absolute; left:52px; right:12px; top:10px; bottom:40px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); align-items:stretch; gap:8px; z-index:2; }
-.vchart-lines { position:absolute; left:52px; right:12px; top:10px; bottom:40px; pointer-events:none; z-index:3; }
-.vchart-x     { position:absolute; left:52px; right:12px; bottom:8px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); gap:6px; z-index:4; }
+.vchart-grid  { position:absolute; left:72px; right:32px; top:24px; bottom:56px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
+.vchart-y     { position:absolute; left:16px;  top:24px; bottom:56px; width:48px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
+.vchart-bars  { position:absolute; left:72px; right:32px; top:24px; bottom:56px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); align-items:stretch; gap:clamp(28px, 6vw, 40px); z-index:2; }
+.vchart-lines { position:absolute; left:72px; right:32px; top:24px; bottom:56px; pointer-events:none; z-index:3; }
+.vchart-x     { position:absolute; left:72px; right:32px; bottom:12px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); gap:clamp(28px, 6vw, 40px); z-index:4; }
 
 /* Raster-Linien (gestrichelt) */
 
@@ -393,27 +403,33 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 /* 0-Baseline (durchgezogen) – dynamische Position */
 .vchart-zero {
-  position:absolute; left:52px; right:12px;
-  top: calc(10px + ((100% - 50px) * (var(--zero,100) / 100)));
+  position:absolute; left:72px; right:32px;
+  top: calc(24px + ((100% - 24px - 56px) * (var(--zero,100) / 100)));
   border-top: 2px solid #cfd7e3;
   z-index:3;
   pointer-events:none;
 }
 
 .net-strip{
-  margin-top:12px; margin-left:52px; margin-right:12px;
-  display:flex; gap:8px; font-size:11px; overflow-x:auto; padding-bottom:4px;
+  margin-top:12px; margin-left:72px; margin-right:32px;
+  display:flex; gap:10px; font-size:11px; overflow-x:auto; padding:4px 0 8px; position:relative;
 }
+.net-strip::before,
+.net-strip::after{
+  content:""; position:sticky; top:0; bottom:0; width:24px; pointer-events:none; z-index:1;
+}
+.net-strip::before{left:0; background:linear-gradient(to right, rgba(255,255,255,0.95), rgba(255,255,255,0));}
+.net-strip::after{right:0; background:linear-gradient(to left, rgba(255,255,255,0.95), rgba(255,255,255,0));}
 .net-strip::-webkit-scrollbar{height:6px;}
 .net-strip::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.12); border-radius:999px;}
 .net-strip-label{
-  margin:18px 12px 6px 52px; font-size:12px; font-weight:600; color:#0f3654;
+  margin:18px 32px 6px 72px; font-size:12px; font-weight:600; color:#0f3654;
 }
 .net-strip .net{
-  text-align:center; padding:6px 12px; border-radius:10px; background:rgba(15,155,134,0.08);
-  font-weight:600; color:#0f3654; font-size:11px; white-space:nowrap; min-width:120px;
+  text-align:center; padding:6px 14px; border-radius:10px; background:rgba(15,155,134,0.06);
+  font-weight:600; color:#0f3654; font-size:11px; white-space:nowrap; min-width:128px; box-shadow:inset 0 0 0 1px rgba(15,27,45,0.08);
 }
-.net-strip .net.neg{background:rgba(239,68,68,0.12); color:#991b1b;}
+.net-strip .net.neg{background:rgba(239,68,68,0.08); color:#991b1b;}
 
 /* Fixkosten-Modul */
 .fix-master .table-scroll{margin-top:12px;}
