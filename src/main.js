@@ -74,10 +74,13 @@ function initSidebarToggle() {
   sidebar.addEventListener('click', ev => {
     const link = ev.target.closest('a[data-tab]');
     if (!link) return;
+    ev.preventDefault();
     const targetHash = normalizeHash(link.getAttribute('href'));
-    if (targetHash === normalizeHash(location.hash)) {
-      ev.preventDefault();
+    const currentHash = normalizeHash(location.hash);
+    if (targetHash === currentHash) {
       renderRoute(targetHash);
+    } else {
+      location.hash = targetHash;
     }
     if (window.matchMedia('(max-width: 960px)').matches) {
       toggle.setAttribute('aria-expanded', 'false');
