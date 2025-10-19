@@ -861,6 +861,10 @@ export async function render(root) {
     labelIndices.add(maxIdx);
   }
 
+  const showInflow = plState.legend.inflow !== false;
+  const showOutflow = plState.legend.outflow !== false;
+  const showNetLine = plState.legend.net !== false;
+
   const closingLabels = showNetLine
     ? closing
         .map((v, i) => {
@@ -882,10 +886,6 @@ export async function render(root) {
       return `<div class="net ${Number(r.net?.total || 0) >= 0 ? "pos" : "neg"}">${escapeHtml(display)}</div>`;
     })
     .join("");
-
-  const showInflow = plState.legend.inflow !== false;
-  const showOutflow = plState.legend.outflow !== false;
-  const showNetLine = plState.legend.net !== false;
 
   function valuesFor(type, row) {
     const showSegments = plState.showDetails;
