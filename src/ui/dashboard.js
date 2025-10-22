@@ -1151,7 +1151,6 @@ export async function render(root) {
       });
     }
   }
-  }
 
   function hideTip(force = false) {
     if (!force) {
