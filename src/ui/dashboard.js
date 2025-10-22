@@ -843,8 +843,14 @@ export async function render(root) {
   const YPct = v => (Y(v) / 1000) * 100;
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
   const baselineGapPct = 0.8;
+  const showInflow = plState.legend.inflow !== false;
+  const showOutflow = plState.legend.outflow !== false;
+  const showNetLine = plState.legend.net !== false;
+
   const points = showNetLine ? closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ") : "";
-  const dots = showNetLine ? closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("") : "";
+  const dots = showNetLine
+    ? closing.map((v, i) => `<circle class="dot" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("")
+    : "";
   const colWidth = 100 / cols;
   const edgeThreshold = colWidth * 0.75;
   const labelIndices = new Set();
@@ -860,10 +866,6 @@ export async function render(root) {
     labelIndices.add(minIdx);
     labelIndices.add(maxIdx);
   }
-
-  const showInflow = plState.legend.inflow !== false;
-  const showOutflow = plState.legend.outflow !== false;
-  const showNetLine = plState.legend.net !== false;
 
   const closingLabels = showNetLine
     ? closing
