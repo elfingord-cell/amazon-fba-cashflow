@@ -71,8 +71,6 @@ const plState = {
     inflowOpen: true,
     outflowPaid: true,
     outflowOpen: true,
-    netPaid: true,
-    netOpen: true,
     netLine: true,
   },
 };
@@ -123,8 +121,7 @@ function ensureSelection(months) {
     plState.selectedMonths = previous;
     return;
   }
-  const defaultCount = Math.min(18, available.length);
-  plState.selectedMonths = available.slice(0, defaultCount || available.length || 0);
+  plState.selectedMonths = available.slice();
 }
 
 function fmtSigned(value) {
@@ -803,33 +800,25 @@ export async function render(root) {
   const opening = Number(kpis.opening || 0);
   const closing = breakdown.map(b => b.closing);
   const monthOpening = breakdown.map(b => b.opening);
-  const closingValues = [opening, ...closing];
   const legend = plState.legend || {};
   const showInflowPaid = legend.inflowPaid !== false;
   const showInflowOpen = legend.inflowOpen !== false;
   const showOutflowPaid = legend.outflowPaid !== false;
   const showOutflowOpen = legend.outflowOpen !== false;
-  const showNetPaid = legend.netPaid !== false;
-  const showNetOpen = legend.netOpen !== false;
   const showNetLine = legend.netLine !== false;
 
   const inflowPaidTotals = showInflowPaid ? series.map(r => Number(r.inflow?.paid || 0)) : [];
   const inflowOpenTotals = showInflowOpen ? series.map(r => Number(r.inflow?.open || 0)) : [];
   const outflowPaidTotals = showOutflowPaid ? series.map(r => -Number(r.outflow?.paid || 0)) : [];
   const outflowOpenTotals = showOutflowOpen ? series.map(r => -Number(r.outflow?.open || 0)) : [];
-  const netPaidTotals = showNetPaid ? series.map(r => Number(r.net?.paid || 0)) : [];
-  const netOpenTotals = showNetOpen ? series.map(r => Number(r.net?.open || 0)) : [];
+  const netTotals = showNetLine ? series.map(r => Number(r.net?.total || 0)) : [];
 
-  const topCandidates = [0, ...inflowPaidTotals, ...inflowOpenTotals, ...netPaidTotals.filter(v => v > 0), ...netOpenTotals.filter(v => v > 0)];
-  if (showNetLine) {
-    topCandidates.push(...closingValues.filter(v => v > 0));
-  }
+  const topCandidates = [0, ...inflowPaidTotals, ...inflowOpenTotals];
+  if (showNetLine) topCandidates.push(...netTotals.filter(v => v > 0));
   const rawTop = Math.max(...topCandidates);
 
-  const bottomCandidates = [0, ...outflowPaidTotals, ...outflowOpenTotals, ...netPaidTotals.filter(v => v < 0), ...netOpenTotals.filter(v => v < 0)];
-  if (showNetLine) {
-    bottomCandidates.push(...closingValues.filter(v => v < 0));
-  }
+  const bottomCandidates = [0, ...outflowPaidTotals, ...outflowOpenTotals];
+  if (showNetLine) bottomCandidates.push(...netTotals.filter(v => v < 0));
   const rawBottom = Math.min(...bottomCandidates);
   const headroomFactor = 1.2;
   const paddedTop = rawTop === 0 ? 0 : rawTop * headroomFactor;
@@ -843,8 +832,9 @@ export async function render(root) {
   const yTicks = Array.from({ length: steps + 1 }, (_, i) => top - (span / steps) * i);
 
   const monthsCount = months.length || 0;
-  const groupWidth = 72;
-  const groupGap = 28;
+  const groupWidth = 48;
+  const groupGap = 16;
+  const innerGap = 6;
   const chartWidth = monthsCount
     ? groupWidth * monthsCount + groupGap * Math.max(0, monthsCount - 1)
     : groupWidth * 18 + groupGap * 17;
@@ -863,10 +853,10 @@ export async function render(root) {
   const baselineGapPct = 0.8;
 
   const points = showNetLine
-    ? closing.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
+    ? netTotals.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
     : "";
   const dots = showNetLine
-    ? closing
+    ? netTotals
         .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${Y(v)}" r="7"></circle>`)
         .join("")
     : "";
@@ -905,15 +895,7 @@ export async function render(root) {
       }
       return segments;
     }
-    if (!row.net) return [];
-    const segments = [];
-    if (plState.legend.netPaid !== false) {
-      segments.push({ key: "paid", value: Number(row.net?.paid || 0) });
-    }
-    if (plState.legend.netOpen !== false) {
-      segments.push({ key: "open", value: Number(row.net?.open || 0) });
-    }
-    return segments;
+    return [];
   }
 
   function stackSegments(values) {
@@ -944,9 +926,9 @@ export async function render(root) {
 
   function ariaForBar(type, row, monthKey) {
     const prettyMonth = formatMonthLabel(monthKey);
-    const target = type === "inflow" ? row.inflow : type === "outflow" ? row.outflow : row.net;
+    const target = type === "inflow" ? row.inflow : row.outflow;
     if (!target) return prettyMonth;
-    const label = type === "inflow" ? "Inflow" : type === "outflow" ? "Outflow" : "Netto";
+    const label = type === "inflow" ? "Inflow" : "Outflow";
     return `${prettyMonth}: ${label} gesamt ${fmtBarValue(type, target.total)} – bezahlt ${fmtBarValue(type, target.paid)} – offen ${fmtBarValue(type, target.open)}`;
   }
 
@@ -974,9 +956,7 @@ export async function render(root) {
     const totalValue =
       type === "inflow"
         ? Number(row.inflow?.total || 0)
-        : type === "outflow"
-        ? -Number(row.outflow?.total || 0)
-        : Number(row.net?.total || 0);
+        : -Number(row.outflow?.total || 0);
     const orientation = totalValue >= 0 ? "pos" : "neg";
     if (!stacked.length) {
       return `<div class="vbar-wrap type-${type} ${orientation} empty" aria-hidden="true"></div>`;
@@ -1055,8 +1035,7 @@ export async function render(root) {
     .map((row, i) => {
       const inflowBar = renderBar("inflow", row, i);
       const outflowBar = renderBar("outflow", row, i);
-      const netBar = renderBar("net", row, i);
-      return `<div class="vbar-group" style="width:${groupWidth}px" data-month="${escapeHtml(months[i] || "")}">${inflowBar}${outflowBar}${netBar}</div>`;
+      return `<div class="vbar-group" style="width:${groupWidth}px; --inner-gap:${innerGap}px" data-month="${escapeHtml(months[i] || "")}">${inflowBar}${outflowBar}</div>`;
     })
     .join("");
 
@@ -1075,8 +1054,6 @@ export async function render(root) {
     { key: "inflowOpen", label: "Inflow offen", swatch: "swatch-inflow-open" },
     { key: "outflowPaid", label: "Outflow bezahlt", swatch: "swatch-outflow-paid" },
     { key: "outflowOpen", label: "Outflow offen", swatch: "swatch-outflow-open" },
-    { key: "netPaid", label: "Netto bezahlt", swatch: "swatch-net-paid" },
-    { key: "netOpen", label: "Netto offen", swatch: "swatch-net-open" },
     { key: "netLine", label: "Netto Linie", swatch: "swatch-net-line" },
   ];
 
@@ -1106,7 +1083,7 @@ export async function render(root) {
       </div>
       <div class="vchart" style="--rows:${yTicks.length}; --zero:${zeroPct.toFixed(2)}">
         <div class="vchart-y">${yTicks.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
-        <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px; --group-width:${groupWidth}px;">
+        <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
           <div class="vchart-stage-inner">
             <div class="vchart-grid">${yTicks.map(() => "<div class=\"yline\"></div>").join("")}</div>
             <div class="vchart-zero"></div>

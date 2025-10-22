@@ -163,13 +163,13 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vchart-bars{
   position:absolute; left:0; right:0; top:0; bottom:0;
   display:flex; align-items:flex-end; justify-content:flex-start;
-  gap:var(--group-gap, 28px);
+  gap:var(--group-gap, 16px);
   width:var(--chart-width, 100%);
 }
 .vchart-bars .vbar-group{
   position:relative; flex:0 0 auto;
   display:flex; align-items:stretch; justify-content:center;
-  gap:4px; height:100%;
+  gap:var(--inner-gap, 6px); height:100%;
 }
 .vchart-bars .vbar-group::before{
   content:""; position:absolute; inset:-12px 0; background:transparent;
@@ -181,7 +181,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
   pointer-events:none; border-left:1px solid rgba(38,50,56,0.08); border-right:1px solid rgba(38,50,56,0.08);
   z-index:0;
 }
-.vbar-wrap{position:relative; flex:1 1 44px; min-width:32px; height:100%; z-index:1;}
+.vbar-wrap{position:relative; flex:1 1 0; min-width:20px; height:100%; z-index:1;}
 .vbar-wrap.empty{pointer-events:none;}
 .vbar{
   position:absolute; inset:0; outline:none;
@@ -206,7 +206,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 /* X-Achse */
 .vchart-x{
-  display:flex; gap:var(--group-gap, 28px);
+  display:flex; gap:var(--group-gap, 16px);
   width:var(--chart-width, 100%);
   padding-bottom:4px;
 }
