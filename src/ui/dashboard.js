@@ -123,7 +123,7 @@ function ensureSelection(months) {
     plState.selectedMonths = previous;
     return;
   }
-  const defaultCount = Math.min(12, available.length);
+  const defaultCount = Math.min(18, available.length);
   plState.selectedMonths = available.slice(0, defaultCount || available.length || 0);
 }
 
@@ -842,8 +842,17 @@ export async function render(root) {
   const span = (top - bottom) || niceStep;
   const yTicks = Array.from({ length: steps + 1 }, (_, i) => top - (span / steps) * i);
 
-  const cols = months.length || 1;
-  const X = i => ((i + 0.5) * 1000) / cols;
+  const monthsCount = months.length || 0;
+  const groupWidth = 72;
+  const groupGap = 28;
+  const chartWidth = monthsCount
+    ? groupWidth * monthsCount + groupGap * Math.max(0, monthsCount - 1)
+    : groupWidth * 18 + groupGap * 17;
+  const centers = months.map((_, idx) => idx * (groupWidth + groupGap) + groupWidth / 2);
+  const X = px => {
+    const safeWidth = chartWidth || 1;
+    return (px / safeWidth) * 1000;
+  };
   const Y = v => {
     const val = Number(v || 0);
     const norm = (top - val) / span;
@@ -853,9 +862,13 @@ export async function render(root) {
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
   const baselineGapPct = 0.8;
 
-  const points = showNetLine ? closing.map((v, i) => `${X(i)},${Y(v)}`).join(" ") : "";
+  const points = showNetLine
+    ? closing.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
+    : "";
   const dots = showNetLine
-    ? closing.map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(i)}" cy="${Y(v)}" r="7"></circle>`).join("")
+    ? closing
+        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${Y(v)}" r="7"></circle>`)
+        .join("")
     : "";
   const maxStripItems = 12;
   const stripSlice = Math.min(series.length, maxStripItems);
@@ -1043,7 +1056,7 @@ export async function render(root) {
       const inflowBar = renderBar("inflow", row, i);
       const outflowBar = renderBar("outflow", row, i);
       const netBar = renderBar("net", row, i);
-      return `<div class="vbar-group" data-month="${escapeHtml(months[i] || "")}">${inflowBar}${outflowBar}${netBar}</div>`;
+      return `<div class="vbar-group" style="width:${groupWidth}px" data-month="${escapeHtml(months[i] || "")}">${inflowBar}${outflowBar}${netBar}</div>`;
     })
     .join("");
 
@@ -1053,7 +1066,7 @@ export async function render(root) {
   const xLabelsHtml = months
     .map((monthKey, idx) => {
       const label = idx % step === 0 ? formatMonthShortLabel(monthKey) : "";
-      return `<div class="xlabel">${label ? escapeHtml(label) : "&nbsp;"}</div>`;
+      return `<div class="xlabel" style="width:${groupWidth}px">${label ? escapeHtml(label) : "&nbsp;"}</div>`;
     })
     .join("");
 
@@ -1091,19 +1104,23 @@ export async function render(root) {
         <div class="kpi"><div class="kpi-label" title="Durchschnittliche Amazon-Auszahlungsquote über die sichtbaren Monate.">Sales × Payout (Monat ∅)</div><div class="kpi-value">${fmtEUR(kpis.salesPayoutAvg || 0)}</div></div>
         <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${firstNegativeDisplay}</div></div>
       </div>
-      <div class="vchart" style="--cols:${months.length}; --rows:${yTicks.length}; --zero:${zeroPct.toFixed(2)}">
-        <div class="vchart-grid">${yTicks.map(() => "<div class=\"yline\"></div>").join("")}</div>
+      <div class="vchart" style="--rows:${yTicks.length}; --zero:${zeroPct.toFixed(2)}">
         <div class="vchart-y">${yTicks.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
-        <div class="vchart-zero"></div>
-        <div class="vchart-bars">
-          ${barGroupsHtml}
+        <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px; --group-width:${groupWidth}px;">
+          <div class="vchart-stage-inner">
+            <div class="vchart-grid">${yTicks.map(() => "<div class=\"yline\"></div>").join("")}</div>
+            <div class="vchart-zero"></div>
+            <div class="vchart-bars">
+              ${barGroupsHtml}
+            </div>
+            <div class="vchart-lines" aria-hidden="true">
+              <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
+                ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}` : ""}
+              </svg>
+            </div>
+          </div>
+          <div class="vchart-x">${xLabelsHtml}</div>
         </div>
-        <div class="vchart-lines" aria-hidden="true">
-          <svg viewBox="0 0 1000 1000" preserveAspectRatio="none">
-            ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}` : ""}
-          </svg>
-        </div>
-        <div class="vchart-x">${xLabelsHtml}</div>
       </div>
       ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>

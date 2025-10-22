@@ -126,43 +126,58 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* ===== Charts (ohne Canvas) ===== */
 .vchart{
   position:relative; background:#fff; border:1px solid #e6e9ef; border-radius:12px;
-  padding:24px 32px 56px 72px; min-height:300px; overflow:hidden;
+  padding:24px 32px 72px 72px; min-height:320px; overflow:visible;
   --baseline-gap:0.8%;
 }
 
 /* Y-Skala – exakt gleiche Reihen wie Raster (via --rows) */
 .vchart-y{
-  position:absolute; left:16px; top:24px; bottom:56px;
+  position:absolute; left:16px; top:24px; bottom:32px;
   display:grid; grid-template-rows:repeat(var(--rows,6),1fr); align-items:end;
   width:48px; color:#6b7280; font-size:11px; text-align:right; gap:0;
 }
 .vchart-y .ytick{line-height:1; transform:translateY(2px); white-space:nowrap}
 
+/* Scrollbare Plot-Fläche */
+.vchart-stage{
+  position:absolute; left:72px; right:32px; top:24px; bottom:32px;
+  display:flex; flex-direction:column; gap:16px;
+  overflow-x:auto; overflow-y:hidden;
+  scrollbar-width:thin;
+}
+.vchart-stage::-webkit-scrollbar{height:8px;}
+.vchart-stage::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.18); border-radius:999px;}
+.vchart-stage-inner{
+  position:relative; flex:1 0 auto; min-height:0;
+  width:var(--chart-width, 100%);
+}
+
 /* Rasterlinien – gleiche Reihen wie Y-Skala */
 .vchart-grid{
-  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
+  position:absolute; left:0; right:0; top:0; bottom:0;
   display:grid; grid-template-rows:repeat(var(--rows,6),1fr);
 }
 .vchart-grid .yline{border-top:1px solid #ECEFF1}
 
-/* Balkenbereich – gleiche Höhe/Offsets wie Raster/Y-Skala */
+/* Balkenbereich */
 .vchart-bars{
-  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); align-items:stretch;
-  gap:clamp(24px, 5vw, 32px);
+  position:absolute; left:0; right:0; top:0; bottom:0;
+  display:flex; align-items:flex-end; justify-content:flex-start;
+  gap:var(--group-gap, 28px);
+  width:var(--chart-width, 100%);
 }
 .vchart-bars .vbar-group{
-  position:relative;
+  position:relative; flex:0 0 auto;
   display:flex; align-items:stretch; justify-content:center;
-  gap:6px; height:100%; padding:0 4px;
+  gap:4px; height:100%;
 }
 .vchart-bars .vbar-group::before{
-  content:""; position:absolute; inset:-12px -14px; background:transparent;
+  content:""; position:absolute; inset:-12px 0; background:transparent;
   z-index:0; pointer-events:none; transition:background .2s ease;
 }
 .vchart-bars .vbar-group:nth-child(odd)::before{background:rgba(38,50,56,0.05);}
 .vchart-bars .vbar-group::after{
-  content:""; position:absolute; top:-12px; bottom:-12px; left:-6px; right:-6px;
+  content:""; position:absolute; top:-12px; bottom:-12px; left:-0.5px; right:-0.5px;
   pointer-events:none; border-left:1px solid rgba(38,50,56,0.08); border-right:1px solid rgba(38,50,56,0.08);
   z-index:0;
 }
@@ -191,17 +206,18 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 /* X-Achse */
 .vchart-x{
-  position:absolute; left:72px; right:32px; bottom:12px;
-  display:grid; grid-template-columns:repeat(var(--cols,12), 1fr); gap:clamp(24px, 5vw, 32px);
+  display:flex; gap:var(--group-gap, 28px);
+  width:var(--chart-width, 100%);
+  padding-bottom:4px;
 }
-.vchart-x .xlabel{font-size:11px; color:#6b7280; text-align:center; white-space:nowrap; display:flex; justify-content:center; align-items:center;}
+.vchart-x .xlabel{font-size:11px; color:#6b7280; text-align:center; white-space:nowrap; display:flex; justify-content:center; align-items:center; flex:0 0 auto;}
 
 /* Overlay für Kontostands-Linie */
 .vchart-lines{
-  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
+  position:absolute; left:0; right:0; top:0; bottom:0;
   pointer-events:none; /* Tooltip bleibt über den Balken */
 }
-.vchart-lines svg{width:100%; height:100%}
+.vchart-lines svg{width:var(--chart-width, 100%); height:100%}
 .vchart-lines .line{fill:none; stroke:#26A69A; stroke-width:3; stroke-linejoin:round; stroke-linecap:round}
 .vchart-lines .dot{fill:#26A69A; stroke:#ffffff; stroke-width:3; opacity:0; transition:opacity .2s ease;}
 .vchart-lines .dot.is-active{opacity:1;}
@@ -384,9 +400,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 /* 0-Baseline (durchgezogen) – dynamische Position */
 .vchart-zero {
-  position:absolute; left:72px; right:32px;
-  top: calc(24px + ((100% - 24px - 56px) * (var(--zero,100) / 100)));
-  border-top: 2px solid #90A4AE;
+  position:absolute; left:0; right:0;
+  top:calc(var(--zero,100) * 1%);
+  border-top:2px solid #90A4AE;
   z-index:3;
   pointer-events:none;
 }
