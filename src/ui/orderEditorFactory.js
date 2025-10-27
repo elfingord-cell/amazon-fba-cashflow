@@ -51,6 +51,29 @@ function fmtPercent(value) {
   return Number(numeric || 0).toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+function fmtDateDE(input) {
+  if (!input) return "—";
+  let date;
+  if (typeof input === "string") {
+    const parts = input.split("-");
+    if (parts.length === 3) {
+      const [y, m, d] = parts.map(Number);
+      if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+        date = new Date(Date.UTC(y, m - 1, d));
+      }
+    }
+  } else if (input instanceof Date) {
+    date = input;
+  }
+
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 function clampPct(value) {
   const pct = parseDE(value);
   if (pct < 0) return 0;
@@ -464,7 +487,7 @@ function buildEventList(events, onStatusChange) {
     wrapper.append(
       el("div", { class: "po-event-row" }, [
         el("span", { class: "po-event-col" }, [evt.label]),
-        el("span", { class: "po-event-col" }, [evt.date]),
+        el("span", { class: "po-event-col" }, [fmtDateDE(evt.due || evt.date)]),
         el("span", { class: "po-event-col amount" }, [fmtEUR(evt.amount)]),
         el("span", { class: "po-event-col status" }, [labelWrap]),
       ]),
@@ -489,7 +512,7 @@ function renderList(container, records, config, onEdit, onDelete) {
     el("tbody", {}, records.map(rec =>
       el("tr", {}, [
         el("td", {}, [rec[config.numberField] || "—"]),
-        el("td", {}, [rec.orderDate || "—"]),
+        el("td", {}, [fmtDateDE(rec.orderDate)]),
         el("td", {}, [fmtEUR(parseDE(rec.goodsEur))]),
         el("td", {}, [String((rec.milestones || []).length)]),
         el("td", {}, [`${rec.transport || "sea"} · ${rec.transitDays || 0}d`]),
@@ -533,7 +556,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
   (record.milestones || []).forEach((ms, index) => {
     const computed = previewMap.get(ms.id);
-    const dueText = computed?.date ?? "—";
+    const dueText = fmtDateDE(computed?.due || computed?.date);
     const amount = computed?.amount ?? -(goods * (clampPct(ms.percent) / 100));
 
     const row = el("tr", { dataset: { msId: ms.id } }, [
@@ -586,7 +609,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           },
         }),
       ]),
-      el("td", { dataset: { role: "ms-date" } }, [dueText ?? "—"]),
+      el("td", { dataset: { role: "ms-date" } }, [dueText]),
       el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
       el("td", {}, [
         el("button", { class: "btn danger", onclick: () => { record.milestones.splice(index, 1); onChange(); } }, ["Entfernen"]),
@@ -597,7 +620,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
   (record.autoEvents || []).forEach((autoEvt) => {
     const computed = previewMap.get(autoEvt.id);
-    const dueText = computed?.date ?? "—";
+    const dueText = fmtDateDE(computed?.due || computed?.date);
     const amount = computed?.amount ?? 0;
     const active = autoEvt.enabled !== false;
     const lagValue = autoEvt.type === "vat_refund"
@@ -662,7 +685,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               },
             }),
       ]),
-      el("td", { dataset: { role: "ms-date" } }, [dueText ?? "—"]),
+      el("td", { dataset: { role: "ms-date" } }, [dueText]),
       el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
       el("td", {}, [
         el("label", { class: "inline-checkbox" }, [
