@@ -832,8 +832,8 @@ export async function render(root) {
   const yTicks = Array.from({ length: steps + 1 }, (_, i) => top - (span / steps) * i);
 
   const monthsCount = months.length || 0;
-  const groupWidth = 48;
-  const groupGap = 16;
+  const groupWidth = 56;
+  const groupGap = 28;
   const innerGap = 6;
   const chartWidth = monthsCount
     ? groupWidth * monthsCount + groupGap * Math.max(0, monthsCount - 1)
@@ -850,14 +850,13 @@ export async function render(root) {
     return clamped * 1000;
   };
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
-  const baselineGapPct = 0.8;
 
   const points = showNetLine
     ? netTotals.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
     : "";
   const dots = showNetLine
     ? netTotals
-        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${Y(v)}" r="7"></circle>`)
+        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${Y(v)}" r="6"></circle>`)
         .join("")
     : "";
   const maxStripItems = 12;
@@ -935,18 +934,9 @@ export async function render(root) {
   function renderSegment(type, seg) {
     const yStart = Y(seg.start);
     const yEnd = Y(seg.end);
-    let topPct = Math.min(yStart, yEnd) / 10;
-    let heightPct = Math.abs(yStart - yEnd) / 10;
-    const touchesBaseline = Math.abs(seg.start) < 1e-6 || Math.abs(seg.end) < 1e-6;
-    if (touchesBaseline) {
-      if (seg.end >= seg.start) {
-        heightPct = Math.max(0, heightPct - baselineGapPct);
-      } else {
-        topPct += baselineGapPct;
-        heightPct = Math.max(0, heightPct - baselineGapPct);
-      }
-    }
-    if (heightPct <= 0.1) return "";
+    const topPct = Math.min(yStart, yEnd) / 10;
+    const heightPct = Math.abs(yStart - yEnd) / 10;
+    if (heightPct <= 0.05) return "";
     const classes = `vbar-segment segment-${type}-${seg.key}`;
     return `<div class="${classes}" style="--seg-top:${topPct.toFixed(2)}; --seg-height:${heightPct.toFixed(2)}"></div>`;
   }
