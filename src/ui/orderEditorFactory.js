@@ -58,6 +58,15 @@ function fmtPercent(value) {
   return Number(numeric || 0).toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+function fmtFxRate(value) {
+  const numeric = typeof value === "number" ? value : parseDE(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "";
+  return Number(numeric).toLocaleString("de-DE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  });
+}
+
 function fmtDateDE(input) {
   if (!input) return "—";
   let date;
@@ -101,11 +110,16 @@ function computeGoodsTotals(record, settings = getSettings()) {
   const unitCount = Number.isFinite(units) ? units : 0;
   const rawUsd = (unitCost + unitExtra) * unitCount + extraFlat;
   const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
-  const fxRate = settings?.fxRate || 0;
+  let fxRate = settings?.fxRate || 0;
+  if (record && record.fxOverride != null && record.fxOverride !== "") {
+    const override = typeof record.fxOverride === "number" ? record.fxOverride : parseDE(record.fxOverride);
+    if (Number.isFinite(override) && override > 0) fxRate = override;
+  }
   const totalEur = Math.round((totalUsd * fxRate) * 100) / 100;
   return {
     usd: totalUsd,
     eur: totalEur,
+    fxRate,
     units: Number.isFinite(units) ? units : 0,
     unitCost,
     unitExtra,
@@ -119,11 +133,15 @@ function normaliseGoodsFields(record, settings = getSettings()) {
   if (record.unitExtraUsd == null) record.unitExtraUsd = "0,00";
   if (record.units == null) record.units = "0";
   if (record.extraFlatUsd == null) record.extraFlatUsd = "0,00";
+  if (record.fxOverride != null && record.fxOverride !== "") {
+    const override = typeof record.fxOverride === "number" ? record.fxOverride : parseDE(record.fxOverride);
+    record.fxOverride = Number.isFinite(override) && override > 0 ? override : null;
+  }
 
   const totals = computeGoodsTotals(record, settings);
   const existingGoods = parseDE(record.goodsEur);
   if (totals.usd === 0 && existingGoods > 0) {
-    const fxRate = settings?.fxRate || 1;
+    const fxRate = totals.fxRate || settings?.fxRate || 1;
     const approxUsd = fxRate ? existingGoods / fxRate : existingGoods;
     record.unitCostUsd = fmtCurrencyInput(approxUsd);
     record.unitExtraUsd = "0,00";
@@ -293,6 +311,7 @@ function defaultRecord(config, settings = getSettings()) {
     units: "0",
     extraFlatUsd: "0,00",
     goodsEur: "0,00",
+    fxOverride: settings.fxRate || null,
     freightEur: "0,00",
     prodDays: 60,
     transport: "sea",
@@ -828,6 +847,7 @@ export function renderOrderModule(root, config) {
     units: `${config.slug}-units`,
     extraFlat: `${config.slug}-extra-flat`,
     goodsSummary: `${config.slug}-goods-summary`,
+    fxRate: `${config.slug}-fx-rate`,
     freight: `${config.slug}-freight`,
     prod: `${config.slug}-prod`,
     transport: `${config.slug}-transport`,
@@ -885,6 +905,12 @@ export function renderOrderModule(root, config) {
         </div>
       </div>
       <div class="po-goods-summary" id="${ids.goodsSummary}">Summe Warenwert: 0,00 € (0,00 USD)</div>
+      <div class="grid two" style="margin-top:12px">
+        <div>
+          <label>FX-Kurs (USD → EUR)</label>
+          <input id="${ids.fxRate}" placeholder="z. B. 1,08" inputmode="decimal" />
+        </div>
+      </div>
       <div class="grid two" style="margin-top:12px">
         <div>
           <label>Fracht (€)</label>
@@ -949,6 +975,7 @@ export function renderOrderModule(root, config) {
   const unitsInput = $(`#${ids.units}`, root);
   const extraFlatInput = $(`#${ids.extraFlat}`, root);
   const goodsSummary = $(`#${ids.goodsSummary}`, root);
+  const fxRateInput = $(`#${ids.fxRate}`, root);
   const freightInput = $(`#${ids.freight}`, root);
   const prodInput = $(`#${ids.prod}`, root);
   const transportSelect = $(`#${ids.transport}`, root);
@@ -1004,7 +1031,10 @@ export function renderOrderModule(root, config) {
     if (!goodsSummary) return;
     const eurText = fmtEUR(totals.eur || 0);
     const usdText = fmtUSD(totals.usd || 0);
-    goodsSummary.textContent = `Summe Warenwert: ${eurText} (${usdText})`;
+    const fxText = fmtFxRate(totals.fxRate);
+    goodsSummary.textContent = fxText
+      ? `Summe Warenwert: ${eurText} (${usdText} · FX ${fxText})`
+      : `Summe Warenwert: ${eurText} (${usdText})`;
   }
 
   function syncEditingFromForm(settings = getSettings()) {
@@ -1014,6 +1044,8 @@ export function renderOrderModule(root, config) {
     editing.unitExtraUsd = fmtCurrencyInput(unitExtraInput.value);
     editing.units = unitsInput.value || "0";
     editing.extraFlatUsd = fmtCurrencyInput(extraFlatInput.value);
+    const fxOverrideValue = parseDE(fxRateInput?.value ?? "");
+    editing.fxOverride = Number.isFinite(fxOverrideValue) && fxOverrideValue > 0 ? fxOverrideValue : null;
     normaliseGoodsFields(editing, settings);
     const totals = computeGoodsTotals(editing, settings);
     updateGoodsSummary(totals);
@@ -1067,6 +1099,8 @@ export function renderOrderModule(root, config) {
     unitExtraInput.value = fmtCurrencyInput(editing.unitExtraUsd ?? "0,00");
     unitsInput.value = String(editing.units ?? "0");
     extraFlatInput.value = fmtCurrencyInput(editing.extraFlatUsd ?? "0,00");
+    const fxBase = editing.fxOverride ?? settings.fxRate ?? 0;
+    if (fxRateInput) fxRateInput.value = fxBase ? fmtFxRate(fxBase) : "";
     updateGoodsSummary(computeGoodsTotals(editing, settings));
     freightInput.value = fmtCurrencyInput(editing.freightEur ?? "0,00");
     prodInput.value = String(editing.prodDays ?? 60);
@@ -1210,6 +1244,14 @@ export function renderOrderModule(root, config) {
     fxFeeInput.value = fmtPercent(next);
     onAnyChange();
   });
+  if (fxRateInput) {
+    fxRateInput.addEventListener("input", onAnyChange);
+    fxRateInput.addEventListener("blur", () => {
+      const parsed = parseDE(fxRateInput.value);
+      fxRateInput.value = parsed > 0 ? fmtFxRate(parsed) : "";
+      onAnyChange();
+    });
+  }
   vatLagInput.addEventListener("input", onAnyChange);
   vatToggle.addEventListener("change", onAnyChange);
   ddpToggle.addEventListener("change", onAnyChange);
