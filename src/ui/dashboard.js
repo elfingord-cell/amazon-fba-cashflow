@@ -218,6 +218,17 @@ function toggleMonthCollapse(month) {
   else set.add(month);
 }
 
+function focusMonthCard(month) {
+  if (!month) return;
+  const available = Array.isArray(plData?.months) ? plData.months : [];
+  if (!available.includes(month)) return;
+  const selection = new Set(plState.selectedMonths || []);
+  selection.add(month);
+  plState.selectedMonths = available.filter(m => selection.has(m));
+  plState.allowEmptySelection = (plState.selectedMonths || []).length === 0;
+  getCollapsedSet().delete(month);
+}
+
 function collapseAllMonths(months) {
   const set = getCollapsedSet();
   set.clear();
@@ -816,7 +827,17 @@ export async function render(root) {
   dashboardRoot = root;
   const state = loadState();
   plState.autoManualCheck = state?.status?.autoManualCheck === true;
-  const { months, series, kpis, breakdown } = computeSeries(state);
+  const computed = computeSeries(state);
+  const kpis = computed.kpis || {};
+  const zipped = (computed.months || []).map((month, idx) => ({
+    month,
+    series: computed.series ? computed.series[idx] : null,
+    breakdown: computed.breakdown ? computed.breakdown[idx] : null,
+  }));
+  zipped.sort((a, b) => a.month.localeCompare(b.month));
+  const months = zipped.map(item => item.month);
+  const series = zipped.map(item => item.series || {});
+  const breakdown = zipped.map(item => item.breakdown || {});
   plData = { months, breakdown };
   ensureSelection(months);
   if (!plState.defaultCollapseApplied) {
@@ -831,8 +852,9 @@ export async function render(root) {
   }
 
   const opening = Number(kpis.opening || 0);
-  const closing = breakdown.map(b => b.closing);
-  const monthOpening = breakdown.map(b => b.opening);
+  const monthOpening = breakdown.map(b => Number(b?.opening || 0));
+  const closing = breakdown.map(b => Number(b?.closing || 0));
+  const firstNegativeIndex = closing.findIndex(value => value < 0);
   const legend = plState.legend || {};
   const showInflowPaid = legend.inflowPaid !== false;
   const showInflowOpen = legend.inflowOpen !== false;
@@ -844,14 +866,20 @@ export async function render(root) {
   const inflowOpenTotals = showInflowOpen ? series.map(r => Number(r.inflow?.open || 0)) : [];
   const outflowPaidTotals = showOutflowPaid ? series.map(r => -Number(r.outflow?.paid || 0)) : [];
   const outflowOpenTotals = showOutflowOpen ? series.map(r => -Number(r.outflow?.open || 0)) : [];
-  const netTotals = showNetLine ? series.map(r => Number(r.net?.total || 0)) : [];
+  const netLineValues = showNetLine ? closing : [];
 
   const topCandidates = [0, ...inflowPaidTotals, ...inflowOpenTotals];
-  if (showNetLine) topCandidates.push(...netTotals.filter(v => v > 0));
+  if (showNetLine) {
+    topCandidates.push(...netLineValues.filter(v => v > 0));
+    topCandidates.push(opening);
+  }
   const rawTop = Math.max(...topCandidates);
 
   const bottomCandidates = [0, ...outflowPaidTotals, ...outflowOpenTotals];
-  if (showNetLine) bottomCandidates.push(...netTotals.filter(v => v < 0));
+  if (showNetLine) {
+    bottomCandidates.push(...netLineValues.filter(v => v < 0));
+    bottomCandidates.push(opening);
+  }
   const rawBottom = Math.min(...bottomCandidates);
   const headroomFactor = 1.2;
   const paddedTop = rawTop === 0 ? 0 : rawTop * headroomFactor;
@@ -885,22 +913,21 @@ export async function render(root) {
   const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
 
   const points = showNetLine
-    ? netTotals.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
+    ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
     : "";
   const dots = showNetLine
-    ? netTotals
+    ? netLineValues
         .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${Y(v)}" r="6"></circle>`)
         .join("")
     : "";
-  const maxStripItems = 12;
-  const stripSlice = Math.min(series.length, maxStripItems);
-  const stripStart = Math.max(0, series.length - stripSlice);
   const netStrip = series
-    .slice(stripStart)
-    .map((r, idx) => {
-      const monthLabel = formatMonthShortLabel(months[stripStart + idx] || "");
-      const display = `${monthLabel} · ${fmtEUR0(r.net?.total || 0)}`;
-      return `<div class="net ${Number(r.net?.total || 0) >= 0 ? "pos" : "neg"}">${escapeHtml(display)}</div>`;
+    .map((row, idx) => {
+      const monthKey = months[idx] || "";
+      const monthLabel = formatMonthShortLabel(monthKey);
+      const value = Number(row?.net?.total || 0);
+      const display = `${monthLabel} · ${fmtEUR0(value)}`;
+      const ariaLabel = `${formatMonthLabel(monthKey)} – Netto ${fmtEUR(value)}`;
+      return `<button type="button" class="net ${value >= 0 ? "pos" : "neg"}" data-month="${escapeHtml(monthKey)}" aria-label="${escapeHtml(ariaLabel)}">${escapeHtml(display)}</button>`;
     })
     .join("");
 
@@ -1093,7 +1120,8 @@ export async function render(root) {
     </div>
   `;
 
-  const firstNegativeDisplay = kpis.firstNegativeMonth ? formatMonthLabel(kpis.firstNegativeMonth) : "—";
+  const firstNegativeDisplay =
+    firstNegativeIndex >= 0 ? formatMonthLabel(months[firstNegativeIndex]) : "—";
 
   root.innerHTML = `
     <section class="card">
@@ -1124,10 +1152,12 @@ export async function render(root) {
       </div>
       ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>
-      <div class="net-strip" style="--cols:${stripSlice || 1};">${netStrip}</div>
+      <div class="net-strip">${netStrip}</div>
     </section>
     <section class="card pl-container" id="pl-root"></section>
   `;
+
+  const plRoot = root.querySelector("#pl-root");
 
   root.querySelectorAll('.legend-button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1193,6 +1223,16 @@ export async function render(root) {
       if (el) showBarTip(el);
     }, true);
     barsWrap.addEventListener("pointerleave", () => hideTip(), true);
+    barsWrap.addEventListener("click", ev => {
+      const el = ev.target.closest(".vbar");
+      if (!el) return;
+      const idx = Number(el.getAttribute("data-idx"));
+      if (!Number.isFinite(idx)) return;
+      const monthKey = months[idx];
+      hideTip(true);
+      focusMonthCard(monthKey);
+      if (plRoot) updatePLSection(plRoot);
+    });
   }
 
   const barNodes = root.querySelectorAll(".vbar[data-type]");
@@ -1202,12 +1242,29 @@ export async function render(root) {
     node.addEventListener("keydown", ev => {
       if (ev.key === "Enter" || ev.key === " ") {
         showBarTip(node);
+        const idx = Number(node.getAttribute("data-idx"));
+        if (Number.isFinite(idx)) {
+          hideTip(true);
+          focusMonthCard(months[idx]);
+          if (plRoot) updatePLSection(plRoot);
+        }
         ev.preventDefault();
       }
     });
   });
 
-  const plRoot = root.querySelector("#pl-root");
+  const netStripNode = root.querySelector(".net-strip");
+  if (netStripNode) {
+    netStripNode.addEventListener("click", ev => {
+      const btn = ev.target.closest("button[data-month]");
+      if (!btn) return;
+      const monthKey = btn.getAttribute("data-month");
+      hideTip(true);
+      focusMonthCard(monthKey);
+      if (plRoot) updatePLSection(plRoot);
+    });
+  }
+
   if (plRoot) updatePLSection(plRoot);
 
   if (!stateListenerOff) {
