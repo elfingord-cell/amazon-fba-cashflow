@@ -71,6 +71,22 @@ function monthIndex(ym) {
   return y * 12 + (m - 1);
 }
 
+function computeGoodsTotals(row, settings) {
+  const units = parseEuro(row?.units ?? 0);
+  const unitCostUsd = parseEuro(row?.unitCostUsd ?? 0);
+  const unitExtraUsd = parseEuro(row?.unitExtraUsd ?? 0);
+  const extraFlatUsd = parseEuro(row?.extraFlatUsd ?? 0);
+  const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
+  const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+  const fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
+  const derivedEur = Math.round((totalUsd * fxRate) * 100) / 100;
+  const fallbackEur = parseEuro(row?.goodsEur ?? 0);
+  return {
+    usd: totalUsd,
+    eur: derivedEur > 0 ? derivedEur : fallbackEur,
+  };
+}
+
 function clampDay(year, monthIndexValue, day) {
   const max = new Date(year, monthIndexValue + 1, 0).getDate();
   const safeDay = Math.min(Math.max(1, day), max);
@@ -373,7 +389,8 @@ function normaliseAutoEvents(row, settings, manual) {
 
 function expandOrderEvents(row, settings, entityLabel, numberField) {
   if (!row) return [];
-  const goods = parseEuro(row.goodsEur);
+  const totals = computeGoodsTotals(row, settings);
+  const goods = totals.eur;
   const freight = parseEuro(row.freightEur);
   const anchors = anchorsFor(row);
   const manual = Array.isArray(row.milestones) ? row.milestones : [];

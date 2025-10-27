@@ -112,10 +112,22 @@ function clampPercent(v){
   return Math.round(v * 10) / 10;
 }
 
-function renderTimelineRow(entry, timeline){
+function computeGoodsEuro(entry, settings){
+  const units = parseEuro(entry?.units ?? 0);
+  const unitCostUsd = parseEuro(entry?.unitCostUsd ?? 0);
+  const unitExtraUsd = parseEuro(entry?.unitExtraUsd ?? 0);
+  const extraFlatUsd = parseEuro(entry?.extraFlatUsd ?? 0);
+  const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
+  const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+  const fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
+  if (totalUsd > 0 && fxRate > 0) return Math.round((totalUsd * fxRate) * 100) / 100;
+  return parseEuro(entry?.goodsEur || entry?.goodsValueEur || entry?.goodsValueUsd);
+}
+
+function renderTimelineRow(entry, timeline, settings){
   const anchors = computeAnchors(entry);
   const phases = buildPhases(anchors);
-  const goods = parseEuro(entry.goodsEur || entry.goodsValueEur || entry.goodsValueUsd);
+  const goods = computeGoodsEuro(entry, settings);
   const milestones = Array.isArray(entry.milestones) ? entry.milestones : [];
   const pctSum = milestones.reduce((acc, m) => acc + parsePercent(m.percent || 0), 0);
   const pctRounded = Math.round(pctSum * 10) / 10;
@@ -207,7 +219,8 @@ export async function render(root){
   };
 
   const monthHeader = months.map(m => `<div class="plan-month">${m.label}</div>`).join("");
-  const rows = entries.map(entry => renderTimelineRow(entry, timeline)).join("");
+  const settings = state?.settings || {};
+  const rows = entries.map(entry => renderTimelineRow(entry, timeline, settings)).join("");
 
   root.innerHTML = `
     <section class="card plan-card">

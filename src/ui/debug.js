@@ -1,4 +1,5 @@
 import { createEmptyState, saveState } from "../data/storageLocal.js";
+import { orderEditorUtils } from "./orderEditorFactory.js";
 
 function buildDemoState(){
   const demo = createEmptyState();
@@ -430,6 +431,12 @@ function buildDemoState(){
       ],
     },
   ];
+
+  const fxRate = Number(demo.settings?.fxRate ?? 0) || 0;
+  const goodsSettings = { fxRate };
+  const { normaliseGoodsFields } = orderEditorUtils;
+  demo.pos.forEach(po => normaliseGoodsFields(po, goodsSettings));
+  demo.fos.forEach(fo => normaliseGoodsFields(fo, goodsSettings));
 
   return demo;
 }

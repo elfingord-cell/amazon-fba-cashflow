@@ -46,6 +46,13 @@ function fmtCurrencyInput(value) {
   });
 }
 
+function fmtUSD(value) {
+  return Number(value || 0).toLocaleString("de-DE", {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
 function fmtPercent(value) {
   const numeric = Number.isFinite(Number(value)) ? Number(value) : parseDE(value);
   return Number(numeric || 0).toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -79,6 +86,55 @@ function clampPct(value) {
   if (pct < 0) return 0;
   if (pct > 100) return 100;
   return pct;
+}
+
+function computeGoodsTotals(record, settings = getSettings()) {
+  const unitsRaw = record?.units;
+  const units = Number(
+    typeof unitsRaw === "number"
+      ? unitsRaw
+      : parseDE(unitsRaw)
+  );
+  const unitCost = parseDE(record?.unitCostUsd);
+  const unitExtra = parseDE(record?.unitExtraUsd);
+  const extraFlat = parseDE(record?.extraFlatUsd);
+  const unitCount = Number.isFinite(units) ? units : 0;
+  const rawUsd = (unitCost + unitExtra) * unitCount + extraFlat;
+  const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+  const fxRate = settings?.fxRate || 0;
+  const totalEur = Math.round((totalUsd * fxRate) * 100) / 100;
+  return {
+    usd: totalUsd,
+    eur: totalEur,
+    units: Number.isFinite(units) ? units : 0,
+    unitCost,
+    unitExtra,
+    extraFlat,
+  };
+}
+
+function normaliseGoodsFields(record, settings = getSettings()) {
+  if (!record) return;
+  if (record.unitCostUsd == null) record.unitCostUsd = "0,00";
+  if (record.unitExtraUsd == null) record.unitExtraUsd = "0,00";
+  if (record.units == null) record.units = "0";
+  if (record.extraFlatUsd == null) record.extraFlatUsd = "0,00";
+
+  const totals = computeGoodsTotals(record, settings);
+  const existingGoods = parseDE(record.goodsEur);
+  if (totals.usd === 0 && existingGoods > 0) {
+    const fxRate = settings?.fxRate || 1;
+    const approxUsd = fxRate ? existingGoods / fxRate : existingGoods;
+    record.unitCostUsd = fmtCurrencyInput(approxUsd);
+    record.unitExtraUsd = "0,00";
+    record.extraFlatUsd = "0,00";
+    record.units = "1";
+  }
+
+  const recalculated = computeGoodsTotals(record, settings);
+  record.goodsEur = fmtCurrencyInput(recalculated.eur);
+  record.goodsUsd = fmtCurrencyInput(recalculated.usd);
+  record.goodsValueUsd = recalculated.usd;
 }
 
 function getSettings() {
@@ -232,6 +288,10 @@ function defaultRecord(config, settings = getSettings()) {
     id: Math.random().toString(36).slice(2, 9),
     [config.numberField]: "",
     orderDate: today,
+    unitCostUsd: "0,00",
+    unitExtraUsd: "0,00",
+    units: "0",
+    extraFlatUsd: "0,00",
     goodsEur: "0,00",
     freightEur: "0,00",
     prodDays: 60,
@@ -250,6 +310,7 @@ function defaultRecord(config, settings = getSettings()) {
     ],
   };
   ensureAutoEvents(record, settings, record.milestones);
+  normaliseGoodsFields(record, settings);
   return record;
 }
 
@@ -270,7 +331,12 @@ function msSum100(ms) {
 }
 
 function orderEvents(record, config, settings) {
-  const goods = parseDE(record.goodsEur);
+  const totals = computeGoodsTotals(record, settings);
+  let goods = totals.eur;
+  if (!goods) {
+    const fallback = parseDE(record.goodsEur);
+    if (fallback) goods = fallback;
+  }
   const freight = parseDE(record.freightEur);
   const prefix = record[config.numberField] ? `${config.entityLabel} ${record[config.numberField]} – ` : "";
   const manual = Array.isArray(record.milestones) ? record.milestones : [];
@@ -498,22 +564,27 @@ function buildEventList(events, onStatusChange) {
 
 function renderList(container, records, config, onEdit, onDelete) {
   container.innerHTML = "";
+  const settings = getSettings();
+  const rows = Array.isArray(records) ? records : [];
+  for (const rec of rows) normaliseGoodsFields(rec, settings);
   const table = el("table", {}, [
     el("thead", {}, [
       el("tr", {}, [
         el("th", {}, [`${config.entityLabel}-Nr.`]),
         el("th", {}, ["Order"]),
-        el("th", {}, ["Warenwert"]),
+        el("th", {}, ["Stück"]),
+        el("th", {}, ["Summe USD"]),
         el("th", {}, ["Zahlungen"]),
         el("th", {}, ["Transport"]),
         el("th", {}, ["Aktionen"]),
       ]),
     ]),
-    el("tbody", {}, records.map(rec =>
+    el("tbody", {}, rows.map(rec =>
       el("tr", {}, [
         el("td", {}, [rec[config.numberField] || "—"]),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
-        el("td", {}, [fmtEUR(parseDE(rec.goodsEur))]),
+        el("td", {}, [Number(parseDE(rec.units ?? 0) || 0).toLocaleString("de-DE")]),
+        el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
         el("td", {}, [String((rec.milestones || []).length)]),
         el("td", {}, [`${rec.transport || "sea"} · ${rec.transitDays || 0}d`]),
         el("td", {}, [
@@ -552,7 +623,8 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   const tbody = el("tbody", {});
   table.append(tbody);
 
-  const goods = parseDE(record.goodsEur);
+  const totals = computeGoodsTotals(record, settings);
+  const goods = totals.eur || parseDE(record.goodsEur);
 
   (record.milestones || []).forEach((ms, index) => {
     const computed = previewMap.get(ms.id);
@@ -744,12 +816,18 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 export function renderOrderModule(root, config) {
   const state = loadState();
   if (!Array.isArray(state[config.entityKey])) state[config.entityKey] = [];
+  const initialSettings = getSettings();
+  state[config.entityKey].forEach(rec => normaliseGoodsFields(rec, initialSettings));
 
   const ids = {
     list: `${config.slug}-list`,
     number: `${config.slug}-number`,
     orderDate: `${config.slug}-order-date`,
-    goods: `${config.slug}-goods`,
+    unitCost: `${config.slug}-unit-cost`,
+    unitExtra: `${config.slug}-unit-extra`,
+    units: `${config.slug}-units`,
+    extraFlat: `${config.slug}-extra-flat`,
+    goodsSummary: `${config.slug}-goods-summary`,
     freight: `${config.slug}-freight`,
     prod: `${config.slug}-prod`,
     transport: `${config.slug}-transport`,
@@ -787,10 +865,27 @@ export function renderOrderModule(root, config) {
           <label>Bestelldatum</label>
           <input id="${ids.orderDate}" type="date" />
         </div>
+      </div>
+      <div class="grid two" style="margin-top:12px">
         <div>
-          <label>Warenwert (€)</label>
-          <input id="${ids.goods}" placeholder="z. B. 8.000,00" />
+          <label>Stückkosten (USD)</label>
+          <input id="${ids.unitCost}" placeholder="z. B. 12,50" inputmode="decimal" />
         </div>
+        <div>
+          <label>Zusatzkosten je Stück (USD)</label>
+          <input id="${ids.unitExtra}" placeholder="z. B. 0,80" inputmode="decimal" />
+        </div>
+        <div>
+          <label>Stückzahl</label>
+          <input id="${ids.units}" type="number" min="0" step="1" />
+        </div>
+        <div>
+          <label>Zusatzkosten pauschal (USD)</label>
+          <input id="${ids.extraFlat}" placeholder="z. B. 150,00" inputmode="decimal" />
+        </div>
+      </div>
+      <div class="po-goods-summary" id="${ids.goodsSummary}">Summe Warenwert: 0,00 € (0,00 USD)</div>
+      <div class="grid two" style="margin-top:12px">
         <div>
           <label>Fracht (€)</label>
           <input id="${ids.freight}" placeholder="z. B. 4.800,00" />
@@ -849,7 +944,11 @@ export function renderOrderModule(root, config) {
   const listZone = $(`#${ids.list}`, root);
   const numberInput = $(`#${ids.number}`, root);
   const orderDateInput = $(`#${ids.orderDate}`, root);
-  const goodsInput = $(`#${ids.goods}`, root);
+  const unitCostInput = $(`#${ids.unitCost}`, root);
+  const unitExtraInput = $(`#${ids.unitExtra}`, root);
+  const unitsInput = $(`#${ids.units}`, root);
+  const extraFlatInput = $(`#${ids.extraFlat}`, root);
+  const goodsSummary = $(`#${ids.goodsSummary}`, root);
   const freightInput = $(`#${ids.freight}`, root);
   const prodInput = $(`#${ids.prod}`, root);
   const transportSelect = $(`#${ids.transport}`, root);
@@ -871,15 +970,20 @@ export function renderOrderModule(root, config) {
   let editing = defaultRecord(config, getSettings());
 
   function updatePreview(settings) {
+    syncEditingFromForm(settings);
     const draft = JSON.parse(JSON.stringify({
       ...editing,
       [config.numberField]: numberInput.value,
       orderDate: orderDateInput.value,
-      goodsEur: goodsInput.value,
+      unitCostUsd: unitCostInput.value,
+      unitExtraUsd: unitExtraInput.value,
+      units: unitsInput.value,
+      extraFlatUsd: extraFlatInput.value,
       prodDays: Number(prodInput.value || 0),
       transport: transportSelect.value,
       transitDays: Number(transitInput.value || 0),
     }));
+    normaliseGoodsFields(draft, settings);
     const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
     preview.append(el("h4", {}, ["Ereignisse"]));
@@ -890,16 +994,29 @@ export function renderOrderModule(root, config) {
     const sum = (editing.milestones || []).reduce((acc, row) => acc + clampPct(row.percent || 0), 0);
     const ok = (Math.round(sum * 10) / 10 === 100)
       && (numberInput.value.trim() !== "")
-      && (parseDE(goodsInput.value) > 0)
+      && (computeGoodsTotals(editing, getSettings()).usd > 0)
       && !!orderDateInput.value;
     saveBtn.disabled = !ok;
     if (convertBtn) convertBtn.disabled = !ok;
   }
 
-  function syncEditingFromForm() {
+  function updateGoodsSummary(totals) {
+    if (!goodsSummary) return;
+    const eurText = fmtEUR(totals.eur || 0);
+    const usdText = fmtUSD(totals.usd || 0);
+    goodsSummary.textContent = `Summe Warenwert: ${eurText} (${usdText})`;
+  }
+
+  function syncEditingFromForm(settings = getSettings()) {
     editing[config.numberField] = numberInput.value.trim();
     editing.orderDate = orderDateInput.value;
-    editing.goodsEur = fmtCurrencyInput(goodsInput.value);
+    editing.unitCostUsd = fmtCurrencyInput(unitCostInput.value);
+    editing.unitExtraUsd = fmtCurrencyInput(unitExtraInput.value);
+    editing.units = unitsInput.value || "0";
+    editing.extraFlatUsd = fmtCurrencyInput(extraFlatInput.value);
+    normaliseGoodsFields(editing, settings);
+    const totals = computeGoodsTotals(editing, settings);
+    updateGoodsSummary(totals);
     editing.freightEur = fmtCurrencyInput(freightInput.value);
     editing.prodDays = Number(prodInput.value || 0);
     editing.transport = transportSelect.value;
@@ -927,12 +1044,12 @@ export function renderOrderModule(root, config) {
         };
       }
     }
-    syncEditingFromForm();
+    const settings = getSettings();
+    syncEditingFromForm(settings);
     if (!transitInput.value) {
       transitInput.value = editing.transport === "air" ? "10" : (editing.transport === "rail" ? "30" : "60");
     }
-    syncEditingFromForm();
-    const settings = getSettings();
+    syncEditingFromForm(settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
     updatePreview(settings);
@@ -942,10 +1059,15 @@ export function renderOrderModule(root, config) {
   function loadForm(record) {
     const settings = getSettings();
     editing = JSON.parse(JSON.stringify(record));
+    normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     numberInput.value = editing[config.numberField] || "";
     orderDateInput.value = editing.orderDate || new Date().toISOString().slice(0, 10);
-    goodsInput.value = fmtCurrencyInput(editing.goodsEur ?? "0,00");
+    unitCostInput.value = fmtCurrencyInput(editing.unitCostUsd ?? "0,00");
+    unitExtraInput.value = fmtCurrencyInput(editing.unitExtraUsd ?? "0,00");
+    unitsInput.value = String(editing.units ?? "0");
+    extraFlatInput.value = fmtCurrencyInput(editing.extraFlatUsd ?? "0,00");
+    updateGoodsSummary(computeGoodsTotals(editing, settings));
     freightInput.value = fmtCurrencyInput(editing.freightEur ?? "0,00");
     prodInput.value = String(editing.prodDays ?? 60);
     transportSelect.value = editing.transport || "sea";
@@ -963,7 +1085,8 @@ export function renderOrderModule(root, config) {
   }
 
   function saveRecord() {
-    syncEditingFromForm();
+    const settings = getSettings();
+    syncEditingFromForm(settings);
     const st = loadState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
     const idx = arr.findIndex(item => (item.id && item.id === editing.id)
@@ -978,7 +1101,8 @@ export function renderOrderModule(root, config) {
 
   function convertRecord() {
     if (!config.convertTo) return;
-    syncEditingFromForm();
+    const settings = getSettings();
+    syncEditingFromForm(settings);
     if (saveBtn.disabled) {
       window.alert("Bitte gültige Daten eingeben, bevor die FO umgewandelt wird.");
       return;
@@ -1041,9 +1165,25 @@ export function renderOrderModule(root, config) {
     window.dispatchEvent(new Event("state:changed"));
   }
 
-  goodsInput.addEventListener("input", onAnyChange);
-  goodsInput.addEventListener("blur", () => {
-    goodsInput.value = fmtCurrencyInput(goodsInput.value);
+  unitCostInput.addEventListener("input", onAnyChange);
+  unitCostInput.addEventListener("blur", () => {
+    unitCostInput.value = fmtCurrencyInput(unitCostInput.value);
+    onAnyChange();
+  });
+  unitExtraInput.addEventListener("input", onAnyChange);
+  unitExtraInput.addEventListener("blur", () => {
+    unitExtraInput.value = fmtCurrencyInput(unitExtraInput.value);
+    onAnyChange();
+  });
+  unitsInput.addEventListener("input", onAnyChange);
+  unitsInput.addEventListener("blur", () => {
+    const numeric = Math.max(0, Math.round(Number(unitsInput.value || 0)));
+    unitsInput.value = Number.isFinite(numeric) ? String(numeric) : "0";
+    onAnyChange();
+  });
+  extraFlatInput.addEventListener("input", onAnyChange);
+  extraFlatInput.addEventListener("blur", () => {
+    extraFlatInput.value = fmtCurrencyInput(extraFlatInput.value);
     onAnyChange();
   });
   freightInput.addEventListener("input", onAnyChange);
@@ -1102,4 +1242,5 @@ export const orderEditorUtils = {
   fmtPercent,
   clampPct,
   defaultRecord,
+  normaliseGoodsFields,
 };
