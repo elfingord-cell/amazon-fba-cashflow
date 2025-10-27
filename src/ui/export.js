@@ -3,6 +3,7 @@
 // - Kurzübersicht, Validierung, JSON-Vorschau, Download/Upload
 
 import { loadState, saveState, exportState, importStateFile } from "../data/storageLocal.js";
+import { expandFixcostInstances } from "../domain/cashflow.js";
 
 const $  = (sel, r=document)=> r.querySelector(sel);
 const esc = (s)=> String(s??"").replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -36,14 +37,30 @@ function validateState(s){
     if (!(pct>=0 && pct<=1)) errors.push(`Umsatz-Zeile ${i+1}: Quote muss zwischen 0 und 1 liegen (oder 0–100%).`);
   });
 
-  // Extras / Outgoings Beträge prüfbar
+  // Extras Beträge prüfbar
   (s.extras||[]).forEach((r,i)=>{
     if (!r.month) warns.push(`Extras-Zeile ${i+1}: Monat fehlt (wird beim Import/Export dennoch übernommen).`);
     if (!Number.isFinite(parseDE(r.amountEur))) errors.push(`Extras-Zeile ${i+1}: Betrag ungültig.`);
   });
-  (s.outgoings||[]).forEach((r,i)=>{
-    if (!r.month) warns.push(`Ausgaben-Zeile ${i+1}: Monat fehlt (wird beim Import/Export dennoch übernommen).`);
-    if (!Number.isFinite(parseDE(r.amountEur))) errors.push(`Ausgaben-Zeile ${i+1}: Betrag ungültig.`);
+
+  (s.fixcosts||[]).forEach((row, i) => {
+    if (!row.name) errors.push(`Fixkosten ${i + 1}: Name fehlt.`);
+    if (!(parseDE(row.amount) > 0)) errors.push(`Fixkosten ${i + 1}: Betrag ungültig.`);
+    if (row.startMonth && row.endMonth && row.startMonth > row.endMonth) {
+      errors.push(`Fixkosten ${i + 1}: Startmonat darf nicht nach Endmonat liegen.`);
+    }
+  });
+  const overrides = s.fixcostOverrides || {};
+  Object.entries(overrides).forEach(([fixId, months]) => {
+    if (!months || typeof months !== "object") return;
+    Object.entries(months).forEach(([monthKey, data]) => {
+      if (data && data.amount && !Number.isFinite(parseDE(data.amount))) {
+        errors.push(`Fixkosten-Override ${fixId} ${monthKey}: Betrag ungültig.`);
+      }
+      if (data && data.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(data.dueDate)) {
+        warns.push(`Fixkosten-Override ${fixId} ${monthKey}: Fälligkeit im Format JJJJ-MM-TT angeben.`);
+      }
+    });
   });
 
   return { errors, warns };
@@ -71,7 +88,8 @@ export async function render(root){
   s.settings  = s.settings  || { startMonth:"2025-02", horizonMonths:18, openingBalance:"50.000,00" };
   s.incomings = Array.isArray(s.incomings) ? s.incomings : [];
   s.extras    = Array.isArray(s.extras)    ? s.extras    : [];
-  s.outgoings = Array.isArray(s.outgoings) ? s.outgoings : [];
+  s.fixcosts  = Array.isArray(s.fixcosts)  ? s.fixcosts  : [];
+  s.fixcostOverrides = (s.fixcostOverrides && typeof s.fixcostOverrides === "object") ? s.fixcostOverrides : {};
 
   const totalPayout = (s.incomings||[]).reduce((acc, r)=>{
     const rev = parseDE(r.revenueEur);
@@ -80,7 +98,8 @@ export async function render(root){
     return acc + rev * (pct||0);
   }, 0);
   const totalExtras = sumDE(s.extras,   r=>r.amountEur);
-  const totalOut    = sumDE(s.outgoings,r=>r.amountEur);
+  const fixInstances = expandFixcostInstances(s, { today: new Date() });
+  const totalFix    = fixInstances.reduce((acc, inst)=> acc + (inst.amount || 0), 0);
 
   const { errors, warns } = validateState(s);
   const canDownload = errors.length===0;
@@ -109,7 +128,7 @@ export async function render(root){
             <li>Opening: <b>${fmtDE(parseDE(s.openingEur))} €</b></li>
             <li>Sales × Payout: <b>${fmtDE(totalPayout)} €</b></li>
             <li>Extras (Σ): <b>${fmtDE(totalExtras)} €</b></li>
-            <li>Ausgaben (Σ): <b>${fmtDE(totalOut)} €</b></li>
+            <li>Fixkosten (Σ): <b>${fmtDE(totalFix)} €</b></li>
             <li>Zeitraum: <b>${esc(s?.settings?.startMonth || "—")}, ${esc(s?.settings?.horizonMonths || 0)} Monate</b></li>
           </ul>
         </div>
@@ -168,9 +187,23 @@ export async function render(root){
       extras: [
         { month: "2025-04", label: "USt-Erstattung", amountEur: "1.500,00" }
       ],
-      outgoings: [
-        { month: "2025-03", label: "Fixkosten", amountEur: "2.000,00" }
-      ]
+      fixcosts: [
+        {
+          id: "fix-export-demo",
+          name: "Fixkosten",
+          category: "Miete",
+          amount: "2.000,00",
+          frequency: "monthly",
+          intervalMonths: 1,
+          anchor: "LAST",
+          startMonth: s?.settings?.startMonth || "2025-02",
+          endMonth: "",
+          proration: { enabled: false, method: "none" },
+          autoPaid: true,
+          notes: "Demo-Position",
+        }
+      ],
+      fixcostOverrides: {},
     };
     saveState(demo);
     alert("Testdaten geladen.");
