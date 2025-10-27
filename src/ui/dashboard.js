@@ -51,13 +51,14 @@ const MODE_OPTIONS = [
 const CONTROL_PRESETS = [
   { key: "all", label: "Alle" },
   { key: "none", label: "Keine" },
-  { key: "last3", label: "Letzte 3" },
-  { key: "last6", label: "Letzte 6" },
-  { key: "last12", label: "Letzte 12" },
+  { key: "next3", label: "Nächste 3" },
+  { key: "next6", label: "Nächste 6" },
+  { key: "next12", label: "Nächste 12" },
 ];
 
 const plState = {
   selectedMonths: null,
+  allowEmptySelection: false,
   mode: "planned",
   showScenario: false,
   search: "",
@@ -117,10 +118,11 @@ function ensureSelection(months) {
   const previous = Array.isArray(plState.selectedMonths)
     ? plState.selectedMonths.filter(m => available.includes(m))
     : [];
-  if (previous.length) {
+  if (previous.length || plState.allowEmptySelection) {
     plState.selectedMonths = previous;
     return;
   }
+  plState.allowEmptySelection = false;
   plState.selectedMonths = available.slice();
 }
 
@@ -145,18 +147,48 @@ function ensureGlobalTip() {
   return el;
 }
 
+function currentMonthKey() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+
+function sliceUpcomingMonths(months, count) {
+  if (!Array.isArray(months) || !months.length) return [];
+  const todayKey = currentMonthKey();
+  const startIdx = months.findIndex(month => month >= todayKey);
+  if (startIdx === -1) {
+    const fallback = months.slice(-count);
+    return fallback.length ? fallback : months.slice();
+  }
+  const upcoming = months.slice(startIdx, startIdx + count);
+  if (upcoming.length === count) return upcoming;
+  const missing = count - upcoming.length;
+  const prior = months.slice(Math.max(0, startIdx - missing), startIdx);
+  const combined = prior.concat(upcoming).slice(-count);
+  if (combined.length) return combined;
+  return months.slice();
+}
+
 function applyControlSelection(control, months) {
+  if (!Array.isArray(months)) months = [];
   switch (control) {
     case "all":
+      plState.allowEmptySelection = false;
       return months.slice();
     case "none":
+      plState.allowEmptySelection = true;
       return [];
-    case "last3":
-      return months.slice(-3);
-    case "last6":
-      return months.slice(-6);
-    case "last12":
-      return months.slice(-12);
+    case "next3":
+      plState.allowEmptySelection = false;
+      return sliceUpcomingMonths(months, 3);
+    case "next6":
+      plState.allowEmptySelection = false;
+      return sliceUpcomingMonths(months, 6);
+    case "next12":
+      plState.allowEmptySelection = false;
+      return sliceUpcomingMonths(months, 12);
     default:
       return plState.selectedMonths || [];
   }
@@ -530,6 +562,7 @@ function attachPLHandlers(plRoot) {
       if (set.has(month)) set.delete(month); else set.add(month);
       const ordered = (plData?.months || []).filter(m => set.has(m));
       plState.selectedMonths = ordered;
+      plState.allowEmptySelection = ordered.length === 0;
       updatePLSection(plRoot);
     });
   }
