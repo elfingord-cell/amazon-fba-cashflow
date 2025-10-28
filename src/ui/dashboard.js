@@ -68,10 +68,8 @@ const plState = {
   defaultCollapseApplied: false,
   showAdvancedFilters: false,
   legend: {
-    inflowPaid: true,
-    inflowOpen: true,
-    outflowPaid: true,
-    outflowOpen: true,
+    inflow: true,
+    outflow: true,
     netLine: true,
   },
 };
@@ -856,24 +854,18 @@ export async function render(root) {
   const closing = breakdown.map(b => Number(b?.closing || 0));
   const firstNegativeIndex = closing.findIndex(value => value < 0);
   const legend = plState.legend || {};
-  const showInflowPaid = legend.inflowPaid !== false;
-  const showInflowOpen = legend.inflowOpen !== false;
-  const showOutflowPaid = legend.outflowPaid !== false;
-  const showOutflowOpen = legend.outflowOpen !== false;
+  const showInflow = legend.inflow !== false;
+  const showOutflow = legend.outflow !== false;
   const showNetLine = legend.netLine !== false;
 
-  const inflowPaidTotals = showInflowPaid ? series.map(r => Number(r.inflow?.paid || 0)) : [];
-  const inflowOpenTotals = showInflowOpen ? series.map(r => Number(r.inflow?.open || 0)) : [];
-  const outflowPaidTotals = showOutflowPaid ? series.map(r => Number(r.outflow?.paid || 0)) : [];
-  const outflowOpenTotals = showOutflowOpen ? series.map(r => Number(r.outflow?.open || 0)) : [];
+  const inflowTotals = showInflow ? series.map(r => Number(r.inflow?.total || 0)) : [];
+  const outflowTotals = showOutflow ? series.map(r => Number(r.outflow?.total || 0)) : [];
   const netLineValues = showNetLine ? closing : [];
 
   const topCandidates = [
     0,
-    ...inflowPaidTotals,
-    ...inflowOpenTotals,
-    ...outflowPaidTotals,
-    ...outflowOpenTotals,
+    ...inflowTotals,
+    ...outflowTotals,
   ];
   if (showNetLine) {
     topCandidates.push(...netLineValues.filter(v => v > 0));
@@ -939,26 +931,16 @@ export async function render(root) {
 
   function valuesFor(type, row) {
     if (type === "inflow") {
-      if (!row.inflow) return [];
-      const segments = [];
-      if (plState.legend.inflowPaid !== false) {
-        segments.push({ key: "paid", value: Number(row.inflow?.paid || 0) });
-      }
-      if (plState.legend.inflowOpen !== false) {
-        segments.push({ key: "open", value: Number(row.inflow?.open || 0) });
-      }
-      return segments;
+      if (!plState.legend || plState.legend.inflow === false) return [];
+      const total = Number(row?.inflow?.total || 0);
+      if (!total) return [];
+      return [{ key: "total", value: total }];
     }
     if (type === "outflow") {
-      if (!row.outflow) return [];
-      const segments = [];
-      if (plState.legend.outflowPaid !== false) {
-        segments.push({ key: "paid", value: Number(row.outflow?.paid || 0) });
-      }
-      if (plState.legend.outflowOpen !== false) {
-        segments.push({ key: "open", value: Number(row.outflow?.open || 0) });
-      }
-      return segments;
+      if (!plState.legend || plState.legend.outflow === false) return [];
+      const total = Number(row?.outflow?.total || 0);
+      if (!total) return [];
+      return [{ key: "total", value: total }];
     }
     return [];
   }
@@ -1054,17 +1036,17 @@ export async function render(root) {
       `;
     };
     const inflowSection = formatSection("Inflow", inflowPaid, inflowOpen, {
-      swatchPaid: "swatch-inflow-paid",
-      swatchOpen: "swatch-inflow-open",
+      swatchPaid: "swatch-inflow",
+      swatchOpen: "swatch-inflow",
     });
     const outflowSection = formatSection("Outflow", outflowPaid, outflowOpen, {
-      swatchPaid: "swatch-outflow-paid",
-      swatchOpen: "swatch-outflow-open",
+      swatchPaid: "swatch-outflow",
+      swatchOpen: "swatch-outflow",
       negative: true,
     });
     const netSection = formatSection("Netto", netPaid, netOpen, {
-      swatchPaid: "swatch-net-paid",
-      swatchOpen: "swatch-net-open",
+      swatchPaid: "swatch-net",
+      swatchOpen: "swatch-net",
     });
     const balanceSection = `
       <div class="tip-divider"></div>
@@ -1105,11 +1087,9 @@ export async function render(root) {
     .join("");
 
   const legendRows = [
-    { key: "inflowPaid", label: "Inflow bezahlt", swatch: "swatch-inflow-paid" },
-    { key: "inflowOpen", label: "Inflow offen", swatch: "swatch-inflow-open" },
-    { key: "outflowPaid", label: "Outflow bezahlt", swatch: "swatch-outflow-paid" },
-    { key: "outflowOpen", label: "Outflow offen", swatch: "swatch-outflow-open" },
-    { key: "netLine", label: "Netto Linie", swatch: "swatch-net-line" },
+    { key: "inflow", label: "Inflow", swatch: "swatch-inflow" },
+    { key: "outflow", label: "Outflow", swatch: "swatch-outflow" },
+    { key: "netLine", label: "Kontostand", swatch: "swatch-net-line" },
   ];
 
   const legendHtml = `

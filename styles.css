@@ -192,6 +192,8 @@ tr.auto-ms.disabled select{opacity:0.8;}
   border-radius:0;
   transition:height .2s ease;
 }
+.segment-inflow-total{background:#26A69A;}
+.segment-outflow-total{background:#EF5350;}
 .segment-inflow-paid{background:#2CA02C;}
 .segment-inflow-open{background:#A5D6A7;}
 .segment-outflow-paid{background:#D32F2F;}
@@ -213,8 +215,8 @@ tr.auto-ms.disabled select{opacity:0.8;}
   pointer-events:none; /* Tooltip bleibt über den Balken */
 }
 .vchart-lines svg{width:var(--chart-width, 100%); height:100%}
-.vchart-lines .line{fill:none; stroke:#26A69A; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; stroke-dasharray:6 4;}
-.vchart-lines .dot{fill:#26A69A; stroke:#ffffff; stroke-width:2; opacity:0; transition:opacity .2s ease;}
+.vchart-lines .line{fill:none; stroke:#37474F; stroke-width:2; stroke-linejoin:round; stroke-linecap:round;}
+.vchart-lines .dot{fill:#37474F; stroke:#ffffff; stroke-width:2; opacity:0; transition:opacity .2s ease;}
 .vchart-lines .dot.is-active{opacity:1;}
 .chart-legend{margin:20px 32px 0 72px; display:flex; flex-wrap:nowrap; gap:14px; font-size:12px; color:var(--muted); overflow-x:auto; padding-bottom:4px;}
 .chart-legend::-webkit-scrollbar{height:6px;}
@@ -224,13 +226,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .legend-button.is-off{opacity:0.45;}
 .legend-label{font-weight:600; white-space:nowrap;}
 .legend-swatch{width:16px; height:16px; border-radius:2px; border:1px solid rgba(15,27,45,0.1); box-shadow:inset 0 0 0 1px rgba(255,255,255,0.25); flex-shrink:0;}
-.legend-swatch.swatch-inflow-paid{background:#2CA02C;}
-.legend-swatch.swatch-inflow-open{background:#A5D6A7;}
-.legend-swatch.swatch-outflow-paid{background:#D32F2F;}
-.legend-swatch.swatch-outflow-open{background:#EF9A9A;}
-.legend-swatch.swatch-net-paid{background:#1976D2;}
-.legend-swatch.swatch-net-open{background:#90CAF9;}
-.legend-swatch.swatch-net-line{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px dashed #26A69A;}
+.legend-swatch.swatch-inflow{background:#26A69A;}
+.legend-swatch.swatch-outflow{background:#EF5350;}
+.legend-swatch.swatch-net-line{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px solid #37474F;}
 
 /* Globaler Tooltip (fixed, nicht clipbar) */
 .chart-tip{ 
@@ -248,12 +246,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .chart-tip .tip-divider{border-top:1px solid #d7dbe3; margin:8px 0;}
 .chart-tip .tip-subtitle{font-size:11px; font-weight:600; margin:0 0 4px; color:#2f3b52; text-transform:uppercase; letter-spacing:0.04em;}
 .chart-tip .tip-swatch{width:10px; height:10px; border-radius:2px; display:inline-block;}
-.chart-tip .tip-swatch.swatch-inflow-paid{background:#2CA02C;}
-.chart-tip .tip-swatch.swatch-inflow-open{background:#A5D6A7;}
-.chart-tip .tip-swatch.swatch-outflow-paid{background:#D32F2F;}
-.chart-tip .tip-swatch.swatch-outflow-open{background:#EF9A9A;}
-.chart-tip .tip-swatch.swatch-net-paid{background:#1976D2;}
-.chart-tip .tip-swatch.swatch-net-open{background:#90CAF9;}
+.chart-tip .tip-swatch.swatch-inflow{background:#26A69A;}
+.chart-tip .tip-swatch.swatch-outflow{background:#EF5350;}
+.chart-tip .tip-swatch.swatch-net{background:#37474F;}
 
 /* === Dashboard Ebenen-Reihenfolge === */
 .vchart-grid  { position:absolute; left:72px; right:32px; top:24px; bottom:56px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
