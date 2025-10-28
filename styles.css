@@ -258,9 +258,42 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* === Dashboard Ebenen-Reihenfolge === */
 .vchart-grid  { position:absolute; left:72px; right:32px; top:24px; bottom:56px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
 .vchart-y     { position:absolute; left:16px;  top:24px; bottom:56px; width:48px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
-  .vchart-bars  { position:absolute; left:72px; right:32px; top:24px; bottom:56px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); align-items:stretch; gap:clamp(24px, 5vw, 32px); z-index:2; }
-  .vchart-lines { position:absolute; left:72px; right:32px; top:24px; bottom:56px; pointer-events:none; z-index:3; }
-  .vchart-x     { position:absolute; left:72px; right:32px; bottom:12px; display:grid; grid-template-columns: repeat(var(--cols,12), 1fr); gap:clamp(24px, 5vw, 32px); z-index:4; }
+  .vchart-bars  {
+    position:absolute;
+    left:72px;
+    right:32px;
+    top:24px;
+    bottom:56px;
+    display:flex;
+    align-items:flex-end;
+    justify-content:flex-start;
+    gap:var(--group-gap, 28px);
+    flex-wrap:nowrap;
+    width:var(--chart-width, 100%);
+    z-index:2;
+  }
+  .vchart-lines {
+    position:absolute;
+    left:72px;
+    right:32px;
+    top:24px;
+    bottom:56px;
+    pointer-events:none;
+    z-index:3;
+  }
+  .vchart-x     {
+    position:absolute;
+    left:72px;
+    right:32px;
+    bottom:12px;
+    display:flex;
+    align-items:center;
+    justify-content:flex-start;
+    gap:var(--group-gap, 28px);
+    flex-wrap:nowrap;
+    width:var(--chart-width, 100%);
+    z-index:4;
+  }
 
 /* Raster-Linien (gestrichelt) */
 
