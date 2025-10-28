@@ -864,18 +864,24 @@ export async function render(root) {
 
   const inflowPaidTotals = showInflowPaid ? series.map(r => Number(r.inflow?.paid || 0)) : [];
   const inflowOpenTotals = showInflowOpen ? series.map(r => Number(r.inflow?.open || 0)) : [];
-  const outflowPaidTotals = showOutflowPaid ? series.map(r => -Number(r.outflow?.paid || 0)) : [];
-  const outflowOpenTotals = showOutflowOpen ? series.map(r => -Number(r.outflow?.open || 0)) : [];
+  const outflowPaidTotals = showOutflowPaid ? series.map(r => Number(r.outflow?.paid || 0)) : [];
+  const outflowOpenTotals = showOutflowOpen ? series.map(r => Number(r.outflow?.open || 0)) : [];
   const netLineValues = showNetLine ? closing : [];
 
-  const topCandidates = [0, ...inflowPaidTotals, ...inflowOpenTotals];
+  const topCandidates = [
+    0,
+    ...inflowPaidTotals,
+    ...inflowOpenTotals,
+    ...outflowPaidTotals,
+    ...outflowOpenTotals,
+  ];
   if (showNetLine) {
     topCandidates.push(...netLineValues.filter(v => v > 0));
     topCandidates.push(opening);
   }
   const rawTop = Math.max(...topCandidates);
 
-  const bottomCandidates = [0, ...outflowPaidTotals, ...outflowOpenTotals];
+  const bottomCandidates = [0];
   if (showNetLine) {
     bottomCandidates.push(...netLineValues.filter(v => v < 0));
     bottomCandidates.push(opening);
@@ -947,10 +953,10 @@ export async function render(root) {
       if (!row.outflow) return [];
       const segments = [];
       if (plState.legend.outflowPaid !== false) {
-        segments.push({ key: "paid", value: -Number(row.outflow?.paid || 0) });
+        segments.push({ key: "paid", value: Number(row.outflow?.paid || 0) });
       }
       if (plState.legend.outflowOpen !== false) {
-        segments.push({ key: "open", value: -Number(row.outflow?.open || 0) });
+        segments.push({ key: "open", value: Number(row.outflow?.open || 0) });
       }
       return segments;
     }
@@ -1006,8 +1012,8 @@ export async function render(root) {
     const totalValue =
       type === "inflow"
         ? Number(row.inflow?.total || 0)
-        : -Number(row.outflow?.total || 0);
-    const orientation = totalValue >= 0 ? "pos" : "neg";
+        : Number(row.outflow?.total || 0);
+    const orientation = type === "outflow" ? "neg" : "pos";
     if (!stacked.length) {
       return `<div class="vbar-wrap type-${type} ${orientation} empty" aria-hidden="true"></div>`;
     }
