@@ -8,18 +8,56 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <nav class="tabs">
-      <a href="#dashboard" data-tab>Dashboard</a>
-      <a href="#eingaben" data-tab>Eingaben</a>
-      <a href="#po" data-tab>PO</a>
-      <a href="#fo" data-tab>FO</a>
-      <a href="#export" data-tab>Export/Import</a>
-      <a href="#debug" data-tab>Debug</a>
-    </nav>
-  </header>
-
-  <main id="app" class="app"></main>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Hauptnavigation">
+      <div class="sidebar-header">
+        <button class="sidebar-toggle" type="button" aria-expanded="true" aria-controls="sidebar-nav">
+          ☰
+        </button>
+        <span class="sidebar-title">FBA Cashflow</span>
+      </div>
+      <nav id="sidebar-nav" class="sidebar-nav">
+        <div class="sidebar-group" data-group>
+          <p class="sidebar-group-label">Überblick</p>
+          <a class="sidebar-link active" href="#dashboard" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">📊</span>
+            <span class="sidebar-text">Dashboard</span>
+          </a>
+        </div>
+        <div class="sidebar-group" data-group>
+          <p class="sidebar-group-label">Planung</p>
+          <a class="sidebar-link" href="#eingaben" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">📝</span>
+            <span class="sidebar-text">Eingaben</span>
+          </a>
+          <a class="sidebar-link" href="#fixkosten" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">🏷️</span>
+            <span class="sidebar-text">Fixkosten</span>
+          </a>
+          <a class="sidebar-link" href="#po" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">📦</span>
+            <span class="sidebar-text">Bestellungen (PO)</span>
+          </a>
+          <a class="sidebar-link" href="#fo" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">🔮</span>
+            <span class="sidebar-text">Forecast-Orders (FO)</span>
+          </a>
+        </div>
+        <div class="sidebar-group" data-group>
+          <p class="sidebar-group-label">Werkzeuge</p>
+          <a class="sidebar-link" href="#export" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">⬇️</span>
+            <span class="sidebar-text">Export / Import</span>
+          </a>
+          <a class="sidebar-link" href="#debug" data-tab>
+            <span class="sidebar-icon" aria-hidden="true">🧪</span>
+            <span class="sidebar-text">Debug</span>
+          </a>
+        </div>
+      </nav>
+    </aside>
+    <main id="app" class="app" tabindex="-1"></main>
+  </div>
 
   <script type="module" src="./src/main.js"></script>
 </body>

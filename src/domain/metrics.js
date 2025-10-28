@@ -1,5 +1,7 @@
 // FBA-CF-0003 — Metriken & Serien für Dashboard (ohne externe Libs)
 
+import { expandFixcostInstances } from "./cashflow.js";
+
 function parseDE(x) {
   if (x == null) return 0;
   if (typeof x === "number") return x;
@@ -38,9 +40,10 @@ export function buildSeries(state) {
     const v = parseDE(r.amountEur);
     extraMap.set(k, (extraMap.get(k) || 0) + v);
   });
-  (state.outgoings || []).forEach(r => {
-    const k = r.month;
-    const v = Math.abs(parseDE(r.amountEur));
+  const fixInstances = expandFixcostInstances(state, { today: new Date() });
+  fixInstances.forEach(inst => {
+    const k = inst.month;
+    const v = Math.abs(inst.amount || 0);
     outMap.set(k, (outMap.get(k) || 0) + v);
   });
 
