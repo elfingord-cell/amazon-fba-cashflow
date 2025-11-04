@@ -12,6 +12,7 @@ const routes = {
   '#fixkosten': () => import('./ui/fixkosten.js'),
   '#po': () => import('./ui/po.js'),
   '#fo': () => import('./ui/fo.js'),
+  '#produkte': () => import('./ui/products.js'),
   '#export': () => import('./ui/export.js'),
   '#plan': () =>
     import('./ui/plan.js').catch(() => ({
@@ -105,12 +106,19 @@ function renderRoute(forcedHash) {
   const hash = normalizeHash(candidate);
   const loader = routes[hash] || routes['#dashboard'];
   setActiveTab(hash);
+  if (typeof APP.__cleanup === 'function') {
+    try { APP.__cleanup(); } catch {}
+    APP.__cleanup = null;
+  }
   APP.innerHTML = '';
   loader()
     .then(mod => {
       const fn = pickRenderer(mod);
       if (typeof fn === 'function') {
-        fn(APP);
+        const result = fn(APP);
+        if (typeof APP.__cleanup !== 'function' && result && typeof result === 'object' && typeof result.cleanup === 'function') {
+          APP.__cleanup = result.cleanup;
+        }
       } else {
         console.warn('Route-Modul ohne passenden Export. Verfügbare Keys:', Object.keys(mod || {}));
         APP.innerHTML = `<section class="panel">

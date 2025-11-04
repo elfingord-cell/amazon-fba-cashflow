@@ -43,6 +43,8 @@ const defaults = {
   fixcosts:  [ ],
   fixcostOverrides: {},
   poTemplates: [],
+  products: [],
+  recentProducts: [],
   status: {
     autoManualCheck: false,
     events: {},
@@ -60,6 +62,12 @@ function ensureFixcostContainers(state) {
 function ensurePoTemplates(state) {
   if (!state) return;
   if (!Array.isArray(state.poTemplates)) state.poTemplates = [];
+}
+
+function ensureProducts(state) {
+  if (!state) return;
+  if (!Array.isArray(state.products)) state.products = [];
+  if (!Array.isArray(state.recentProducts)) state.recentProducts = [];
 }
 
 function monthIndex(ym) {
@@ -130,6 +138,169 @@ function migrateLegacyOutgoings(state) {
   state.outgoings = [];
 }
 
+const PRODUCT_STATUS = new Set(["active", "inactive"]);
+
+function productKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function cleanAlias(alias, sku) {
+  const trimmed = String(alias || "").trim();
+  if (trimmed) return trimmed;
+  const fallback = String(sku || "").trim();
+  return fallback ? `Ohne Alias (${fallback})` : "Ohne Alias";
+}
+
+function normaliseTemplate(template) {
+  if (!template || typeof template !== "object") return null;
+  const next = {};
+  if (template.scope) {
+    next.scope = template.scope === "SKU_SUPPLIER" ? "SKU_SUPPLIER" : "SKU";
+  }
+  if (template.name) next.name = String(template.name);
+  if (template.supplierId) next.supplierId = String(template.supplierId);
+  const copyFields = [
+    "unitPriceUsd",
+    "extraPerUnitUsd",
+    "extraFlatUsd",
+    "transport",
+    "productionDays",
+    "transitDays",
+    "freightEur",
+    "dutyPct",
+    "dutyIncludesFreight",
+    "vatImportPct",
+    "vatRefundActive",
+    "vatRefundLag",
+    "fxRate",
+    "fxFeePct",
+    "ddp",
+  ];
+  for (const field of copyFields) {
+    if (template[field] != null) next[field] = template[field];
+  }
+  if (Array.isArray(template.milestones)) {
+    next.milestones = template.milestones.map(row => ({
+      id: row.id || `ms-${Math.random().toString(36).slice(2, 9)}`,
+      label: row.label || "Milestone",
+      percent: Number(row.percent) || 0,
+      anchor: row.anchor || "ETA",
+      lagDays: Number(row.lagDays) || 0,
+    }));
+  }
+  if (template.fields && typeof template.fields === "object") {
+    next.fields = JSON.parse(JSON.stringify(template.fields));
+  }
+  return next;
+}
+
+function migrateProducts(state) {
+  if (!state) return;
+  ensureProducts(state);
+  const map = new Map();
+  const now = new Date().toISOString();
+  state.products = state.products.filter(Boolean).map(prod => {
+    const skuClean = productKey(prod?.sku);
+    if (!skuClean) return null;
+    const existing = map.get(skuClean);
+    const base = existing || {};
+    const next = {
+      id: prod.id || base.id || `prod-${Math.random().toString(36).slice(2, 9)}`,
+      sku: String(prod.sku || base.sku || "").trim(),
+      alias: cleanAlias(prod.alias || base.alias, prod.sku || base.sku),
+      supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
+      status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
+      tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
+      template: normaliseTemplate(prod.template || base.template),
+      createdAt: prod.createdAt || base.createdAt || now,
+      updatedAt: prod.updatedAt || now,
+    };
+    map.set(skuClean, next);
+    return next;
+  }).filter(Boolean);
+
+  const orders = [];
+  if (Array.isArray(state.pos)) orders.push(...state.pos);
+  if (Array.isArray(state.fos)) orders.push(...state.fos);
+
+  for (const order of orders) {
+    const key = productKey(order?.sku);
+    if (!key) continue;
+    if (!map.has(key)) {
+      const entry = {
+        id: `prod-${Math.random().toString(36).slice(2, 9)}`,
+        sku: String(order.sku).trim(),
+        alias: cleanAlias(null, order.sku),
+        supplierId: "",
+        status: "active",
+        tags: [],
+        template: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      map.set(key, entry);
+      state.products.push(entry);
+    }
+  }
+}
+
+function computeProductStats(state, skuValue) {
+  const key = productKey(skuValue);
+  if (!key) return {
+    lastPoNumber: null,
+    lastOrderDate: null,
+    avgUnitPriceUsd: null,
+    lastQty: null,
+    poCount: 0,
+  };
+  const orders = Array.isArray(state.pos) ? state.pos : [];
+  const relevant = orders
+    .filter(rec => productKey(rec?.sku) === key)
+    .sort((a, b) => {
+      const da = a?.orderDate || "";
+      const db = b?.orderDate || "";
+      return db.localeCompare(da);
+    });
+  if (!relevant.length) {
+    return {
+      lastPoNumber: null,
+      lastOrderDate: null,
+      avgUnitPriceUsd: null,
+      lastQty: null,
+      poCount: 0,
+    };
+  }
+  const last = relevant[0];
+  const qtyValues = relevant.map(rec => Number(rec.units) || 0).filter(v => Number.isFinite(v));
+  const unitPrices = relevant.map(rec => Number(rec.unitCostUsd) || 0).filter(v => Number.isFinite(v));
+  const avg = unitPrices.length ? unitPrices.reduce((a, b) => a + b, 0) / unitPrices.length : null;
+  return {
+    lastPoNumber: last.poNumber || last.number || null,
+    lastOrderDate: last.orderDate || null,
+    avgUnitPriceUsd: avg,
+    lastQty: qtyValues.length ? qtyValues[0] : null,
+    poCount: relevant.length,
+  };
+}
+
+function normaliseProductInput(input) {
+  if (!input || typeof input !== "object") throw new Error("Produktdaten erforderlich");
+  const sku = String(input.sku || "").trim();
+  if (!sku) throw new Error("SKU darf nicht leer sein.");
+  const alias = cleanAlias(input.alias, sku);
+  const supplierId = input.supplierId != null ? String(input.supplierId).trim() : "";
+  const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
+  const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
+  const template = normaliseTemplate(input.template);
+  return { sku, alias, supplierId, status, tags, template };
+}
+
+function updateProductStatsMeta(state, product) {
+  if (!product) return product;
+  const stats = computeProductStats(state, product.sku);
+  return { ...product, stats };
+}
+
 function ensureStatusSection(state){
   const target = state || {};
   if (!target.status || typeof target.status !== "object") {
@@ -152,6 +323,7 @@ export function createEmptyState(){
   ensureStatusSection(clone);
   ensureFixcostContainers(clone);
   ensurePoTemplates(clone);
+  ensureProducts(clone);
   return clone;
 }
 
@@ -166,7 +338,9 @@ export function loadState(){
   ensureStatusSection(_state);
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
+  ensureProducts(_state);
   migrateLegacyOutgoings(_state);
+  migrateProducts(_state);
   return _state;
 }
 
@@ -175,6 +349,7 @@ export function saveState(s){
   ensureStatusSection(_state);
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
+  ensureProducts(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -275,4 +450,98 @@ export function setEventsManualPaid(eventIds, paid){
     }
   }
   if (changed) saveState(state);
+}
+
+export function getProductsSnapshot(){
+  const state = loadState();
+  ensureProducts(state);
+  const list = state.products.map(prod => updateProductStatsMeta(state, prod));
+  return list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+}
+
+export function getProductBySku(sku){
+  const state = loadState();
+  ensureProducts(state);
+  const key = productKey(sku);
+  const match = state.products.find(prod => productKey(prod.sku) === key);
+  return match ? updateProductStatsMeta(state, match) : null;
+}
+
+export function upsertProduct(input){
+  const state = loadState();
+  ensureProducts(state);
+  const normalised = normaliseProductInput(input);
+  const key = productKey(normalised.sku);
+  let target = state.products.find(prod => productKey(prod.sku) === key);
+  const now = new Date().toISOString();
+  if (!target) {
+    target = {
+      id: `prod-${Math.random().toString(36).slice(2, 9)}`,
+      sku: normalised.sku,
+      alias: normalised.alias,
+      supplierId: normalised.supplierId,
+      status: normalised.status,
+      tags: normalised.tags,
+      template: normalised.template,
+      createdAt: now,
+      updatedAt: now,
+    };
+    state.products.push(target);
+  } else {
+    target.alias = normalised.alias;
+    target.supplierId = normalised.supplierId;
+    target.status = normalised.status;
+    target.tags = normalised.tags;
+    target.template = normalised.template;
+    target.updatedAt = now;
+    target.sku = normalised.sku;
+  }
+  saveState(state);
+  return updateProductStatsMeta(loadState(), target);
+}
+
+export function setProductStatus(sku, status){
+  const state = loadState();
+  ensureProducts(state);
+  const key = productKey(sku);
+  const target = state.products.find(prod => productKey(prod.sku) === key);
+  if (!target) return null;
+  target.status = PRODUCT_STATUS.has(status) ? status : "active";
+  target.updatedAt = new Date().toISOString();
+  saveState(state);
+  return updateProductStatsMeta(loadState(), target);
+}
+
+export function deleteProductBySku(sku){
+  const state = loadState();
+  ensureProducts(state);
+  const key = productKey(sku);
+  const before = state.products.length;
+  state.products = state.products.filter(prod => productKey(prod.sku) !== key);
+  if (state.recentProducts && Array.isArray(state.recentProducts)) {
+    state.recentProducts = state.recentProducts.filter(entry => entry !== key);
+  }
+  if (state.products.length !== before) saveState(state);
+}
+
+export function recordRecentProduct(sku){
+  const state = loadState();
+  ensureProducts(state);
+  const key = productKey(sku);
+  if (!key) return;
+  const list = state.recentProducts;
+  const existingIndex = list.indexOf(key);
+  if (existingIndex !== -1) list.splice(existingIndex, 1);
+  list.unshift(key);
+  while (list.length > 5) list.pop();
+  saveState(state);
+}
+
+export function getRecentProducts(){
+  const state = loadState();
+  ensureProducts(state);
+  return state.recentProducts
+    .map(key => state.products.find(prod => productKey(prod.sku) === key))
+    .filter(Boolean)
+    .map(prod => updateProductStatsMeta(state, prod));
 }

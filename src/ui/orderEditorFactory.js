@@ -1,4 +1,13 @@
-import { loadState, saveState, getStatusSnapshot, setEventManualPaid } from "../data/storageLocal.js";
+import {
+  loadState,
+  saveState,
+  getStatusSnapshot,
+  setEventManualPaid,
+  getProductsSnapshot,
+  getRecentProducts,
+  recordRecentProduct,
+  upsertProduct,
+} from "../data/storageLocal.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -778,6 +787,7 @@ function buildEventList(events, onStatusChange) {
 
 function renderList(container, records, config, onEdit, onDelete) {
   container.innerHTML = "";
+  refreshProductCache();
   const settings = getSettings();
   const rows = Array.isArray(records) ? records : [];
   for (const rec of rows) normaliseGoodsFields(rec, settings);
@@ -785,7 +795,7 @@ function renderList(container, records, config, onEdit, onDelete) {
     el("thead", {}, [
       el("tr", {}, [
         el("th", {}, [`${config.entityLabel}-Nr.`]),
-        ...(config.slug === "po" ? [el("th", {}, ["SKU"])] : []),
+        ...((config.slug === "po" || config.slug === "fo") ? [el("th", {}, ["Produkt"])] : []),
         el("th", {}, ["Order"]),
         el("th", {}, ["Stück"]),
         el("th", {}, ["Summe USD"]),
@@ -797,7 +807,7 @@ function renderList(container, records, config, onEdit, onDelete) {
     el("tbody", {}, rows.map(rec =>
       el("tr", {}, [
         el("td", {}, [rec[config.numberField] || "—"]),
-        ...(config.slug === "po" ? [el("td", {}, [rec.sku || "—"])] : []),
+        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [productLabelForList(rec.sku)])] : []),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
         el("td", {}, [Number(parseDE(rec.units ?? 0) || 0).toLocaleString("de-DE")]),
         el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
@@ -1068,12 +1078,14 @@ export function renderOrderModule(root, config) {
     Object.assign(ids, {
       sku: `${config.slug}-sku`,
       skuList: `${config.slug}-sku-list`,
+      recent: `${config.slug}-sku-recent`,
       supplier: `${config.slug}-supplier`,
       quickLatest: `${config.slug}-quick-latest`,
       quickHistory: `${config.slug}-quick-history`,
-      templateSelect: `${config.slug}-template-select`,
+      templateLoad: `${config.slug}-template-load`,
       templateSave: `${config.slug}-template-save`,
       quickStatus: `${config.slug}-quick-status`,
+      productCreate: `${config.slug}-quick-create-product`,
     });
   }
   if (config.convertTo) {
@@ -1089,19 +1101,19 @@ export function renderOrderModule(root, config) {
       <h3>${config.formTitle}</h3>
       ${quickfillEnabled ? `
       <div class="grid two po-quickfill">
-        <div>
-          <label>SKU wählen</label>
-          <input id="${ids.sku}" list="${ids.skuList}" placeholder="z. B. FBA-SKU" autocomplete="off" />
+        <div class="po-product-field">
+          <label>Produkt (Alias/SKU)</label>
+          <input id="${ids.sku}" list="${ids.skuList}" placeholder="Tippe Alias oder SKU …" autocomplete="off" />
           <datalist id="${ids.skuList}"></datalist>
+          <div class="po-product-recent" id="${ids.recent}" aria-live="polite"></div>
         </div>
         <div class="po-quickfill-actions">
           <div class="po-quickfill-buttons">
             <button class="btn secondary" type="button" id="${ids.quickLatest}">Neueste übernehmen</button>
             <button class="btn" type="button" id="${ids.quickHistory}">Aus Historie wählen</button>
-            <select id="${ids.templateSelect}">
-              <option value="">Kein Template</option>
-            </select>
+            <button class="btn secondary" type="button" id="${ids.templateLoad}">Template laden</button>
             <button class="btn secondary" type="button" id="${ids.templateSave}">Als Template speichern…</button>
+            <button class="btn tertiary" type="button" id="${ids.productCreate}">Neues Produkt anlegen</button>
           </div>
           <p class="po-quickfill-status" id="${ids.quickStatus}" aria-live="polite"></p>
         </div>
@@ -1210,7 +1222,8 @@ export function renderOrderModule(root, config) {
   const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
   const quickLatestBtn = quickfillEnabled ? $(`#${ids.quickLatest}`, root) : null;
   const quickHistoryBtn = quickfillEnabled ? $(`#${ids.quickHistory}`, root) : null;
-  const templateSelect = quickfillEnabled ? $(`#${ids.templateSelect}`, root) : null;
+  const productCreateBtn = quickfillEnabled ? $(`#${ids.productCreate}`, root) : null;
+  const templateLoadBtn = quickfillEnabled ? $(`#${ids.templateLoad}`, root) : null;
   const templateSaveBtn = quickfillEnabled ? $(`#${ids.templateSave}`, root) : null;
   const quickStatus = quickfillEnabled ? $(`#${ids.quickStatus}`, root) : null;
   const numberInput = $(`#${ids.number}`, root);
@@ -1240,6 +1253,89 @@ export function renderOrderModule(root, config) {
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
   let editing = defaultRecord(config, getSettings());
+  let productCache = [];
+
+  function refreshProductCache() {
+    productCache = getProductsSnapshot();
+  }
+
+  function formatProductOption(product) {
+    if (!product) return "";
+    const alias = product.alias || product.sku || "Produkt";
+    const sku = product.sku || "";
+    const supplier = product.supplierId ? ` • ${product.supplierId}` : "";
+    return `${alias} – ${sku}${supplier}`;
+  }
+
+  function productLabelForList(sku) {
+    if (!sku) return "—";
+    const match = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === String(sku).trim().toLowerCase());
+    if (!match) return sku;
+    return `${match.alias || match.sku} (${match.sku})`;
+  }
+
+  function resolveProductFromInput(value) {
+    const term = String(value || "").trim().toLowerCase();
+    const baseTerm = term.split("•")[0].trim();
+    if (!term) return null;
+    return productCache.find(prod => {
+      if (!prod || !prod.sku) return false;
+      const alias = String(prod.alias || "").trim().toLowerCase();
+      const sku = String(prod.sku || "").trim().toLowerCase();
+      const combo = `${alias} – ${sku}`;
+      const supplier = prod.supplierId ? `${combo} • ${String(prod.supplierId).trim().toLowerCase()}` : null;
+      if (term === combo.toLowerCase() || baseTerm === combo.toLowerCase()) return true;
+      if (supplier && term === supplier) return true;
+      if (alias && (term === alias || baseTerm === alias)) return true;
+      if (sku && (term === sku || baseTerm === sku)) return true;
+      return false;
+    }) || null;
+  }
+
+  function parseSkuInputValue(raw) {
+    const product = resolveProductFromInput(raw);
+    if (product) return product.sku;
+    return String(raw || "").trim();
+  }
+
+  function setSkuField(product) {
+    if (!quickfillEnabled || !skuInput) return;
+    if (product) {
+      skuInput.value = formatProductOption(product);
+      skuInput.dataset.sku = product.sku;
+      if (supplierInput && !editing.supplier && product.supplierId) {
+        supplierInput.value = product.supplierId;
+        editing.supplier = product.supplierId;
+      }
+    } else {
+      skuInput.dataset.sku = "";
+    }
+  }
+
+  function renderRecentChips() {
+    if (!quickfillEnabled) return;
+    const container = $(`#${ids.recent}`, root);
+    if (!container) return;
+    const recents = getRecentProducts();
+    container.innerHTML = "";
+    if (!recents.length) {
+      container.append(el("span", { class: "muted" }, ["Zuletzt genutzte Produkte erscheinen hier."]));
+      return;
+    }
+    recents.forEach(prod => {
+      const btn = el("button", {
+        type: "button",
+        class: "chip",
+        onclick: () => {
+          setSkuField(prod);
+          editing.sku = prod.sku;
+          refreshQuickfillControls();
+          updateSaveEnabled();
+        },
+      }, [prod.alias ? `${prod.alias} (${prod.sku})` : prod.sku]);
+      container.append(btn);
+    });
+  }
 
   function setQuickStatus(message) {
     if (!quickStatus) return;
@@ -1264,14 +1360,6 @@ export function renderOrderModule(root, config) {
       ensureAutoEvents(copy, settings, copy.milestones || []);
       return copy;
     });
-  }
-
-  function collectSkus() {
-    const skus = new Set();
-    for (const rec of getAllRecords()) {
-      if (rec?.sku) skus.add(String(rec.sku));
-    }
-    return Array.from(skus).sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base" }));
   }
 
   function monthTime(value) {
@@ -1308,13 +1396,7 @@ export function renderOrderModule(root, config) {
     return st.poTemplates;
   }
 
-  function saveTemplates(nextTemplates) {
-    const st = getCurrentState();
-    st.poTemplates = nextTemplates;
-    saveState(st);
-  }
-
-  function applicableTemplates(skuValue, supplierValue) {
+  function legacyTemplatesFor(skuValue, supplierValue) {
     if (!skuValue) return [];
     const skuLower = skuValue.trim().toLowerCase();
     const supplierLower = supplierValue ? supplierValue.trim().toLowerCase() : null;
@@ -1332,36 +1414,54 @@ export function renderOrderModule(root, config) {
       .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   }
 
-  function refreshSkuOptions() {
-    if (!quickfillEnabled || !skuList) return;
-    const opts = collectSkus();
-    skuList.innerHTML = "";
-    for (const sku of opts) {
-      skuList.append(el("option", { value: sku }));
+  function getTemplateCandidates(skuValue, supplierValue) {
+    if (!skuValue) return [];
+    const results = [];
+    const product = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === skuValue.trim().toLowerCase());
+    if (product && product.template) {
+      const scope = product.template.scope === "SKU_SUPPLIER" ? "SKU_SUPPLIER" : "SKU";
+      const tplSupplier = (product.template.supplierId || product.supplierId || "").trim().toLowerCase();
+      const supplierLower = (supplierValue || "").trim().toLowerCase();
+      const matches = scope === "SKU_SUPPLIER" ? (supplierLower && tplSupplier === supplierLower) : true;
+      if (matches) {
+        results.push({
+          id: `product-${product.sku}-${scope}`,
+          name: product.template.name || (scope === "SKU_SUPPLIER" ? "Produkt-Template (SKU+Supplier)" : "Produkt-Template (SKU)"),
+          scope,
+          source: "product",
+          template: product.template,
+        });
+      }
     }
+    const legacy = legacyTemplatesFor(skuValue, supplierValue);
+    legacy.forEach(tpl => {
+      results.push({
+        id: tpl.id,
+        name: tpl.name || (tpl.scope === "SKU_SUPPLIER" ? "Legacy (SKU+Supplier)" : "Legacy (SKU)"),
+        scope: tpl.scope,
+        source: "legacy",
+        template: tpl,
+      });
+    });
+    return results;
   }
 
-  function refreshTemplateSelect() {
-    if (!templateSelect) return;
-    const skuValue = skuInput?.value?.trim() || "";
-    const supplierValue = supplierInput?.value?.trim() || "";
-    const templates = applicableTemplates(skuValue, supplierValue);
-    templateSelect.innerHTML = "";
-    templateSelect.append(el("option", { value: "" }, ["Kein Template"]));
-    templates.forEach(tpl => {
-      const scopeLabel = tpl.scope === "SKU_SUPPLIER" ? "SKU+Supplier" : "SKU";
-      const text = tpl.name ? `${tpl.name} (${scopeLabel})` : `Standard (${scopeLabel})`;
-      templateSelect.append(el("option", { value: tpl.id }, [text]));
-    });
-    templateSelect.disabled = templates.length === 0;
-    if (templates.length === 0) templateSelect.value = "";
+  function refreshSkuOptions() {
+    if (!quickfillEnabled || !skuList) return;
+    refreshProductCache();
+    skuList.innerHTML = "";
+    productCache
+      .filter(prod => prod && prod.status !== "inactive")
+      .forEach(prod => {
+        skuList.append(el("option", { value: formatProductOption(prod) }));
+      });
   }
 
   function refreshQuickfillControls() {
     if (!quickfillEnabled) return;
     refreshSkuOptions();
-    refreshTemplateSelect();
-    const skuValue = skuInput?.value?.trim() || "";
+    renderRecentChips();
+    const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
     const supplierValue = supplierInput?.value?.trim() || "";
     const latest = findLatestMatch(skuValue, supplierValue);
     if (quickLatestBtn) {
@@ -1375,6 +1475,11 @@ export function renderOrderModule(root, config) {
       quickHistoryBtn.disabled = !hasHistory;
       quickHistoryBtn.title = hasHistory ? "" : "Keine Vorgänger-POs für diese SKU";
     }
+    if (templateLoadBtn) {
+      const candidates = getTemplateCandidates(skuValue, supplierValue);
+      templateLoadBtn.disabled = candidates.length === 0;
+      templateLoadBtn.title = candidates.length ? "" : "Kein Template verfügbar";
+    }
   }
 
   function applySourceRecord(source, message) {
@@ -1384,12 +1489,20 @@ export function renderOrderModule(root, config) {
     if (quickfillEnabled) {
       const skuValue = (skuInput?.value?.trim() || source.sku || "").trim();
       const supplierValue = (supplierInput?.value?.trim() || source.supplier || "").trim();
-      merged.sku = skuValue;
+      merged.sku = parseSkuInputValue(skuValue);
       merged.supplier = supplierValue;
     }
     normaliseGoodsFields(merged, settings);
     ensureAutoEvents(merged, settings, merged.milestones || []);
     loadForm(merged);
+    const parsedSku = parseSkuInputValue(merged.sku);
+    if (parsedSku) {
+      const product = resolveProductFromInput(parsedSku) || productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === parsedSku.trim().toLowerCase());
+      if (product) {
+        setSkuField(product);
+        recordRecentProduct(product.sku);
+      }
+    }
     if (message) setQuickStatus(message);
   }
 
@@ -1414,7 +1527,7 @@ export function renderOrderModule(root, config) {
 
   function openHistoryModal() {
     if (!quickfillEnabled) return;
-    const skuValue = skuInput?.value?.trim() || "";
+    const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
     if (!skuValue) {
       window.alert("Bitte zuerst eine SKU wählen.");
       return;
@@ -1505,12 +1618,13 @@ export function renderOrderModule(root, config) {
 
   function openTemplateModal() {
     if (!quickfillEnabled) return;
-    const skuValue = skuInput?.value?.trim() || "";
+    const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
     if (!skuValue) {
       window.alert("Bitte zuerst eine SKU eingeben.");
       return;
     }
     const supplierValue = supplierInput?.value?.trim() || "";
+    refreshProductCache();
     const nameInput = el("input", { type: "text", placeholder: "z. B. Standardbestellung" });
     const scopeSelect = el("select", {}, [
       el("option", { value: "SKU" }, ["SKU"]),
@@ -1549,10 +1663,8 @@ export function renderOrderModule(root, config) {
         }
         const scope = scopeSelect.value === "SKU_SUPPLIER" && supplierValue ? "SKU_SUPPLIER" : "SKU";
         const template = {
-          id: `tpl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
           scope,
-          sku: skuValue,
-          supplier: scope === "SKU_SUPPLIER" ? supplierValue : "",
+          supplierId: scope === "SKU_SUPPLIER" ? supplierValue : "",
           name: nameInput.value.trim() || (scope === "SKU_SUPPLIER" ? "Standard (SKU+Supplier)" : "Standard (SKU)"),
           fields: {},
           updatedAt: new Date().toISOString(),
@@ -1566,23 +1678,131 @@ export function renderOrderModule(root, config) {
             template.fields[key] = editing[key];
           }
         });
-        const templates = getTemplates();
-        const existingIdx = templates.findIndex(t => t.scope === template.scope
-          && String(t.sku).trim().toLowerCase() === template.sku.trim().toLowerCase()
-          && String(t.supplier || "").trim().toLowerCase() === String(template.supplier || "").trim().toLowerCase()
-          && String(t.name || "").trim().toLowerCase() === template.name.trim().toLowerCase());
-        if (existingIdx >= 0) {
-          template.id = templates[existingIdx].id;
-          templates[existingIdx] = template;
-        } else {
-          templates.push(template);
-        }
-        saveTemplates(templates);
-        closeModal(overlay);
+        const existingProduct = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === skuValue.trim().toLowerCase());
+        const payload = {
+          sku: skuValue,
+          alias: existingProduct?.alias || skuValue,
+          supplierId: existingProduct?.supplierId || "",
+          status: existingProduct?.status || "active",
+          tags: existingProduct?.tags || [],
+          template,
+        };
+        upsertProduct(payload);
+        recordRecentProduct(skuValue);
+        refreshProductCache();
         refreshQuickfillControls();
-        templateSelect.value = template.id;
         setQuickStatus(`Template „${template.name}“ gespeichert.`);
+        closeModal(overlay);
       });
+      footer.append(cancelBtn, saveBtn);
+    }
+  }
+
+  function applyTemplateCandidate(entry) {
+    if (!entry || !entry.template) return;
+    const fields = entry.template.fields ? JSON.parse(JSON.stringify(entry.template.fields)) : JSON.parse(JSON.stringify(entry.template));
+    applySourceRecord(fields, `Template „${entry.name}“ geladen. Du kannst alles anpassen.`);
+  }
+
+  function openTemplatePicker(candidates) {
+    let overlay;
+    const list = el("div", { class: "po-template-picker" });
+    candidates.forEach(entry => {
+      const scopeLabel = entry.scope === "SKU_SUPPLIER" ? "SKU+Supplier" : "SKU";
+      const row = el("div", { class: "po-template-row" }, [
+        el("div", { class: "po-template-info" }, [
+          el("strong", {}, [entry.name || "Template"]),
+          el("span", { class: "muted" }, [`${scopeLabel} • ${entry.source === "product" ? "Produkt" : "Legacy"}`]),
+        ]),
+        el("div", { class: "po-template-actions" }, [
+          el("button", { class: "btn", type: "button", onclick: () => {
+            applyTemplateCandidate(entry);
+            closeModal(overlay);
+          } }, ["Übernehmen"]),
+        ]),
+      ]);
+      list.append(row);
+    });
+    overlay = buildModal({ title: "Template wählen", content: list, actions: [] });
+    const footer = overlay.querySelector(".po-modal-actions");
+    if (footer) {
+      footer.innerHTML = "";
+      footer.append(
+        el("button", { class: "btn", type: "button", onclick: () => closeModal(overlay) }, ["Abbrechen"]),
+      );
+    }
+  }
+
+  function handleTemplateLoad() {
+    if (!quickfillEnabled) return;
+    const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
+    if (!skuValue) {
+      window.alert("Bitte zuerst eine SKU wählen.");
+      return;
+    }
+    const supplierValue = supplierInput?.value?.trim() || "";
+    refreshProductCache();
+    const candidates = getTemplateCandidates(skuValue, supplierValue);
+    if (!candidates.length) {
+      window.alert("Kein Template verfügbar.");
+      return;
+    }
+    if (candidates.length === 1) {
+      applyTemplateCandidate(candidates[0]);
+      return;
+    }
+    openTemplatePicker(candidates);
+  }
+
+  function openCreateProductModal() {
+    refreshProductCache();
+    const form = el("form", { class: "po-product-create" });
+    const skuField = el("input", { required: true, placeholder: "SKU" });
+    const aliasField = el("input", { required: true, placeholder: "Alias" });
+    const supplierField = el("input", { placeholder: "Supplier" });
+    form.append(
+      el("label", {}, ["SKU", skuField]),
+      el("label", {}, ["Alias", aliasField]),
+      el("label", {}, ["Supplier", supplierField])
+    );
+    const overlay = buildModal({ title: "Neues Produkt anlegen", content: form, actions: [] });
+    const footer = overlay.querySelector(".po-modal-actions");
+    if (footer) {
+      const cancelBtn = el("button", { class: "btn", type: "button", onclick: () => closeModal(overlay) }, ["Abbrechen"]);
+      const saveBtn = el("button", { class: "btn primary", type: "button" }, ["Speichern"]);
+      saveBtn.addEventListener("click", () => {
+        const sku = skuField.value.trim();
+        const alias = aliasField.value.trim();
+        if (!sku || !alias) {
+          window.alert("Bitte SKU und Alias angeben.");
+          return;
+        }
+        try {
+          upsertProduct({
+            sku,
+            alias,
+            supplierId: supplierField.value.trim(),
+            status: "active",
+            tags: [],
+          });
+          recordRecentProduct(sku);
+          refreshProductCache();
+          if (skuInput) {
+            const product = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === sku.trim().toLowerCase());
+            if (product) {
+              setSkuField(product);
+              editing.sku = product.sku;
+              refreshQuickfillControls();
+              updateSaveEnabled();
+            }
+          }
+          closeModal(overlay);
+          setQuickStatus("Produkt angelegt.");
+        } catch (err) {
+          window.alert(err.message || String(err));
+        }
+      });
+      footer.innerHTML = "";
       footer.append(cancelBtn, saveBtn);
     }
   }
@@ -1631,7 +1851,7 @@ export function renderOrderModule(root, config) {
 
   function syncEditingFromForm(settings = getSettings()) {
     if (quickfillEnabled) {
-      editing.sku = skuInput ? skuInput.value.trim() : "";
+      editing.sku = skuInput ? parseSkuInputValue(skuInput.value) : "";
       editing.supplier = supplierInput ? supplierInput.value.trim() : "";
     }
     editing[config.numberField] = numberInput.value.trim();
@@ -1690,7 +1910,16 @@ export function renderOrderModule(root, config) {
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     if (quickfillEnabled) {
-      if (skuInput) skuInput.value = editing.sku || "";
+      refreshProductCache();
+      if (skuInput) {
+        const product = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === String(editing.sku || "").trim().toLowerCase());
+        if (product) {
+          setSkuField(product);
+        } else {
+          skuInput.value = editing.sku || "";
+          skuInput.dataset.sku = editing.sku || "";
+        }
+      }
       if (supplierInput) supplierInput.value = editing.supplier || "";
       setQuickStatus("");
       refreshQuickfillControls();
@@ -1733,6 +1962,9 @@ export function renderOrderModule(root, config) {
     saveState(st);
     renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
     refreshQuickfillControls();
+    if (quickfillEnabled && editing.sku) {
+      recordRecentProduct(editing.sku);
+    }
     window.dispatchEvent(new Event("state:changed"));
   }
 
@@ -1870,7 +2102,14 @@ export function renderOrderModule(root, config) {
   transitInput.addEventListener("input", (e) => { editing.transitDays = Number(e.target.value || 0); onAnyChange(); });
   if (quickfillEnabled && skuInput) {
     const handleSkuChange = () => {
-      editing.sku = skuInput.value.trim();
+      const product = resolveProductFromInput(skuInput.value);
+      if (product) {
+        setSkuField(product);
+        editing.sku = product.sku;
+        recordRecentProduct(product.sku);
+      } else {
+        editing.sku = skuInput.value.trim();
+      }
       setQuickStatus("");
       refreshQuickfillControls();
       updateSaveEnabled();
@@ -1894,7 +2133,7 @@ export function renderOrderModule(root, config) {
   }
   if (quickfillEnabled && quickLatestBtn) {
     quickLatestBtn.addEventListener("click", () => {
-      const skuValue = skuInput?.value?.trim();
+      const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
       if (!skuValue) {
         window.alert("Bitte zuerst eine SKU wählen.");
         return;
@@ -1912,22 +2151,11 @@ export function renderOrderModule(root, config) {
   if (quickfillEnabled && quickHistoryBtn) {
     quickHistoryBtn.addEventListener("click", openHistoryModal);
   }
-  if (templateSelect) {
-    templateSelect.addEventListener("change", () => {
-      const id = templateSelect.value;
-      if (!id) {
-        setQuickStatus("");
-        return;
-      }
-      const tpl = getTemplates().find(item => item.id === id);
-      if (!tpl) {
-        setQuickStatus("");
-        return;
-      }
-      const fields = JSON.parse(JSON.stringify(tpl.fields || {}));
-      applySourceRecord(fields, `Template „${tpl.name || "Template"}“ geladen. Du kannst alles anpassen.`);
-      templateSelect.value = id;
-    });
+  if (productCreateBtn) {
+    productCreateBtn.addEventListener("click", openCreateProductModal);
+  }
+  if (templateLoadBtn) {
+    templateLoadBtn.addEventListener("click", handleTemplateLoad);
   }
   if (templateSaveBtn) {
     templateSaveBtn.addEventListener("click", openTemplateModal);

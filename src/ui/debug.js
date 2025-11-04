@@ -111,6 +111,69 @@ function buildDemoState(){
     },
   };
 
+  demo.products = [
+    {
+      id: "prod-sku-alpha",
+      sku: "SKU-ALPHA",
+      alias: "Premium French Press Set",
+      supplierId: "Ningbo Trading",
+      status: "active",
+      tags: ["Kitchen", "Coffee"],
+      template: {
+        scope: "SKU",
+        name: "Standard (SKU)",
+        fields: {
+          units: "1200",
+          unitCostUsd: "11,80",
+          unitExtraUsd: "0,60",
+          extraFlatUsd: "250,00",
+          transport: "sea",
+          prodDays: 40,
+          transitDays: 55,
+          freightEur: "3.200,00",
+          dutyRatePct: "6,5",
+          dutyIncludeFreight: true,
+          eustRatePct: "19",
+          vatRefundEnabled: true,
+          vatRefundLagMonths: 2,
+          fxRate: "1,08",
+          fxFeePct: "0,5",
+          milestones: [
+            { id: "tpl-alpha-ms1", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+            { id: "tpl-alpha-ms2", label: "Production", percent: 50, anchor: "PROD_DONE", lagDays: 0 },
+            { id: "tpl-alpha-ms3", label: "Balance", percent: 20, anchor: "ETA", lagDays: 5 },
+          ],
+        },
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: "prod-sku-bravo",
+      sku: "SKU-BRAVO",
+      alias: "Ergonomischer Bürostuhl",
+      supplierId: "Shenzhen Seats Co.",
+      status: "active",
+      tags: ["Office"],
+      template: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: "prod-sku-charlie",
+      sku: "SKU-CHARLIE",
+      alias: "Fitness Resistance Bands Set",
+      supplierId: "Xiamen Fitness",
+      status: "active",
+      tags: ["Fitness"],
+      template: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ];
+
+  demo.recentProducts = ["sku-alpha", "sku-bravo"];
+
   demo.dividends = [
     { month: "2025-06", label: "Dividende", amountEur: "-12.500,00" },
     { month: "2025-06", label: "KapESt", amountEur: "-3.200,00" },
