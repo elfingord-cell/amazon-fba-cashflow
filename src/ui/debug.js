@@ -122,6 +122,8 @@ function buildDemoState(){
     {
       id: "po-demo-2024-10",
       poNo: "24010",
+      sku: "SKU-ALPHA",
+      supplier: "Ningbo Trading",
       orderDate: "2024-10-05",
       goodsEur: "24.500,00",
       freightEur: "3.200,00",
@@ -144,6 +146,8 @@ function buildDemoState(){
     {
       id: "po-demo-2024-11",
       poNo: "24011",
+      sku: "SKU-ALPHA",
+      supplier: "Ningbo Trading",
       orderDate: "2024-11-07",
       goodsEur: "23.800,00",
       freightEur: "2.800,00",
@@ -166,6 +170,8 @@ function buildDemoState(){
     {
       id: "po-demo-2024-12",
       poNo: "24012",
+      sku: "SKU-ALPHA",
+      supplier: "Ningbo Trading",
       orderDate: "2024-12-03",
       goodsEur: "27.200,00",
       freightEur: "3.000,00",
@@ -188,6 +194,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-01",
       poNo: "25001",
+      sku: "SKU-BRAVO",
+      supplier: "Shenzhen Works",
       orderDate: "2025-01-10",
       goodsEur: "28.600,00",
       freightEur: "3.600,00",
@@ -210,6 +218,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-02",
       poNo: "25002",
+      sku: "SKU-BRAVO",
+      supplier: "Shenzhen Works",
       orderDate: "2025-02-06",
       goodsEur: "26.400,00",
       freightEur: "3.100,00",
@@ -232,6 +242,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-03",
       poNo: "25003",
+      sku: "SKU-BRAVO",
+      supplier: "Shenzhen Works",
       orderDate: "2025-03-04",
       goodsEur: "29.100,00",
       freightEur: "3.300,00",
@@ -254,6 +266,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-04",
       poNo: "25004",
+      sku: "SKU-CHARLIE",
+      supplier: "Ningbo Trading",
       orderDate: "2025-04-08",
       goodsEur: "30.500,00",
       freightEur: "3.500,00",
@@ -276,6 +290,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-05",
       poNo: "25005",
+      sku: "SKU-CHARLIE",
+      supplier: "Ningbo Trading",
       orderDate: "2025-05-09",
       goodsEur: "27.900,00",
       freightEur: "3.000,00",
@@ -298,6 +314,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-06",
       poNo: "25006",
+      sku: "SKU-CHARLIE",
+      supplier: "Ningbo Trading",
       orderDate: "2025-06-06",
       goodsEur: "31.200,00",
       freightEur: "3.400,00",
@@ -320,6 +338,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-07",
       poNo: "25007",
+      sku: "SKU-DELTA",
+      supplier: "Shenzhen Works",
       orderDate: "2025-07-04",
       goodsEur: "28.800,00",
       freightEur: "2.900,00",
@@ -342,6 +362,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-08",
       poNo: "25008",
+      sku: "SKU-DELTA",
+      supplier: "Shenzhen Works",
       orderDate: "2025-08-05",
       goodsEur: "26.700,00",
       freightEur: "2.700,00",
@@ -364,6 +386,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-09",
       poNo: "25009",
+      sku: "SKU-DELTA",
+      supplier: "Shenzhen Works",
       orderDate: "2025-09-09",
       goodsEur: "29.400,00",
       freightEur: "3.100,00",
@@ -386,6 +410,8 @@ function buildDemoState(){
     {
       id: "po-demo-2025-10",
       poNo: "25010",
+      sku: "SKU-DELTA",
+      supplier: "Shenzhen Works",
       orderDate: "2025-10-06",
       goodsEur: "27.500,00",
       freightEur: "2.800,00",
@@ -411,6 +437,8 @@ function buildDemoState(){
     {
       id: "fo-demo-2025-09",
       foNo: "26002",
+      sku: "SKU-FOXTROT",
+      supplier: "Ningbo Trading",
       orderDate: "2025-09-01",
       goodsEur: "33.000,00",
       freightEur: "3.200,00",

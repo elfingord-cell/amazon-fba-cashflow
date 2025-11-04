@@ -90,6 +90,198 @@ function fmtDateDE(input) {
   });
 }
 
+function parseISOToDate(iso) {
+  if (!iso) return null;
+  const parts = String(iso).split("-");
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts.map(Number);
+  if (![y, m, d].every(n => Number.isFinite(n))) return null;
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function formatDateISO(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+const QUICKFILL_FIELD_MAP = [
+  "units",
+  "unitCostUsd",
+  "unitExtraUsd",
+  "extraFlatUsd",
+  "fxOverride",
+  "fxFeePct",
+  "transport",
+  "prodDays",
+  "transitDays",
+  "freightEur",
+  "dutyRatePct",
+  "dutyIncludeFreight",
+  "eustRatePct",
+  "vatRefundEnabled",
+  "vatRefundLagMonths",
+  "ddp",
+];
+
+const QUICKFILL_ARRAY_FIELDS = ["milestones", "autoEvents"];
+
+const TEMPLATE_FIELD_OPTIONS = [
+  { key: "units", label: "Stückzahl" },
+  { key: "unitCostUsd", label: "Stückkosten (USD)" },
+  { key: "unitExtraUsd", label: "Zusatzkosten je Stück (USD)" },
+  { key: "extraFlatUsd", label: "Zusatzkosten pauschal (USD)" },
+  { key: "fxOverride", label: "FX-Kurs" },
+  { key: "fxFeePct", label: "FX-Gebühr (%)" },
+  { key: "transport", label: "Transport" },
+  { key: "prodDays", label: "Produktionstage" },
+  { key: "transitDays", label: "Transit-Tage" },
+  { key: "freightEur", label: "Fracht (€)" },
+  { key: "dutyRatePct", label: "Zoll (%)" },
+  { key: "dutyIncludeFreight", label: "Freight einbeziehen" },
+  { key: "eustRatePct", label: "EUSt (%)" },
+  { key: "vatRefundEnabled", label: "EUSt-Erstattung aktiv" },
+  { key: "vatRefundLagMonths", label: "EUSt-Lag (Monate)" },
+  { key: "ddp", label: "DDP" },
+  { key: "milestones", label: "Meilensteine" },
+  { key: "autoEvents", label: "Importkosten-Einstellungen" },
+];
+
+function cloneMilestones(list = []) {
+  return list.map(row => ({
+    ...row,
+    id: Math.random().toString(36).slice(2, 9),
+  }));
+}
+
+function cloneAutoEvents(list = []) {
+  return list.map(evt => ({
+    ...evt,
+    id: `auto-${evt.type || "evt"}-${Math.random().toString(36).slice(2, 7)}`,
+  }));
+}
+
+function applyQuickfillSource(baseRecord, source) {
+  if (!source) return baseRecord;
+  const next = JSON.parse(JSON.stringify(baseRecord));
+  for (const field of QUICKFILL_FIELD_MAP) {
+    if (source[field] == null) continue;
+    next[field] = Array.isArray(source[field])
+      ? JSON.parse(JSON.stringify(source[field]))
+      : source[field];
+  }
+  if (source.milestones) {
+    next.milestones = cloneMilestones(source.milestones);
+  }
+  if (source.autoEvents) {
+    next.autoEvents = cloneAutoEvents(source.autoEvents);
+  }
+  if (source.fxOverride == null && baseRecord.fxOverride != null) {
+    next.fxOverride = baseRecord.fxOverride;
+  }
+  return next;
+}
+
+function diffFields(current, incoming) {
+  const diffs = [];
+  const labelMap = {
+    units: "Stückzahl",
+    unitCostUsd: "Stückkosten (USD)",
+    unitExtraUsd: "Zusatzkosten je Stück (USD)",
+    extraFlatUsd: "Zusatzkosten pauschal (USD)",
+    fxOverride: "FX-Kurs",
+    fxFeePct: "FX-Gebühr (%)",
+    transport: "Transport",
+    prodDays: "Produktionstage",
+    transitDays: "Transit-Tage",
+    freightEur: "Fracht (€)",
+    dutyRatePct: "Zoll (%)",
+    dutyIncludeFreight: "Freight einbeziehen",
+    eustRatePct: "EUSt (%)",
+    vatRefundEnabled: "EUSt-Erstattung aktiv",
+    vatRefundLagMonths: "EUSt-Lag (Monate)",
+    ddp: "DDP",
+    milestones: "Meilensteine",
+    autoEvents: "Importkosten-Einstellungen",
+  };
+
+  const currencyFields = new Set([
+    "unitCostUsd",
+    "unitExtraUsd",
+    "extraFlatUsd",
+    "freightEur",
+  ]);
+
+  const percentFields = new Set([
+    "fxFeePct",
+    "dutyRatePct",
+    "eustRatePct",
+  ]);
+
+  for (const field of [...QUICKFILL_FIELD_MAP, ...QUICKFILL_ARRAY_FIELDS]) {
+    const label = labelMap[field] || field;
+    if (field === "milestones" || field === "autoEvents") {
+      const currentJson = JSON.stringify(current[field] || []);
+      const incomingJson = JSON.stringify(incoming[field] || []);
+      if (currentJson !== incomingJson) {
+        diffs.push({ label, before: current[field]?.length || 0, after: incoming[field]?.length || 0, type: "list" });
+      }
+      continue;
+    }
+
+    const before = current[field];
+    const after = incoming[field];
+    if (before == null && after == null) continue;
+    if (before === after) continue;
+    const format = (value) => {
+      if (value == null) return "—";
+      if (currencyFields.has(field)) {
+        if (field === "freightEur") return fmtEUR(parseDE(value));
+        return fmtUSD(parseDE(value));
+      }
+      if (percentFields.has(field)) return `${fmtPercent(value)} %`;
+      if (field === "fxOverride") return fmtFxRate(value);
+      if (typeof value === "boolean") return value ? "Ja" : "Nein";
+      return String(value);
+    };
+    if (format(before) === format(after)) continue;
+    diffs.push({ label, before: format(before), after: format(after) });
+  }
+  return diffs;
+}
+
+function buildModal({ title, content, actions = [] }) {
+  const overlay = el("div", { class: "po-modal-backdrop", role: "dialog", "aria-modal": "true" });
+  const card = el("div", { class: "po-modal" }, [
+    el("header", { class: "po-modal-header" }, [
+      el("h4", {}, [title || ""]),
+      el("button", { class: "btn ghost", type: "button", onclick: () => closeModal(overlay), "aria-label": "Schließen" }, ["✕"]),
+    ]),
+    el("div", { class: "po-modal-body" }, [content]),
+    el("footer", { class: "po-modal-actions" }, actions.length ? actions : [
+      el("button", { class: "btn", type: "button", onclick: () => closeModal(overlay) }, ["Schließen"]),
+    ]),
+  ]);
+  overlay.append(card);
+  document.body.append(overlay);
+  const focusable = overlay.querySelector("button, [href], input, select, textarea");
+  if (focusable) focusable.focus();
+  function handleKey(ev) {
+    if (ev.key === "Escape") {
+      closeModal(overlay);
+    }
+  }
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) closeModal(overlay);
+  });
+  overlay.addEventListener("keydown", handleKey);
+  return overlay;
+}
+
+function closeModal(overlay) {
+  if (!overlay) return;
+  overlay.remove();
+}
+
 function clampPct(value) {
   const pct = parseDE(value);
   if (pct < 0) return 0;
@@ -307,6 +499,8 @@ function defaultRecord(config, settings = getSettings()) {
     id: Math.random().toString(36).slice(2, 9),
     [config.numberField]: "",
     orderDate: today,
+    sku: "",
+    supplier: "",
     unitCostUsd: "0,00",
     unitExtraUsd: "0,00",
     units: "0",
@@ -591,6 +785,7 @@ function renderList(container, records, config, onEdit, onDelete) {
     el("thead", {}, [
       el("tr", {}, [
         el("th", {}, [`${config.entityLabel}-Nr.`]),
+        ...(config.slug === "po" ? [el("th", {}, ["SKU"])] : []),
         el("th", {}, ["Order"]),
         el("th", {}, ["Stück"]),
         el("th", {}, ["Summe USD"]),
@@ -602,6 +797,7 @@ function renderList(container, records, config, onEdit, onDelete) {
     el("tbody", {}, rows.map(rec =>
       el("tr", {}, [
         el("td", {}, [rec[config.numberField] || "—"]),
+        ...(config.slug === "po" ? [el("td", {}, [rec.sku || "—"])] : []),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
         el("td", {}, [Number(parseDE(rec.units ?? 0) || 0).toLocaleString("de-DE")]),
         el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
@@ -839,6 +1035,8 @@ export function renderOrderModule(root, config) {
   const initialSettings = getSettings();
   state[config.entityKey].forEach(rec => normaliseGoodsFields(rec, initialSettings));
 
+  const quickfillEnabled = config.slug === "po";
+
   const ids = {
     list: `${config.slug}-list`,
     number: `${config.slug}-number`,
@@ -866,6 +1064,18 @@ export function renderOrderModule(root, config) {
     create: `${config.slug}-create`,
     remove: `${config.slug}-remove`,
   };
+  if (quickfillEnabled) {
+    Object.assign(ids, {
+      sku: `${config.slug}-sku`,
+      skuList: `${config.slug}-sku-list`,
+      supplier: `${config.slug}-supplier`,
+      quickLatest: `${config.slug}-quick-latest`,
+      quickHistory: `${config.slug}-quick-history`,
+      templateSelect: `${config.slug}-template-select`,
+      templateSave: `${config.slug}-template-save`,
+      quickStatus: `${config.slug}-quick-status`,
+    });
+  }
   if (config.convertTo) {
     ids.convert = `${config.slug}-convert`;
   }
@@ -877,7 +1087,27 @@ export function renderOrderModule(root, config) {
     </section>
     <section class="card">
       <h3>${config.formTitle}</h3>
-      <div class="grid two">
+      ${quickfillEnabled ? `
+      <div class="grid two po-quickfill">
+        <div>
+          <label>SKU wählen</label>
+          <input id="${ids.sku}" list="${ids.skuList}" placeholder="z. B. FBA-SKU" autocomplete="off" />
+          <datalist id="${ids.skuList}"></datalist>
+        </div>
+        <div class="po-quickfill-actions">
+          <div class="po-quickfill-buttons">
+            <button class="btn secondary" type="button" id="${ids.quickLatest}">Neueste übernehmen</button>
+            <button class="btn" type="button" id="${ids.quickHistory}">Aus Historie wählen</button>
+            <select id="${ids.templateSelect}">
+              <option value="">Kein Template</option>
+            </select>
+            <button class="btn secondary" type="button" id="${ids.templateSave}">Als Template speichern…</button>
+          </div>
+          <p class="po-quickfill-status" id="${ids.quickStatus}" aria-live="polite"></p>
+        </div>
+      </div>
+      ` : ``}
+      <div class="grid ${quickfillEnabled ? "three" : "two"}">
         <div>
           <label>${config.numberLabel}</label>
           <input id="${ids.number}" placeholder="${config.numberPlaceholder}" />
@@ -886,6 +1116,12 @@ export function renderOrderModule(root, config) {
           <label>Bestelldatum</label>
           <input id="${ids.orderDate}" type="date" />
         </div>
+        ${quickfillEnabled ? `
+        <div>
+          <label>Lieferant</label>
+          <input id="${ids.supplier}" placeholder="z. B. Ningbo Trading" />
+        </div>
+        ` : ``}
       </div>
       <div class="grid two" style="margin-top:12px">
         <div>
@@ -969,6 +1205,14 @@ export function renderOrderModule(root, config) {
   `;
 
   const listZone = $(`#${ids.list}`, root);
+  const skuInput = quickfillEnabled ? $(`#${ids.sku}`, root) : null;
+  const skuList = quickfillEnabled ? $(`#${ids.skuList}`, root) : null;
+  const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
+  const quickLatestBtn = quickfillEnabled ? $(`#${ids.quickLatest}`, root) : null;
+  const quickHistoryBtn = quickfillEnabled ? $(`#${ids.quickHistory}`, root) : null;
+  const templateSelect = quickfillEnabled ? $(`#${ids.templateSelect}`, root) : null;
+  const templateSaveBtn = quickfillEnabled ? $(`#${ids.templateSave}`, root) : null;
+  const quickStatus = quickfillEnabled ? $(`#${ids.quickStatus}`, root) : null;
   const numberInput = $(`#${ids.number}`, root);
   const orderDateInput = $(`#${ids.orderDate}`, root);
   const unitCostInput = $(`#${ids.unitCost}`, root);
@@ -997,6 +1241,352 @@ export function renderOrderModule(root, config) {
 
   let editing = defaultRecord(config, getSettings());
 
+  function setQuickStatus(message) {
+    if (!quickStatus) return;
+    quickStatus.textContent = message || "";
+  }
+
+  function getCurrentState() {
+    return loadState();
+  }
+
+  function getAllRecords() {
+    const st = getCurrentState();
+    if (!Array.isArray(st[config.entityKey])) st[config.entityKey] = [];
+    return st[config.entityKey];
+  }
+
+  function normaliseHistory(records) {
+    const settings = getSettings();
+    return (records || []).map(rec => {
+      const copy = JSON.parse(JSON.stringify(rec));
+      normaliseGoodsFields(copy, settings);
+      ensureAutoEvents(copy, settings, copy.milestones || []);
+      return copy;
+    });
+  }
+
+  function collectSkus() {
+    const skus = new Set();
+    for (const rec of getAllRecords()) {
+      if (rec?.sku) skus.add(String(rec.sku));
+    }
+    return Array.from(skus).sort((a, b) => a.localeCompare(b, "de", { sensitivity: "base" }));
+  }
+
+  function monthTime(value) {
+    const date = parseISOToDate(value);
+    return date ? date.getTime() : 0;
+  }
+
+  function getHistoryFor(skuValue, supplierValue, limit = 10) {
+    if (!skuValue) return [];
+    const skuLower = skuValue.trim().toLowerCase();
+    const supplierLower = supplierValue ? supplierValue.trim().toLowerCase() : null;
+    const matches = getAllRecords().filter(rec => {
+      const recSku = (rec?.sku || "").trim().toLowerCase();
+      if (!recSku || recSku !== skuLower) return false;
+      if (!supplierLower) return true;
+      const recSupplier = (rec?.supplier || "").trim().toLowerCase();
+      return recSupplier === supplierLower;
+    });
+    matches.sort((a, b) => monthTime(b.orderDate) - monthTime(a.orderDate));
+    return matches.slice(0, limit);
+  }
+
+  function findLatestMatch(skuValue, supplierValue) {
+    if (!skuValue) return null;
+    const withSupplier = supplierValue ? getHistoryFor(skuValue, supplierValue, 1) : [];
+    if (withSupplier.length) return withSupplier[0];
+    const generic = getHistoryFor(skuValue, null, 1);
+    return generic.length ? generic[0] : null;
+  }
+
+  function getTemplates() {
+    const st = getCurrentState();
+    if (!Array.isArray(st.poTemplates)) st.poTemplates = [];
+    return st.poTemplates;
+  }
+
+  function saveTemplates(nextTemplates) {
+    const st = getCurrentState();
+    st.poTemplates = nextTemplates;
+    saveState(st);
+  }
+
+  function applicableTemplates(skuValue, supplierValue) {
+    if (!skuValue) return [];
+    const skuLower = skuValue.trim().toLowerCase();
+    const supplierLower = supplierValue ? supplierValue.trim().toLowerCase() : null;
+    return getTemplates()
+      .filter(tpl => {
+        if (!tpl || !tpl.sku) return false;
+        const tplSku = String(tpl.sku).trim().toLowerCase();
+        if (tplSku !== skuLower) return false;
+        if (tpl.scope === "SKU_SUPPLIER") {
+          const tplSupplier = (tpl.supplier || "").trim().toLowerCase();
+          return supplierLower ? tplSupplier === supplierLower : false;
+        }
+        return tpl.scope === "SKU";
+      })
+      .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  }
+
+  function refreshSkuOptions() {
+    if (!quickfillEnabled || !skuList) return;
+    const opts = collectSkus();
+    skuList.innerHTML = "";
+    for (const sku of opts) {
+      skuList.append(el("option", { value: sku }));
+    }
+  }
+
+  function refreshTemplateSelect() {
+    if (!templateSelect) return;
+    const skuValue = skuInput?.value?.trim() || "";
+    const supplierValue = supplierInput?.value?.trim() || "";
+    const templates = applicableTemplates(skuValue, supplierValue);
+    templateSelect.innerHTML = "";
+    templateSelect.append(el("option", { value: "" }, ["Kein Template"]));
+    templates.forEach(tpl => {
+      const scopeLabel = tpl.scope === "SKU_SUPPLIER" ? "SKU+Supplier" : "SKU";
+      const text = tpl.name ? `${tpl.name} (${scopeLabel})` : `Standard (${scopeLabel})`;
+      templateSelect.append(el("option", { value: tpl.id }, [text]));
+    });
+    templateSelect.disabled = templates.length === 0;
+    if (templates.length === 0) templateSelect.value = "";
+  }
+
+  function refreshQuickfillControls() {
+    if (!quickfillEnabled) return;
+    refreshSkuOptions();
+    refreshTemplateSelect();
+    const skuValue = skuInput?.value?.trim() || "";
+    const supplierValue = supplierInput?.value?.trim() || "";
+    const latest = findLatestMatch(skuValue, supplierValue);
+    if (quickLatestBtn) {
+      quickLatestBtn.disabled = !latest;
+      quickLatestBtn.title = latest
+        ? `Werte aus ${config.entityLabel} ${latest[config.numberField] || "—"} übernehmen`
+        : "Keine Vorgänger-POs für diese SKU";
+    }
+    if (quickHistoryBtn) {
+      const hasHistory = skuValue && (getHistoryFor(skuValue, supplierValue).length > 0 || (!supplierValue && getHistoryFor(skuValue, null).length > 0));
+      quickHistoryBtn.disabled = !hasHistory;
+      quickHistoryBtn.title = hasHistory ? "" : "Keine Vorgänger-POs für diese SKU";
+    }
+  }
+
+  function applySourceRecord(source, message) {
+    if (!source) return;
+    const settings = getSettings();
+    const merged = applyQuickfillSource(editing, source);
+    if (quickfillEnabled) {
+      const skuValue = (skuInput?.value?.trim() || source.sku || "").trim();
+      const supplierValue = (supplierInput?.value?.trim() || source.supplier || "").trim();
+      merged.sku = skuValue;
+      merged.supplier = supplierValue;
+    }
+    normaliseGoodsFields(merged, settings);
+    ensureAutoEvents(merged, settings, merged.milestones || []);
+    loadForm(merged);
+    if (message) setQuickStatus(message);
+  }
+
+  function renderDiffList(diffs, container) {
+    if (!container) return;
+    container.innerHTML = "";
+    if (!diffs.length) {
+      container.append(el("p", { class: "muted" }, ["Keine Unterschiede zum aktuellen Formular."]));
+      return;
+    }
+    const list = el("dl", { class: "po-diff-list" });
+    diffs.forEach(diff => {
+      list.append(
+        el("dt", {}, [diff.label]),
+        el("dd", {}, [diff.type === "list"
+          ? `Anzahl ${diff.before} → ${diff.after}`
+          : `${diff.before} → ${diff.after}`]),
+      );
+    });
+    container.append(list);
+  }
+
+  function openHistoryModal() {
+    if (!quickfillEnabled) return;
+    const skuValue = skuInput?.value?.trim() || "";
+    if (!skuValue) {
+      window.alert("Bitte zuerst eine SKU wählen.");
+      return;
+    }
+    const supplierValue = supplierInput?.value?.trim() || "";
+    let records = getHistoryFor(skuValue, supplierValue);
+    let usingSupplier = true;
+    if (!records.length && supplierValue) {
+      records = getHistoryFor(skuValue, null);
+      usingSupplier = false;
+    }
+    if (!records.length) {
+      window.alert("Keine Vorgänger-POs für diese SKU gefunden.");
+      return;
+    }
+    const tableBody = el("tbody");
+    const diffZone = el("div", { class: "po-history-diff" });
+    const wrapper = el("div", { class: "po-history" }, [
+      el("p", { class: "muted" }, [usingSupplier ? "Sortiert nach Datum (neueste zuerst)." : "Keine passende Lieferantenhistorie – zeige jüngste POs dieser SKU." ]),
+      el("table", { class: "po-history-table" }, [
+        el("thead", {}, [
+          el("tr", {}, [
+            el("th", {}, ["PO-Nr."]),
+            el("th", {}, ["Bestelldatum"]),
+            el("th", {}, ["Stückzahl"]),
+            el("th", {}, ["Stückpreis (USD)"]),
+            el("th", {}, ["Produktionstage"]),
+            el("th", {}, ["Transit-Tage"]),
+            el("th", {}, ["Transport"]),
+            el("th", {}, ["Fracht (€)"]),
+            el("th", {}, ["Zoll %"]),
+            el("th", {}, ["EUSt %"]),
+            el("th", {}, ["FX-Fee %"]),
+            el("th", {}, ["Aktionen"]),
+          ]),
+        ]),
+        tableBody,
+      ]),
+      diffZone,
+    ]);
+
+    const overlay = buildModal({ title: `Historie für ${skuValue}`, content: wrapper, actions: [] });
+    const footer = overlay.querySelector(".po-modal-actions");
+    if (footer) {
+      footer.innerHTML = "";
+      footer.append(
+        el("button", { class: "btn", type: "button", onclick: () => closeModal(overlay) }, ["Abbrechen"]),
+      );
+    }
+
+    const settings = getSettings();
+    const currentSnapshot = JSON.parse(JSON.stringify(editing));
+    normaliseGoodsFields(currentSnapshot, settings);
+    ensureAutoEvents(currentSnapshot, settings, currentSnapshot.milestones || []);
+
+    records.slice(0, 10).forEach((rec, index) => {
+      const normalized = normaliseHistory([rec])[0];
+      const compareBtn = el("button", { class: "btn secondary", type: "button" }, ["Vergleichen"]);
+      const applyBtn = el("button", { class: "btn primary", type: "button" }, ["Übernehmen"]);
+      applyBtn.addEventListener("click", () => {
+        closeModal(overlay);
+        applySourceRecord(normalized, `Werte aus ${config.entityLabel} ${rec[config.numberField] || ""} übernommen. Du kannst alles anpassen.`);
+      });
+      compareBtn.addEventListener("click", () => {
+        const incoming = applyQuickfillSource(currentSnapshot, normalized);
+        const diffs = diffFields(currentSnapshot, incoming);
+        renderDiffList(diffs, diffZone);
+      });
+      const freightText = fmtEUR(parseDE(normalized.freightEur || rec.freightEur || 0));
+      tableBody.append(
+        el("tr", { class: index === 0 ? "po-history-latest" : "" }, [
+          el("td", {}, [rec[config.numberField] || "—"]),
+          el("td", {}, [fmtDateDE(rec.orderDate)]),
+          el("td", {}, [Number(parseDE(normalized.units || rec.units || 0) || 0).toLocaleString("de-DE")]),
+          el("td", {}, [fmtUSD(parseDE(normalized.unitCostUsd || rec.unitCostUsd || 0))]),
+          el("td", {}, [String(rec.prodDays || 0)]),
+          el("td", {}, [String(rec.transitDays || 0)]),
+          el("td", {}, [rec.transport || "—"]),
+          el("td", {}, [freightText]),
+          el("td", {}, [`${fmtPercent(normalized.dutyRatePct ?? rec.dutyRatePct ?? 0)} %`]),
+          el("td", {}, [`${fmtPercent(normalized.eustRatePct ?? rec.eustRatePct ?? 0)} %`]),
+          el("td", {}, [`${fmtPercent(normalized.fxFeePct ?? rec.fxFeePct ?? 0)} %`]),
+          el("td", { class: "po-history-actions" }, [compareBtn, applyBtn]),
+        ]),
+      );
+    });
+  }
+
+  function openTemplateModal() {
+    if (!quickfillEnabled) return;
+    const skuValue = skuInput?.value?.trim() || "";
+    if (!skuValue) {
+      window.alert("Bitte zuerst eine SKU eingeben.");
+      return;
+    }
+    const supplierValue = supplierInput?.value?.trim() || "";
+    const nameInput = el("input", { type: "text", placeholder: "z. B. Standardbestellung" });
+    const scopeSelect = el("select", {}, [
+      el("option", { value: "SKU" }, ["SKU"]),
+      el("option", { value: "SKU_SUPPLIER" }, ["SKU+Supplier"]),
+    ]);
+    if (!supplierValue) scopeSelect.value = "SKU";
+    const fieldList = el("div", { class: "po-template-fields" });
+    TEMPLATE_FIELD_OPTIONS.forEach(opt => {
+      const checkbox = el("input", { type: "checkbox", value: opt.key, id: `tpl-${opt.key}` });
+      if (opt.key !== "autoEvents") checkbox.checked = true;
+      const label = el("label", { for: `tpl-${opt.key}` }, [opt.label]);
+      const row = el("div", { class: "po-template-field" }, [checkbox, label]);
+      fieldList.append(row);
+    });
+    const content = el("div", { class: "po-template-form" }, [
+      el("label", {}, ["Name"]),
+      nameInput,
+      el("label", { style: "margin-top:12px" }, ["Geltungsbereich"]),
+      scopeSelect,
+      el("p", { class: "muted" }, ["Welche Felder übernehmen?" ]),
+      fieldList,
+    ]);
+
+    const overlay = buildModal({ title: "Als Template speichern", content, actions: [] });
+    const footer = overlay.querySelector(".po-modal-actions");
+    if (footer) {
+      footer.innerHTML = "";
+      const cancelBtn = el("button", { class: "btn", type: "button", onclick: () => closeModal(overlay) }, ["Abbrechen"]);
+      const saveBtn = el("button", { class: "btn primary", type: "button" }, ["Speichern"]);
+      saveBtn.addEventListener("click", () => {
+        const selected = Array.from(fieldList.querySelectorAll("input[type=checkbox]:checked"))
+          .map(cb => cb.value);
+        if (!selected.length) {
+          window.alert("Bitte mindestens ein Feld auswählen.");
+          return;
+        }
+        const scope = scopeSelect.value === "SKU_SUPPLIER" && supplierValue ? "SKU_SUPPLIER" : "SKU";
+        const template = {
+          id: `tpl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          scope,
+          sku: skuValue,
+          supplier: scope === "SKU_SUPPLIER" ? supplierValue : "",
+          name: nameInput.value.trim() || (scope === "SKU_SUPPLIER" ? "Standard (SKU+Supplier)" : "Standard (SKU)"),
+          fields: {},
+          updatedAt: new Date().toISOString(),
+        };
+        selected.forEach(key => {
+          if (key === "milestones") {
+            template.fields[key] = cloneMilestones(editing.milestones || []);
+          } else if (key === "autoEvents") {
+            template.fields[key] = cloneAutoEvents(editing.autoEvents || []);
+          } else {
+            template.fields[key] = editing[key];
+          }
+        });
+        const templates = getTemplates();
+        const existingIdx = templates.findIndex(t => t.scope === template.scope
+          && String(t.sku).trim().toLowerCase() === template.sku.trim().toLowerCase()
+          && String(t.supplier || "").trim().toLowerCase() === String(template.supplier || "").trim().toLowerCase()
+          && String(t.name || "").trim().toLowerCase() === template.name.trim().toLowerCase());
+        if (existingIdx >= 0) {
+          template.id = templates[existingIdx].id;
+          templates[existingIdx] = template;
+        } else {
+          templates.push(template);
+        }
+        saveTemplates(templates);
+        closeModal(overlay);
+        refreshQuickfillControls();
+        templateSelect.value = template.id;
+        setQuickStatus(`Template „${template.name}“ gespeichert.`);
+      });
+      footer.append(cancelBtn, saveBtn);
+    }
+  }
+
   function updatePreview(settings) {
     syncEditingFromForm(settings);
     const draft = JSON.parse(JSON.stringify({
@@ -1023,7 +1613,8 @@ export function renderOrderModule(root, config) {
     const ok = (Math.round(sum * 10) / 10 === 100)
       && (numberInput.value.trim() !== "")
       && (computeGoodsTotals(editing, getSettings()).usd > 0)
-      && !!orderDateInput.value;
+      && !!orderDateInput.value
+      && (!quickfillEnabled || (skuInput && skuInput.value.trim() !== ""));
     saveBtn.disabled = !ok;
     if (convertBtn) convertBtn.disabled = !ok;
   }
@@ -1039,6 +1630,10 @@ export function renderOrderModule(root, config) {
   }
 
   function syncEditingFromForm(settings = getSettings()) {
+    if (quickfillEnabled) {
+      editing.sku = skuInput ? skuInput.value.trim() : "";
+      editing.supplier = supplierInput ? supplierInput.value.trim() : "";
+    }
     editing[config.numberField] = numberInput.value.trim();
     editing.orderDate = orderDateInput.value;
     editing.unitCostUsd = fmtCurrencyInput(unitCostInput.value);
@@ -1094,6 +1689,12 @@ export function renderOrderModule(root, config) {
     editing = JSON.parse(JSON.stringify(record));
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
+    if (quickfillEnabled) {
+      if (skuInput) skuInput.value = editing.sku || "";
+      if (supplierInput) supplierInput.value = editing.supplier || "";
+      setQuickStatus("");
+      refreshQuickfillControls();
+    }
     numberInput.value = editing[config.numberField] || "";
     orderDateInput.value = editing.orderDate || new Date().toISOString().slice(0, 10);
     unitCostInput.value = fmtCurrencyInput(editing.unitCostUsd ?? "0,00");
@@ -1131,6 +1732,7 @@ export function renderOrderModule(root, config) {
     st[config.entityKey] = arr;
     saveState(st);
     renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
+    refreshQuickfillControls();
     window.dispatchEvent(new Event("state:changed"));
   }
 
@@ -1266,6 +1868,70 @@ export function renderOrderModule(root, config) {
     onAnyChange();
   });
   transitInput.addEventListener("input", (e) => { editing.transitDays = Number(e.target.value || 0); onAnyChange(); });
+  if (quickfillEnabled && skuInput) {
+    const handleSkuChange = () => {
+      editing.sku = skuInput.value.trim();
+      setQuickStatus("");
+      refreshQuickfillControls();
+      updateSaveEnabled();
+    };
+    skuInput.addEventListener("input", handleSkuChange);
+    skuInput.addEventListener("blur", () => {
+      skuInput.value = skuInput.value.trim();
+      handleSkuChange();
+    });
+  }
+  if (quickfillEnabled && supplierInput) {
+    const handleSupplier = () => {
+      editing.supplier = supplierInput.value.trim();
+      refreshQuickfillControls();
+    };
+    supplierInput.addEventListener("input", handleSupplier);
+    supplierInput.addEventListener("blur", () => {
+      supplierInput.value = supplierInput.value.trim();
+      handleSupplier();
+    });
+  }
+  if (quickfillEnabled && quickLatestBtn) {
+    quickLatestBtn.addEventListener("click", () => {
+      const skuValue = skuInput?.value?.trim();
+      if (!skuValue) {
+        window.alert("Bitte zuerst eine SKU wählen.");
+        return;
+      }
+      const supplierValue = supplierInput?.value?.trim() || "";
+      const latest = findLatestMatch(skuValue, supplierValue);
+      if (!latest) {
+        window.alert("Keine Vorgänger-POs für diese SKU gefunden.");
+        return;
+      }
+      const normalized = normaliseHistory([latest])[0];
+      applySourceRecord(normalized, `Werte aus ${config.entityLabel} ${latest[config.numberField] || ""} übernommen. Du kannst alles anpassen.`);
+    });
+  }
+  if (quickfillEnabled && quickHistoryBtn) {
+    quickHistoryBtn.addEventListener("click", openHistoryModal);
+  }
+  if (templateSelect) {
+    templateSelect.addEventListener("change", () => {
+      const id = templateSelect.value;
+      if (!id) {
+        setQuickStatus("");
+        return;
+      }
+      const tpl = getTemplates().find(item => item.id === id);
+      if (!tpl) {
+        setQuickStatus("");
+        return;
+      }
+      const fields = JSON.parse(JSON.stringify(tpl.fields || {}));
+      applySourceRecord(fields, `Template „${tpl.name || "Template"}“ geladen. Du kannst alles anpassen.`);
+      templateSelect.value = id;
+    });
+  }
+  if (templateSaveBtn) {
+    templateSaveBtn.addEventListener("click", openTemplateModal);
+  }
   numberInput.addEventListener("input", onAnyChange);
   orderDateInput.addEventListener("input", onAnyChange);
 
@@ -1275,6 +1941,7 @@ export function renderOrderModule(root, config) {
   if (convertBtn) convertBtn.addEventListener("click", convertRecord);
 
   renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
+  refreshQuickfillControls();
   loadForm(defaultRecord(config, getSettings()));
 }
 

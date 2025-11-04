@@ -42,6 +42,7 @@ const defaults = {
   fos:       [ ],
   fixcosts:  [ ],
   fixcostOverrides: {},
+  poTemplates: [],
   status: {
     autoManualCheck: false,
     events: {},
@@ -54,6 +55,11 @@ function ensureFixcostContainers(state) {
   if (!state.fixcostOverrides || typeof state.fixcostOverrides !== "object") {
     state.fixcostOverrides = {};
   }
+}
+
+function ensurePoTemplates(state) {
+  if (!state) return;
+  if (!Array.isArray(state.poTemplates)) state.poTemplates = [];
 }
 
 function monthIndex(ym) {
@@ -145,6 +151,7 @@ export function createEmptyState(){
   const clone = structuredClone(defaults);
   ensureStatusSection(clone);
   ensureFixcostContainers(clone);
+  ensurePoTemplates(clone);
   return clone;
 }
 
@@ -158,6 +165,7 @@ export function loadState(){
   }
   ensureStatusSection(_state);
   ensureFixcostContainers(_state);
+  ensurePoTemplates(_state);
   migrateLegacyOutgoings(_state);
   return _state;
 }
@@ -166,6 +174,7 @@ export function saveState(s){
   _state = s || _state || structuredClone(defaults);
   ensureStatusSection(_state);
   ensureFixcostContainers(_state);
+  ensurePoTemplates(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
