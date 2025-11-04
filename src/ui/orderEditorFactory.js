@@ -29,6 +29,12 @@ function el(tag, attrs = {}, children = []) {
   return node;
 }
 
+let productCache = [];
+
+function refreshProductCache() {
+  productCache = getProductsSnapshot();
+}
+
 function parseDE(value) {
   if (value == null) return 0;
   const cleaned = String(value)
@@ -1253,11 +1259,6 @@ export function renderOrderModule(root, config) {
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
   let editing = defaultRecord(config, getSettings());
-  let productCache = [];
-
-  function refreshProductCache() {
-    productCache = getProductsSnapshot();
-  }
 
   function formatProductOption(product) {
     if (!product) return "";
