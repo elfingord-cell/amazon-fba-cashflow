@@ -35,6 +35,15 @@ function refreshProductCache() {
   productCache = getProductsSnapshot();
 }
 
+function productLabelForList(sku) {
+  if (!sku) return "—";
+  const match = productCache.find(
+    prod => prod && prod.sku && prod.sku.trim().toLowerCase() === String(sku).trim().toLowerCase(),
+  );
+  if (!match) return sku;
+  return `${match.alias || match.sku} (${match.sku})`;
+}
+
 function parseDE(value) {
   if (value == null) return 0;
   const cleaned = String(value)
@@ -1266,13 +1275,6 @@ export function renderOrderModule(root, config) {
     const sku = product.sku || "";
     const supplier = product.supplierId ? ` • ${product.supplierId}` : "";
     return `${alias} – ${sku}${supplier}`;
-  }
-
-  function productLabelForList(sku) {
-    if (!sku) return "—";
-    const match = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === String(sku).trim().toLowerCase());
-    if (!match) return sku;
-    return `${match.alias || match.sku} (${match.sku})`;
   }
 
   function resolveProductFromInput(value) {
