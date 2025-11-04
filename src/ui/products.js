@@ -267,6 +267,9 @@ function renderProducts(root) {
           .map(tag => tag.trim())
           .filter(Boolean),
       };
+      if (existing?.sku) {
+        payload.originalSku = existing.sku;
+      }
       const templateObj = {};
       Object.entries(templateInputs).forEach(([key, input]) => {
         if (!input) return;

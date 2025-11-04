@@ -1690,6 +1690,9 @@ export function renderOrderModule(root, config) {
           tags: existingProduct?.tags || [],
           template,
         };
+        if (existingProduct?.sku) {
+          payload.originalSku = existingProduct.sku;
+        }
         upsertProduct(payload);
         recordRecentProduct(skuValue);
         refreshProductCache();

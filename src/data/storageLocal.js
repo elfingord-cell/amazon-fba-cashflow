@@ -470,10 +470,27 @@ export function getProductBySku(sku){
 export function upsertProduct(input){
   const state = loadState();
   ensureProducts(state);
+
+  const originalKey = input?.originalSku ? productKey(input.originalSku) : null;
   const normalised = normaliseProductInput(input);
-  const key = productKey(normalised.sku);
-  let target = state.products.find(prod => productKey(prod.sku) === key);
+  const nextKey = productKey(normalised.sku);
   const now = new Date().toISOString();
+
+  let target = null;
+
+  if (originalKey) {
+    target = state.products.find(prod => productKey(prod.sku) === originalKey) || null;
+  }
+
+  const conflict = state.products.find(prod => productKey(prod.sku) === nextKey);
+  if (conflict && conflict !== target) {
+    throw new Error("Diese SKU existiert bereits.");
+  }
+
+  if (!target) {
+    target = conflict || null;
+  }
+
   if (!target) {
     target = {
       id: `prod-${Math.random().toString(36).slice(2, 9)}`,
@@ -496,6 +513,21 @@ export function upsertProduct(input){
     target.updatedAt = now;
     target.sku = normalised.sku;
   }
+
+  if (originalKey && nextKey !== originalKey) {
+    state.products = state.products.filter(prod => prod === target || productKey(prod.sku) !== originalKey);
+    if (Array.isArray(state.recentProducts)) {
+      const seen = new Set();
+      state.recentProducts = state.recentProducts
+        .map(key => key === originalKey ? nextKey : key)
+        .filter(key => {
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+    }
+  }
+
   saveState(state);
   return updateProductStatsMeta(loadState(), target);
 }
