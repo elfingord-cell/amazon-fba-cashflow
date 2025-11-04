@@ -87,8 +87,11 @@ function getFx(po: PO, settings: Settings): number {
 }
 
 export function usdToEur(usd: number, fxRate: number, fxFeePct: number): number {
+  if (!Number.isFinite(usd)) return 0;
+  const rate = Number.isFinite(fxRate) && fxRate > 0 ? fxRate : 0;
   const feeFactor = 1 + (fxFeePct ?? 0) / 100;
-  return usd * fxRate * feeFactor;
+  const converted = rate > 0 ? usd / rate : usd;
+  return converted * feeFactor;
 }
 
 function computeAnchors(po: PO): Record<Anchor, Date> {
@@ -140,7 +143,7 @@ function dutyAmount(po: PO, settings: Settings): number | null {
   const dutyRate = po.dutyRatePct ?? 0;
   if (dutyRate <= 0) return null;
   const fx = getFx(po, settings);
-  const goodsEur = po.goodsValueUsd * fx;
+  const goodsEur = fx > 0 ? po.goodsValueUsd / fx : po.goodsValueUsd;
   const base = goodsEur + (po.dutyIncludeFreight ? po.freightEur ?? 0 : 0);
   const result = base * (dutyRate / 100);
   if (result === 0) return null;
@@ -154,7 +157,7 @@ function eustAmount(po: PO, settings: Settings, duty: number | null, freight: nu
     return -round2(po.eustOverrideEur);
   }
   const fx = getFx(po, settings);
-  const goodsEur = po.goodsValueUsd * fx;
+  const goodsEur = fx > 0 ? po.goodsValueUsd / fx : po.goodsValueUsd;
   const freightAbs = freight ? Math.abs(freight) : (po.freightEur ?? 0);
   const dutyAbs = duty ? Math.abs(duty) : 0;
   const base = goodsEur + freightAbs + dutyAbs;

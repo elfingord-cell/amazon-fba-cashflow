@@ -79,7 +79,7 @@ function computeGoodsTotals(row, settings) {
   const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
   const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
   const fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
-  const derivedEur = Math.round((totalUsd * fxRate) * 100) / 100;
+  const derivedEur = fxRate > 0 ? Math.round((totalUsd / fxRate) * 100) / 100 : 0;
   const fallbackEur = parseEuro(row?.goodsEur ?? 0);
   return {
     usd: totalUsd,

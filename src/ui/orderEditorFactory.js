@@ -115,7 +115,8 @@ function computeGoodsTotals(record, settings = getSettings()) {
     const override = typeof record.fxOverride === "number" ? record.fxOverride : parseDE(record.fxOverride);
     if (Number.isFinite(override) && override > 0) fxRate = override;
   }
-  const totalEur = Math.round((totalUsd * fxRate) * 100) / 100;
+  const fallbackEur = parseDE(record?.goodsEur);
+  const totalEur = fxRate > 0 ? Math.round((totalUsd / fxRate) * 100) / 100 : (Number.isFinite(fallbackEur) ? Math.round(fallbackEur * 100) / 100 : 0);
   return {
     usd: totalUsd,
     eur: totalEur,
@@ -141,8 +142,8 @@ function normaliseGoodsFields(record, settings = getSettings()) {
   const totals = computeGoodsTotals(record, settings);
   const existingGoods = parseDE(record.goodsEur);
   if (totals.usd === 0 && existingGoods > 0) {
-    const fxRate = totals.fxRate || settings?.fxRate || 1;
-    const approxUsd = fxRate ? existingGoods / fxRate : existingGoods;
+    const fxRate = totals.fxRate || settings?.fxRate || 0;
+    const approxUsd = fxRate > 0 ? existingGoods * fxRate : existingGoods;
     record.unitCostUsd = fmtCurrencyInput(approxUsd);
     record.unitExtraUsd = "0,00";
     record.extraFlatUsd = "0,00";
@@ -1033,7 +1034,7 @@ export function renderOrderModule(root, config) {
     const usdText = fmtUSD(totals.usd || 0);
     const fxText = fmtFxRate(totals.fxRate);
     goodsSummary.textContent = fxText
-      ? `Summe Warenwert: ${eurText} (${usdText} · FX ${fxText})`
+      ? `Summe Warenwert: ${eurText} (${usdText} ÷ FX ${fxText})`
       : `Summe Warenwert: ${eurText} (${usdText})`;
   }
 
