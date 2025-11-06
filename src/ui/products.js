@@ -183,20 +183,20 @@ function renderProducts(root) {
     const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
 
     const templateFields = [
-      { key: "unitPriceUsd", label: "Stückpreis (USD)" },
-      { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)" },
-      { key: "extraFlatUsd", label: "Zusatz pauschal (USD)" },
-      { key: "transport", label: "Transport" },
-      { key: "productionDays", label: "Produktionstage" },
-      { key: "transitDays", label: "Transit-Tage" },
-      { key: "freightEur", label: "Fracht (€)" },
-      { key: "dutyPct", label: "Zoll %" },
+      { key: "unitPriceUsd", label: "Stückpreis (USD)", valueType: "number" },
+      { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)", valueType: "number" },
+      { key: "extraFlatUsd", label: "Zusatz pauschal (USD)", valueType: "number" },
+      { key: "transport", label: "Transport", valueType: "text" },
+      { key: "productionDays", label: "Produktionstage", valueType: "number" },
+      { key: "transitDays", label: "Transit-Tage", valueType: "number" },
+      { key: "freightEur", label: "Fracht (€)", valueType: "number" },
+      { key: "dutyPct", label: "Zoll %", valueType: "number" },
       { key: "dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox" },
-      { key: "vatImportPct", label: "EUSt %" },
+      { key: "vatImportPct", label: "EUSt %", valueType: "number" },
       { key: "vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox" },
-      { key: "vatRefundLag", label: "EUSt-Lag (Monate)" },
-      { key: "fxRate", label: "FX-Kurs" },
-      { key: "fxFeePct", label: "FX-Gebühr %" },
+      { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number" },
+      { key: "fxRate", label: "FX-Kurs", valueType: "number" },
+      { key: "fxFeePct", label: "FX-Gebühr %", valueType: "number" },
       { key: "ddp", label: "DDP", type: "checkbox" },
     ];
 
@@ -212,7 +212,9 @@ function renderProducts(root) {
 
     const templateContainer = createEl("div", { class: "grid two" });
     const templateInputs = {};
+    const templateFieldMeta = {};
     templateFields.forEach(field => {
+      templateFieldMeta[field.key] = field;
       if (field.type === "checkbox") {
         const checkbox = createEl("input", { type: "checkbox", name: field.key, checked: Boolean(template[field.key]) });
         templateInputs[field.key] = checkbox;
@@ -275,8 +277,15 @@ function renderProducts(root) {
         if (!input) return;
         if (input.type === "checkbox") {
           templateObj[key] = input.checked;
-        } else if (input.value.trim() !== "") {
-          templateObj[key] = parseNumber(input.value);
+          return;
+        }
+        const raw = input.value.trim();
+        if (raw === "") return;
+        const meta = templateFieldMeta[key] || {};
+        if (meta.valueType === "text") {
+          templateObj[key] = raw;
+        } else {
+          templateObj[key] = parseNumber(raw);
         }
       });
       const msValue = milestonesArea.value.trim();
