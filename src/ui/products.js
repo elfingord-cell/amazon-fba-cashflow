@@ -256,6 +256,10 @@ function renderProducts(root) {
       onClose: () => {},
     });
     cancelBtn.addEventListener("click", () => dialog.overlay.remove());
+    saveBtn.addEventListener("click", ev => {
+      ev.preventDefault();
+      form.requestSubmit();
+    });
 
     form.addEventListener("submit", ev => {
       ev.preventDefault();
