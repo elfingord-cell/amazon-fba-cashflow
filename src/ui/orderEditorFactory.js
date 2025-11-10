@@ -812,8 +812,10 @@ function renderList(container, records, config, onEdit, onDelete) {
         el("th", {}, [`${config.entityLabel}-Nr.`]),
         ...((config.slug === "po" || config.slug === "fo") ? [el("th", {}, ["Produkt"])] : []),
         el("th", {}, ["Order"]),
+        el("th", {}, ["Timeline"]),
         el("th", {}, ["Stück"]),
         el("th", {}, ["Summe USD"]),
+        el("th", {}, ["Fracht (€)"]),
         el("th", {}, ["Zahlungen"]),
         el("th", {}, ["Transport"]),
         el("th", {}, ["Aktionen"]),
@@ -824,8 +826,10 @@ function renderList(container, records, config, onEdit, onDelete) {
         el("td", {}, [rec[config.numberField] || "—"]),
         ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [productLabelForList(rec.sku)])] : []),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
+        el("td", {}, [formatTimelineSummary(rec)]),
         el("td", {}, [Number(parseDE(rec.units ?? 0) || 0).toLocaleString("de-DE")]),
         el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
+        el("td", {}, [fmtEUR(parseDE(rec.freightEur || 0))]),
         el("td", {}, [String((rec.milestones || []).length)]),
         el("td", {}, [`${rec.transport || "sea"} · ${rec.transitDays || 0}d`]),
         el("td", {}, [
@@ -837,6 +841,118 @@ function renderList(container, records, config, onEdit, onDelete) {
     )),
   ]);
   container.append(table);
+}
+
+function computeTimeline(record) {
+  if (!record) return null;
+  const order = parseISOToDate(record.orderDate) || null;
+  if (!order) return null;
+  const prodDays = Math.max(0, Number(record.prodDays || 0));
+  const transitDays = Math.max(0, Number(record.transitDays || 0));
+  const prodDone = addDays(order, prodDays);
+  const etd = prodDone;
+  const eta = addDays(etd, transitDays);
+  const totalDays = Math.max(prodDays + transitDays, 1);
+  return {
+    order,
+    prodDone,
+    etd,
+    eta,
+    prodDays,
+    transitDays,
+    totalDays,
+  };
+}
+
+function formatTimelineSummary(record) {
+  const timeline = computeTimeline(record);
+  if (!timeline) return "—";
+  return [
+    `Order ${fmtDateDE(timeline.order)}`,
+    `Prod done/ETD ${fmtDateDE(timeline.prodDone)}`,
+    `ETA ${fmtDateDE(timeline.eta)}`,
+  ].join(" • ");
+}
+
+function transportIcon(transport) {
+  if (transport === "air") return "✈️";
+  if (transport === "rail") return "🚆";
+  return "🚢";
+}
+
+function renderTimeline(timelineNode, summaryNode, record) {
+  if (!timelineNode || !summaryNode) return;
+  const timeline = computeTimeline(record);
+  summaryNode.innerHTML = "";
+  timelineNode.innerHTML = "";
+
+  if (!timeline) {
+    summaryNode.append(el("span", { class: "muted" }, ["Bitte gültiges Bestelldatum eingeben."]));
+    return;
+  }
+
+  const summary = el("div", { class: "po-timeline-summary-items" }, [
+    el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["Order"]), " ", fmtDateDE(timeline.order)]),
+    el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["Prod done/ETD"]), " ", fmtDateDE(timeline.prodDone)]),
+    el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["ETA"]), " ", fmtDateDE(timeline.eta)]),
+  ]);
+  summaryNode.append(summary);
+
+  const track = el("div", { class: "po-timeline-track" });
+  track.append(el("div", { class: "po-timeline-base" }));
+
+  const segments = el("div", { class: "po-timeline-segments" });
+  const total = timeline.totalDays;
+  const prodPctRaw = total ? (timeline.prodDays / total) * 100 : 0;
+  const transitPctRaw = total ? (timeline.transitDays / total) * 100 : 0;
+  const prodPct = Math.max(0, Math.min(100, prodPctRaw));
+  const transitPct = Math.max(0, Math.min(100, transitPctRaw));
+
+  if (timeline.prodDays > 0) {
+    segments.append(el("div", {
+      class: "po-timeline-segment production",
+      style: `left:0%; width:${prodPct}%`,
+    }, [
+      el("span", { class: "po-timeline-segment-icon", "aria-hidden": "true" }, ["🏭"]),
+      el("span", { class: "sr-only" }, [`Produktion ${timeline.prodDays} Tage`]),
+    ]));
+  }
+
+  if (timeline.transitDays > 0) {
+    const start = prodPct;
+    segments.append(el("div", {
+      class: "po-timeline-segment transit",
+      style: `left:${start}% ; width:${transitPct}%`,
+    }, [
+      el("span", { class: "po-timeline-segment-icon", "aria-hidden": "true" }, [transportIcon(record.transport)]),
+      el("span", { class: "sr-only" }, [`Transport ${timeline.transitDays} Tage`]),
+    ]));
+  }
+
+  track.append(segments);
+
+  const markers = el("div", { class: "po-timeline-markers" });
+  const addMarker = (label, date, percent, align) => {
+    const marker = el("div", {
+      class: `po-timeline-marker po-timeline-marker-${align}`,
+      style: `left:${percent}%`,
+    }, [
+      el("span", { class: "po-timeline-dot" }),
+      el("span", { class: "po-timeline-marker-label" }, [
+        el("strong", {}, [label]),
+        el("span", {}, [fmtDateDE(date)]),
+      ]),
+    ]);
+    markers.append(marker);
+  };
+
+  addMarker("Order", timeline.order, 0, "start");
+  const middleAlign = prodPct <= 10 ? "start" : (prodPct >= 90 ? "end" : "center");
+  addMarker("Prod done/ETD", timeline.prodDone, prodPct, middleAlign);
+  addMarker("ETA", timeline.eta, 100, "end");
+
+  track.append(markers);
+  timelineNode.append(track);
 }
 
 function renderMsTable(container, record, config, onChange, focusInfo, settings) {
@@ -1083,6 +1199,8 @@ export function renderOrderModule(root, config) {
     vatLag: `${config.slug}-vat-lag`,
     vatToggle: `${config.slug}-vat-toggle`,
     ddp: `${config.slug}-ddp`,
+    timeline: `${config.slug}-timeline`,
+    timelineSummary: `${config.slug}-timeline-summary`,
     msZone: `${config.slug}-ms-zone`,
     preview: `${config.slug}-preview`,
     save: `${config.slug}-save`,
@@ -1220,6 +1338,13 @@ export function renderOrderModule(root, config) {
           <label><input type="checkbox" id="${ids.ddp}" /> DDP (Importkosten enthalten)</label>
         </div>
       </div>
+      <div class="po-timeline-card">
+        <div class="po-timeline-card-header">
+          <h4>PO Timeline</h4>
+          <div id="${ids.timelineSummary}" class="po-timeline-summary"></div>
+        </div>
+        <div id="${ids.timeline}" class="po-timeline-track-wrapper"></div>
+      </div>
       <div id="${ids.msZone}" style="margin-top:10px"></div>
       <div style="display:flex; gap:8px; margin-top:10px">
         <button class="btn" id="${ids.save}">Speichern</button>
@@ -1260,6 +1385,8 @@ export function renderOrderModule(root, config) {
   const vatLagInput = $(`#${ids.vatLag}`, root);
   const vatToggle = $(`#${ids.vatToggle}`, root);
   const ddpToggle = $(`#${ids.ddp}`, root);
+  const timelineZone = $(`#${ids.timeline}`, root);
+  const timelineSummary = $(`#${ids.timelineSummary}`, root);
   const msZone = $(`#${ids.msZone}`, root);
   const saveBtn = $(`#${ids.save}`, root);
   const createBtn = $(`#${ids.create}`, root);
@@ -1905,6 +2032,7 @@ export function renderOrderModule(root, config) {
     }
     syncEditingFromForm(settings);
     ensureAutoEvents(editing, settings, editing.milestones);
+    renderTimeline(timelineZone, timelineSummary, editing);
     renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
     updatePreview(settings);
     updateSaveEnabled();
@@ -1950,6 +2078,7 @@ export function renderOrderModule(root, config) {
     vatLagInput.value = String(editing.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0);
     vatToggle.checked = editing.vatRefundEnabled !== false;
     ddpToggle.checked = !!editing.ddp;
+    renderTimeline(timelineZone, timelineSummary, editing);
     renderMsTable(msZone, editing, config, onAnyChange, null, settings);
     updatePreview(settings);
     updateSaveEnabled();
