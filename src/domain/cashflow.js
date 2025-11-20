@@ -320,7 +320,7 @@ function normaliseSettings(raw) {
 }
 
 function normaliseAutoEvents(row, settings, manual) {
-  const order = ['duty', 'eust', 'vat_refund', 'fx_fee'];
+  const order = ['freight', 'duty', 'eust', 'vat_refund', 'fx_fee'];
   const clones = Array.isArray(row.autoEvents)
     ? row.autoEvents.filter(Boolean).map(evt => ({ ...evt }))
     : [];
@@ -347,6 +347,13 @@ function normaliseAutoEvents(row, settings, manual) {
     }
     return existing;
   }
+
+  ensure('freight', {
+    label: 'Fracht',
+    anchor: 'ETA',
+    lagDays: settings.freightLagDays,
+    enabled: true,
+  });
 
   ensure('duty', {
     label: 'Zoll',
@@ -378,7 +385,7 @@ function normaliseAutoEvents(row, settings, manual) {
 
   if (row.ddp) {
     for (const evt of clones) {
-      if (evt.type === 'duty' || evt.type === 'eust' || evt.type === 'vat_refund') {
+      if (evt.type === 'freight' || evt.type === 'duty' || evt.type === 'eust' || evt.type === 'vat_refund') {
         evt.enabled = false;
       }
     }
@@ -435,6 +442,28 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     const anchor = auto.anchor || 'ETA';
     const baseDate = anchors[anchor] || anchors.ETA;
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
+
+    if (auto.type === 'freight') {
+      const amount = parseEuro(row.freightEur);
+      if (!amount) continue;
+      const due = addDays(baseDate, Number(auto.lagDays || 0));
+      events.push({
+        label: `${prefix} – ${auto.label || 'Fracht'}`,
+        amount,
+        due,
+        month: toMonthKey(due),
+        direction: 'out',
+        type: 'freight',
+        anchor: auto.anchor || 'ETA',
+        lagDays: Number(auto.lagDays || 0) || 0,
+        sourceType: prefixBase,
+        sourceNumber: ref,
+        sourceId: row.id,
+        id: `${row.id || prefixBase}-auto-freight`,
+        tooltip: 'Frachtkosten laut Eingabe',
+      });
+      continue;
+    }
 
     if (auto.type === 'duty') {
       const percent = parsePct(auto.percent ?? dutyRate);

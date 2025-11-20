@@ -415,6 +415,13 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
     return map.get(type);
   };
 
+  ensure("freight", {
+    label: "Fracht",
+    anchor: "ETA",
+    lagDays: settings.freightLagDays || 0,
+    enabled: true,
+  });
+
   ensure("duty", {
     label: "Zoll",
     percent: settings.dutyRatePct || 0,
@@ -449,6 +456,7 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
   });
 
   record.autoEvents = [
+    "freight",
     "duty",
     "eust",
     "vat_refund",
@@ -457,14 +465,14 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
 
   if (record.ddp) {
     for (const evt of record.autoEvents) {
-      if (evt.type === "duty" || evt.type === "eust" || evt.type === "vat_refund") {
+      if (evt.type === "freight" || evt.type === "duty" || evt.type === "eust" || evt.type === "vat_refund") {
         if (evt.enabled !== false) evt._ddpEnabledBackup = evt.enabled !== false;
         evt.enabled = false;
       }
     }
   } else {
     for (const evt of record.autoEvents) {
-      if ((evt.type === "duty" || evt.type === "eust" || evt.type === "vat_refund") && evt._ddpEnabledBackup != null) {
+      if ((evt.type === "freight" || evt.type === "duty" || evt.type === "eust" || evt.type === "vat_refund") && evt._ddpEnabledBackup != null) {
         evt.enabled = evt._ddpEnabledBackup;
         delete evt._ddpEnabledBackup;
       }
@@ -632,6 +640,41 @@ function orderEvents(record, config, settings) {
     const anchor = autoEvt.anchor || "ETA";
     const baseDate = anchorDate(base, anchor);
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
+
+    if (autoEvt.type === "freight") {
+      const amountAbs = parseDE(record.freightEur);
+      if (!amountAbs) {
+        const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+        const dueIso = isoDate(due);
+        if (!dueIso) continue;
+        events.push({
+          id: autoEvt.id,
+          label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
+          date: dueIso,
+          amount: 0,
+          type: "freight",
+          auto: true,
+          due,
+          direction: "out",
+        });
+        continue;
+      }
+      const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+      const dueIso = isoDate(due);
+      if (!dueIso) continue;
+      const amount = -amountAbs;
+      events.push({
+        id: autoEvt.id,
+        label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
+        date: dueIso,
+        amount,
+        type: "freight",
+        auto: true,
+        due,
+        direction: amount <= 0 ? "out" : "in",
+      });
+      continue;
+    }
 
     if (autoEvt.type === "duty") {
       const percent = clampPct(autoEvt.percent ?? stateDutyRate ?? settings.dutyRatePct ?? 0);
@@ -1049,8 +1092,11 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
   (record.autoEvents || []).forEach((autoEvt) => {
     const computed = previewMap.get(autoEvt.id);
+    const fallbackAmount = autoEvt.type === "freight"
+      ? -(parseDE(record.freightEur) || 0)
+      : 0;
     const dueText = fmtDateDE(computed?.due || computed?.date);
-    const amount = computed?.amount ?? 0;
+    const amount = computed?.amount ?? fallbackAmount;
     const active = autoEvt.enabled !== false;
     const lagValue = autoEvt.type === "vat_refund"
       ? Number(autoEvt.lagMonths ?? record.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0)
@@ -1065,21 +1111,23 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           onblur: (e) => { autoEvt.label = e.target.value.trim(); onChange(); },
         }),
       ]),
-      el("td", {}, [
-        el("input", {
-          type: "text",
-          inputmode: "decimal",
-          value: fmtPercent(autoEvt.percent ?? 0),
-          dataset: { field: "percent" },
-          oninput: (e) => { autoEvt.percent = e.target.value; onChange(); },
-          onblur: (e) => {
-            const next = clampPct(e.target.value);
-            autoEvt.percent = next;
-            e.target.value = fmtPercent(next);
-            onChange();
-          },
-        }),
-      ]),
+      autoEvt.type === "freight"
+        ? el("td", {}, [el("span", { class: "muted" }, ["—"])])
+        : el("td", {}, [
+            el("input", {
+              type: "text",
+              inputmode: "decimal",
+              value: fmtPercent(autoEvt.percent ?? 0),
+              dataset: { field: "percent" },
+              oninput: (e) => { autoEvt.percent = e.target.value; onChange(); },
+              onblur: (e) => {
+                const next = clampPct(e.target.value);
+                autoEvt.percent = next;
+                e.target.value = fmtPercent(next);
+                onChange();
+              },
+            }),
+          ]),
       el("td", {}, [
         (() => {
           const select = el("select", { dataset: { field: "anchor" }, onchange: (e) => { autoEvt.anchor = e.target.value; onChange(); } }, [
