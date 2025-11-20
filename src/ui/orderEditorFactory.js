@@ -975,9 +975,9 @@ function renderTimeline(timelineNode, summaryNode, record) {
   track.append(segments);
 
   const markers = el("div", { class: "po-timeline-markers" });
-  const addMarker = (label, date, percent, align) => {
+  const addMarker = (label, date, percent, align, extraClass = "") => {
     const marker = el("div", {
-      class: `po-timeline-marker po-timeline-marker-${align}`,
+      class: `po-timeline-marker po-timeline-marker-${align}${extraClass ? ` ${extraClass}` : ""}`,
       style: `left:${percent}%`,
     }, [
       el("span", { class: "po-timeline-dot" }),
@@ -993,6 +993,15 @@ function renderTimeline(timelineNode, summaryNode, record) {
   const middleAlign = prodPct <= 10 ? "start" : (prodPct >= 90 ? "end" : "center");
   addMarker("Prod done/ETD", timeline.prodDone, prodPct, middleAlign);
   addMarker("ETA", timeline.eta, 100, "end");
+
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const diffDays = (today.getTime() - timeline.order.getTime()) / msPerDay;
+  const clampedDays = Math.max(0, Math.min(timeline.totalDays, diffDays));
+  const todayPct = timeline.totalDays ? (clampedDays / timeline.totalDays) * 100 : 0;
+  const currentAlign = todayPct <= 10 ? "start" : (todayPct >= 90 ? "end" : "center");
+  addMarker("Heute", today, todayPct, currentAlign, "po-timeline-marker-current");
 
   track.append(markers);
   timelineNode.append(track);
