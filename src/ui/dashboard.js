@@ -889,12 +889,41 @@ export async function render(root) {
     return { topVal, bottomVal, spanVal, ticks };
   }
 
+  function buildAlignedLineScale(maxVal, minVal, zeroRatio) {
+    const steps = 5;
+    const headroomFactor = 1.2;
+    const paddedTop = maxVal === 0 ? 0 : maxVal * headroomFactor;
+    const paddedBottom = minVal === 0 ? 0 : minVal * headroomFactor;
+    const above = Math.max(paddedTop, 0);
+    const below = Math.abs(Math.min(paddedBottom, 0));
+    const ratioBase = Number.isFinite(zeroRatio) ? zeroRatio : 0.5;
+    let safeRatio = Math.min(0.95, Math.max(0.05, ratioBase));
+    if (below === 0 && above > 0) safeRatio = 1;
+    if (above === 0 && below > 0) safeRatio = 0;
+    const spanBase = safeRatio === 1
+      ? above || 1
+      : safeRatio === 0
+      ? below || 1
+      : Math.max(1, above / (safeRatio || 1), below / (1 - safeRatio || 1));
+    const step = niceStepSize(spanBase / steps);
+    const topVal = Math.max(step, Math.ceil((spanBase * safeRatio) / step) * step);
+    const spanVal = safeRatio === 0 ? topVal : topVal / safeRatio;
+    const bottomVal = -spanVal * (1 - safeRatio);
+    const ticks = Array.from({ length: steps + 1 }, (_, i) => topVal - (spanVal / steps) * i);
+    return { topVal, bottomVal, spanVal, ticks };
+  }
+
   const { topVal: barTop, bottomVal: barBottom, spanVal: barSpan, ticks: yTicksBar } = buildScale(maxBar, minBar);
+  const zeroRatio = barSpan === 0 ? 0.5 : (barTop - 0) / barSpan;
 
   const lineCandidates = showNetLine ? netLineValues.concat([opening]) : [opening];
   const maxLine = Math.max(...lineCandidates, 0);
   const minLine = Math.min(...lineCandidates, 0);
-  const { topVal: lineTop, bottomVal: lineBottom, spanVal: lineSpan, ticks: yTicksLine } = buildScale(maxLine, minLine);
+  const { topVal: lineTop, bottomVal: lineBottom, spanVal: lineSpan, ticks: yTicksLine } = buildAlignedLineScale(
+    maxLine,
+    minLine,
+    zeroRatio
+  );
 
   const monthsCount = months.length || 0;
   const groupWidth = 56;
