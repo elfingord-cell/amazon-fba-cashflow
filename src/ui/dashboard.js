@@ -862,13 +862,12 @@ export async function render(root) {
   const outflowTotals = showOutflow ? series.map(r => Number(r.outflow?.total || 0)) : [];
   const netLineValues = showNetLine ? closing : [];
 
-  const outflowNegTotals = outflowTotals.map(v => -Number(v || 0));
-  const barMax = Math.max(0, ...inflowTotals);
-  const barMin = Math.min(0, ...outflowNegTotals);
+  const barPosMax = Math.max(0, ...inflowTotals, ...outflowTotals);
+  const barMin = 0;
 
   const lineValues = [...netLineValues, opening];
-  const lineMax = Math.max(0, ...lineValues);
-  const lineMin = Math.min(0, ...lineValues);
+  const linePosMaxRaw = Math.max(0, ...lineValues);
+  const lineNegMaxRaw = Math.min(0, ...lineValues);
 
   function buildScale(maxVal, minVal) {
     const steps = 5;
@@ -884,37 +883,39 @@ export async function render(root) {
     return { topVal, bottomVal, spanVal, ticks };
   }
 
-  const { topVal: barTop, bottomVal: barBottom, spanVal: barSpan, ticks: yTicksBar } = buildScale(barMax, barMin);
-  const zeroY = (() => {
-    const val = Number(0);
-    const norm = (barTop - val) / (barSpan || 1);
-    const clamped = Math.max(0, Math.min(1, norm));
-    return clamped * 1000;
-  })();
+  const { topVal: barTop, bottomVal: barBottom, ticks: yTicksBar } = buildScale(barPosMax, barMin);
 
-  const lineHeadroom = 1.2;
-  const linePosMax = lineMax * lineHeadroom;
-  const lineNegMax = Math.abs(lineMin) * lineHeadroom;
+  const posSpan = Math.max(barPosMax, linePosMaxRaw);
+  const negSpan = Math.abs(lineNegMaxRaw);
+  const headroom = 1.2;
+  const posScaleVal = Math.max(1, posSpan * headroom || 1);
+  const negScaleVal = negSpan > 0 ? negSpan * headroom : 0;
+  const zeroY = (posScaleVal / (posScaleVal + negScaleVal || 1)) * 1000;
 
-  const posStep = linePosMax ? niceStepSize(linePosMax / 4) : 0;
-  const negStep = lineNegMax ? niceStepSize(lineNegMax / 4) : 0;
+  const linePosMax = linePosMaxRaw * headroom;
+  const lineNegMax = Math.abs(lineNegMaxRaw) * headroom;
+  const lineAxisPosMax = Math.max(linePosMax, posScaleVal);
+  const lineAxisNegMax = Math.max(lineNegMax, negScaleVal);
+
+  const posStep = lineAxisPosMax ? niceStepSize(lineAxisPosMax / 4) : 0;
+  const negStep = lineAxisNegMax ? niceStepSize(lineAxisNegMax / 4) : 0;
   const yTicksLine = [];
-  if (linePosMax && posStep) {
-    for (let v = linePosMax; v > 0; v -= posStep) yTicksLine.push(v);
+  if (lineAxisPosMax && posStep) {
+    for (let v = lineAxisPosMax; v > 0; v -= posStep) yTicksLine.push(v);
   }
   yTicksLine.push(0);
-  if (lineNegMax && negStep) {
-    for (let v = negStep; v <= lineNegMax + 1e-6; v += negStep) yTicksLine.push(-v);
+  if (lineAxisNegMax && negStep) {
+    for (let v = negStep; v <= lineAxisNegMax + 1e-6; v += negStep) yTicksLine.push(-v);
   }
 
   const YLine = v => {
     const val = Number(v || 0);
     if (val >= 0) {
-      if (!linePosMax) return zeroY;
-      return zeroY - (val / linePosMax) * zeroY;
+      if (!posScaleVal) return zeroY;
+      return zeroY - (val / posScaleVal) * zeroY;
     }
-    if (!lineNegMax) return zeroY;
-    return zeroY + (-val / lineNegMax) * (1000 - zeroY);
+    if (!negScaleVal) return zeroY;
+    return zeroY + (-val / negScaleVal) * (1000 - zeroY);
   };
 
   const monthsCount = months.length || 0;
@@ -929,14 +930,10 @@ export async function render(root) {
     const safeWidth = chartWidth || 1;
     return (px / safeWidth) * 1000;
   };
-  const posScale = barTop || 1;
-  const negScale = Math.max(1, -barBottom || 1);
   const YBar = v => {
     const val = Number(v || 0);
-    if (val >= 0) {
-      return zeroY - (val / posScale) * zeroY;
-    }
-    return zeroY + (-val / negScale) * (1000 - zeroY);
+    if (!posScaleVal) return zeroY;
+    return zeroY - (val / posScaleVal) * zeroY;
   };
   const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
 
@@ -974,7 +971,7 @@ export async function render(root) {
       if (!plState.legend || plState.legend.outflow === false) return [];
       const total = Number(row?.outflow?.total || 0);
       if (!total) return [];
-      return [{ key: "total", value: -total }];
+      return [{ key: "total", value: total }];
     }
     return [];
   }
