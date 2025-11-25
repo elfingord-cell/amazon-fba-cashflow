@@ -323,12 +323,14 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .chart-tip .tip-swatch.swatch-net{background:#37474F;}
 
 /* === Dashboard Ebenen-Reihenfolge === */
-.vchart-grid  { position:absolute; left:72px; right:32px; top:24px; bottom:56px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
+.vchart-grid  { position:absolute; left:72px; right:96px; top:24px; bottom:56px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
 .vchart-y     { position:absolute; left:16px;  top:24px; bottom:56px; width:48px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
+.vchart-y-right{ position:absolute; right:16px; top:24px; bottom:56px; width:64px; color:#6b7280; font-size:11px; text-align:left; z-index:4; pointer-events:none; }
+.vchart-y-right .ytick-line{ position:absolute; left:0; transform:translateY(50%); white-space:nowrap; }
   .vchart-bars  {
     position:absolute;
     left:72px;
-    right:32px;
+    right:96px;
     top:24px;
     bottom:56px;
     display:flex;
@@ -342,7 +344,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
   .vchart-lines {
     position:absolute;
     left:72px;
-    right:32px;
+    right:96px;
     top:24px;
     bottom:56px;
     pointer-events:none;
@@ -351,7 +353,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
   .vchart-x     {
     position:absolute;
     left:72px;
-    right:32px;
+    right:96px;
     bottom:12px;
     display:flex;
     align-items:center;

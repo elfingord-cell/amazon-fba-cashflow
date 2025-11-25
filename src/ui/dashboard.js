@@ -871,24 +871,30 @@ export async function render(root) {
     topCandidates.push(...netLineValues.filter(v => v > 0));
     topCandidates.push(opening);
   }
-  const rawTop = Math.max(...topCandidates);
+  const outflowNegTotals = outflowTotals.map(v => -Number(v || 0));
+  const maxBar = Math.max(0, ...inflowTotals);
+  const minBar = Math.min(0, ...outflowNegTotals);
 
-  const bottomCandidates = [0];
-  if (showNetLine) {
-    bottomCandidates.push(...netLineValues.filter(v => v < 0));
-    bottomCandidates.push(opening);
+  function buildScale(maxVal, minVal) {
+    const steps = 5;
+    const headroomFactor = 1.2;
+    const paddedTop = maxVal === 0 ? 0 : maxVal * headroomFactor;
+    const paddedBottom = minVal === 0 ? 0 : minVal * headroomFactor;
+    const range = (paddedTop - paddedBottom) / steps || 1;
+    const niceStep = niceStepSize(range);
+    const topVal = Math.max(niceStep, Math.ceil(paddedTop / niceStep) * niceStep);
+    const bottomVal = minVal < 0 ? Math.floor(paddedBottom / niceStep) * niceStep : 0;
+    const spanVal = (topVal - bottomVal) || niceStep;
+    const ticks = Array.from({ length: steps + 1 }, (_, i) => topVal - (spanVal / steps) * i);
+    return { topVal, bottomVal, spanVal, ticks };
   }
-  const rawBottom = Math.min(...bottomCandidates);
-  const headroomFactor = 1.2;
-  const paddedTop = rawTop === 0 ? 0 : rawTop * headroomFactor;
-  const paddedBottom = rawBottom === 0 ? 0 : rawBottom * headroomFactor;
-  const steps = 5;
-  const range = (paddedTop - paddedBottom) / steps || 1;
-  const niceStep = niceStepSize(range);
-  const top = Math.max(niceStep, Math.ceil(paddedTop / niceStep) * niceStep);
-  const bottom = rawBottom < 0 ? Math.floor(paddedBottom / niceStep) * niceStep : 0;
-  const span = (top - bottom) || niceStep;
-  const yTicks = Array.from({ length: steps + 1 }, (_, i) => top - (span / steps) * i);
+
+  const { topVal: barTop, bottomVal: barBottom, spanVal: barSpan, ticks: yTicksBar } = buildScale(maxBar, minBar);
+
+  const lineCandidates = showNetLine ? netLineValues.concat([opening]) : [opening];
+  const maxLine = Math.max(...lineCandidates, 0);
+  const minLine = Math.min(...lineCandidates, 0);
+  const { topVal: lineTop, bottomVal: lineBottom, spanVal: lineSpan, ticks: yTicksLine } = buildScale(maxLine, minLine);
 
   const monthsCount = months.length || 0;
   const groupWidth = 56;
@@ -902,22 +908,32 @@ export async function render(root) {
     const safeWidth = chartWidth || 1;
     return (px / safeWidth) * 1000;
   };
-  const Y = v => {
+  const YBar = v => {
     const val = Number(v || 0);
-    const norm = (top - val) / span;
+    const norm = (barTop - val) / barSpan;
     const clamped = Math.max(0, Math.min(1, norm));
     return clamped * 1000;
   };
-  const zeroPct = Math.max(0, Math.min(100, Y(0) / 10));
+  const YLine = v => {
+    const val = Number(v || 0);
+    const norm = (lineTop - val) / lineSpan;
+    const clamped = Math.max(0, Math.min(1, norm));
+    return clamped * 1000;
+  };
+  const zeroPct = Math.max(0, Math.min(100, YBar(0) / 10));
 
   const points = showNetLine
-    ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${Y(v)}`).join(" ")
+    ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${YLine(v)}`).join(" ")
     : "";
   const dots = showNetLine
     ? netLineValues
-        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${Y(v)}" r="6"></circle>`)
+        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${YLine(v)}" r="6"></circle>`)
         .join("")
     : "";
+  const axisRows = yTicksBar.length || 6;
+  const yAxisLineHtml = yTicksLine
+    .map(val => `<div class="ytick-line" style="top:${(YLine(val) / 10).toFixed(2)}%">${fmtTick(val)}</div>`)
+    .join("");
   const netStrip = series
     .map((row, idx) => {
       const monthKey = months[idx] || "";
@@ -940,7 +956,7 @@ export async function render(root) {
       if (!plState.legend || plState.legend.outflow === false) return [];
       const total = Number(row?.outflow?.total || 0);
       if (!total) return [];
-      return [{ key: "total", value: total }];
+      return [{ key: "total", value: -total }];
     }
     return [];
   }
@@ -980,8 +996,8 @@ export async function render(root) {
   }
 
   function renderSegment(type, seg) {
-    const yStart = Y(seg.start);
-    const yEnd = Y(seg.end);
+    const yStart = YBar(seg.start);
+    const yEnd = YBar(seg.end);
     const topPct = Math.min(yStart, yEnd) / 10;
     const heightPct = Math.abs(yStart - yEnd) / 10;
     if (heightPct <= 0.05) return "";
@@ -1117,11 +1133,12 @@ export async function render(root) {
         <div class="kpi"><div class="kpi-label" title="Durchschnittliche Amazon-Auszahlungsquote über die sichtbaren Monate.">Sales × Payout (Monat ∅)</div><div class="kpi-value">${fmtEUR(kpis.salesPayoutAvg || 0)}</div></div>
         <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${firstNegativeDisplay}</div></div>
       </div>
-      <div class="vchart" style="--rows:${yTicks.length}; --zero:${zeroPct.toFixed(2)}">
-        <div class="vchart-y">${yTicks.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
+      <div class="vchart" style="--rows:${axisRows}; --zero:${zeroPct.toFixed(2)}">
+        <div class="vchart-y">${yTicksBar.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
+        <div class="vchart-y-right">${yAxisLineHtml}</div>
         <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
           <div class="vchart-stage-inner">
-            <div class="vchart-grid">${yTicks.map(() => "<div class=\"yline\"></div>").join("")}</div>
+            <div class="vchart-grid">${yTicksBar.map(() => "<div class=\"yline\"></div>").join("")}</div>
             <div class="vchart-zero"></div>
             <div class="vchart-bars">
               ${barGroupsHtml}
