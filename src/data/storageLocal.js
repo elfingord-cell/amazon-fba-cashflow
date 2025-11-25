@@ -271,9 +271,15 @@ function computeProductStats(state, skuValue) {
     };
   }
   const last = relevant[0];
-  const qtyValues = relevant.map(rec => Number(rec.units) || 0).filter(v => Number.isFinite(v));
-  const unitPrices = relevant.map(rec => Number(rec.unitCostUsd) || 0).filter(v => Number.isFinite(v));
-  const avg = unitPrices.length ? unitPrices.reduce((a, b) => a + b, 0) / unitPrices.length : null;
+  const qtyValues = relevant
+    .map(rec => Number(rec.units) || 0)
+    .filter(v => Number.isFinite(v));
+  const unitPrices = relevant
+    .map(rec => parseEuro(rec.unitCostUsd))
+    .filter(v => Number.isFinite(v) && v > 0);
+  const avg = unitPrices.length
+    ? unitPrices.reduce((a, b) => a + b, 0) / unitPrices.length
+    : null;
   return {
     lastPoNumber: last.poNumber || last.number || null,
     lastOrderDate: last.orderDate || null,
