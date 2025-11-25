@@ -499,7 +499,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vchart-zero {
   position:absolute; left:0; right:0;
   top:calc(var(--zero,100) * 1%);
-  border-top:2px solid #90A4AE;
+  border-top:3px solid #90A4AE;
   z-index:3;
   pointer-events:none;
 }

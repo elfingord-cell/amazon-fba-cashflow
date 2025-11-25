@@ -863,8 +863,12 @@ export async function render(root) {
   const netLineValues = showNetLine ? closing : [];
 
   const outflowNegTotals = outflowTotals.map(v => -Number(v || 0));
-  const maxCombined = Math.max(0, ...inflowTotals, ...outflowTotals, ...netLineValues, opening);
-  const minCombined = Math.min(0, ...outflowNegTotals, ...netLineValues, opening);
+  const barMax = Math.max(0, ...inflowTotals);
+  const barMin = Math.min(0, ...outflowNegTotals);
+
+  const lineValues = [...netLineValues, opening];
+  const lineMax = Math.max(0, ...lineValues);
+  const lineMin = Math.min(0, ...lineValues);
 
   function buildScale(maxVal, minVal) {
     const steps = 5;
@@ -880,11 +884,38 @@ export async function render(root) {
     return { topVal, bottomVal, spanVal, ticks };
   }
 
-  const { topVal: barTop, bottomVal: barBottom, spanVal: barSpan, ticks: yTicksBar } = buildScale(maxCombined, minCombined);
-  const lineTop = barTop;
-  const lineBottom = barBottom;
-  const lineSpan = barSpan || 1;
-  const yTicksLine = yTicksBar;
+  const { topVal: barTop, bottomVal: barBottom, spanVal: barSpan, ticks: yTicksBar } = buildScale(barMax, barMin);
+  const zeroY = (() => {
+    const val = Number(0);
+    const norm = (barTop - val) / (barSpan || 1);
+    const clamped = Math.max(0, Math.min(1, norm));
+    return clamped * 1000;
+  })();
+
+  const lineHeadroom = 1.2;
+  const linePosMax = lineMax * lineHeadroom;
+  const lineNegMax = Math.abs(lineMin) * lineHeadroom;
+
+  const posStep = linePosMax ? niceStepSize(linePosMax / 4) : 0;
+  const negStep = lineNegMax ? niceStepSize(lineNegMax / 4) : 0;
+  const yTicksLine = [];
+  if (linePosMax && posStep) {
+    for (let v = linePosMax; v > 0; v -= posStep) yTicksLine.push(v);
+  }
+  yTicksLine.push(0);
+  if (lineNegMax && negStep) {
+    for (let v = negStep; v <= lineNegMax + 1e-6; v += negStep) yTicksLine.push(-v);
+  }
+
+  const YLine = v => {
+    const val = Number(v || 0);
+    if (val >= 0) {
+      if (!linePosMax) return zeroY;
+      return zeroY - (val / linePosMax) * zeroY;
+    }
+    if (!lineNegMax) return zeroY;
+    return zeroY + (-val / lineNegMax) * (1000 - zeroY);
+  };
 
   const monthsCount = months.length || 0;
   const groupWidth = 56;
@@ -900,17 +931,11 @@ export async function render(root) {
   };
   const YBar = v => {
     const val = Number(v || 0);
-    const norm = (barTop - val) / barSpan;
+    const norm = (barTop - val) / (barSpan || 1);
     const clamped = Math.max(0, Math.min(1, norm));
     return clamped * 1000;
   };
-  const YLine = v => {
-    const val = Number(v || 0);
-    const norm = (lineTop - val) / lineSpan;
-    const clamped = Math.max(0, Math.min(1, norm));
-    return clamped * 1000;
-  };
-  const zeroPct = Math.max(0, Math.min(100, YBar(0) / 10));
+  const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
 
   const points = showNetLine
     ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${YLine(v)}`).join(" ")
