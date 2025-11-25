@@ -929,11 +929,14 @@ export async function render(root) {
     const safeWidth = chartWidth || 1;
     return (px / safeWidth) * 1000;
   };
+  const posScale = barTop || 1;
+  const negScale = Math.max(1, -barBottom || 1);
   const YBar = v => {
     const val = Number(v || 0);
-    const norm = (barTop - val) / (barSpan || 1);
-    const clamped = Math.max(0, Math.min(1, norm));
-    return clamped * 1000;
+    if (val >= 0) {
+      return zeroY - (val / posScale) * zeroY;
+    }
+    return zeroY + (-val / negScale) * (1000 - zeroY);
   };
   const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
 
