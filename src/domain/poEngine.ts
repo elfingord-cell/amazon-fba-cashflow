@@ -159,8 +159,8 @@ function eustAmount(po: PO, settings: Settings, duty: number | null, freight: nu
   const fx = getFx(po, settings);
   const goodsEur = fx > 0 ? po.goodsValueUsd / fx : po.goodsValueUsd;
   const freightAbs = freight ? Math.abs(freight) : (po.freightEur ?? 0);
-  const dutyAbs = duty ? Math.abs(duty) : 0;
-  const base = goodsEur + freightAbs + dutyAbs;
+  // EUSt-Bemessungsgrundlage: Warenwert + Freight (Zoll nicht enthalten)
+  const base = goodsEur + freightAbs;
   if (base === 0) return null;
   const result = base * (settings.eustRate ?? 0);
   if (result === 0) return null;

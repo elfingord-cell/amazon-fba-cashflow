@@ -1021,7 +1021,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         el("th", {}, ["Label"]),
         el("th", {}, ["%"]),
         el("th", {}, ["Anker"]),
-        el("th", {}, ["Lag"]),
+        el("th", {}, ["Lag (Einheit)"]),
         el("th", {}, ["Datum"]),
         el("th", {}, ["Betrag (€)"]),
         el("th", {}, ["Aktion"]),
@@ -1077,18 +1077,21 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         })(),
       ]),
       el("td", {}, [
-        el("input", {
-          type: "number",
-          value: String(ms.lagDays || 0),
-          dataset: { field: "lag" },
-          oninput: (e) => { ms.lagDays = Number(e.target.value || 0); onChange(); },
-          onblur: (e) => {
-            const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
-            e.target.value = String(next);
-            ms.lagDays = next;
-            onChange();
-          },
-        }),
+        el("div", { class: "lag-field" }, [
+          el("input", {
+            type: "number",
+            value: String(ms.lagDays || 0),
+            dataset: { field: "lag" },
+            oninput: (e) => { ms.lagDays = Number(e.target.value || 0); onChange(); },
+            onblur: (e) => {
+              const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
+              e.target.value = String(next);
+              ms.lagDays = next;
+              onChange();
+            },
+          }),
+          el("span", { class: "muted" }, ["Tage"]),
+        ]),
       ]),
       el("td", { dataset: { role: "ms-date" } }, [dueText]),
       el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
@@ -1150,26 +1153,29 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         })(),
       ]),
       el("td", {}, [
-        autoEvt.type === "vat_refund"
-          ? el("input", {
-              type: "number",
-              min: "0",
-              value: String(lagValue),
-              dataset: { field: "lagMonths" },
-              oninput: (e) => { autoEvt.lagMonths = Number(e.target.value || 0); onChange(); },
-            })
-          : el("input", {
-              type: "number",
-              value: String(lagValue),
-              dataset: { field: "lag" },
-              oninput: (e) => { autoEvt.lagDays = Number(e.target.value || 0); onChange(); },
-              onblur: (e) => {
-                const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
-                e.target.value = String(next);
-                autoEvt.lagDays = next;
-                onChange();
-              },
-            }),
+        el("div", { class: "lag-field" }, [
+          autoEvt.type === "vat_refund"
+            ? el("input", {
+                type: "number",
+                min: "0",
+                value: String(lagValue),
+                dataset: { field: "lagMonths" },
+                oninput: (e) => { autoEvt.lagMonths = Number(e.target.value || 0); onChange(); },
+              })
+            : el("input", {
+                type: "number",
+                value: String(lagValue),
+                dataset: { field: "lag" },
+                oninput: (e) => { autoEvt.lagDays = Number(e.target.value || 0); onChange(); },
+                onblur: (e) => {
+                  const next = Number.isFinite(Number(e.target.value)) ? Number(e.target.value) : 0;
+                  e.target.value = String(next);
+                  autoEvt.lagDays = next;
+                  onChange();
+                },
+              }),
+          el("span", { class: "muted" }, [autoEvt.type === "vat_refund" ? "Monate" : "Tage"]),
+        ]),
       ]),
       el("td", { dataset: { role: "ms-date" } }, [dueText]),
       el("td", { dataset: { role: "ms-amount" } }, [fmtEUR(amount)]),
