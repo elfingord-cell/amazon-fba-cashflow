@@ -44,6 +44,16 @@ function productLabelForList(sku) {
   return `${match.alias || match.sku} (${match.sku})`;
 }
 
+function formatSkuSummary(record) {
+  const items = Array.isArray(record?.items) ? record.items.filter(Boolean) : [];
+  if (!items.length) return productLabelForList(record?.sku);
+  const uniq = Array.from(new Set(items.map(it => (it?.sku || "").trim()).filter(Boolean)));
+  if (!uniq.length) return productLabelForList(record?.sku);
+  const first = productLabelForList(uniq[0]);
+  if (uniq.length === 1) return first;
+  return `${first} +${uniq.length - 1}`;
+}
+
 function parseDE(value) {
   if (value == null) return 0;
   const cleaned = String(value)
@@ -147,7 +157,7 @@ const QUICKFILL_FIELD_MAP = [
   "ddp",
 ];
 
-const QUICKFILL_ARRAY_FIELDS = ["milestones", "autoEvents"];
+const QUICKFILL_ARRAY_FIELDS = ["milestones", "autoEvents", "items"];
 
 const TEMPLATE_FIELD_OPTIONS = [
   { key: "units", label: "Stückzahl" },
@@ -166,6 +176,7 @@ const TEMPLATE_FIELD_OPTIONS = [
   { key: "vatRefundEnabled", label: "EUSt-Erstattung aktiv" },
   { key: "vatRefundLagMonths", label: "EUSt-Lag (Monate)" },
   { key: "ddp", label: "DDP" },
+  { key: "items", label: "Positionen" },
   { key: "milestones", label: "Meilensteine" },
   { key: "autoEvents", label: "Importkosten-Einstellungen" },
 ];
@@ -184,6 +195,13 @@ function cloneAutoEvents(list = []) {
   }));
 }
 
+function cloneItems(list = []) {
+  return list.map(item => ({
+    ...item,
+    id: item.id || `item-${Math.random().toString(36).slice(2, 9)}`,
+  }));
+}
+
 function applyQuickfillSource(baseRecord, source) {
   if (!source) return baseRecord;
   const next = JSON.parse(JSON.stringify(baseRecord));
@@ -198,6 +216,9 @@ function applyQuickfillSource(baseRecord, source) {
   }
   if (source.autoEvents) {
     next.autoEvents = cloneAutoEvents(source.autoEvents);
+  }
+  if (source.items) {
+    next.items = cloneItems(source.items);
   }
   if (source.fxOverride == null && baseRecord.fxOverride != null) {
     next.fxOverride = baseRecord.fxOverride;
@@ -313,19 +334,53 @@ function clampPct(value) {
   return pct;
 }
 
+function ensureItems(record) {
+  if (!record) return [];
+  if (!Array.isArray(record.items) || !record.items.length) {
+    record.items = [
+      {
+        id: `item-${Math.random().toString(36).slice(2, 9)}`,
+        sku: record.sku || "",
+        units: record.units ?? "0",
+        unitCostUsd: record.unitCostUsd ?? "0,00",
+        unitExtraUsd: record.unitExtraUsd ?? "0,00",
+        extraFlatUsd: record.extraFlatUsd ?? "0,00",
+      },
+    ];
+  }
+  record.items = record.items.map(item => ({
+    id: item.id || `item-${Math.random().toString(36).slice(2, 9)}`,
+    sku: item.sku || "",
+    units: item.units ?? "0",
+    unitCostUsd: item.unitCostUsd ?? "0,00",
+    unitExtraUsd: item.unitExtraUsd ?? "0,00",
+    extraFlatUsd: item.extraFlatUsd ?? "0,00",
+  }));
+  return record.items;
+}
+
 function computeGoodsTotals(record, settings = getSettings()) {
-  const unitsRaw = record?.units;
-  const units = Number(
-    typeof unitsRaw === "number"
-      ? unitsRaw
-      : parseDE(unitsRaw)
-  );
-  const unitCost = parseDE(record?.unitCostUsd);
-  const unitExtra = parseDE(record?.unitExtraUsd);
-  const extraFlat = parseDE(record?.extraFlatUsd);
-  const unitCount = Number.isFinite(units) ? units : 0;
-  const rawUsd = (unitCost + unitExtra) * unitCount + extraFlat;
-  const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+  const items = ensureItems(record);
+  let totalUsd = 0;
+  let totalUnits = 0;
+  let unitCost = 0;
+  let unitExtra = 0;
+  let extraFlat = 0;
+  items.forEach((item, idx) => {
+    const units = Number(parseDE(item.units));
+    const unit = parseDE(item.unitCostUsd);
+    const extra = parseDE(item.unitExtraUsd);
+    const flat = parseDE(item.extraFlatUsd);
+    if (idx === 0) {
+      unitCost = unit;
+      unitExtra = extra;
+      extraFlat = flat;
+    }
+    if (Number.isFinite(units) && units > 0) totalUnits += units;
+    const subtotal = (unit + extra) * (Number.isFinite(units) ? units : 0) + flat;
+    if (Number.isFinite(subtotal)) totalUsd += subtotal;
+  });
+  totalUsd = Math.max(0, Math.round(totalUsd * 100) / 100);
   let fxRate = settings?.fxRate || 0;
   if (record && record.fxOverride != null && record.fxOverride !== "") {
     const override = typeof record.fxOverride === "number" ? record.fxOverride : parseDE(record.fxOverride);
@@ -337,7 +392,7 @@ function computeGoodsTotals(record, settings = getSettings()) {
     usd: totalUsd,
     eur: totalEur,
     fxRate,
-    units: Number.isFinite(units) ? units : 0,
+    units: totalUnits,
     unitCost,
     unitExtra,
     extraFlat,
@@ -346,30 +401,31 @@ function computeGoodsTotals(record, settings = getSettings()) {
 
 function normaliseGoodsFields(record, settings = getSettings()) {
   if (!record) return;
-  if (record.unitCostUsd == null) record.unitCostUsd = "0,00";
-  if (record.unitExtraUsd == null) record.unitExtraUsd = "0,00";
-  if (record.units == null) record.units = "0";
-  if (record.extraFlatUsd == null) record.extraFlatUsd = "0,00";
+  ensureItems(record);
+  record.items = record.items.map(item => ({
+    ...item,
+    unitCostUsd: fmtCurrencyInput(item.unitCostUsd ?? "0,00"),
+    unitExtraUsd: fmtCurrencyInput(item.unitExtraUsd ?? "0,00"),
+    units: String(item.units ?? "0"),
+    extraFlatUsd: fmtCurrencyInput(item.extraFlatUsd ?? "0,00"),
+  }));
   if (record.fxOverride != null && record.fxOverride !== "") {
     const override = typeof record.fxOverride === "number" ? record.fxOverride : parseDE(record.fxOverride);
     record.fxOverride = Number.isFinite(override) && override > 0 ? override : null;
   }
 
   const totals = computeGoodsTotals(record, settings);
-  const existingGoods = parseDE(record.goodsEur);
-  if (totals.usd === 0 && existingGoods > 0) {
-    const fxRate = totals.fxRate || settings?.fxRate || 0;
-    const approxUsd = fxRate > 0 ? existingGoods * fxRate : existingGoods;
-    record.unitCostUsd = fmtCurrencyInput(approxUsd);
-    record.unitExtraUsd = "0,00";
-    record.extraFlatUsd = "0,00";
-    record.units = "1";
-  }
-
   const recalculated = computeGoodsTotals(record, settings);
   record.goodsEur = fmtCurrencyInput(recalculated.eur);
   record.goodsUsd = fmtCurrencyInput(recalculated.usd);
   record.goodsValueUsd = recalculated.usd;
+  record.units = String(recalculated.units || "0");
+  record.unitCostUsd = fmtCurrencyInput(record.items[0]?.unitCostUsd ?? "0,00");
+  record.unitExtraUsd = fmtCurrencyInput(record.items[0]?.unitExtraUsd ?? "0,00");
+  record.extraFlatUsd = fmtCurrencyInput(record.items[0]?.extraFlatUsd ?? "0,00");
+  if (!record.sku && record.items[0]?.sku) {
+    record.sku = record.items[0].sku;
+  }
 }
 
 function getSettings() {
@@ -533,10 +589,16 @@ function defaultRecord(config, settings = getSettings()) {
     orderDate: today,
     sku: "",
     supplier: "",
-    unitCostUsd: "0,00",
-    unitExtraUsd: "0,00",
-    units: "0",
-    extraFlatUsd: "0,00",
+    items: [
+      {
+        id: `item-${Math.random().toString(36).slice(2, 9)}`,
+        sku: "",
+        units: "0",
+        unitCostUsd: "0,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      },
+    ],
     goodsEur: "0,00",
     fxOverride: settings.fxRate || null,
     freightEur: "0,00",
@@ -867,10 +929,10 @@ function renderList(container, records, config, onEdit, onDelete) {
     el("tbody", {}, rows.map(rec =>
       el("tr", {}, [
         el("td", {}, [rec[config.numberField] || "—"]),
-        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [productLabelForList(rec.sku)])] : []),
+        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [formatSkuSummary(rec)])] : []),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
         el("td", {}, [formatTimelineSummary(rec)]),
-        el("td", {}, [Number(parseDE(rec.units ?? 0) || 0).toLocaleString("de-DE")]),
+        el("td", {}, [Number(computeGoodsTotals(rec, settings).units || 0).toLocaleString("de-DE")]),
         el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
         el("td", {}, [fmtEUR(parseDE(rec.freightEur || 0))]),
         el("td", {}, [String((rec.milestones || []).length)]),
@@ -884,6 +946,70 @@ function renderList(container, records, config, onEdit, onDelete) {
     )),
   ]);
   container.append(table);
+}
+
+function renderItemsTable(container, record, onChange, dataListId) {
+  if (!container) return;
+  refreshProductCache();
+  ensureItems(record);
+  container.innerHTML = "";
+  const header = el("thead", {}, [
+    el("tr", {}, [
+      el("th", {}, ["SKU"]),
+      el("th", {}, ["Stück"]),
+      el("th", {}, ["Stückkosten (USD)"]),
+      el("th", {}, ["Zusatz/ Stück (USD)"]),
+      el("th", {}, ["Pauschal (USD)"]),
+      el("th", {}, [""])
+    ])
+  ]);
+  const body = el("tbody");
+  const dl = el("datalist", { id: dataListId });
+  productCache.forEach(prod => {
+    dl.append(el("option", { value: prod.sku, label: prod.alias ? `${prod.alias}` : prod.sku }));
+  });
+
+  record.items.forEach(item => {
+    const row = el("tr", { dataset: { itemId: item.id } });
+    const skuInput = el("input", { list: dataListId, value: item.sku || "", placeholder: "SKU" });
+    skuInput.addEventListener("input", () => { item.sku = skuInput.value.trim(); onChange(); });
+
+    const unitsInput = el("input", { type: "number", min: "0", step: "1", value: item.units || "0" });
+    unitsInput.addEventListener("input", () => { item.units = unitsInput.value; onChange(); });
+
+    const unitCostInput = el("input", { inputmode: "decimal", value: fmtCurrencyInput(item.unitCostUsd ?? "0,00"), placeholder: "0,00" });
+    unitCostInput.addEventListener("blur", () => { item.unitCostUsd = fmtCurrencyInput(unitCostInput.value); unitCostInput.value = item.unitCostUsd; onChange(); });
+    unitCostInput.addEventListener("input", () => { item.unitCostUsd = unitCostInput.value; });
+
+    const unitExtraInput = el("input", { inputmode: "decimal", value: fmtCurrencyInput(item.unitExtraUsd ?? "0,00"), placeholder: "0,00" });
+    unitExtraInput.addEventListener("blur", () => { item.unitExtraUsd = fmtCurrencyInput(unitExtraInput.value); unitExtraInput.value = item.unitExtraUsd; onChange(); });
+    unitExtraInput.addEventListener("input", () => { item.unitExtraUsd = unitExtraInput.value; });
+
+    const flatInput = el("input", { inputmode: "decimal", value: fmtCurrencyInput(item.extraFlatUsd ?? "0,00"), placeholder: "0,00" });
+    flatInput.addEventListener("blur", () => { item.extraFlatUsd = fmtCurrencyInput(flatInput.value); flatInput.value = item.extraFlatUsd; onChange(); });
+    flatInput.addEventListener("input", () => { item.extraFlatUsd = flatInput.value; });
+
+    const removeBtn = el("button", { class: "btn danger", type: "button" }, ["✕"]);
+    removeBtn.addEventListener("click", () => {
+      if ((record.items || []).length <= 1) return;
+      record.items = record.items.filter(it => it.id !== item.id);
+      renderItemsTable(container, record, onChange, dataListId);
+      onChange();
+    });
+
+    row.append(
+      el("td", {}, [skuInput]),
+      el("td", {}, [unitsInput]),
+      el("td", {}, [unitCostInput]),
+      el("td", {}, [unitExtraInput]),
+      el("td", {}, [flatInput]),
+      el("td", {}, [removeBtn]),
+    );
+    body.append(row);
+  });
+
+  const table = el("table", { class: "po-items-table" }, [header, body]);
+  container.append(table, dl);
 }
 
 function computeTimeline(record) {
@@ -1245,10 +1371,8 @@ export function renderOrderModule(root, config) {
     list: `${config.slug}-list`,
     number: `${config.slug}-number`,
     orderDate: `${config.slug}-order-date`,
-    unitCost: `${config.slug}-unit-cost`,
-    unitExtra: `${config.slug}-unit-extra`,
-    units: `${config.slug}-units`,
-    extraFlat: `${config.slug}-extra-flat`,
+    items: `${config.slug}-items`,
+    addItem: `${config.slug}-add-item`,
     goodsSummary: `${config.slug}-goods-summary`,
     fxRate: `${config.slug}-fx-rate`,
     freight: `${config.slug}-freight`,
@@ -1331,23 +1455,12 @@ export function renderOrderModule(root, config) {
         </div>
         ` : ``}
       </div>
-      <div class="grid two" style="margin-top:12px">
-        <div>
-          <label>Stückkosten (USD)</label>
-          <input id="${ids.unitCost}" placeholder="z. B. 12,50" inputmode="decimal" />
+      <div class="po-items-card">
+        <div class="po-items-card-header">
+          <h4>Positionen</h4>
+          <button class="btn" type="button" id="${ids.addItem}">Position hinzufügen</button>
         </div>
-        <div>
-          <label>Zusatzkosten je Stück (USD)</label>
-          <input id="${ids.unitExtra}" placeholder="z. B. 0,80" inputmode="decimal" />
-        </div>
-        <div>
-          <label>Stückzahl</label>
-          <input id="${ids.units}" type="number" min="0" step="1" />
-        </div>
-        <div>
-          <label>Zusatzkosten pauschal (USD)</label>
-          <input id="${ids.extraFlat}" placeholder="z. B. 150,00" inputmode="decimal" />
-        </div>
+        <div id="${ids.items}"></div>
       </div>
       <div class="po-goods-summary" id="${ids.goodsSummary}">Summe Warenwert: 0,00 € (0,00 USD)</div>
       <div class="grid two" style="margin-top:12px">
@@ -1431,10 +1544,9 @@ export function renderOrderModule(root, config) {
   const quickStatus = quickfillEnabled ? $(`#${ids.quickStatus}`, root) : null;
   const numberInput = $(`#${ids.number}`, root);
   const orderDateInput = $(`#${ids.orderDate}`, root);
-  const unitCostInput = $(`#${ids.unitCost}`, root);
-  const unitExtraInput = $(`#${ids.unitExtra}`, root);
-  const unitsInput = $(`#${ids.units}`, root);
-  const extraFlatInput = $(`#${ids.extraFlat}`, root);
+  const itemsZone = $(`#${ids.items}`, root);
+  const addItemBtn = $(`#${ids.addItem}`, root);
+  const itemsDataListId = `${ids.items}-dl`;
   const goodsSummary = $(`#${ids.goodsSummary}`, root);
   const fxRateInput = $(`#${ids.fxRate}`, root);
   const freightInput = $(`#${ids.freight}`, root);
@@ -1566,7 +1678,11 @@ export function renderOrderModule(root, config) {
     const supplierLower = supplierValue ? supplierValue.trim().toLowerCase() : null;
     const matches = getAllRecords().filter(rec => {
       const recSku = (rec?.sku || "").trim().toLowerCase();
-      if (!recSku || recSku !== skuLower) return false;
+      const itemMatch = Array.isArray(rec?.items)
+        ? rec.items.some(it => (it?.sku || "").trim().toLowerCase() === skuLower)
+        : false;
+      if (!recSku && !itemMatch) return false;
+      if (recSku && recSku !== skuLower && !itemMatch) return false;
       if (!supplierLower) return true;
       const recSupplier = (rec?.supplier || "").trim().toLowerCase();
       return recSupplier === supplierLower;
@@ -2026,11 +2142,12 @@ export function renderOrderModule(root, config) {
 
   function updateSaveEnabled() {
     const sum = (editing.milestones || []).reduce((acc, row) => acc + clampPct(row.percent || 0), 0);
+    const hasSku = (!quickfillEnabled || (skuInput && skuInput.value.trim() !== "")) || (editing.items || []).some(it => it.sku);
     const ok = (Math.round(sum * 10) / 10 === 100)
       && (numberInput.value.trim() !== "")
       && (computeGoodsTotals(editing, getSettings()).usd > 0)
       && !!orderDateInput.value
-      && (!quickfillEnabled || (skuInput && skuInput.value.trim() !== ""));
+      && hasSku;
     saveBtn.disabled = !ok;
     if (convertBtn) convertBtn.disabled = !ok;
   }
@@ -2052,10 +2169,24 @@ export function renderOrderModule(root, config) {
     }
     editing[config.numberField] = numberInput.value.trim();
     editing.orderDate = orderDateInput.value;
-    editing.unitCostUsd = fmtCurrencyInput(unitCostInput.value);
-    editing.unitExtraUsd = fmtCurrencyInput(unitExtraInput.value);
-    editing.units = unitsInput.value || "0";
-    editing.extraFlatUsd = fmtCurrencyInput(extraFlatInput.value);
+    const domItems = itemsZone ? Array.from(itemsZone.querySelectorAll("[data-item-id]")) : [];
+    const nextItems = [];
+    domItems.forEach(row => {
+      const id = row.dataset.itemId || `item-${Math.random().toString(36).slice(2, 9)}`;
+      const [skuInputEl, unitsEl, unitCostEl, unitExtraEl, flatEl] = row.querySelectorAll("input");
+      nextItems.push({
+        id,
+        sku: skuInputEl?.value?.trim() || "",
+        units: unitsEl?.value || "0",
+        unitCostUsd: fmtCurrencyInput(unitCostEl?.value || "0,00"),
+        unitExtraUsd: fmtCurrencyInput(unitExtraEl?.value || "0,00"),
+        extraFlatUsd: fmtCurrencyInput(flatEl?.value || "0,00"),
+      });
+    });
+    if (nextItems.length) {
+      editing.items = nextItems;
+    }
+    ensureItems(editing);
     const fxOverrideValue = parseDE(fxRateInput?.value ?? "");
     editing.fxOverride = Number.isFinite(fxOverrideValue) && fxOverrideValue > 0 ? fxOverrideValue : null;
     normaliseGoodsFields(editing, settings);
@@ -2106,6 +2237,7 @@ export function renderOrderModule(root, config) {
     editing = JSON.parse(JSON.stringify(record));
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
+    renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
     if (quickfillEnabled) {
       refreshProductCache();
       if (skuInput) {
@@ -2123,10 +2255,6 @@ export function renderOrderModule(root, config) {
     }
     numberInput.value = editing[config.numberField] || "";
     orderDateInput.value = editing.orderDate || new Date().toISOString().slice(0, 10);
-    unitCostInput.value = fmtCurrencyInput(editing.unitCostUsd ?? "0,00");
-    unitExtraInput.value = fmtCurrencyInput(editing.unitExtraUsd ?? "0,00");
-    unitsInput.value = String(editing.units ?? "0");
-    extraFlatInput.value = fmtCurrencyInput(editing.extraFlatUsd ?? "0,00");
     const fxBase = editing.fxOverride ?? settings.fxRate ?? 0;
     if (fxRateInput) fxRateInput.value = fxBase ? fmtFxRate(fxBase) : "";
     updateGoodsSummary(computeGoodsTotals(editing, settings));
@@ -2232,27 +2360,21 @@ export function renderOrderModule(root, config) {
     window.dispatchEvent(new Event("state:changed"));
   }
 
-  unitCostInput.addEventListener("input", onAnyChange);
-  unitCostInput.addEventListener("blur", () => {
-    unitCostInput.value = fmtCurrencyInput(unitCostInput.value);
-    onAnyChange();
-  });
-  unitExtraInput.addEventListener("input", onAnyChange);
-  unitExtraInput.addEventListener("blur", () => {
-    unitExtraInput.value = fmtCurrencyInput(unitExtraInput.value);
-    onAnyChange();
-  });
-  unitsInput.addEventListener("input", onAnyChange);
-  unitsInput.addEventListener("blur", () => {
-    const numeric = Math.max(0, Math.round(Number(unitsInput.value || 0)));
-    unitsInput.value = Number.isFinite(numeric) ? String(numeric) : "0";
-    onAnyChange();
-  });
-  extraFlatInput.addEventListener("input", onAnyChange);
-  extraFlatInput.addEventListener("blur", () => {
-    extraFlatInput.value = fmtCurrencyInput(extraFlatInput.value);
-    onAnyChange();
-  });
+  if (addItemBtn) {
+    addItemBtn.addEventListener("click", () => {
+      ensureItems(editing);
+      editing.items.push({
+        id: `item-${Math.random().toString(36).slice(2, 9)}`,
+        sku: "",
+        units: "0",
+        unitCostUsd: "0,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      });
+      renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
+      onAnyChange();
+    });
+  }
   freightInput.addEventListener("input", onAnyChange);
   freightInput.addEventListener("blur", () => {
     freightInput.value = fmtCurrencyInput(freightInput.value);

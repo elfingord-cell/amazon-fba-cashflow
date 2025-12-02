@@ -223,14 +223,14 @@ function migrateProducts(state) {
   if (Array.isArray(state.pos)) orders.push(...state.pos);
   if (Array.isArray(state.fos)) orders.push(...state.fos);
 
-  for (const order of orders) {
-    const key = productKey(order?.sku);
-    if (!key) continue;
+  const pushProduct = (sku) => {
+    const key = productKey(sku);
+    if (!key) return;
     if (!map.has(key)) {
       const entry = {
         id: `prod-${Math.random().toString(36).slice(2, 9)}`,
-        sku: String(order.sku).trim(),
-        alias: cleanAlias(null, order.sku),
+        sku: String(sku).trim(),
+        alias: cleanAlias(null, sku),
         supplierId: "",
         status: "active",
         tags: [],
@@ -240,6 +240,13 @@ function migrateProducts(state) {
       };
       map.set(key, entry);
       state.products.push(entry);
+    }
+  };
+
+  for (const order of orders) {
+    pushProduct(order?.sku);
+    if (Array.isArray(order?.items)) {
+      order.items.forEach(it => pushProduct(it?.sku));
     }
   }
 }
@@ -255,7 +262,7 @@ function computeProductStats(state, skuValue) {
   };
   const orders = Array.isArray(state.pos) ? state.pos : [];
   const relevant = orders
-    .filter(rec => productKey(rec?.sku) === key)
+    .filter(rec => productKey(rec?.sku) === key || (Array.isArray(rec?.items) && rec.items.some(it => productKey(it?.sku) === key)))
     .sort((a, b) => {
       const da = a?.orderDate || "";
       const db = b?.orderDate || "";
@@ -272,10 +279,14 @@ function computeProductStats(state, skuValue) {
   }
   const last = relevant[0];
   const qtyValues = relevant
-    .map(rec => Number(rec.units) || 0)
+    .flatMap(rec => Array.isArray(rec.items) && rec.items.length
+      ? rec.items.filter(it => productKey(it?.sku) === key).map(it => Number(it.units) || 0)
+      : [Number(rec.units) || 0])
     .filter(v => Number.isFinite(v));
   const unitPrices = relevant
-    .map(rec => parseEuro(rec.unitCostUsd))
+    .flatMap(rec => Array.isArray(rec.items) && rec.items.length
+      ? rec.items.filter(it => productKey(it?.sku) === key).map(it => parseEuro(it.unitCostUsd))
+      : [parseEuro(rec.unitCostUsd)])
     .filter(v => Number.isFinite(v) && v > 0);
   const avg = unitPrices.length
     ? unitPrices.reduce((a, b) => a + b, 0) / unitPrices.length

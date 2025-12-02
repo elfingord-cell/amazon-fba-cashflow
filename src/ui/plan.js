@@ -113,13 +113,31 @@ function clampPercent(v){
 }
 
 function computeGoodsEuro(entry, settings){
-  const units = parseEuro(entry?.units ?? 0);
-  const unitCostUsd = parseEuro(entry?.unitCostUsd ?? 0);
-  const unitExtraUsd = parseEuro(entry?.unitExtraUsd ?? 0);
-  const extraFlatUsd = parseEuro(entry?.extraFlatUsd ?? 0);
-  const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
-  const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
-  const fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
+  const items = Array.isArray(entry?.items) ? entry.items : [];
+  let totalUsd = 0;
+  if (items.length){
+    items.forEach(it => {
+      const units = parseEuro(it?.units ?? 0);
+      const unitCostUsd = parseEuro(it?.unitCostUsd ?? 0);
+      const unitExtraUsd = parseEuro(it?.unitExtraUsd ?? 0);
+      const extraFlatUsd = parseEuro(it?.extraFlatUsd ?? 0);
+      const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
+      const subtotal = Math.max(0, Math.round(rawUsd * 100) / 100);
+      if (Number.isFinite(subtotal)) totalUsd += subtotal;
+    });
+  } else {
+    const units = parseEuro(entry?.units ?? 0);
+    const unitCostUsd = parseEuro(entry?.unitCostUsd ?? 0);
+    const unitExtraUsd = parseEuro(entry?.unitExtraUsd ?? 0);
+    const extraFlatUsd = parseEuro(entry?.extraFlatUsd ?? 0);
+    const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
+    totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+  }
+  let fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
+  if (entry && entry.fxOverride != null && entry.fxOverride !== "") {
+    const override = parseEuro(entry.fxOverride);
+    if (Number.isFinite(override) && override > 0) fxRate = override;
+  }
   if (totalUsd > 0 && fxRate > 0) return Math.round((totalUsd * fxRate) * 100) / 100;
   return parseEuro(entry?.goodsEur || entry?.goodsValueEur || entry?.goodsValueUsd);
 }

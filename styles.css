@@ -115,6 +115,12 @@ thead th{font-size:12px; color:var(--muted); font-weight:700}
 .po-event-preview{margin-top:14px; padding:14px; border:1px solid rgba(15,27,45,.08); border-radius:var(--radius-md); background:rgba(232,247,242,0.6); display:flex; flex-direction:column; gap:8px;}
 .po-event-preview h4{margin:0; font-size:12px; letter-spacing:.4px; text-transform:uppercase; color:var(--muted);}
 .po-goods-summary{margin-top:8px; font-size:13px; font-weight:600; color:var(--ink,#1b2a32);}
+.po-items-card{margin-top:16px; border:1px solid rgba(15,27,45,0.08); border-radius:12px; padding:12px; background:#f8fafc;}
+.po-items-card-header{display:flex; justify-content:space-between; align-items:center; gap:12px;}
+.po-items-card-header h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:.3px; color:var(--muted);}
+.po-items-table input{min-height:36px;}
+.po-items-table td:last-child{width:64px; text-align:right;}
+.po-items-table th:last-child{text-align:right;}
 .po-quickfill{align-items:end; gap:16px; margin-bottom:12px;}
 .po-quickfill-actions{display:flex; flex-direction:column; gap:6px; align-items:flex-end; justify-content:flex-end;}
 .po-quickfill-buttons{display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end;}

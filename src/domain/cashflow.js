@@ -72,13 +72,31 @@ function monthIndex(ym) {
 }
 
 function computeGoodsTotals(row, settings) {
-  const units = parseEuro(row?.units ?? 0);
-  const unitCostUsd = parseEuro(row?.unitCostUsd ?? 0);
-  const unitExtraUsd = parseEuro(row?.unitExtraUsd ?? 0);
-  const extraFlatUsd = parseEuro(row?.extraFlatUsd ?? 0);
-  const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
-  const totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
-  const fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
+  const items = Array.isArray(row?.items) ? row.items : [];
+  let totalUsd = 0;
+  if (items.length) {
+    items.forEach(item => {
+      const units = parseEuro(item?.units ?? 0);
+      const unitCostUsd = parseEuro(item?.unitCostUsd ?? 0);
+      const unitExtraUsd = parseEuro(item?.unitExtraUsd ?? 0);
+      const extraFlatUsd = parseEuro(item?.extraFlatUsd ?? 0);
+      const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
+      const subtotal = Math.max(0, Math.round(rawUsd * 100) / 100);
+      if (Number.isFinite(subtotal)) totalUsd += subtotal;
+    });
+  } else {
+    const units = parseEuro(row?.units ?? 0);
+    const unitCostUsd = parseEuro(row?.unitCostUsd ?? 0);
+    const unitExtraUsd = parseEuro(row?.unitExtraUsd ?? 0);
+    const extraFlatUsd = parseEuro(row?.extraFlatUsd ?? 0);
+    const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
+    totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+  }
+  let fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
+  if (row && row.fxOverride != null && row.fxOverride !== "") {
+    const override = parseEuro(row.fxOverride);
+    if (Number.isFinite(override) && override > 0) fxRate = override;
+  }
   const derivedEur = fxRate > 0 ? Math.round((totalUsd / fxRate) * 100) / 100 : 0;
   const fallbackEur = parseEuro(row?.goodsEur ?? 0);
   return {
