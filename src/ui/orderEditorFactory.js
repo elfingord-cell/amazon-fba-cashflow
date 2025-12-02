@@ -2487,6 +2487,18 @@ export function renderOrderModule(root, config) {
   renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
   refreshQuickfillControls();
   loadForm(defaultRecord(config, getSettings()));
+
+  if (root._orderStateListener) {
+    window.removeEventListener("state:changed", root._orderStateListener);
+  }
+  const handleStateChanged = () => {
+    const freshState = loadState();
+    const settings = getSettings();
+    renderList(listZone, freshState[config.entityKey], config, onEdit, onDelete);
+    if (preview) updatePreview(settings);
+  };
+  root._orderStateListener = handleStateChanged;
+  window.addEventListener("state:changed", handleStateChanged);
 }
 
 export const orderEditorUtils = {
