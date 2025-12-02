@@ -332,6 +332,14 @@ function ensureStatusSection(state){
   return target.status;
 }
 
+function broadcastStateChanged(){
+  try {
+    if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+      window.dispatchEvent(new Event("state:changed"));
+    }
+  } catch {}
+}
+
 let _state = null;
 const listeners = new Set();
 
@@ -424,6 +432,7 @@ export function setAutoManualCheck(enabled){
   if (status.autoManualCheck === next) return;
   status.autoManualCheck = next;
   saveState(state);
+  broadcastStateChanged();
 }
 
 export function setEventManualPaid(eventId, paid){
@@ -437,6 +446,7 @@ export function setEventManualPaid(eventId, paid){
   if (record.manual === next) return;
   record.manual = next;
   saveState(state);
+  broadcastStateChanged();
 }
 
 export function clearEventManualPaid(eventId){
@@ -448,6 +458,7 @@ export function clearEventManualPaid(eventId){
   delete map[eventId].manual;
   if (!Object.keys(map[eventId]).length) delete map[eventId];
   saveState(state);
+  broadcastStateChanged();
 }
 
 export function setEventsManualPaid(eventIds, paid){
@@ -466,7 +477,10 @@ export function setEventsManualPaid(eventIds, paid){
       changed = true;
     }
   }
-  if (changed) saveState(state);
+  if (changed) {
+    saveState(state);
+    broadcastStateChanged();
+  }
 }
 
 export function getProductsSnapshot(){
