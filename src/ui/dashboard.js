@@ -885,17 +885,18 @@ export async function render(root) {
 
   const { topVal: barTop, bottomVal: barBottom, ticks: yTicksBar } = buildScale(barPosMax, barMin);
 
-  const posSpan = Math.max(barPosMax, linePosMaxRaw);
-  const negSpan = Math.abs(lineNegMaxRaw);
-  const headroom = 1.2;
-  const posScaleVal = Math.max(1, posSpan * headroom || 1);
-  const negScaleVal = negSpan > 0 ? negSpan * headroom : 0;
-  const zeroY = (posScaleVal / (posScaleVal + negScaleVal || 1)) * 1000;
+  const linePosSpan = Math.max(0, linePosMaxRaw);
+  const lineNegSpan = Math.abs(lineNegMaxRaw);
+  const lineHeadroom = 1.2;
+  const linePosScale = Math.max(1, linePosSpan * lineHeadroom || 1);
+  const lineNegScale = lineNegSpan > 0 ? lineNegSpan * lineHeadroom : 0;
+  const zeroY = (linePosScale / (linePosScale + lineNegScale || 1)) * 1000;
 
-  const linePosMax = linePosMaxRaw * headroom;
-  const lineNegMax = Math.abs(lineNegMaxRaw) * headroom;
-  const lineAxisPosMax = Math.max(linePosMax, posScaleVal);
-  const lineAxisNegMax = Math.max(lineNegMax, negScaleVal);
+  const lineAxisPosMax = linePosScale;
+  const lineAxisNegMax = lineNegScale;
+
+  const barHeadroom = 1.02;
+  const barScaleVal = barPosMax ? barPosMax * barHeadroom : 1;
 
   const posStep = lineAxisPosMax ? niceStepSize(lineAxisPosMax / 4) : 0;
   const negStep = lineAxisNegMax ? niceStepSize(lineAxisNegMax / 4) : 0;
@@ -911,11 +912,11 @@ export async function render(root) {
   const YLine = v => {
     const val = Number(v || 0);
     if (val >= 0) {
-      if (!posScaleVal) return zeroY;
-      return zeroY - (val / posScaleVal) * zeroY;
+      if (!linePosScale) return zeroY;
+      return zeroY - (val / linePosScale) * zeroY;
     }
-    if (!negScaleVal) return zeroY;
-    return zeroY + (-val / negScaleVal) * (1000 - zeroY);
+    if (!lineNegScale) return zeroY;
+    return zeroY + (-val / lineNegScale) * (1000 - zeroY);
   };
 
   const monthsCount = months.length || 0;
@@ -932,8 +933,8 @@ export async function render(root) {
   };
   const YBar = v => {
     const val = Number(v || 0);
-    if (!posScaleVal) return zeroY;
-    return zeroY - (val / posScaleVal) * zeroY;
+    if (!barScaleVal) return zeroY;
+    return zeroY - (val / barScaleVal) * zeroY;
   };
   const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
 
