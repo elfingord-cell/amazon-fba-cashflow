@@ -871,7 +871,7 @@ export async function render(root) {
 
   function buildScale(maxVal, minVal) {
     const steps = 5;
-    const headroomFactor = 1.2;
+    const headroomFactor = 1.05;
     const paddedTop = maxVal === 0 ? 0 : maxVal * headroomFactor;
     const paddedBottom = minVal === 0 ? 0 : minVal * headroomFactor;
     const range = (paddedTop - paddedBottom) / steps || 1;
