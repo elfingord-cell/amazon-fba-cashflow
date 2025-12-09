@@ -14,55 +14,70 @@ function formatNumberDE(value) {
 
 function parseCsv(text) {
   const lines = text.split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return [];
+  if (!lines.length) return { records: [], warnings: [] };
+  const warnings = [];
   const delimiter = lines[0].includes(';') ? ';' : ',';
-  const header = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
-  const monthPattern = /^\d{4}-\d{2}$/;
+  const rawHeader = lines[0].split(delimiter).map(h => h.trim());
+  const header = rawHeader.map(h => h.toLowerCase());
+  const monthPattern = /^\d{4}[-/]\d{2}$/;
   const hasMonthCols = header.some(h => monthPattern.test(h));
   const records = [];
   if (hasMonthCols) {
-    const monthCols = header.map((h, idx) => (monthPattern.test(h) ? { month: h, idx } : null)).filter(Boolean);
+    const monthCols = header
+      .map((h, idx) => {
+        if (monthPattern.test(h)) {
+          const [y, m] = h.split(/[-/]/);
+          return { month: `${y}-${m}`, idx };
+        }
+        return null;
+      })
+      .filter(Boolean);
     const skuIdx = header.findIndex(h => h === 'sku');
     const aliasIdx = header.findIndex(h => h === 'alias' || h === 'produkt');
+    if (skuIdx === -1) throw new Error("Spalte ‘SKU’ nicht gefunden. Bitte Datei prüfen oder Spalten im Wizard zuordnen.");
+    monthCols.forEach(col => {
+      if (!monthPattern.test(col.month)) warnings.push(`Monatsspalte ${rawHeader[col.idx]} nicht als YYYY-MM erkannt.`);
+    });
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(delimiter);
-      const sku = cols[skuIdx >= 0 ? skuIdx : 0]?.trim();
+      const sku = cols[skuIdx]?.trim();
       if (!sku) continue;
       const alias = aliasIdx >= 0 ? cols[aliasIdx]?.trim() : '';
       monthCols.forEach(col => {
-        const raw = cols[col.idx] || '';
-        const qty = parseInt(raw.replace(/\D/g, ''), 10);
-        if (Number.isNaN(qty)) return;
-        records.push({ sku, alias, month: col.month, qty });
+        const raw = (cols[col.idx] || '').trim();
+        const cleaned = raw.replace(/[\s€]/g, '');
+        const qty = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : Number.parseInt(cleaned, 10);
+        if (!Number.isInteger(qty) || qty < 0) {
+          warnings.push(`Ungültige Menge in Zeile ${i + 1}, Spalte ${rawHeader[col.idx]} → als 0 übernommen.`);
+          records.push({ sku, alias, month: col.month, qty: 0, source: 'ventory' });
+          return;
+        }
+        records.push({ sku, alias, month: col.month, qty, source: 'ventory' });
       });
     }
   } else {
     const skuIdx = header.findIndex(h => h === 'sku');
     const monthIdx = header.findIndex(h => h === 'monat' || h === 'month');
     const qtyIdx = header.findIndex(h => h === 'menge' || h === 'qty' || h === 'quantity');
+    if (skuIdx === -1 || monthIdx === -1 || qtyIdx === -1) {
+      throw new Error('Spalte ‘SKU’ oder Monat/Menge nicht gefunden. Bitte Spalten im Wizard zuordnen.');
+    }
     const priceIdx = header.findIndex(h => h === 'preis' || h === 'price' || h === 'priceeur');
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(delimiter);
-      const sku = cols[skuIdx >= 0 ? skuIdx : 0]?.trim();
-      const monthRaw = cols[monthIdx >= 0 ? monthIdx : 1]?.trim();
-      const qty = parseInt(cols[qtyIdx >= 0 ? qtyIdx : 2] || '0', 10);
-      if (!sku || !monthRaw || Number.isNaN(qty)) continue;
+      const sku = cols[skuIdx]?.trim();
+      const monthRaw = cols[monthIdx]?.trim();
+      const qtyRaw = (cols[qtyIdx] || '').trim();
+      const qty = qtyRaw === '' || qtyRaw === '-' || qtyRaw === '—' ? 0 : Number.parseInt(qtyRaw, 10);
+      if (!sku || !monthRaw) continue;
+      if (!Number.isInteger(qty) || qty < 0) warnings.push(`Ungültige Menge in Zeile ${i + 1} → als 0 übernommen.`);
       const price = priceIdx >= 0 ? parseNumberDE(cols[priceIdx]) : 0;
       const ymMatch = monthRaw.match(/^(\d{4})[-/.](\d{2})/);
       const month = ymMatch ? `${ymMatch[1]}-${ymMatch[2]}` : monthRaw;
-      records.push({ sku, month, qty, priceEur: price });
+      records.push({ sku, month, qty: Number.isInteger(qty) && qty >= 0 ? qty : 0, priceEur: price, source: 'ventory' });
     }
   }
-  return records;
-}
-
-function readAsBinaryString(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => resolve(reader.result);
-    reader.readAsBinaryString(file);
-  });
+  return { records, warnings };
 }
 
 const XLSX_CANDIDATES = [
@@ -94,46 +109,98 @@ async function parseExcelFile(file) {
     XLSX.set_cptable(cpexcel.default);
   }
 
-  // Versuche zuerst den Array-Pfad (schnell, modern), dann eine binäre
-  // Repräsentation für ältere XLS-Dateien oder Browser, die arrayBuffer
-  // nicht sauber an XLSX liefern. Wenn beide Pfade scheitern, versuche
-  // ein manuelles Binary aus einem ArrayBuffer zu erzeugen. Sollte das
-  // XLSX-Modul trotz aller Pfade scheitern, schlagen wir mit einer
-  // klaren Fehlermeldung fehl.
   let workbook;
   let primaryError;
+  let compatibilityTried = false;
   try {
     const buffer = await file.arrayBuffer();
-    workbook = XLSX.read(buffer, { type: 'array', dense: true });
+    workbook = XLSX.read(buffer, { type: 'array', dense: true, cellDates: true });
   } catch (err) {
     primaryError = err;
   }
 
   if (!workbook) {
+    compatibilityTried = true;
     try {
-      const binary = await readAsBinaryString(file);
-      workbook = XLSX.read(binary, { type: 'binary', dense: true });
-    } catch (fallbackErr) {
-      try {
-        const buf = await file.arrayBuffer();
-        const manualBinary = Array.from(new Uint8Array(buf)).map(b => String.fromCharCode(b)).join('');
-        workbook = XLSX.read(manualBinary, { type: 'binary', dense: true });
-      } catch (manualErr) {
-        console.error('Excel-Import fehlgeschlagen', primaryError, fallbackErr, manualErr);
-        throw new Error('Excel-Datei konnte nicht gelesen werden');
-      }
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      const binary = Array.from(bytes).map(b => String.fromCharCode(b)).join('');
+      workbook = XLSX.read(binary, { type: 'binary', dense: true, cellDates: true });
+    } catch (manualErr) {
+      console.error('Excel-Import fehlgeschlagen', primaryError, manualErr);
+      throw new Error('Format .xls erkannt. Erster Leseversuch fehlgeschlagen – Kompatibilitätsmodus wird versucht …');
     }
   }
 
   if (!workbook?.SheetNames?.length) {
     throw new Error('Keine Tabellenblätter gefunden');
   }
-  const sheet = workbook.SheetNames[0];
-  const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheet]);
-  if (!csv.trim()) {
-    throw new Error('Leeres Tabellenblatt');
+
+  let sheetName = workbook.SheetNames[0];
+  const skuSheet = workbook.SheetNames.find(name => {
+    const sheet = workbook.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0, blankrows: false });
+    const headerLower = (rows[0] || []).map(cell => String(cell || '').trim().toLowerCase());
+    return headerLower.includes('sku');
+  });
+  if (skuSheet) sheetName = skuSheet;
+
+  const sheet = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+  if (!rows.length) throw new Error('Keine Daten im Arbeitsblatt gefunden.');
+
+  const headerRaw = rows[0].map(cell => String(cell ?? '').trim());
+  const headerLower = headerRaw.map(h => h.toLowerCase());
+  const skuIdx = headerLower.findIndex(h => h === 'sku');
+  if (skuIdx === -1) throw new Error("Spalte ‘SKU’ nicht gefunden. Bitte Datei prüfen oder Spalten im Wizard zuordnen.");
+
+  const monthCols = headerLower
+    .map((h, idx) => {
+      if (/^\d{4}[-/]\d{2}$/.test(h)) {
+        const [y, m] = h.split(/[-/]/);
+        return { month: `${y}-${m}`, idx };
+      }
+      const asNumber = Number(headerRaw[idx]);
+      if (Number.isFinite(asNumber) && asNumber > 0 && String(headerRaw[idx]).length <= 5) {
+        const base = new Date(Date.UTC(1899, 11, 30));
+        const dt = new Date(base.getTime() + (asNumber - 1) * 24 * 60 * 60 * 1000);
+        const ym = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+        return { month: ym, idx };
+      }
+      return null;
+    })
+    .filter(Boolean);
+
+  if (!monthCols.length) throw new Error('Keine Monatsspalten erkannt. Erlaubt: YYYY-MM oder Excel-Datum.');
+
+  const aliasIdx = headerLower.findIndex(h => h === 'alias' || h === 'produktname');
+  const warnings = [];
+  const records = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+    const sku = (row[skuIdx] || '').toString().trim();
+    if (!sku) continue;
+    const alias = aliasIdx >= 0 ? (row[aliasIdx] || '').toString().trim() : '';
+    monthCols.forEach(col => {
+      const raw = row[col.idx];
+      const cleaned = raw == null ? '' : raw.toString().trim();
+      const qty = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : Number.parseInt(cleaned, 10);
+      if (!Number.isInteger(qty) || qty < 0) {
+        warnings.push(`Ungültige Menge in Zeile ${i + 1}, Spalte ${headerRaw[col.idx]} → als 0 übernommen.`);
+        records.push({ sku, alias, month: col.month, qty: 0, source: 'ventory' });
+        return;
+      }
+      records.push({ sku, alias, month: col.month, qty, source: 'ventory' });
+    });
   }
-  return parseCsv(csv);
+
+  if (compatibilityTried && !records.length) {
+    throw new Error('Excel-Datei konnte nicht gelesen werden');
+  }
+
+  return { records, warnings };
 }
 
 function renderTable(el, state) {
@@ -244,30 +311,31 @@ function render(el) {
     const file = ev.target.files?.[0];
     if (!file) return;
     const lower = file.name.toLowerCase();
-    let records = [];
+    let parsed = { records: [], warnings: [] };
     try {
       if (lower.endsWith('.csv')) {
         const text = await file.text();
-        records = parseCsv(String(text));
+        parsed = parseCsv(String(text));
       } else if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) {
-        records = await parseExcelFile(file);
+        parsed = await parseExcelFile(file);
       } else {
         alert('Bitte CSV, XLS oder XLSX hochladen.');
         return;
       }
     } catch (err) {
       console.error(err);
-      alert('Datei konnte nicht gelesen werden. Bitte erneut versuchen.');
+      const msg = err?.message || 'Datei konnte nicht gelesen werden. Bitte erneut versuchen.';
+      alert(msg);
       return;
     }
-    if (!records.length) {
+    if (!parsed.records.length) {
       alert('Keine gültigen Zeilen gefunden.');
       return;
     }
     const st = loadState();
     ensureForecastContainers(st);
     const map = new Map();
-    records.forEach(rec => {
+    parsed.records.forEach(rec => {
       const key = `${rec.sku}__${rec.month}`;
       const next = { sku: rec.sku, alias: rec.alias, month: rec.month, qty: Number(rec.qty || 0) || 0, priceEur: rec.priceEur || 0, source: 'ventory', importId: Date.now() };
       map.set(key, next);
@@ -275,6 +343,9 @@ function render(el) {
     const existing = st.forecast.items.filter(it => !map.has(`${it.sku}__${it.month}`));
     st.forecast.items = [...existing, ...map.values()];
     saveState(st);
+    if (parsed.warnings?.length) {
+      alert(parsed.warnings.slice(0, 5).join('\n'));
+    }
     render(el);
   });
 }
