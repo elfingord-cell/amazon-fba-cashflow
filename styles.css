@@ -610,3 +610,10 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vat-row.vat-footer {background:#eef2f6; font-weight:700;}
 .vat-row .bold {font-weight:700;}
 .vat-row .mono {font-variant-numeric:tabular-nums;}
+
+/* === Forecast Upload === */
+.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:8px; overflow-x:auto;}
+.forecast-table {min-width:100%;}
+.forecast-table .table-row {display:grid; grid-template-columns:140px 180px repeat(auto-fit, minmax(80px, 1fr)); gap:4px; align-items:center;}
+.forecast-table .cell {padding:6px 8px; font-size:13px; white-space:nowrap;}
+.forecast-table .cell input {width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;}

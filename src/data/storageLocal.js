@@ -62,6 +62,12 @@ const defaults = {
     { name: "Sonstiges", isGrossInput: true, vatRate: "19", reverseCharge: false },
   ],
   vatPreviewMonths: {},
+  forecast: {
+    items: [],
+    settings: {
+      useForecast: false,
+    },
+  },
   status: {
     autoManualCheck: false,
     events: {},
@@ -106,6 +112,19 @@ function ensureVatData(state) {
 
   if (!state.vatPreviewMonths || typeof state.vatPreviewMonths !== "object") {
     state.vatPreviewMonths = {};
+  }
+}
+
+function ensureForecast(state) {
+  if (!state) return;
+  if (!state.forecast || typeof state.forecast !== "object") {
+    state.forecast = structuredClone(defaults.forecast);
+  }
+  if (!Array.isArray(state.forecast.items)) state.forecast.items = [];
+  if (!state.forecast.settings || typeof state.forecast.settings !== "object") {
+    state.forecast.settings = { useForecast: false };
+  } else {
+    state.forecast.settings.useForecast = Boolean(state.forecast.settings.useForecast);
   }
 }
 
@@ -393,6 +412,7 @@ export function createEmptyState(){
   ensurePoTemplates(clone);
   ensureProducts(clone);
   ensureVatData(clone);
+  ensureForecast(clone);
   return clone;
 }
 
@@ -409,6 +429,7 @@ export function loadState(){
   ensurePoTemplates(_state);
   ensureProducts(_state);
   ensureVatData(_state);
+  ensureForecast(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
   return _state;
@@ -421,6 +442,7 @@ export function saveState(s){
   ensurePoTemplates(_state);
   ensureProducts(_state);
   ensureVatData(_state);
+  ensureForecast(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -454,6 +476,7 @@ export function importStateFile(file, cb){
       const json = JSON.parse(reader.result || '{}');
       ensureStatusSection(json);
       ensureFixcostContainers(json);
+      ensureForecast(json);
       migrateLegacyOutgoings(json);
       cb(json);
     } catch (err) {

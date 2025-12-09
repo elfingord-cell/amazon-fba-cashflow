@@ -690,16 +690,43 @@ export function computeSeries(state) {
     pushEntry(entry.month, baseEntry(entry, { auto: entry.auto, autoEligible: entry.autoEligible }));
   });
 
-  // Inflows
+  const forecastEnabled = Boolean(s?.forecast?.settings?.useForecast);
+  const forecastMap = {};
+  if (forecastEnabled && Array.isArray(s?.forecast?.items)) {
+    s.forecast.items.forEach(item => {
+      if (!item || !item.month || !item.sku) return;
+      const month = item.month;
+      if (!bucket[month]) return;
+      const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
+      const price = parseEuro(item.priceEur ?? item.price ?? 0);
+      const revenue = qty * price;
+      forecastMap[month] = (forecastMap[month] || 0) + revenue;
+    });
+  }
+
+  const payoutPctMap = {};
   (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
-    const m = row.month; if (!bucket[m]) return;
-    const amt = parseEuro(row.revenueEur) * (parsePct(row.payoutPct) / 100);
+    if (!row || !row.month) return;
+    payoutPctMap[row.month] = row.payoutPct;
+  });
+
+  const manualRevenue = {};
+  (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
+    if (!row || !row.month) return;
+    manualRevenue[row.month] = parseEuro(row.revenueEur);
+  });
+
+  Object.keys(bucket).forEach(m => {
+    const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
+    if (typeof revenue === 'undefined') return;
+    const payoutPct = parsePct(payoutPctMap[m] || 0);
+    const amt = revenue * (payoutPct / 100);
     const date = monthEndFromKey(m);
     pushEntry(m, baseEntry({
       id: `sales-${m}`,
       direction: amt >= 0 ? 'in' : 'out',
       amount: Math.abs(amt),
-      label: 'Amazon Payout',
+      label: forecastEnabled ? 'Amazon Payout (Prognose)' : 'Amazon Payout',
       month: m,
       date: isoDate(date),
       kind: 'sales-payout',

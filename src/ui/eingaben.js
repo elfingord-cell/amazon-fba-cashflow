@@ -87,6 +87,7 @@ export async function render(root) {
 
     <section class="card">
       <h3>Umsätze × Payout</h3>
+      <p class="muted">Optional können Umsätze aus der <a href="#forecast">Absatzprognose</a> übernommen werden.</p>
       <table class="table">
         <thead><tr><th>Monat</th><th>Umsatz (€)</th><th>Payout (%)</th><th></th></tr></thead>
         <tbody id="income-rows"></tbody>
