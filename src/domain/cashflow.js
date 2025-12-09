@@ -92,11 +92,10 @@ function computeGoodsTotals(row, settings) {
     const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
     totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
   }
-  let fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
-  if (row && row.fxOverride != null && row.fxOverride !== "") {
-    const override = parseEuro(row.fxOverride);
-    if (Number.isFinite(override) && override > 0) fxRate = override;
-  }
+  const override = parseEuro(row?.fxOverride ?? 0);
+  const fxRate = (Number.isFinite(override) && override > 0)
+    ? override
+    : (parseEuro(settings?.fxRate ?? 0) || 0);
   const derivedEur = fxRate > 0 ? Math.round((totalUsd / fxRate) * 100) / 100 : 0;
   const fallbackEur = parseEuro(row?.goodsEur ?? 0);
   return {
