@@ -113,6 +113,10 @@ function formatDateLabel(iso) {
 function ensureSelection(months) {
   const available = Array.isArray(months) ? months : [];
   pruneCollapsed(available);
+  if (plState.allowEmptySelection && (!plState.selectedMonths || plState.selectedMonths.length === 0)) {
+    plState.selectedMonths = [];
+    return;
+  }
   const previous = Array.isArray(plState.selectedMonths)
     ? plState.selectedMonths.filter(m => available.includes(m))
     : [];

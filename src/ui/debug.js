@@ -1,4 +1,4 @@
-import { createEmptyState, saveState } from "../data/storageLocal.js";
+import { createEmptyState, saveState, loadState } from "../data/storageLocal.js";
 import { orderEditorUtils } from "./orderEditorFactory.js";
 
 function buildDemoState(){
@@ -540,11 +540,14 @@ export async function render(root){
       <div class="toolbar" style="display:flex; gap:12px; flex-wrap:wrap; margin-top:16px;">
         <button class="btn" id="seed">Testdaten &amp; POs laden</button>
         <button class="btn danger" id="wipe">Alle Daten löschen</button>
+        <button class="btn secondary" id="undo" disabled>Letzten Import rückgängig</button>
       </div>
       <div id="status" class="muted" style="margin-top:12px"></div>
     </section>`;
 
   const status = root.querySelector("#status");
+  const undoBtn = root.querySelector("#undo");
+  let lastSnapshot = null;
 
   function updateStatus(msg){
     status.textContent = msg;
@@ -552,11 +555,31 @@ export async function render(root){
     setTimeout(()=>{ if (status.textContent === msg) status.textContent = ""; }, 2500);
   }
 
+  function hasExistingData(state){
+    if (!state) return false;
+    const keys = ["pos","fos","incomings","extras","fixcosts","dividends","products"];
+    return keys.some(key => Array.isArray(state[key]) && state[key].length);
+  }
+
+  function updateUndoState(){
+    if (!undoBtn) return;
+    undoBtn.disabled = !lastSnapshot;
+  }
+
   root.querySelector("#seed").addEventListener("click", ()=>{
+    const current = loadState();
+    if (hasExistingData(current)) {
+      const proceed = window.confirm("Daten vorhanden – überschreiben?");
+      if (!proceed) return;
+      lastSnapshot = current;
+    } else {
+      lastSnapshot = null;
+    }
     const demoState = buildDemoState();
     saveState(demoState);
     window.dispatchEvent(new Event("state:changed"));
     updateStatus("Testdaten wurden geladen.");
+    updateUndoState();
   });
 
   root.querySelector("#wipe").addEventListener("click", ()=>{
@@ -565,4 +588,17 @@ export async function render(root){
     window.dispatchEvent(new Event("state:changed"));
     updateStatus("Alle Daten wurden zurückgesetzt.");
   });
+
+  if (undoBtn) {
+    undoBtn.addEventListener("click", ()=>{
+      if (!lastSnapshot) return;
+      saveState(lastSnapshot);
+      window.dispatchEvent(new Event("state:changed"));
+      updateStatus("Letzter Import wurde rückgängig gemacht.");
+      lastSnapshot = null;
+      updateUndoState();
+    });
+  }
+
+  updateUndoState();
 }

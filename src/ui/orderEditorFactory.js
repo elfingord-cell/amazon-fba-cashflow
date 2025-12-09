@@ -55,18 +55,19 @@ function formatSkuSummary(record) {
 }
 
 function parseDE(value) {
-  if (value == null) return 0;
+  if (value == null) return NaN;
   const cleaned = String(value)
     .trim()
     .replace(/\s/g, "")
     .replace(/[^0-9,.-]+/g, "");
+  if (!cleaned) return NaN;
   const parts = cleaned.split(",");
   let normalised = parts
     .map((segment, idx) => (idx === parts.length - 1 ? segment : segment.replace(/\./g, "")))
     .join(".");
   normalised = normalised.replace(/\.(?=\d{3}(?:\.|$))/g, "");
   const num = Number(normalised);
-  return Number.isFinite(num) ? num : 0;
+  return Number.isFinite(num) ? num : NaN;
 }
 
 function fmtEUR(value) {
@@ -74,7 +75,11 @@ function fmtEUR(value) {
 }
 
 function fmtCurrencyInput(value) {
-  return Number(parseDE(value) || 0).toLocaleString("de-DE", {
+  const raw = value == null ? "" : String(value);
+  const parsed = parseDE(raw);
+  if (!raw.trim()) return "";
+  if (!Number.isFinite(parsed)) return raw;
+  return Number(parsed).toLocaleString("de-DE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -122,6 +127,21 @@ function fmtDateDE(input) {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+function parseDeDate(value) {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(trimmed);
+  if (!match) return null;
+  const [_, dd, mm, yyyy] = match;
+  const y = Number(yyyy);
+  const m = Number(mm);
+  const d = Number(dd);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
 }
 
 function parseISOToDate(iso) {
@@ -367,17 +387,21 @@ function computeGoodsTotals(record, settings = getSettings()) {
   let unitExtra = 0;
   let extraFlat = 0;
   items.forEach((item, idx) => {
-    const units = Number(parseDE(item.units));
-    const unit = parseDE(item.unitCostUsd);
-    const extra = parseDE(item.unitExtraUsd);
-    const flat = parseDE(item.extraFlatUsd);
+    const unitsRaw = parseDE(item.units);
+    const unitRaw = parseDE(item.unitCostUsd);
+    const extraRaw = parseDE(item.unitExtraUsd);
+    const flatRaw = parseDE(item.extraFlatUsd);
+    const units = Number.isFinite(unitsRaw) ? unitsRaw : 0;
+    const unit = Number.isFinite(unitRaw) ? unitRaw : 0;
+    const extra = Number.isFinite(extraRaw) ? extraRaw : 0;
+    const flat = Number.isFinite(flatRaw) ? flatRaw : 0;
     if (idx === 0) {
       unitCost = unit;
       unitExtra = extra;
       extraFlat = flat;
     }
-    if (Number.isFinite(units) && units > 0) totalUnits += units;
-    const subtotal = (unit + extra) * (Number.isFinite(units) ? units : 0) + flat;
+    if (units > 0) totalUnits += units;
+    const subtotal = (unit + extra) * units + flat;
     if (Number.isFinite(subtotal)) totalUsd += subtotal;
   });
   totalUsd = Math.max(0, Math.round(totalUsd * 100) / 100);
@@ -1371,6 +1395,9 @@ export function renderOrderModule(root, config) {
     list: `${config.slug}-list`,
     number: `${config.slug}-number`,
     orderDate: `${config.slug}-order-date`,
+    orderDateDisplay: `${config.slug}-order-date-display`,
+    orderDatePicker: `${config.slug}-order-date-picker`,
+    orderDateError: `${config.slug}-order-date-error`,
     items: `${config.slug}-items`,
     addItem: `${config.slug}-add-item`,
     goodsSummary: `${config.slug}-goods-summary`,
@@ -1393,6 +1420,7 @@ export function renderOrderModule(root, config) {
     save: `${config.slug}-save`,
     create: `${config.slug}-create`,
     remove: `${config.slug}-remove`,
+    cancel: `${config.slug}-cancel`,
   };
   if (quickfillEnabled) {
     Object.assign(ids, {
@@ -1446,7 +1474,17 @@ export function renderOrderModule(root, config) {
         </div>
         <div>
           <label>Bestelldatum</label>
-          <input id="${ids.orderDate}" type="date" />
+          <div class="po-date-picker">
+            <input
+              id="${ids.orderDateDisplay}"
+              placeholder="TT.MM.JJJJ"
+              inputmode="numeric"
+              aria-describedby="${ids.orderDateError}"
+            />
+            <button type="button" class="btn tertiary" id="${ids.orderDate}-picker-btn" aria-label="Datum auswählen">📅</button>
+            <input id="${ids.orderDate}" type="date" aria-hidden="true" tabindex="-1" class="sr-only" />
+          </div>
+          <div id="${ids.orderDateError}" class="form-error" role="alert"></div>
         </div>
         ${quickfillEnabled ? `
         <div>
@@ -1522,11 +1560,14 @@ export function renderOrderModule(root, config) {
         <div id="${ids.timeline}" class="po-timeline-track-wrapper"></div>
       </div>
       <div id="${ids.msZone}" style="margin-top:10px"></div>
-      <div style="display:flex; gap:8px; margin-top:10px">
-        <button class="btn" id="${ids.save}">Speichern</button>
-        <button class="btn" id="${ids.create}">${config.newButtonLabel}</button>
-        ${config.convertTo ? `<button class="btn secondary" id="${ids.convert}">${config.convertTo.buttonLabel || "In PO umwandeln"}</button>` : ""}
-        <button class="btn danger" id="${ids.remove}">Löschen</button>
+      <div class="po-sticky-footer">
+        <div class="po-sticky-actions">
+          <button class="btn primary" id="${ids.save}">Speichern</button>
+          <button class="btn" id="${ids.cancel}">Abbrechen</button>
+          <button class="btn" id="${ids.create}">${config.newButtonLabel}</button>
+          ${config.convertTo ? `<button class="btn secondary" id="${ids.convert}">${config.convertTo.buttonLabel || "In PO umwandeln"}</button>` : ""}
+          <button class="btn danger" id="${ids.remove}">Löschen</button>
+        </div>
       </div>
       <div id="${ids.preview}" class="po-event-preview"></div>
     </section>
@@ -1544,6 +1585,9 @@ export function renderOrderModule(root, config) {
   const quickStatus = quickfillEnabled ? $(`#${ids.quickStatus}`, root) : null;
   const numberInput = $(`#${ids.number}`, root);
   const orderDateInput = $(`#${ids.orderDate}`, root);
+  const orderDateDisplay = $(`#${ids.orderDateDisplay}`, root);
+  const orderDateError = $(`#${ids.orderDateError}`, root);
+  const orderDatePickerBtn = $(`#${ids.orderDate}-picker-btn`, root);
   const itemsZone = $(`#${ids.items}`, root);
   const addItemBtn = $(`#${ids.addItem}`, root);
   const itemsDataListId = `${ids.items}-dl`;
@@ -1564,12 +1608,14 @@ export function renderOrderModule(root, config) {
   const timelineSummary = $(`#${ids.timelineSummary}`, root);
   const msZone = $(`#${ids.msZone}`, root);
   const saveBtn = $(`#${ids.save}`, root);
+  const cancelBtn = $(`#${ids.cancel}`, root);
   const createBtn = $(`#${ids.create}`, root);
   const deleteBtn = $(`#${ids.remove}`, root);
   const preview = $(`#${ids.preview}`, root);
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
   let editing = defaultRecord(config, getSettings());
+  let lastLoaded = JSON.parse(JSON.stringify(editing));
 
   function formatProductOption(product) {
     if (!product) return "";
@@ -1645,6 +1691,23 @@ export function renderOrderModule(root, config) {
   function setQuickStatus(message) {
     if (!quickStatus) return;
     quickStatus.textContent = message || "";
+  }
+
+  function showToast(message) {
+    if (quickStatus) {
+      quickStatus.textContent = message;
+      return;
+    }
+    let toast = document.getElementById(`${config.slug}-toast`);
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = `${config.slug}-toast`;
+      toast.className = "po-toast";
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.hidden = false;
+    setTimeout(() => { toast.hidden = true; }, 2000);
   }
 
   function getCurrentState() {
@@ -2164,7 +2227,10 @@ export function renderOrderModule(root, config) {
       editing.supplier = supplierInput ? supplierInput.value.trim() : "";
     }
     editing[config.numberField] = numberInput.value.trim();
-    editing.orderDate = orderDateInput.value;
+    const parsedDisplay = parseDeDate(orderDateDisplay?.value || "");
+    const isoFromDisplay = parsedDisplay ? formatDateISO(parsedDisplay) : null;
+    const isoFromPicker = orderDateInput?.value || null;
+    editing.orderDate = isoFromDisplay || isoFromPicker || editing.orderDate;
     const domItems = itemsZone ? Array.from(itemsZone.querySelectorAll("[data-item-id]")) : [];
     const nextItems = [];
     domItems.forEach(row => {
@@ -2228,8 +2294,31 @@ export function renderOrderModule(root, config) {
     updateSaveEnabled();
   }
 
+  function updateOrderDateFields(iso) {
+    const safeIso = iso || new Date().toISOString().slice(0, 10);
+    if (orderDateInput) orderDateInput.value = safeIso;
+    if (orderDateDisplay) orderDateDisplay.value = fmtDateDE(safeIso);
+    if (orderDateError) orderDateError.textContent = "";
+  }
+
+  function validateOrderDate(showError = false) {
+    const parsed = parseDeDate(orderDateDisplay?.value || "") || parseISOToDate(orderDateInput?.value || "");
+    if (!parsed) {
+      if (orderDateError && showError) {
+        orderDateError.textContent = "Bitte Datum im Format TT.MM.JJJJ eingeben";
+      }
+      return null;
+    }
+    if (orderDateError) orderDateError.textContent = "";
+    const isoVal = formatDateISO(parsed);
+    if (orderDateInput) orderDateInput.value = isoVal;
+    if (orderDateDisplay) orderDateDisplay.value = fmtDateDE(isoVal);
+    return isoVal;
+  }
+
   function loadForm(record) {
     const settings = getSettings();
+    lastLoaded = JSON.parse(JSON.stringify(record));
     editing = JSON.parse(JSON.stringify(record));
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
@@ -2250,7 +2339,7 @@ export function renderOrderModule(root, config) {
       refreshQuickfillControls();
     }
     numberInput.value = editing[config.numberField] || "";
-    orderDateInput.value = editing.orderDate || new Date().toISOString().slice(0, 10);
+    updateOrderDateFields(editing.orderDate || new Date().toISOString().slice(0, 10));
     const fxBase = editing.fxOverride ?? settings.fxRate ?? 0;
     if (fxRateInput) fxRateInput.value = fxBase ? fmtFxRate(fxBase) : "";
     updateGoodsSummary(computeGoodsTotals(editing, settings));
@@ -2272,6 +2361,11 @@ export function renderOrderModule(root, config) {
   }
 
   function saveRecord() {
+    const isoDate = validateOrderDate(true);
+    if (!isoDate) {
+      if (orderDateDisplay) orderDateDisplay.focus();
+      return;
+    }
     const settings = getSettings();
     syncEditingFromForm(settings);
     const st = loadState();
@@ -2288,6 +2382,7 @@ export function renderOrderModule(root, config) {
       recordRecentProduct(editing.sku);
     }
     window.dispatchEvent(new Event("state:changed"));
+    showToast(`${config.entityLabel || "PO"} gespeichert`);
   }
 
   function convertRecord() {
@@ -2369,6 +2464,27 @@ export function renderOrderModule(root, config) {
       });
       renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
       onAnyChange();
+    });
+  }
+  if (orderDateDisplay) {
+    orderDateDisplay.addEventListener("blur", () => validateOrderDate(true));
+    orderDateDisplay.addEventListener("input", () => {
+      if (orderDateError) orderDateError.textContent = "";
+    });
+  }
+  if (orderDateInput) {
+    orderDateInput.addEventListener("change", () => {
+      updateOrderDateFields(orderDateInput.value);
+      onAnyChange();
+    });
+  }
+  if (orderDatePickerBtn && orderDateInput) {
+    orderDatePickerBtn.addEventListener("click", () => {
+      if (orderDateInput.showPicker) {
+        orderDateInput.showPicker();
+      } else {
+        orderDateInput.focus();
+      }
     });
   }
   freightInput.addEventListener("input", onAnyChange);
@@ -2477,12 +2593,25 @@ export function renderOrderModule(root, config) {
     templateSaveBtn.addEventListener("click", openTemplateModal);
   }
   numberInput.addEventListener("input", onAnyChange);
-  orderDateInput.addEventListener("input", onAnyChange);
+  if (orderDateDisplay) orderDateDisplay.addEventListener("input", onAnyChange);
 
   saveBtn.addEventListener("click", saveRecord);
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", () => {
+      loadForm(lastLoaded || editing);
+    });
+  }
   createBtn.addEventListener("click", () => loadForm(defaultRecord(config, getSettings())));
   deleteBtn.addEventListener("click", () => onDelete(editing));
   if (convertBtn) convertBtn.addEventListener("click", convertRecord);
+
+  const shortcutHandler = (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
+      ev.preventDefault();
+      saveRecord();
+    }
+  };
+  window.addEventListener("keydown", shortcutHandler);
 
   renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
   refreshQuickfillControls();

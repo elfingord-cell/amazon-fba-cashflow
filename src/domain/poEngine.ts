@@ -40,7 +40,7 @@ export type Settings = {
 export type EventRow = {
   key: string;
   date: string;
-  type: "PO" | "FREIGHT" | "DUTY" | "EUST" | "VAT_REFUND";
+  type: "PO" | "FREIGHT" | "DUTY" | "EUST" | "VAT_REFUND" | "FX";
   label: string;
   poId: string;
   poNo: string;
@@ -107,7 +107,11 @@ function computeAnchors(po: PO): Record<Anchor, Date> {
   };
 }
 
-function milestoneAmount(po: PO, settings: Settings, milestone: Milestone): { amount: number; srcCurrency?: "USD" | "EUR"; srcAmount?: number } {
+function milestoneAmount(
+  po: PO,
+  settings: Settings,
+  milestone: Milestone,
+): { amount: number; fee?: number; srcCurrency?: "USD" | "EUR"; srcAmount?: number } {
   const percent = milestone.percent ?? 0;
   const ratio = percent / 100;
   if (milestone.currency === "EUR" && typeof milestone.valueEur === "number") {
@@ -120,9 +124,12 @@ function milestoneAmount(po: PO, settings: Settings, milestone: Milestone): { am
 
   const usdAmount = po.goodsValueUsd * ratio;
   const fx = getFx(po, settings);
-  const eur = usdToEur(usdAmount, fx, settings.fxFeePct ?? 0);
+  const baseEur = usdToEur(usdAmount, fx, 0);
+  const feePct = settings.fxFeePct ?? 0;
+  const fee = baseEur * (feePct / 100);
   return {
-    amount: -round2(eur),
+    amount: -round2(baseEur),
+    fee: feePct ? -round2(fee) : 0,
     srcCurrency: "USD",
     srcAmount: round2(usdAmount),
   };
@@ -162,7 +169,9 @@ function eustAmount(po: PO, settings: Settings, duty: number | null, freight: nu
   // EUSt-Bemessungsgrundlage: Warenwert + Freight (Zoll nicht enthalten)
   const base = goodsEur + freightAbs;
   if (base === 0) return null;
-  const result = base * (settings.eustRate ?? 0);
+  const rawRate = (settings as any).eustRate ?? (settings as any).eustRatePct ?? 0;
+  const rate = rawRate > 1 ? rawRate / 100 : rawRate;
+  const result = base * rate;
   if (result === 0) return null;
   return -round2(result);
 }
@@ -183,7 +192,7 @@ export function expandPO(po: PO, settings: Settings): EventRow[] {
     const anchorDate = anchors[milestone.anchor];
     if (!anchorDate) continue;
     const dueDate = addDays(anchorDate, milestone.lagDays ?? 0);
-    const { amount, srcCurrency, srcAmount } = milestoneAmount(po, settings, milestone);
+    const { amount, srcCurrency, srcAmount, fee } = milestoneAmount(po, settings, milestone);
     const date = iso(dueDate);
     events.push({
       key: [date, "PO", po.id, milestone.id].join("|"),
@@ -196,6 +205,19 @@ export function expandPO(po: PO, settings: Settings): EventRow[] {
       srcCurrency,
       srcAmount,
     });
+    if (fee && fee !== 0) {
+      events.push({
+        key: [date, "FX", po.id, milestone.id].join("|"),
+        date,
+        type: "FX" as any,
+        label: `${po.poNo} – FX-Gebühr`,
+        poId: po.id,
+        poNo: po.poNo,
+        amountEur: fee,
+        srcCurrency: "EUR",
+        srcAmount: Math.abs(fee),
+      });
+    }
   }
 
   const eta = anchors.ETA;
@@ -207,7 +229,7 @@ export function expandPO(po: PO, settings: Settings): EventRow[] {
       key: [freightDate, "FREIGHT", po.id].join("|"),
       date: freightDate,
       type: "FREIGHT",
-      label: `${po.poNo} – Freight`,
+      label: `${po.poNo} – Fracht`,
       poId: po.id,
       poNo: po.poNo,
       amountEur: freight,
@@ -223,7 +245,7 @@ export function expandPO(po: PO, settings: Settings): EventRow[] {
       key: [dutyDate, "DUTY", po.id].join("|"),
       date: dutyDate,
       type: "DUTY",
-      label: `${po.poNo} – Duty`,
+      label: `${po.poNo} – Zoll`,
       poId: po.id,
       poNo: po.poNo,
       amountEur: duty,
@@ -254,7 +276,7 @@ export function expandPO(po: PO, settings: Settings): EventRow[] {
         key: [refundIso, "VAT_REFUND", po.id].join("|"),
         date: refundIso,
         type: "VAT_REFUND",
-        label: `${po.poNo} – VAT Refund`,
+        label: `${po.poNo} – EUSt-Erstattung`,
         poId: po.id,
         poNo: po.poNo,
         amountEur: Math.abs(eust),
@@ -395,11 +417,57 @@ test("expandPO creates expected events", () => {
   assert.deepStrictEqual(markers, [
     "2025-02-21:PO",
     "2025-04-22:PO",
+    "2025-04-22:FX",
     "2025-06-21:DUTY",
     "2025-06-21:EUST",
     "2025-07-05:FREIGHT",
     "2025-08-31:VAT_REFUND",
   ]);
+});
+
+test("auto-events use goods + freight base and FX fee split", () => {
+  const po: PO = {
+    id: "po-25007",
+    poNo: "PO25007",
+    orderDate: "2025-10-20",
+    goodsValueUsd: 80000,
+    prodDays: 40,
+    transport: "sea",
+    transitDays: 60,
+    ddp: false,
+    freightEur: 4800,
+    dutyRatePct: 6.5,
+    dutyIncludeFreight: true,
+    milestones: [
+      { id: "m1", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "m2", label: "Balance", percent: 70, anchor: "ETD", lagDays: 0 },
+    ],
+  };
+  const settings: Settings = {
+    fxRate: 1.08,
+    fxFeePct: 0.5,
+    eustRate: 0.19,
+    freightLagDays: 14,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
+  };
+
+  const events = expandPO(po, settings);
+  const byType = Object.fromEntries(events.map(evt => [evt.type, evt]));
+
+  const goodsEur = 80000 / 1.08; // 74,074.07
+  const dutyBase = goodsEur + 4800;
+  const duty = round2(dutyBase * 0.065);
+  const eustBase = dutyBase;
+  const eust = round2(eustBase * 0.19);
+
+  assert.strictEqual(round2(Math.abs(byType.FREIGHT.amountEur)), 4800);
+  assert.strictEqual(round2(Math.abs(byType.DUTY.amountEur)), round2(duty));
+  assert.strictEqual(round2(Math.abs(byType.EUST.amountEur)), round2(eust));
+  const fxEvents = events.filter(e => e.type === "FX");
+  assert.ok(fxEvents.length >= 2);
+  const fxSum = round2(fxEvents.reduce((sum, e) => sum + Math.abs(e.amountEur), 0));
+  assert.strictEqual(fxSum, round2(goodsEur * 0.005));
 });
 
 test("aggregateByMonth groups sums", () => {
