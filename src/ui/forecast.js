@@ -56,6 +56,18 @@ function parseCsv(text) {
   return records;
 }
 
+async function parseExcelFile(file) {
+  const [{ default: XLSX }, buffer] = await Promise.all([
+    import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm'),
+    file.arrayBuffer(),
+  ]);
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  if (!workbook.SheetNames?.length) return [];
+  const sheet = workbook.SheetNames[0];
+  const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheet]);
+  return parseCsv(csv);
+}
+
 function renderTable(el, state) {
   const months = [];
   const horizon = Number(state.settings?.horizonMonths || 18);
@@ -143,8 +155,8 @@ function render(el) {
       </div>
     </header>
     <div class="uploader">
-      <input type="file" accept=".csv,.xlsx" data-forecast-file />
-      <p class="text-muted small">Bitte Ventory-Export als CSV oder XLSX hochladen.</p>
+      <input type="file" accept=".csv,.xls,.xlsx" data-forecast-file />
+      <p class="text-muted small">Bitte Ventory-Export als CSV, XLS oder XLSX hochladen.</p>
     </div>
   `;
   const tableHost = document.createElement('div');
@@ -160,35 +172,42 @@ function render(el) {
     saveState(st);
   });
 
-  wrap.querySelector('[data-forecast-file]').addEventListener('change', ev => {
+  wrap.querySelector('[data-forecast-file]').addEventListener('change', async ev => {
     const file = ev.target.files?.[0];
     if (!file) return;
-    if (file.name.toLowerCase().endsWith('.xlsx')) {
-      alert('Bitte als CSV exportieren und erneut hochladen.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result || '';
-      const records = parseCsv(String(text));
-      if (!records.length) {
-        alert('Keine gültigen Zeilen gefunden.');
+    const lower = file.name.toLowerCase();
+    let records = [];
+    try {
+      if (lower.endsWith('.csv')) {
+        const text = await file.text();
+        records = parseCsv(String(text));
+      } else if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) {
+        records = await parseExcelFile(file);
+      } else {
+        alert('Bitte CSV, XLS oder XLSX hochladen.');
         return;
       }
-      const st = loadState();
-      ensureForecastContainers(st);
-      const map = new Map();
-      records.forEach(rec => {
-        const key = `${rec.sku}__${rec.month}`;
-        const next = { sku: rec.sku, alias: rec.alias, month: rec.month, qty: Number(rec.qty || 0) || 0, priceEur: rec.priceEur || 0, source: 'ventory', importId: Date.now() };
-        map.set(key, next);
-      });
-      const existing = st.forecast.items.filter(it => !map.has(`${it.sku}__${it.month}`));
-      st.forecast.items = [...existing, ...map.values()];
-      saveState(st);
-      render(el);
-    };
-    reader.readAsText(file, 'utf-8');
+    } catch (err) {
+      console.error(err);
+      alert('Datei konnte nicht gelesen werden. Bitte erneut versuchen.');
+      return;
+    }
+    if (!records.length) {
+      alert('Keine gültigen Zeilen gefunden.');
+      return;
+    }
+    const st = loadState();
+    ensureForecastContainers(st);
+    const map = new Map();
+    records.forEach(rec => {
+      const key = `${rec.sku}__${rec.month}`;
+      const next = { sku: rec.sku, alias: rec.alias, month: rec.month, qty: Number(rec.qty || 0) || 0, priceEur: rec.priceEur || 0, source: 'ventory', importId: Date.now() };
+      map.set(key, next);
+    });
+    const existing = st.forecast.items.filter(it => !map.has(`${it.sku}__${it.month}`));
+    st.forecast.items = [...existing, ...map.values()];
+    saveState(st);
+    render(el);
   });
 }
 
