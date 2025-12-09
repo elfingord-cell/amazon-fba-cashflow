@@ -65,9 +65,28 @@ function readAsBinaryString(file) {
   });
 }
 
+const XLSX_CANDIDATES = [
+  'https://cdn.sheetjs.com/xlsx-0.20.2/package/xlsx.mjs',
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm',
+];
+
+async function loadXlsxModule() {
+  let lastError;
+  for (const url of XLSX_CANDIDATES) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const mod = await import(/* @vite-ignore */ url);
+      return mod?.default ? mod : { default: mod };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error('XLSX-Modul konnte nicht geladen werden');
+}
+
 async function parseExcelFile(file) {
   const [{ default: XLSX }, cpexcel] = await Promise.all([
-    import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm'),
+    loadXlsxModule(),
     import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/cpexcel.full.mjs').catch(() => null),
   ]);
 
@@ -78,7 +97,9 @@ async function parseExcelFile(file) {
   // Versuche zuerst den Array-Pfad (schnell, modern), dann eine binäre
   // Repräsentation für ältere XLS-Dateien oder Browser, die arrayBuffer
   // nicht sauber an XLSX liefern. Wenn beide Pfade scheitern, versuche
-  // ein manuelles Binary aus einem ArrayBuffer zu erzeugen.
+  // ein manuelles Binary aus einem ArrayBuffer zu erzeugen. Sollte das
+  // XLSX-Modul trotz aller Pfade scheitern, schlagen wir mit einer
+  // klaren Fehlermeldung fehl.
   let workbook;
   let primaryError;
   try {
@@ -99,7 +120,7 @@ async function parseExcelFile(file) {
         workbook = XLSX.read(manualBinary, { type: 'binary', dense: true });
       } catch (manualErr) {
         console.error('Excel-Import fehlgeschlagen', primaryError, fallbackErr, manualErr);
-        throw manualErr;
+        throw new Error('Excel-Datei konnte nicht gelesen werden');
       }
     }
   }
