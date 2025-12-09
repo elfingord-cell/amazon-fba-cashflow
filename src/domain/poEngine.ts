@@ -412,12 +412,13 @@ test("expandPO creates expected events", () => {
   };
 
   const events = expandPO(po, settings);
-  assert.strictEqual(events.length, 6);
+  assert.strictEqual(events.length, 8);
   const markers = events.map((e) => `${e.date}:${e.type}`);
   assert.deepStrictEqual(markers, [
+    "2025-02-21:FX",
     "2025-02-21:PO",
-    "2025-04-22:PO",
     "2025-04-22:FX",
+    "2025-04-22:PO",
     "2025-06-21:DUTY",
     "2025-06-21:EUST",
     "2025-07-05:FREIGHT",

@@ -33,6 +33,15 @@ const defaults = {
     vatRefundEnabled: true,
     vatRefundLagMonths: 2,
     freightLagDays: 14,
+    vatPreview: {
+      eustLagMonths: 2,
+      istVersteuerung: false,
+      rcNetting: true,
+      timingAlpha: [1, 0, 0],
+      returnsDelta: 0,
+      vatRateDelta: 0,
+      mixShift: 0,
+    },
   },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
   extras:    [ ],
@@ -45,6 +54,16 @@ const defaults = {
   poTemplates: [],
   products: [],
   recentProducts: [],
+  vatCostRules: [
+    { name: "Lizenz", isGrossInput: true, vatRate: "19", reverseCharge: false },
+    { name: "Steuerberatung", isGrossInput: true, vatRate: "19", reverseCharge: false },
+    { name: "Versicherung", isGrossInput: true, vatRate: "19", reverseCharge: false },
+    { name: "Miete", isGrossInput: true, vatRate: "19", reverseCharge: false },
+    { name: "Tools", isGrossInput: true, vatRate: "19", reverseCharge: false },
+    { name: "Importkosten", isGrossInput: true, vatRate: "0", reverseCharge: false },
+    { name: "Reverse Charge", isGrossInput: false, vatRate: "19", reverseCharge: true },
+    { name: "Sonstiges", isGrossInput: true, vatRate: "19", reverseCharge: false },
+  ],
   status: {
     autoManualCheck: false,
     events: {},
@@ -68,6 +87,29 @@ function ensureProducts(state) {
   if (!state) return;
   if (!Array.isArray(state.products)) state.products = [];
   if (!Array.isArray(state.recentProducts)) state.recentProducts = [];
+}
+
+function ensureVatData(state) {
+  if (!state) return;
+  if (!state.settings) state.settings = {};
+  if (!state.settings.vatPreview || typeof state.settings.vatPreview !== "object") {
+    state.settings.vatPreview = structuredClone(defaults.settings.vatPreview);
+  } else {
+    const base = defaults.settings.vatPreview;
+    state.settings.vatPreview.eustLagMonths = Number(state.settings.vatPreview.eustLagMonths ?? base.eustLagMonths) || base.eustLagMonths;
+    state.settings.vatPreview.istVersteuerung = state.settings.vatPreview.istVersteuerung === true;
+    state.settings.vatPreview.rcNetting = state.settings.vatPreview.rcNetting !== false;
+    state.settings.vatPreview.timingAlpha = Array.isArray(state.settings.vatPreview.timingAlpha)
+      ? state.settings.vatPreview.timingAlpha.map(n => Number(n) || 0)
+      : structuredClone(base.timingAlpha);
+    state.settings.vatPreview.returnsDelta = Number(state.settings.vatPreview.returnsDelta || 0);
+    state.settings.vatPreview.vatRateDelta = Number(state.settings.vatPreview.vatRateDelta || 0);
+    state.settings.vatPreview.mixShift = Number(state.settings.vatPreview.mixShift || 0);
+  }
+
+  if (!Array.isArray(state.vatCostRules)) {
+    state.vatCostRules = structuredClone(defaults.vatCostRules);
+  }
 }
 
 function monthIndex(ym) {
@@ -309,7 +351,11 @@ function normaliseProductInput(input) {
   const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
   const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
   const template = normaliseTemplate(input.template);
-  return { sku, alias, supplierId, status, tags, template };
+  const vatRate = Number(String(input.vatRate ?? "19").replace(",", ".")) || 19;
+  const jurisdiction = input.jurisdiction || "DE";
+  const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
+  const vatExempt = input.vatExempt === true;
+  return { sku, alias, supplierId, status, tags, template, vatRate, jurisdiction, returnsRate, vatExempt };
 }
 
 function updateProductStatsMeta(state, product) {
@@ -349,6 +395,7 @@ export function createEmptyState(){
   ensureFixcostContainers(clone);
   ensurePoTemplates(clone);
   ensureProducts(clone);
+  ensureVatData(clone);
   return clone;
 }
 
@@ -364,6 +411,7 @@ export function loadState(){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureVatData(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
   return _state;
@@ -375,6 +423,7 @@ export function saveState(s){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureVatData(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -488,6 +537,42 @@ export function getProductsSnapshot(){
   ensureProducts(state);
   const list = state.products.map(prod => updateProductStatsMeta(state, prod));
   return list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+}
+
+export function getVatPreviewConfig(){
+  const state = loadState();
+  ensureVatData(state);
+  return { settings: state.settings.vatPreview, costRules: state.vatCostRules };
+}
+
+export function updateVatPreviewSettings(patch){
+  if (!patch || typeof patch !== "object") return;
+  const state = loadState();
+  ensureVatData(state);
+  const target = state.settings.vatPreview;
+  if (typeof patch.eustLagMonths !== "undefined") target.eustLagMonths = Number(patch.eustLagMonths) || target.eustLagMonths;
+  if (typeof patch.istVersteuerung !== "undefined") target.istVersteuerung = Boolean(patch.istVersteuerung);
+  if (typeof patch.rcNetting !== "undefined") target.rcNetting = Boolean(patch.rcNetting);
+  if (Array.isArray(patch.timingAlpha)) target.timingAlpha = patch.timingAlpha.map(n => Number(n) || 0);
+  if (typeof patch.returnsDelta !== "undefined") target.returnsDelta = Number(patch.returnsDelta) || 0;
+  if (typeof patch.vatRateDelta !== "undefined") target.vatRateDelta = Number(patch.vatRateDelta) || 0;
+  if (typeof patch.mixShift !== "undefined") target.mixShift = Number(patch.mixShift) || 0;
+  saveState(state);
+  broadcastStateChanged();
+}
+
+export function updateVatCostRules(rules){
+  if (!Array.isArray(rules)) return;
+  const state = loadState();
+  ensureVatData(state);
+  state.vatCostRules = rules.map(rule => ({
+    name: String(rule.name || "Kosten"),
+    isGrossInput: rule.isGrossInput !== false,
+    vatRate: String(rule.vatRate ?? "0"),
+    reverseCharge: rule.reverseCharge === true,
+  }));
+  saveState(state);
+  broadcastStateChanged();
 }
 
 export function getProductBySku(sku){
