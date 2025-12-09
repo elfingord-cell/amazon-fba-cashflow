@@ -61,8 +61,23 @@ async function parseExcelFile(file) {
     import('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm'),
     file.arrayBuffer(),
   ]);
-  const workbook = XLSX.read(buffer, { type: 'array' });
-  if (!workbook.SheetNames?.length) return [];
+
+  // Older XLS-Dateien schlagen gelegentlich mit dem Array-Reader fehl.
+  // Wir versuchen zuerst den schnellen Array-Pfad und fallen bei Fehler
+  // auf einen binären String zurück, damit auch Legacy-Exporte geladen werden.
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: 'array' });
+  } catch (err) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    workbook = XLSX.read(binary, { type: 'binary' });
+  }
+
+  if (!workbook?.SheetNames?.length) return [];
   const sheet = workbook.SheetNames[0];
   const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheet]);
   return parseCsv(csv);
