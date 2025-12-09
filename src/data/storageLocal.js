@@ -35,12 +35,9 @@ const defaults = {
     freightLagDays: 14,
     vatPreview: {
       eustLagMonths: 2,
-      istVersteuerung: false,
-      rcNetting: true,
-      timingAlpha: [1, 0, 0],
-      returnsDelta: 0,
-      vatRateDelta: 0,
-      mixShift: 0,
+      deShareDefault: 0.8,
+      feeRateDefault: 0.38,
+      fixInputDefault: 0,
     },
   },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
@@ -64,6 +61,7 @@ const defaults = {
     { name: "Reverse Charge", isGrossInput: false, vatRate: "19", reverseCharge: true },
     { name: "Sonstiges", isGrossInput: true, vatRate: "19", reverseCharge: false },
   ],
+  vatPreviewMonths: {},
   status: {
     autoManualCheck: false,
     events: {},
@@ -97,18 +95,17 @@ function ensureVatData(state) {
   } else {
     const base = defaults.settings.vatPreview;
     state.settings.vatPreview.eustLagMonths = Number(state.settings.vatPreview.eustLagMonths ?? base.eustLagMonths) || base.eustLagMonths;
-    state.settings.vatPreview.istVersteuerung = state.settings.vatPreview.istVersteuerung === true;
-    state.settings.vatPreview.rcNetting = state.settings.vatPreview.rcNetting !== false;
-    state.settings.vatPreview.timingAlpha = Array.isArray(state.settings.vatPreview.timingAlpha)
-      ? state.settings.vatPreview.timingAlpha.map(n => Number(n) || 0)
-      : structuredClone(base.timingAlpha);
-    state.settings.vatPreview.returnsDelta = Number(state.settings.vatPreview.returnsDelta || 0);
-    state.settings.vatPreview.vatRateDelta = Number(state.settings.vatPreview.vatRateDelta || 0);
-    state.settings.vatPreview.mixShift = Number(state.settings.vatPreview.mixShift || 0);
+    state.settings.vatPreview.deShareDefault = Number(state.settings.vatPreview.deShareDefault ?? base.deShareDefault) || base.deShareDefault;
+    state.settings.vatPreview.feeRateDefault = Number(state.settings.vatPreview.feeRateDefault ?? base.feeRateDefault) || base.feeRateDefault;
+    state.settings.vatPreview.fixInputDefault = Number(state.settings.vatPreview.fixInputDefault ?? base.fixInputDefault) || base.fixInputDefault;
   }
 
   if (!Array.isArray(state.vatCostRules)) {
     state.vatCostRules = structuredClone(defaults.vatCostRules);
+  }
+
+  if (!state.vatPreviewMonths || typeof state.vatPreviewMonths !== "object") {
+    state.vatPreviewMonths = {};
   }
 }
 
@@ -542,7 +539,7 @@ export function getProductsSnapshot(){
 export function getVatPreviewConfig(){
   const state = loadState();
   ensureVatData(state);
-  return { settings: state.settings.vatPreview, costRules: state.vatCostRules };
+  return { settings: state.settings.vatPreview, months: state.vatPreviewMonths };
 }
 
 export function updateVatPreviewSettings(patch){
@@ -551,26 +548,30 @@ export function updateVatPreviewSettings(patch){
   ensureVatData(state);
   const target = state.settings.vatPreview;
   if (typeof patch.eustLagMonths !== "undefined") target.eustLagMonths = Number(patch.eustLagMonths) || target.eustLagMonths;
-  if (typeof patch.istVersteuerung !== "undefined") target.istVersteuerung = Boolean(patch.istVersteuerung);
-  if (typeof patch.rcNetting !== "undefined") target.rcNetting = Boolean(patch.rcNetting);
-  if (Array.isArray(patch.timingAlpha)) target.timingAlpha = patch.timingAlpha.map(n => Number(n) || 0);
-  if (typeof patch.returnsDelta !== "undefined") target.returnsDelta = Number(patch.returnsDelta) || 0;
-  if (typeof patch.vatRateDelta !== "undefined") target.vatRateDelta = Number(patch.vatRateDelta) || 0;
-  if (typeof patch.mixShift !== "undefined") target.mixShift = Number(patch.mixShift) || 0;
+  if (typeof patch.deShareDefault !== "undefined") target.deShareDefault = Number(patch.deShareDefault);
+  if (typeof patch.feeRateDefault !== "undefined") target.feeRateDefault = Number(patch.feeRateDefault);
+  if (typeof patch.fixInputDefault !== "undefined") target.fixInputDefault = Number(patch.fixInputDefault);
   saveState(state);
   broadcastStateChanged();
 }
 
-export function updateVatCostRules(rules){
-  if (!Array.isArray(rules)) return;
+export function updateVatPreviewMonth(month, patch){
+  if (!month || !patch || typeof patch !== "object") return;
   const state = loadState();
   ensureVatData(state);
-  state.vatCostRules = rules.map(rule => ({
-    name: String(rule.name || "Kosten"),
-    isGrossInput: rule.isGrossInput !== false,
-    vatRate: String(rule.vatRate ?? "0"),
-    reverseCharge: rule.reverseCharge === true,
-  }));
+  const target = state.vatPreviewMonths[month] || {};
+  if (typeof patch.deShare !== "undefined") target.deShare = Number(patch.deShare);
+  if (typeof patch.feeRateOfGross !== "undefined") target.feeRateOfGross = Number(patch.feeRateOfGross);
+  if (typeof patch.fixInputVat !== "undefined") target.fixInputVat = Number(patch.fixInputVat);
+  state.vatPreviewMonths[month] = target;
+  saveState(state);
+  broadcastStateChanged();
+}
+
+export function resetVatPreviewMonths(){
+  const state = loadState();
+  ensureVatData(state);
+  state.vatPreviewMonths = {};
   saveState(state);
   broadcastStateChanged();
 }
