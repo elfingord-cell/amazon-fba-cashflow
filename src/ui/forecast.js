@@ -1,4 +1,5 @@
 import { loadState, saveState, addStateListener } from '../data/storageLocal.js';
+import { parseForecastJsonPayload, formatEuroDE } from '../domain/forecastImport.js';
 
 function parseNumberDE(value) {
   if (value == null) return 0;
@@ -203,6 +204,21 @@ async function parseExcelFile(file) {
   return { records, warnings };
 }
 
+function parseVentoryJsonContent(obj) {
+  return parseForecastJsonPayload(obj);
+}
+
+async function parseJsonFile(file) {
+  const text = await file.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch (err) {
+    throw new Error('JSON konnte nicht gelesen werden. Prüfe Datei oder Format.');
+  }
+  return parseVentoryJsonContent(json);
+}
+
 function renderTable(el, state) {
   const months = [];
   const horizon = Number(state.settings?.horizonMonths || 18);
@@ -290,8 +306,8 @@ function render(el) {
       </div>
     </header>
     <div class="uploader">
-      <input type="file" accept=".csv,.xls,.xlsx" data-forecast-file />
-      <p class="text-muted small">Bitte Ventory-Export als CSV, XLS oder XLSX hochladen.</p>
+      <input type="file" accept=".csv,.xls,.xlsx,.json" data-forecast-file />
+      <p class="text-muted small">Bitte Ventory-Export als CSV, XLS, XLSX oder JSON hochladen.</p>
     </div>
   `;
   const tableHost = document.createElement('div');
@@ -312,14 +328,17 @@ function render(el) {
     if (!file) return;
     const lower = file.name.toLowerCase();
     let parsed = { records: [], warnings: [] };
+    const importId = Date.now();
     try {
       if (lower.endsWith('.csv')) {
         const text = await file.text();
         parsed = parseCsv(String(text));
       } else if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) {
         parsed = await parseExcelFile(file);
+      } else if (lower.endsWith('.json')) {
+        parsed = await parseJsonFile(file);
       } else {
-        alert('Bitte CSV, XLS oder XLSX hochladen.');
+        alert('Bitte CSV, XLS, XLSX oder JSON hochladen.');
         return;
       }
     } catch (err) {
@@ -328,7 +347,28 @@ function render(el) {
       alert(msg);
       return;
     }
-    if (!parsed.records.length) {
+    if (parsed.type === 'app-export') {
+      if (!parsed.incomings?.length) {
+        alert('Keine gültigen Zeilen gefunden.');
+        return;
+      }
+      const st = loadState();
+      ensureForecastContainers(st);
+      st.incomings = parsed.incomings.map(row => ({
+        month: row.month,
+        revenueEur: formatEuroDE(row.revenueEur),
+        payoutPct: row.payoutPct,
+      }));
+      if (parsed.settings?.startMonth) st.settings.startMonth = parsed.settings.startMonth;
+      if (parsed.settings?.horizonMonths) st.settings.horizonMonths = parsed.settings.horizonMonths;
+      saveState(st);
+      const warnText = parsed.warnings?.length ? `\n${parsed.warnings.join('\n')}` : '';
+      alert(`Umsätze aus JSON übernommen (${st.incomings.length} Monate).${warnText}`);
+      render(el);
+      return;
+    }
+
+    if (!parsed.records?.length) {
       alert('Keine gültigen Zeilen gefunden.');
       return;
     }
@@ -337,7 +377,15 @@ function render(el) {
     const map = new Map();
     parsed.records.forEach(rec => {
       const key = `${rec.sku}__${rec.month}`;
-      const next = { sku: rec.sku, alias: rec.alias, month: rec.month, qty: Number(rec.qty || 0) || 0, priceEur: rec.priceEur || 0, source: 'ventory', importId: Date.now() };
+      const next = {
+        sku: rec.sku,
+        alias: rec.alias,
+        month: rec.month,
+        qty: Number(rec.qty || 0) || 0,
+        priceEur: rec.priceEur ?? 0,
+        source: rec.source || 'ventory',
+        importId: rec.importId || importId,
+      };
       map.set(key, next);
     });
     const existing = st.forecast.items.filter(it => !map.has(`${it.sku}__${it.month}`));
@@ -346,6 +394,7 @@ function render(el) {
     if (parsed.warnings?.length) {
       alert(parsed.warnings.slice(0, 5).join('\n'));
     }
+    alert(`Import abgeschlossen: ${map.size} Monatswerte.`);
     render(el);
   });
 }
