@@ -21,6 +21,12 @@ export function parsePct(p) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function parseRateFraction(value, fallback = 0) {
+  const n = Number(String(value ?? fallback).replace(',', '.'));
+  if (!Number.isFinite(n)) return fallback;
+  return n > 1 ? n / 100 : n;
+}
+
 export function fmtEUR(val) {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
     .format(_num(Number(val)));
@@ -226,6 +232,8 @@ export function expandFixcostInstances(state, opts = {}) {
     const name = master.name || 'Fixkosten';
     const category = master.category || 'Sonstiges';
     const baseAmount = Math.abs(parseEuro(master.amount));
+    const baseIsGross = master.isGross !== false;
+    const baseVatRate = parseRateFraction(master.vatRate ?? 0.19, 0.19);
     const notes = master.notes || '';
     const autoPaid = master.autoPaid === true;
 
@@ -250,8 +258,20 @@ export function expandFixcostInstances(state, opts = {}) {
 
       let amount = baseAmount;
       let overrideApplied = false;
+      let isGrossEff = baseIsGross;
+      let vatRateEff = baseVatRate;
       if (override.amount != null && String(override.amount).trim() !== '') {
         amount = Math.abs(parseEuro(override.amount));
+        overrideApplied = true;
+      }
+
+      if (typeof override.isGross !== 'undefined') {
+        isGrossEff = override.isGross === true;
+        overrideApplied = true;
+      }
+
+      if (override.vatRate != null && String(override.vatRate).trim() !== '') {
+        vatRateEff = parseRateFraction(override.vatRate, baseVatRate);
         overrideApplied = true;
       }
 
@@ -293,10 +313,14 @@ export function expandFixcostInstances(state, opts = {}) {
         fixedCostId: fcId,
         autoPaid,
         notes,
+        isGross: isGrossEff,
+        vatRate: vatRateEff,
         override: {
           amount: override.amount || '',
           dueDate: override.dueDate || '',
           note: overrideNote,
+          isGross: typeof override.isGross !== 'undefined' ? override.isGross : undefined,
+          vatRate: override.vatRate,
         },
         overrideActive: overrideApplied || Boolean(override.dueDate) || Boolean(overrideNote),
         prorationApplied,

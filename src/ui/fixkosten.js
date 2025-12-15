@@ -64,6 +64,12 @@ function formatCurrency(value) {
   return Number(num).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatRate(value) {
+  const num = Number(String(value ?? "").replace(",", "."));
+  if (!Number.isFinite(num)) return "0,19";
+  return String(num).replace(".", ",");
+}
+
 function formatDateDisplay(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
   const [y, m, d] = iso.split("-");
@@ -100,6 +106,8 @@ function createDefaultFixcost(state) {
     name: "Neue Fixkosten",
     category: "Sonstiges",
     amount: "1.000,00",
+    isGross: true,
+    vatRate: "19",
     frequency: "monthly",
     intervalMonths: 1,
     anchor: "LAST",
@@ -147,6 +155,8 @@ function render(root) {
               <th>Name</th>
               <th>Kategorie</th>
               <th>Betrag (€)</th>
+              <th>Netto/Brutto</th>
+              <th>USt-Satz</th>
               <th>Frequenz</th>
               <th>Fälligkeitstag</th>
               <th>Start / Ende</th>
@@ -204,6 +214,15 @@ function render(root) {
             <td>
               <input type="text" data-field="amount" value="${formatCurrency(row.amount)}" inputmode="decimal" />
               ${errors.includes("Bitte Betrag > 0 eingeben.") ? `<small class="error">Bitte Betrag > 0 eingeben.</small>` : ""}
+            </td>
+            <td>
+              <label class="checkbox inline">
+                <input type="checkbox" data-field="isGross" ${row.isGross !== false ? "checked" : ""} />
+                <span>Betrag ist brutto</span>
+              </label>
+            </td>
+            <td>
+              <input type="text" data-field="vatRate" value="${formatRate(row.vatRate)}" inputmode="decimal" aria-label="USt-Satz" />
             </td>
             <td>
               <select data-field="frequency" value="${freq}">
@@ -311,6 +330,8 @@ function render(root) {
             <th>Position</th>
             <th>Kategorie</th>
             <th>Betrag (€)</th>
+            <th>Netto/Brutto</th>
+            <th>USt-Satz</th>
             <th>Fälligkeit</th>
             <th>Bezahlt</th>
             <th></th>
@@ -341,6 +362,8 @@ function render(root) {
         </td>
         <td>${inst.category || "Sonstiges"}</td>
         <td>${formatCurrency(inst.amount)} €</td>
+        <td>${inst.isGross ? "Brutto" : "Netto"}</td>
+        <td>${formatRate(inst.vatRate || 0)}</td>
         <td>${dueDisplay}</td>
         <td>
           <label class="checkbox">
@@ -363,6 +386,8 @@ function render(root) {
       : formatCurrency(inst.amount);
     const currentDue = inst.override?.dueDate ? formatDateDisplay(inst.override.dueDate) : (inst.dueDateIso ? formatDateDisplay(inst.dueDateIso) : "");
     const currentNote = inst.override?.note || "";
+    const currentGross = typeof inst.override?.isGross !== "undefined" ? inst.override.isGross : inst.isGross !== false;
+    const currentVatRate = typeof inst.override?.vatRate !== "undefined" ? inst.override.vatRate : inst.vatRate;
     return `
       <tr class="fix-instance-edit" data-edit-for="${inst.id}">
         <td colspan="6">
@@ -374,6 +399,14 @@ function render(root) {
             <label>
               Override Fälligkeit (TT.MM.JJJJ)
               <input type="text" data-field="overrideDue" value="${currentDue}" placeholder="TT.MM.JJJJ" />
+            </label>
+            <label class="checkbox inline">
+              <input type="checkbox" data-field="overrideGross" ${currentGross ? "checked" : ""} />
+              <span>Betrag ist brutto</span>
+            </label>
+            <label>
+              Override USt-Satz
+              <input type="text" data-field="overrideVatRate" value="${formatRate(currentVatRate)}" inputmode="decimal" />
             </label>
             <label>
               Override Notiz
@@ -418,6 +451,10 @@ function render(root) {
       row.proration.method = event.target.value;
     } else if (field === "intervalMonths") {
       row.intervalMonths = Math.max(1, Number(event.target.value || 1));
+    } else if (field === "isGross") {
+      row.isGross = event.target.checked;
+    } else if (field === "vatRate") {
+      row.vatRate = event.target.value;
     }
     saveState(state);
     renderMasters();
@@ -460,6 +497,10 @@ function render(root) {
     if (field === "amount") {
       const formatted = formatCurrency(event.target.value);
       row.amount = formatted;
+      event.target.value = formatted;
+    } else if (field === "vatRate") {
+      const formatted = formatRate(event.target.value || row.vatRate || "0,19");
+      row.vatRate = formatted;
       event.target.value = formatted;
     }
     saveState(state);
@@ -605,6 +646,8 @@ function render(root) {
       const amountInput = editRow.querySelector("input[data-field='overrideAmount']");
       const dueInput = editRow.querySelector("input[data-field='overrideDue']");
       const noteInput = editRow.querySelector("input[data-field='overrideNote']");
+      const grossInput = editRow.querySelector("input[data-field='overrideGross']");
+      const vatInput = editRow.querySelector("input[data-field='overrideVatRate']");
       const errorBox = editRow.querySelector(".edit-error");
       const amountValue = amountInput?.value || "";
       const parsedAmount = parseCurrency(amountValue);
@@ -623,6 +666,8 @@ function render(root) {
         amount: formatCurrency(parsedAmount),
         dueDate: isoDue,
         note: noteInput?.value?.trim() || "",
+        isGross: grossInput?.checked ?? inst.isGross,
+        vatRate: vatInput?.value || inst.vatRate,
       };
       saveState(state);
       editingInstanceId = null;

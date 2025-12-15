@@ -35,7 +35,7 @@ function buildRow(row, cfg) {
     <span role="cell" title="Anteil Deutschland">${fmt(row.grossDe)}</span>
     <span role="cell" title="Output-USt">${fmt(row.outVat)}</span>
     <span role="cell" title="Vorsteuer auf Amazon-Gebühren">${fmt(row.feeInputVat)}</span>
-    <span role="cell" title="Vorsteuer aus Fixkosten">${fmt(row.fixInputVat)}</span>
+    <span role="cell" title="Vorsteuer aus Fixkosten">${fmt(row.fixInputVat)}${row.fixOverride ? " <span class=\"badge override\">Override</span>" : ""}</span>
     <span role="cell" title="EUSt-Erstattung">${fmt(row.eustRefund)}</span>
     <span role="cell" class="bold" title="Zahllast DE">${fmt(row.payable)}</span>
     <div class="vat-controls" role="cell">
@@ -47,9 +47,10 @@ function buildRow(row, cfg) {
         Gebührensatz
         <input type="number" step="0.01" min="0" max="1" data-month="${row.month}" data-field="feeRateOfGross" value="${cfg.feeRateOfGross}" aria-label="Gebührensatz" />
       </label>
-      <label>
-        Fixkosten-VSt
-        <input type="text" inputmode="decimal" data-month="${row.month}" data-field="fixInputVat" value="${fmt(row.fixInputVat)}" aria-label="Fixkosten Vorsteuer" />
+        <label>
+          Fixkosten-VSt
+        <input type="text" inputmode="decimal" data-month="${row.month}" data-field="fixInputVat" value="${fmt(row.fixInputVat)}" aria-label="Fixkosten Vorsteuer" ${row.fixOverride ? "" : "disabled"} />
+        <button type="button" class="btn tertiary" data-override-fix="${row.month}" aria-label="Fixkosten-VSt überschreiben">${row.fixOverride ? "Override ändern" : "Override setzen"}</button>
       </label>
       <div class="vat-actions">
         <button type="button" class="btn-secondary" data-copy-prev="${row.month}" aria-label="Vormonat übernehmen">Vormonat übernehmen</button>
@@ -72,6 +73,10 @@ function renderTable(root, data) {
         <label>
           EUSt-Lag (Monate)
           <input type="number" id="vat-eust-lag" min="0" value="${data.settings.eustLagMonths}" aria-label="EUSt Lag Monate" />
+        </label>
+        <label>
+          VSt-Lag Fixkosten (Monate)
+          <input type="number" id="vat-fix-lag" min="0" value="${data.settings.fixVatLagMonths || 0}" aria-label="VSt Lag Fixkosten" />
         </label>
         <button type="button" class="btn-secondary" id="vat-reset" aria-label="Alle zurücksetzen">Alle zurücksetzen</button>
       </div>
@@ -114,6 +119,10 @@ function renderTable(root, data) {
     updateVatPreviewSettings({ eustLagMonths: Number(ev.target.value) || 0 });
   });
 
+  table.querySelector("#vat-fix-lag")?.addEventListener("change", (ev) => {
+    updateVatPreviewSettings({ fixVatLagMonths: Number(ev.target.value) || 0 });
+  });
+
   table.querySelector("#vat-reset")?.addEventListener("click", () => {
     resetVatPreviewMonths();
   });
@@ -129,18 +138,30 @@ function renderTable(root, data) {
 
   body.addEventListener("click", (ev) => {
     const btn = ev.target.closest("[data-copy-prev]");
-    if (!btn) return;
-    const month = btn.getAttribute("data-copy-prev");
-    const months = data.months;
-    const idx = months.indexOf(month);
-    if (idx > 0) {
-      const prevMonth = months[idx - 1];
-      const cfg = data.monthConfig[prevMonth];
-      updateVatPreviewMonth(month, {
-        deShare: cfg.deShare,
-        feeRateOfGross: cfg.feeRateOfGross,
-        fixInputVat: cfg.fixInputVat,
-      });
+    if (btn) {
+      const month = btn.getAttribute("data-copy-prev");
+      const months = data.months;
+      const idx = months.indexOf(month);
+      if (idx > 0) {
+        const prevMonth = months[idx - 1];
+        const cfg = data.monthConfig[prevMonth];
+        updateVatPreviewMonth(month, {
+          deShare: cfg.deShare,
+          feeRateOfGross: cfg.feeRateOfGross,
+          fixInputVat: cfg.fixInputVat,
+          fixInputVatOverride: data.monthConfig[prevMonth]?.fixInputVatOverride,
+        });
+      }
+    }
+
+    const overrideBtn = ev.target.closest("[data-override-fix]");
+    if (overrideBtn) {
+      const month = overrideBtn.getAttribute("data-override-fix");
+      const current = data.monthConfig[month]?.fixInputVatOverride;
+      const next = window.prompt("Fixkosten-VSt Override (EUR, optional)", current != null ? fmt(current) : "");
+      if (next === null) return;
+      const parsed = next.trim() === "" ? null : parseEuro(next);
+      updateVatPreviewMonth(month, { fixInputVatOverride: parsed });
     }
   });
 
@@ -160,6 +181,7 @@ export default function renderVat(el) {
         deShare: Number(state.vatPreviewMonths?.[m]?.deShare ?? state.settings.vatPreview.deShareDefault ?? 0.8),
         feeRateOfGross: Number(state.vatPreviewMonths?.[m]?.feeRateOfGross ?? state.settings.vatPreview.feeRateDefault ?? 0.38),
         fixInputVat: parseEuro(state.vatPreviewMonths?.[m]?.fixInputVat ?? state.settings.vatPreview.fixInputDefault ?? 0),
+        fixInputVatOverride: state.vatPreviewMonths?.[m]?.fixInputVatOverride,
       };
     });
     result.settings = state.settings.vatPreview;

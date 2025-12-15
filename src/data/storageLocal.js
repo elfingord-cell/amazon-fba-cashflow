@@ -38,6 +38,8 @@ const defaults = {
       deShareDefault: 0.8,
       feeRateDefault: 0.38,
       fixInputDefault: 0,
+      fixVatLagMonths: 0,
+      fixVatCreditAtMonthEnd: true,
     },
   },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
@@ -80,6 +82,15 @@ function ensureFixcostContainers(state) {
   if (!state.fixcostOverrides || typeof state.fixcostOverrides !== "object") {
     state.fixcostOverrides = {};
   }
+
+   state.fixcosts = state.fixcosts.map(row => {
+    if (!row) return row;
+    const next = { ...row };
+    if (typeof next.isGross === "undefined") next.isGross = true;
+    const rate = Number(String(next.vatRate ?? "19").replace(",", "."));
+    next.vatRate = Number.isFinite(rate) ? rate : 19;
+    return next;
+  });
 }
 
 function ensurePoTemplates(state) {
@@ -104,6 +115,8 @@ function ensureVatData(state) {
     state.settings.vatPreview.deShareDefault = Number(state.settings.vatPreview.deShareDefault ?? base.deShareDefault) || base.deShareDefault;
     state.settings.vatPreview.feeRateDefault = Number(state.settings.vatPreview.feeRateDefault ?? base.feeRateDefault) || base.feeRateDefault;
     state.settings.vatPreview.fixInputDefault = Number(state.settings.vatPreview.fixInputDefault ?? base.fixInputDefault) || base.fixInputDefault;
+    state.settings.vatPreview.fixVatLagMonths = Number(state.settings.vatPreview.fixVatLagMonths ?? base.fixVatLagMonths) || 0;
+    state.settings.vatPreview.fixVatCreditAtMonthEnd = state.settings.vatPreview.fixVatCreditAtMonthEnd !== false;
   }
 
   if (!Array.isArray(state.vatCostRules)) {
@@ -574,6 +587,8 @@ export function updateVatPreviewSettings(patch){
   if (typeof patch.deShareDefault !== "undefined") target.deShareDefault = Number(patch.deShareDefault);
   if (typeof patch.feeRateDefault !== "undefined") target.feeRateDefault = Number(patch.feeRateDefault);
   if (typeof patch.fixInputDefault !== "undefined") target.fixInputDefault = Number(patch.fixInputDefault);
+  if (typeof patch.fixVatLagMonths !== "undefined") target.fixVatLagMonths = Number(patch.fixVatLagMonths) || 0;
+  if (typeof patch.fixVatCreditAtMonthEnd !== "undefined") target.fixVatCreditAtMonthEnd = patch.fixVatCreditAtMonthEnd !== false;
   saveState(state);
   broadcastStateChanged();
 }
@@ -586,6 +601,7 @@ export function updateVatPreviewMonth(month, patch){
   if (typeof patch.deShare !== "undefined") target.deShare = Number(patch.deShare);
   if (typeof patch.feeRateOfGross !== "undefined") target.feeRateOfGross = Number(patch.feeRateOfGross);
   if (typeof patch.fixInputVat !== "undefined") target.fixInputVat = Number(patch.fixInputVat);
+  if (typeof patch.fixInputVatOverride !== "undefined") target.fixInputVatOverride = patch.fixInputVatOverride === null ? undefined : Number(patch.fixInputVatOverride);
   state.vatPreviewMonths[month] = target;
   saveState(state);
   broadcastStateChanged();

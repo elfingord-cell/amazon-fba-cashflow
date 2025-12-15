@@ -46,7 +46,7 @@ test("applies DE VAT preview formula with defaults", () => {
     { month: "2025-10", revenueEur: "100.000" },
   ];
   state.vatPreviewMonths = {
-    "2025-10": { fixInputVat: 1900 },
+    "2025-10": { fixInputVatOverride: 1900 },
   };
 
   const res = computeVatPreview(state);
@@ -66,7 +66,7 @@ test("uses monthly overrides and EUSt refunds", () => {
     { month: "2025-11", revenueEur: "50.000" },
   ];
   state.vatPreviewMonths = {
-    "2025-11": { deShare: 0.5, feeRateOfGross: 0.2, fixInputVat: 100 },
+    "2025-11": { deShare: 0.5, feeRateOfGross: 0.2, fixInputVatOverride: 100 },
   };
   state.pos.push({
     id: "po1",
@@ -97,4 +97,25 @@ test("uses monthly overrides and EUSt refunds", () => {
   assert.ok(Math.abs(nov.grossDe - 25000) < 0.1, "Override DE share applied");
   const refundMonth = res.rows.find(r => r.eustRefund > 0);
   assert.ok(refundMonth, "EUSt refund populated");
+});
+
+test("computes fix VAT with lag from gross and net amounts", () => {
+  const state = cloneState();
+  state.settings.startMonth = "2025-11";
+  state.settings.horizonMonths = 3;
+  state.settings.vatPreview.fixVatLagMonths = 1;
+  state.fixcosts = [
+    { id: "fc1", name: "Steuerberatung", amount: "1.190,00", isGross: true, vatRate: "19", frequency: "monthly", anchor: "15", startMonth: "2025-11" },
+    { id: "fc2", name: "SaaS", amount: "100,00", isGross: false, vatRate: "19", frequency: "monthly", anchor: "05", startMonth: "2025-11" },
+  ];
+  state.incomings = [{ month: "2025-11", revenueEur: "0" }, { month: "2025-12", revenueEur: "0" }];
+
+  const res = computeVatPreview(state);
+  const dec = res.rows.find(r => r.month === "2025-12");
+  assert.ok(dec, "December row present");
+  assert.ok(Math.abs(dec.fixInputVat - 209) < 0.01, `Expected 209 VAT credit, got ${dec.fixInputVat}`);
+  state.settings.vatPreview.fixVatLagMonths = 0;
+  const res2 = computeVatPreview(state);
+  const nov = res2.rows.find(r => r.month === "2025-11");
+  assert.ok(Math.abs(nov.fixInputVat - 209) < 0.01, "Lag 0 shifts credit back");
 });
