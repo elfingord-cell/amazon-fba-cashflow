@@ -37,6 +37,7 @@ const PRORATION_OPTIONS = [
 
 const collapsedMonths = new Set();
 let editingInstanceId = null;
+let selectedFixRows = new Set();
 
 function generateId() {
   try {
@@ -141,17 +142,37 @@ function validateFixcost(row) {
 function render(root) {
   const state = loadState();
   ensureStructures(state);
+  const expandedRows = new Set(
+    Object.entries(state.fixcostUi?.expanded || {})
+      .filter(([, val]) => Boolean(val))
+      .map(([key]) => key)
+  );
+  const viewMode = state.fixcostUi?.viewMode === "expanded" ? "expanded" : "compact";
 
   root.innerHTML = `
     <section class="card fix-master">
       <div class="card-header">
         <h2>Fixkosten (Stammdaten)</h2>
         <p class="muted">Definiere wiederkehrende Fixkosten, Frequenz und automatische Zahlungen.</p>
+        <div class="fix-master-toolbar">
+          <div class="toggle-group" role="group" aria-label="Darstellung">
+            <button class="btn ${viewMode === "compact" ? "primary" : "secondary"}" data-view="compact">Kompakt</button>
+            <button class="btn ${viewMode === "expanded" ? "primary" : "secondary"}" data-view="expanded">Erweitert</button>
+          </div>
+          <div class="batch-actions ${selectedFixRows.size ? "visible" : ""}" aria-live="polite">
+            <span class="muted">${selectedFixRows.size} ausgewählt</span>
+            <button class="btn" data-batch="vat-19">USt 19 % setzen</button>
+            <button class="btn" data-batch="toggle-gross">Netto/Brutto umschalten</button>
+            <button class="btn" data-batch="duplicate">Duplizieren</button>
+            <button class="btn danger" data-batch="delete">Löschen</button>
+          </div>
+        </div>
       </div>
       <div class="table-scroll">
-        <table class="table fix-master-table">
+        <table class="table fix-master-table ${viewMode === "expanded" ? "expanded" : "compact"}">
           <thead>
             <tr>
+              <th class="sticky name-col" aria-label="Auswahl"></th>
               <th>Name</th>
               <th>Kategorie</th>
               <th>Betrag (€)</th>
@@ -188,8 +209,11 @@ function render(root) {
   const monthContainer = root.querySelector("#fix-month-list");
 
   function renderMasters() {
+    selectedFixRows = new Set(
+      Array.from(selectedFixRows).filter((id) => state.fixcosts.some((row) => row.id === id))
+    );
     if (!state.fixcosts.length) {
-      masterBody.innerHTML = `<tr><td colspan="10" class="muted">Keine Fixkosten hinterlegt.</td></tr>`;
+      masterBody.innerHTML = `<tr><td colspan="13" class="muted">Keine Fixkosten hinterlegt.</td></tr>`;
       return;
     }
     masterBody.innerHTML = state.fixcosts
@@ -199,48 +223,61 @@ function render(root) {
         const prorationMethod = row.proration?.method || "none";
         const freq = row.frequency || "monthly";
         const customVisible = freq === "custom";
+        const expanded = expandedRows.has(row.id) || viewMode === "expanded";
+        const startLabel = row.startMonth ? monthLabel(row.startMonth) : "–";
+        const endLabel = row.endMonth ? monthLabel(row.endMonth) : "offen";
+        const rangeLabel = `${startLabel} – ${endLabel}`;
+        const nameTooltip = row.name || "Fixkosten";
         return `
-          <tr class="fix-master-row" data-id="${row.id}">
-            <td>
-              <label class="sr-only" for="name-${row.id}">Name</label>
-              <input id="name-${row.id}" type="text" data-field="name" value="${row.name || ""}" placeholder="z. B. Steuerberatung" />
+          <tr class="fix-master-row ${expanded ? "is-open" : ""}" data-id="${row.id}">
+            <td class="sticky name-col">
+              <div class="name-cell" title="${nameTooltip}">
+                <label class="checkbox" aria-label="Zeile auswählen">
+                  <input type="checkbox" data-action="select-row" ${selectedFixRows.has(row.id) ? "checked" : ""} />
+                  <span class="sr-only">Auswahl</span>
+                </label>
+                <button class="chevron" data-action="toggle-row" aria-expanded="${expanded}">
+                  <span class="chevron-icon">${expanded ? "▾" : "▸"}</span>
+                </button>
+                <div class="name-input-wrapper">
+                  <label class="sr-only" for="name-${row.id}">Name</label>
+                  <input id="name-${row.id}" type="text" data-field="name" value="${row.name || ""}" placeholder="z. B. Steuerberatung" />
+                  ${viewMode === "expanded" ? `<div class="secondary muted">${rangeLabel}</div>` : ""}
+                </div>
+              </div>
               ${errors.includes("Bitte einen Namen vergeben.") ? `<small class="error">Bitte einen Namen vergeben.</small>` : ""}
             </td>
-            <td>
+            <td class="min-col cat-col">
               <select data-field="category" value="${row.category || "Sonstiges"}">
                 ${CATEGORY_OPTIONS.map(opt => `<option value="${opt}" ${opt === (row.category || "Sonstiges") ? "selected" : ""}>${opt}</option>`).join("")}
               </select>
             </td>
-            <td>
+            <td class="min-col amount-col">
               <input type="text" data-field="amount" value="${formatCurrency(row.amount)}" inputmode="decimal" />
               ${errors.includes("Bitte Betrag > 0 eingeben.") ? `<small class="error">Bitte Betrag > 0 eingeben.</small>` : ""}
             </td>
-            <td>
+            <td class="min-col gross-col">
               <label class="checkbox inline">
                 <input type="checkbox" data-field="isGross" ${row.isGross !== false ? "checked" : ""} />
                 <span>Betrag ist brutto</span>
               </label>
             </td>
-            <td>
+            <td class="min-col vat-col">
               <input type="text" data-field="vatRate" value="${formatRate(row.vatRate)}" inputmode="decimal" aria-label="USt-Satz" />
             </td>
-            <td>
+            <td class="min-col freq-col">
               <select data-field="frequency" value="${freq}">
                 ${FREQUENCY_OPTIONS.map(opt => `<option value="${opt.value}" ${opt.value === freq ? "selected" : ""}>${opt.label}</option>`).join("")}
               </select>
               <input type="number" min="1" class="interval-input ${customVisible ? "" : "hidden"}" data-field="intervalMonths" value="${row.intervalMonths || 1}" aria-label="Intervall in Monaten" />
             </td>
-            <td>
+            <td class="min-col anchor-col">
               <select data-field="anchor" value="${row.anchor || "LAST"}">
                 ${ANCHOR_OPTIONS.map(opt => `<option value="${opt.value}" ${opt.value === (row.anchor || "LAST") ? "selected" : ""}>${opt.label}</option>`).join("")}
               </select>
             </td>
-            <td class="fix-month-range">
-              <input type="month" data-field="startMonth" value="${row.startMonth || ""}" aria-label="Startmonat" />
-              <input type="month" data-field="endMonth" value="${row.endMonth || ""}" aria-label="Endmonat" />
-              ${errors.includes("Startmonat darf nicht nach Endmonat liegen.") ? `<small class="error">Startmonat darf nicht nach Endmonat liegen.</small>` : ""}
-            </td>
-            <td class="fix-proration">
+            <td class="min-col range-col">${rangeLabel}</td>
+            <td class="min-col proration-col">
               <label class="checkbox">
                 <input type="checkbox" data-field="prorationEnabled" ${prorationEnabled ? "checked" : ""} />
                 <span>anteilig</span>
@@ -249,20 +286,46 @@ function render(root) {
                 ${PRORATION_OPTIONS.map(opt => `<option value="${opt.value}" ${opt.value === prorationMethod ? "selected" : ""}>${opt.label}</option>`).join("")}
               </select>
             </td>
-            <td>
+            <td class="min-col autopaid-col">
               <label class="checkbox">
                 <input type="checkbox" data-field="autoPaid" ${row.autoPaid ? "checked" : ""} />
-                <span>Automatisch bezahlen am Fälligkeitstag</span>
+                <span class="sr-only">Automatisch bezahlt</span>
               </label>
             </td>
-            <td>
-              <input type="text" data-field="notes" value="${row.notes || ""}" placeholder="Notiz" />
+            <td class="min-col notes-col">
+              <button class="btn tertiary note-btn" data-action="note" title="Notiz anzeigen">🛈</button>
+              ${row.notes ? `<span class="badge note" title="${row.notes}">Notiz</span>` : ""}
             </td>
-            <td class="actions">
+            <td class="actions min-col">
               <button class="btn" data-action="duplicate">Duplizieren</button>
               <button class="btn danger" data-action="delete">Löschen</button>
             </td>
           </tr>
+          ${expanded ? `
+            <tr class="fix-master-detail" data-for="${row.id}" data-id="${row.id}">
+              <td colspan="13">
+                <div class="detail-grid">
+                  <label>Start / Ende
+                    <div class="range-inputs">
+                      <input type="month" data-field="startMonth" value="${row.startMonth || ""}" aria-label="Startmonat" />
+                      <input type="month" data-field="endMonth" value="${row.endMonth || ""}" aria-label="Endmonat" />
+                    </div>
+                    ${errors.includes("Startmonat darf nicht nach Endmonat liegen.") ? `<small class="error" role="alert">Startmonat darf nicht nach Endmonat liegen.</small>` : ""}
+                  </label>
+                  <label>Notiz
+                    <textarea data-field="notes" rows="2" placeholder="Notiz">${row.notes || ""}</textarea>
+                  </label>
+                  <div class="detail-inline">
+                    <strong>Proration</strong>
+                    <div class="muted">${prorationEnabled ? "anteilig" : "keine Proration"}</div>
+                  </div>
+                  <div class="detail-inline">
+                    <strong>Frequenz</strong>
+                    <div class="muted">${freq === "custom" ? `${row.intervalMonths || 1} Monate` : FREQUENCY_OPTIONS.find((f) => f.value === freq)?.label || ""}</div>
+                  </div>
+                </div>
+              </td>
+            </tr>` : ""}
         `;
       })
       .join("");
@@ -426,6 +489,57 @@ function render(root) {
   renderMasters();
   renderMonthInstances();
 
+  const toolbar = root.querySelector(".fix-master-toolbar");
+
+  toolbar?.addEventListener("click", (event) => {
+    const viewBtn = event.target.closest("button[data-view]");
+    const batchBtn = event.target.closest("button[data-batch]");
+    if (viewBtn) {
+      const mode = viewBtn.dataset.view;
+      state.fixcostUi.viewMode = mode === "expanded" ? "expanded" : "compact";
+      saveState(state);
+      renderMasters();
+      return;
+    }
+    if (batchBtn) {
+      const ids = Array.from(selectedFixRows);
+      if (!ids.length) return;
+      if (batchBtn.dataset.batch === "delete") {
+        if (confirm(`Wirklich ${ids.length} Positionen löschen?`)) {
+          state.fixcosts = state.fixcosts.filter((row) => !ids.includes(row.id));
+          selectedFixRows = new Set();
+          saveState(state);
+          renderMasters();
+          renderMonthInstances();
+        }
+      } else if (batchBtn.dataset.batch === "duplicate") {
+        ids.forEach((id) => {
+          const src = state.fixcosts.find((r) => r.id === id);
+          if (src) {
+            const copy = { ...src, id: generateId(), name: `${src.name || "Kopie"} (Kopie)` };
+            state.fixcosts.push(copy);
+          }
+        });
+        saveState(state);
+        renderMasters();
+      } else if (batchBtn.dataset.batch === "vat-19") {
+        ids.forEach((id) => {
+          const row = state.fixcosts.find((r) => r.id === id);
+          if (row) row.vatRate = "19";
+        });
+        saveState(state);
+        renderMasters();
+      } else if (batchBtn.dataset.batch === "toggle-gross") {
+        ids.forEach((id) => {
+          const row = state.fixcosts.find((r) => r.id === id);
+          if (row) row.isGross = !(row.isGross !== false);
+        });
+        saveState(state);
+        renderMasters();
+      }
+    }
+  });
+
   addBtn?.addEventListener("click", () => {
     state.fixcosts.push(createDefaultFixcost(state));
     saveState(state);
@@ -435,7 +549,15 @@ function render(root) {
   });
 
   masterBody?.addEventListener("change", (event) => {
-    const tr = event.target.closest("tr.fix-master-row");
+    const tr = event.target.closest("tr[data-id]");
+    if (event.target.dataset.action === "select-row") {
+      const id = tr?.dataset.id;
+      if (!id) return;
+      if (event.target.checked) selectedFixRows.add(id);
+      else selectedFixRows.delete(id);
+      renderMasters();
+      return;
+    }
     if (!tr) return;
     const id = tr.dataset.id;
     const row = state.fixcosts.find((item) => item.id === id);
@@ -488,7 +610,7 @@ function render(root) {
   });
 
   masterBody?.addEventListener("blur", (event) => {
-    const tr = event.target.closest("tr.fix-master-row");
+    const tr = event.target.closest("tr[data-id]");
     if (!tr) return;
     const id = tr.dataset.id;
     const row = state.fixcosts.find((item) => item.id === id);
@@ -515,8 +637,30 @@ function render(root) {
     const tr = btn.closest("tr.fix-master-row");
     const id = tr?.dataset.id;
     const rowIndex = state.fixcosts.findIndex((item) => item.id === id);
-    if (rowIndex < 0) return;
     const action = btn.dataset.action;
+
+    if (action === "toggle-row") {
+      if (!id) return;
+      if (expandedRows.has(id)) expandedRows.delete(id);
+      else expandedRows.add(id);
+      state.fixcostUi.expanded = {};
+      expandedRows.forEach((key) => (state.fixcostUi.expanded[key] = true));
+      saveState(state);
+      renderMasters();
+      return;
+    }
+
+    if (action === "note") {
+      if (!expandedRows.has(id)) {
+        expandedRows.add(id);
+        state.fixcostUi.expanded[id] = true;
+        saveState(state);
+        renderMasters();
+      }
+      return;
+    }
+
+    if (rowIndex < 0) return;
     if (action === "delete") {
       if (confirm("Diese Fixkosten-Position wirklich löschen?")) {
         const removed = state.fixcosts.splice(rowIndex, 1)[0];

@@ -535,11 +535,52 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .net-strip .net.neg{background:rgba(239,68,68,0.08); color:#991b1b;}
 
 /* Fixkosten-Modul */
-.fix-master .table-scroll{margin-top:12px;}
-.fix-master-table input,.fix-master-table select{width:100%; box-sizing:border-box;}
+.fix-master .table-scroll{margin-top:12px; overflow-x:auto;}
+.fix-master-toolbar{display:flex; gap:16px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-top:12px;}
+.fix-master-toolbar .batch-actions{display:flex; gap:10px; align-items:center; opacity:0; visibility:hidden; transition:opacity .2s ease;}
+.fix-master-toolbar .batch-actions.visible{opacity:1; visibility:visible;}
+.fix-master-table{min-width:1480px; border-collapse:separate; border-spacing:0 4px;}
+.fix-master-table thead th{position:sticky; top:0; background:#f7fbf7; z-index:2; padding:10px 12px; text-align:left; white-space:nowrap;}
+.fix-master-table tr{background:#fff; box-shadow:0 1px 2px rgba(15,27,45,0.08);}
+.fix-master-table tr:nth-child(odd){background:linear-gradient(90deg,rgba(38,50,56,0.04),rgba(38,50,56,0.01));}
+.fix-master-table .fix-master-row{min-height:56px;}
+.fix-master-table input,.fix-master-table select,.fix-master-table textarea{width:100%; box-sizing:border-box;}
+.fix-master-table textarea{min-height:56px;}
 .fix-master-table .interval-input.hidden,.fix-master-table select.hidden{display:none;}
 .fix-master-table .checkbox{display:flex; gap:6px; align-items:center; font-size:0.9rem;}
 .fix-master-table .error{color:#d32f2f; font-size:0.8rem; display:block; margin-top:4px;}
+.fix-master-table .name-col{min-width:260px; position:sticky; left:0; background:inherit; z-index:3;}
+.fix-master-table .cat-col{min-width:140px;}
+.fix-master-table .amount-col{min-width:120px;}
+.fix-master-table .gross-col{min-width:120px;}
+.fix-master-table .vat-col{min-width:90px;}
+.fix-master-table .freq-col{min-width:130px;}
+.fix-master-table .anchor-col{min-width:130px;}
+.fix-master-table .range-col{min-width:180px;}
+.fix-master-table .proration-col{min-width:150px;}
+.fix-master-table .autopaid-col{min-width:140px; text-align:center;}
+.fix-master-table .notes-col{min-width:140px; text-align:center;}
+.fix-master-table .actions{min-width:140px;}
+.fix-master-table .name-cell{display:flex; align-items:center; gap:8px;}
+.fix-master-table .name-input-wrapper{min-width:180px; overflow:hidden;}
+.fix-master-table .name-input-wrapper input{padding:8px 10px; text-overflow:ellipsis; white-space:nowrap; overflow:hidden;}
+.fix-master-table .name-input-wrapper .secondary{margin-top:4px; font-size:12px;}
+.fix-master-table .chevron{border:none; background:transparent; font-size:16px; cursor:pointer; width:32px; height:32px; display:flex; align-items:center; justify-content:center;}
+.fix-master-table .chevron:focus-visible{outline:2px solid #1976d2; border-radius:6px;}
+.fix-master-table td{padding:10px 12px; vertical-align:middle; white-space:nowrap;}
+.fix-master-table .min-col{padding-right:14px;}
+.fix-master-table .fix-master-detail td{background:#f7fbf7;}
+.fix-master-table .detail-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; align-items:start;}
+.fix-master-table .detail-grid label{display:flex; flex-direction:column; gap:6px; font-size:0.9rem;}
+.fix-master-table .range-inputs{display:flex; gap:8px;}
+.fix-master-table .detail-inline{padding:10px; background:#fff; border:1px solid #dfe7e2; border-radius:10px;}
+.fix-master-table .note-btn{width:44px; height:44px; padding:0;}
+.fix-master-table .badge.note{margin-left:6px; background:#1976d2; color:#fff; padding:2px 8px; border-radius:999px;}
+.fix-master-table tr:hover{box-shadow:0 3px 10px rgba(15,27,45,0.12);}
+.fix-master-table .sticky{box-shadow:2px 0 4px rgba(0,0,0,0.05);}
+.fix-master-table.compact .fix-master-detail{display:none;}
+.fix-master-table.expanded .fix-master-detail{display:table-row;}
+.fix-master-table.expanded .name-input-wrapper input{white-space:normal;}
 .fix-month-list{display:flex; flex-direction:column; gap:16px;}
 .fix-month-card{border:1px solid #d8e7df; border-radius:12px; background:#fff; overflow:hidden; box-shadow:0 2px 6px rgba(15,27,45,0.08);}
 .fix-month-card header{display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:12px 16px; background:#f2f8f4;}

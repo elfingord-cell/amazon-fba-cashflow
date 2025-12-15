@@ -74,6 +74,10 @@ const defaults = {
     autoManualCheck: false,
     events: {},
   },
+  fixcostUi: {
+    viewMode: "compact",
+    expanded: {},
+  },
 };
 
 function ensureFixcostContainers(state) {
@@ -81,6 +85,15 @@ function ensureFixcostContainers(state) {
   if (!Array.isArray(state.fixcosts)) state.fixcosts = [];
   if (!state.fixcostOverrides || typeof state.fixcostOverrides !== "object") {
     state.fixcostOverrides = {};
+  }
+
+  if (!state.fixcostUi || typeof state.fixcostUi !== "object") {
+    state.fixcostUi = structuredClone(defaults.fixcostUi);
+  } else {
+    state.fixcostUi.viewMode = state.fixcostUi.viewMode === "expanded" ? "expanded" : "compact";
+    if (!state.fixcostUi.expanded || typeof state.fixcostUi.expanded !== "object") {
+      state.fixcostUi.expanded = {};
+    }
   }
 
    state.fixcosts = state.fixcosts.map(row => {
