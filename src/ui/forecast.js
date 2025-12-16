@@ -208,15 +208,59 @@ function parseVentoryJsonContent(obj) {
   return parseForecastJsonPayload(obj);
 }
 
+function stripBom(text) {
+  if (typeof text !== 'string') return '';
+  return text.replace(/^\uFEFF/, '');
+}
+
 async function parseJsonFile(file) {
-  const text = await file.text();
-  let json;
+  let text = '';
   try {
-    json = JSON.parse(text);
+    text = await file.text();
   } catch (err) {
-    throw new Error('JSON konnte nicht gelesen werden. Prüfe Datei oder Format.');
+    console.error('JSON-Text konnte nicht gelesen werden', err);
   }
-  return parseVentoryJsonContent(json);
+
+  const tryParse = raw => {
+    try {
+      return JSON.parse(stripBom(raw));
+    } catch (err) {
+      return null;
+    }
+  };
+
+  let json = tryParse(text);
+  if (!json) {
+    try {
+      const buffer = await file.arrayBuffer();
+      const decoded = new TextDecoder('windows-1252', { fatal: false }).decode(buffer);
+      json = tryParse(decoded);
+    } catch (err) {
+      console.error('JSON-Fallback-Decode fehlgeschlagen', err);
+    }
+  }
+
+  if (!json) {
+    // Datei trägt evtl. die Endung .json, enthält aber XLS-Daten – versuche Excel-Parser.
+    try {
+      return await parseExcelFile(file);
+    } catch (excelErr) {
+      console.error('Excel-Fallback nach JSON-Fehler gescheitert', excelErr);
+      throw new Error('JSON konnte nicht gelesen werden. Prüfe Datei oder Format.');
+    }
+  }
+
+  try {
+    return parseVentoryJsonContent(json);
+  } catch (err) {
+    // Wenn der Inhalt strukturell kein JSON im erwarteten Format ist, versuche Excel als letzten Ausweg.
+    try {
+      return await parseExcelFile(file);
+    } catch (excelErr) {
+      console.error('Excel-Fallback nach Parserfehler gescheitert', err, excelErr);
+      throw err;
+    }
+  }
 }
 
 function renderTable(el, state) {
