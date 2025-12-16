@@ -1,6 +1,6 @@
 import { loadState, saveState, addStateListener, getProductsSnapshot } from '../data/storageLocal.js';
 import { openProductDrawer } from './products.js';
-import { parseForecastJsonPayload, formatEuroDE, normalizeMonthToken } from '../domain/forecastImport.js';
+import { parseForecastJsonPayload, formatEuroDE, normalizeMonthToken, parseVentoryCsv, mergeForecastItems } from '../domain/forecastImport.js';
 
 function parseNumberDE(value) {
   if (value == null) return 0;
@@ -22,123 +22,14 @@ function formatEuroWithSymbol(value) {
   return `${formatEuroDE(value)} €`;
 }
 
-function detectMonthFromCell(cell) {
-  if (!cell) return null;
-  const trimmed = String(cell).trim().replace(/\s+/g, " ");
-  const direct = normalizeMonthToken(trimmed);
-  if (direct) return direct;
-  const ymMatch = trimmed.match(/(\d{4})[-/.](\d{2})/);
-  if (ymMatch) return `${ymMatch[1]}-${ymMatch[2]}`;
-  const nameYearLoose = trimmed.match(/([A-Za-zÄÖÜäöü\.]{2,})[^0-9]{0,5}(\d{4})/);
-  if (nameYearLoose) {
-    const cleanedName = nameYearLoose[1].replace(/[^A-Za-zÄÖÜäöü]/g, "");
-    const token = `${cleanedName} ${nameYearLoose[2]}`;
-    const norm = normalizeMonthToken(token);
-    if (norm) return norm;
-  }
-  return null;
-}
-
 function calcRevenueFromGross(qty, priceGross, showGross, vatRate) {
   if (priceGross == null) return null;
   const base = Number(priceGross) || 0;
   const effective = showGross ? base : base / (1 + vatRate);
   return qty * effective;
 }
-
-function parseCsvLine(line, delimiter) {
-  const cells = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-      continue;
-    }
-    if (!inQuotes && ch === delimiter) {
-      cells.push(current);
-      current = "";
-      continue;
-    }
-    current += ch;
-  }
-  cells.push(current);
-  return cells;
-}
-
 function parseCsv(text) {
-  const lines = text.split(/\r?\n/).filter(line => line.length);
-  if (!lines.length) return { records: [], warnings: [] };
-
-  const firstNonEmpty = lines.find(line => line.trim().length) || '';
-  const delimiter = firstNonEmpty.includes(';') ? ';' : ',';
-  const rows = lines.map(line => parseCsvLine(line, delimiter));
-
-  const headerIdx = rows.findIndex(r => r.some(cell => String(cell || '').trim().toLowerCase() === 'sku'));
-  if (headerIdx === -1) throw new Error("Spalte ‘SKU’ nicht gefunden. Bitte Datei prüfen oder Spalten im Wizard zuordnen.");
-
-  const headerRaw = rows[headerIdx].map(h => String(h ?? '').trim());
-  const headerLower = headerRaw.map(h => h.toLowerCase());
-  const maxCols = Math.max(...rows.map(r => r.length));
-
-  const monthByCol = Array(maxCols).fill(null);
-  let currentMonth = null;
-  for (let r = 0; r <= headerIdx; r++) {
-    const line = rows[r];
-    for (let c = 0; c < maxCols; c++) {
-      const token = line[c] ?? '';
-      const month = detectMonthFromCell(token);
-      if (month) {
-        currentMonth = month;
-        monthByCol[c] = month;
-      } else if (currentMonth && !monthByCol[c]) {
-        monthByCol[c] = currentMonth;
-      }
-    }
-  }
-
-  const skuIdx = headerLower.findIndex(h => h === 'sku');
-  const aliasIdx = headerLower.findIndex(h => h === 'alias' || h === 'produkt' || h === 'produktname');
-
-  const qtyCols = [];
-  for (let c = 0; c < maxCols; c++) {
-    const label = (headerLower[c] || '').trim();
-    const month = monthByCol[c];
-    const isQty = ['einheiten', 'qty', 'menge', 'units'].some(key => label.includes(key));
-    if (month && isQty) {
-      qtyCols.push({ idx: c, month });
-    }
-  }
-
-  if (!qtyCols.length) {
-    throw new Error('Keine Monats-Spalten erkannt (Ventory). Gültig: YYYY-MM, YYYY/MM, MM-YYYY, MMM YYYY.');
-  }
-
-  const warnings = [];
-  const records = [];
-  for (let r = headerIdx + 1; r < rows.length; r++) {
-    const cols = rows[r].length ? rows[r] : [];
-    const sku = (cols[skuIdx] || '').trim();
-    if (!sku) continue;
-    const alias = aliasIdx >= 0 ? (cols[aliasIdx] || '').trim() : '';
-    qtyCols.forEach(col => {
-      const raw = (cols[col.idx] || '').toString().trim();
-      const cleaned = raw.replace(/[\s€]/g, '');
-      const qtyVal = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : parseNumberDE(cleaned);
-      const valid = Number.isFinite(qtyVal) && qtyVal >= 0;
-      if (!valid) {
-        warnings.push(`Ungültige Menge in Zeile ${r + 1}, Spalte ${headerRaw[col.idx] || col.idx} → als 0 übernommen.`);
-      }
-      records.push({ sku, alias, month: col.month, qty: valid ? qtyVal : 0, source: 'ventory' });
-    });
-  }
-  return { records, warnings };
+  return parseVentoryCsv(text);
 }
 
 const XLSX_CANDIDATES = [
@@ -1040,6 +931,8 @@ function render(el) {
     }
     const st = loadState();
     ensureForecastContainers(st);
+    const importedSkus = new Set(parsed.importedSkus || parsed.records.map(r => r.sku));
+    const importedMonths = new Set(parsed.importedMonths || parsed.records.map(r => r.month));
     const map = new Map();
     parsed.records.forEach(rec => {
       const key = `${rec.sku}__${rec.month}`;
@@ -1058,13 +951,15 @@ function render(el) {
         st.forecast.prices.byMonth[rec.sku][rec.month] = Number(rec.priceEur) || 0;
       }
     });
-    const existing = st.forecast.items.filter(it => !map.has(`${it.sku}__${it.month}`));
-    st.forecast.items = [...existing, ...map.values()];
+    const merged = mergeForecastItems(st.forecast.items, Array.from(map.values()));
+    st.forecast.items = merged.items;
     saveState(st);
     if (parsed.warnings?.length) {
       alert(parsed.warnings.slice(0, 5).join('\n'));
     }
-    alert(`Import abgeschlossen: ${map.size} Monatswerte.`);
+    const monthsWritten = importedMonths.size || merged.importedMonths.size;
+    const skusWritten = importedSkus.size || merged.importedSkus.size;
+    alert(`Import abgeschlossen: ${map.size} Monatswerte (${skusWritten} SKUs, ${monthsWritten} Monate).`);
     render(el);
   });
 }
