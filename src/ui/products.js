@@ -187,6 +187,12 @@ export function openProductDrawer(initialInput, { onSaved } = {}) {
   const saveBtn = createEl("button", { class: "btn primary", type: "submit" }, ["Speichern"]);
   const cancelBtn = createEl("button", { class: "btn", type: "button" }, ["Abbrechen"]);
 
+  // Buttons live outside the form container; wire the primary control to submit explicitly
+  saveBtn.addEventListener("click", ev => {
+    ev.preventDefault();
+    form.requestSubmit();
+  });
+
   const dialog = openModal({
     title: match ? `Produkt bearbeiten – ${base.alias || base.sku}` : "Produkt anlegen",
     content: form,
