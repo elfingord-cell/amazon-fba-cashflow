@@ -657,7 +657,8 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-toolbar input[type="search"]{padding:8px 10px; min-width:200px; border:1px solid #d0d7de; border-radius:8px;}
 .forecast-toolbar .select-inline{display:flex; align-items:center; gap:6px; font-size:13px; color:#37474f;}
 .forecast-toolbar select{padding:6px 8px; border:1px solid #d0d7de; border-radius:8px;}
-.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:10px; overflow:auto; max-height:520px;}
+.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:10px; overflow:hidden;}
+.forecast-scroll{max-height:520px; overflow:auto;}
 .forecast-grid{min-width:100%; display:flex; flex-direction:column; font-size:13px; color:#263238;}
 .forecast-grid .fg-head,.forecast-grid .fg-body,.forecast-grid .fg-footer{min-width:100%;}
 .forecast-grid .fg-row{display:grid; grid-auto-rows:1fr; align-items:stretch;}
@@ -683,7 +684,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-grid .fg-month-cell input[value=""]{color:#b0bec5;}
 .forecast-grid .fg-month-cell input::-webkit-inner-spin-button,.forecast-grid .fg-month-cell input::-webkit-outer-spin-button{margin:0;}
 .forecast-grid .fg-total-cell{font-variant-numeric:tabular-nums; text-align:right;}
-.forecast-grid .fg-body{max-height:400px; overflow-y:auto; overflow-x:visible;}
+.forecast-grid .fg-body{overflow:visible;}
 .forecast-grid .fg-row:hover .fg-cell{background:#f1f5f9;}
 .forecast-grid .fg-row:hover .fg-sticky,.forecast-grid .fg-row:hover .fg-sticky-right{background:#e8f5f2;}
 .forecast-grid .fg-row.fg-data .fg-month-cell input.error{border-color:#d32f2f;}

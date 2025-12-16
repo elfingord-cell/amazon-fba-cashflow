@@ -476,7 +476,10 @@ function renderTable(el, state) {
     }
   });
 
-  return table;
+  const scroller = document.createElement('div');
+  scroller.className = 'forecast-scroll';
+  scroller.appendChild(table);
+  return scroller;
 }
 
 function ensureForecastContainers(state) {
