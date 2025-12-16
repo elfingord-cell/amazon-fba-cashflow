@@ -20,14 +20,40 @@ function detectMonthFromCell(cell) {
   if (direct) return direct;
   const ymMatch = trimmed.match(/(\d{4})[-/.](\d{2})/);
   if (ymMatch) return `${ymMatch[1]}-${ymMatch[2]}`;
-  const nameYear = trimmed.match(/([A-Za-zÄÖÜäöü\.]+)\s+(\d{4})/);
-  if (nameYear) {
-    const cleanedName = nameYear[1].replace(/\./g, "");
-    const token = `${cleanedName} ${nameYear[2]}`;
+  const nameYearLoose = trimmed.match(/([A-Za-zÄÖÜäöü\.]{2,})[^0-9]{0,5}(\d{4})/);
+  if (nameYearLoose) {
+    const cleanedName = nameYearLoose[1].replace(/[^A-Za-zÄÖÜäöü]/g, "");
+    const token = `${cleanedName} ${nameYearLoose[2]}`;
     const norm = normalizeMonthToken(token);
     if (norm) return norm;
   }
   return null;
+}
+
+function parseCsvLine(line, delimiter) {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (!inQuotes && ch === delimiter) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current);
+  return cells;
 }
 
 function parseCsv(text) {
@@ -36,7 +62,7 @@ function parseCsv(text) {
 
   const firstNonEmpty = lines.find(line => line.trim().length) || '';
   const delimiter = firstNonEmpty.includes(';') ? ';' : ',';
-  const rows = lines.map(line => line.split(delimiter).map(col => col));
+  const rows = lines.map(line => parseCsvLine(line, delimiter));
 
   const headerIdx = rows.findIndex(r => r.some(cell => String(cell || '').trim().toLowerCase() === 'sku'));
   if (headerIdx === -1) throw new Error("Spalte ‘SKU’ nicht gefunden. Bitte Datei prüfen oder Spalten im Wizard zuordnen.");
@@ -88,11 +114,12 @@ function parseCsv(text) {
     qtyCols.forEach(col => {
       const raw = (cols[col.idx] || '').toString().trim();
       const cleaned = raw.replace(/[\s€]/g, '');
-      const qty = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : Number.parseInt(cleaned, 10);
-      if (!Number.isInteger(qty) || qty < 0) {
+      const qtyVal = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : parseNumberDE(cleaned);
+      const valid = Number.isFinite(qtyVal) && qtyVal >= 0;
+      if (!valid) {
         warnings.push(`Ungültige Menge in Zeile ${r + 1}, Spalte ${headerRaw[col.idx] || col.idx} → als 0 übernommen.`);
       }
-      records.push({ sku, alias, month: col.month, qty: Number.isInteger(qty) && qty >= 0 ? qty : 0, source: 'ventory' });
+      records.push({ sku, alias, month: col.month, qty: valid ? qtyVal : 0, source: 'ventory' });
     });
   }
   return { records, warnings };
