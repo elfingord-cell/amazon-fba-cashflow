@@ -68,6 +68,13 @@ const defaults = {
     items: [],
     settings: {
       useForecast: false,
+      grossRevenue: false,
+      priceVatRate: 0.19,
+    },
+    prices: {
+      defaults: {},
+      byMonth: {},
+      vatRate: 0.19,
     },
   },
   status: {
@@ -149,9 +156,23 @@ function ensureForecast(state) {
   if (!Array.isArray(state.forecast.items)) state.forecast.items = [];
   if (!state.forecast.settings || typeof state.forecast.settings !== "object") {
     state.forecast.settings = { useForecast: false };
-  } else {
-    state.forecast.settings.useForecast = Boolean(state.forecast.settings.useForecast);
   }
+  state.forecast.settings.useForecast = Boolean(state.forecast.settings.useForecast);
+  state.forecast.settings.grossRevenue = Boolean(state.forecast.settings.grossRevenue);
+  const vatSetting = Number(String(state.forecast.settings.priceVatRate ?? "0.19").replace(",", "."));
+  state.forecast.settings.priceVatRate = Number.isFinite(vatSetting) ? vatSetting : 0.19;
+
+  if (!state.forecast.prices || typeof state.forecast.prices !== "object") {
+    state.forecast.prices = structuredClone(defaults.forecast.prices);
+  }
+  if (!state.forecast.prices.defaults || typeof state.forecast.prices.defaults !== "object") {
+    state.forecast.prices.defaults = {};
+  }
+  if (!state.forecast.prices.byMonth || typeof state.forecast.prices.byMonth !== "object") {
+    state.forecast.prices.byMonth = {};
+  }
+  const vatPrice = Number(String(state.forecast.prices.vatRate ?? state.forecast.settings.priceVatRate ?? 0.19).replace(",", "."));
+  state.forecast.prices.vatRate = Number.isFinite(vatPrice) ? vatPrice : 0.19;
 }
 
 function monthIndex(ym) {

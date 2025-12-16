@@ -293,17 +293,36 @@ function monthSeries(state) {
   return months;
 }
 
+function resolvePrice(state, sku, month) {
+  if (!sku) return null;
+  const defaults = state.forecast?.prices?.defaults || {};
+  const byMonth = state.forecast?.prices?.byMonth || {};
+  if (byMonth[sku] && byMonth[sku][month] != null) {
+    const v = Number(byMonth[sku][month]);
+    return Number.isFinite(v) ? v : null;
+  }
+  if (defaults[sku] != null) {
+    const v = Number(defaults[sku]);
+    return Number.isFinite(v) ? v : null;
+  }
+  const fallback = (state.forecast?.items || []).find(it => it?.sku === sku && it?.month === month && it.priceEur != null);
+  if (fallback) {
+    const v = Number(fallback.priceEur);
+    return Number.isFinite(v) ? v : null;
+  }
+  return null;
+}
+
 const forecastUiPrefs = {
   search: '',
   year: 'all',
   showAlias: true,
   hideZero: false,
   heatmap: false,
+  mode: 'units',
 };
 
-function renderTable(el, state) {
-  const monthsAll = monthSeries(state);
-  const months = forecastUiPrefs.year === 'all' ? monthsAll : monthsAll.filter(m => m.startsWith(forecastUiPrefs.year));
+function renderTable(el, state, months) {
   const grouped = new Map();
   (state.forecast?.items || []).forEach(item => {
     const key = (item.sku || '').trim();
@@ -324,8 +343,12 @@ function renderTable(el, state) {
     return months.some(m => (row.values[m] ?? 0) !== 0);
   });
 
+  const mode = forecastUiPrefs.mode || 'units';
+  const gross = Boolean(state.forecast?.settings?.grossRevenue);
+  const vatRate = Number(state.forecast?.prices?.vatRate ?? state.forecast?.settings?.priceVatRate ?? 0.19) || 0;
+
   const table = document.createElement('div');
-  table.className = `forecast-grid ${forecastUiPrefs.heatmap ? 'heatmap' : ''}`;
+  table.className = `forecast-grid ${forecastUiPrefs.heatmap ? 'heatmap' : ''} ${mode}`;
   table.style.setProperty('--fg-months', months.length);
 
   // Header rows with year grouping
@@ -375,28 +398,41 @@ function renderTable(el, state) {
   body.className = 'fg-body';
 
   const inputs = [];
-  const maxQty = Math.max(
+  const maxHeat = Math.max(
     1,
-    ...tbodyRows.flatMap(row => months.map(m => Number(row.values[m] || 0))),
+    ...tbodyRows.flatMap(row => months.map(m => {
+      const qty = Number(row.values[m] || 0);
+      const price = resolvePrice(state, row.sku, m);
+      const rev = price == null ? 0 : qty * price * (gross ? (1 + vatRate) : 1);
+      return mode === 'revenue' ? rev : qty;
+    })),
   );
+
+  let missingPrices = 0;
 
   tbodyRows.forEach((row, rowIdx) => {
     const tr = document.createElement('div');
     tr.className = 'fg-row fg-data';
     const skuCell = document.createElement('div');
+    const defaultPrice = state.forecast?.prices?.defaults?.[row.sku];
     skuCell.className = 'fg-cell fg-sku fg-sticky';
     skuCell.innerHTML = `<div class="fg-sku-code">${row.sku}</div>${
       forecastUiPrefs.showAlias && row.alias ? `<div class="fg-alias">${row.alias}</div>` : ''
-    }`;
+    }<button type="button" class="fg-price-chip" data-price-default="${row.sku}">${defaultPrice != null ? formatEuroDE(defaultPrice) : 'Preis pflegen'}</button>`;
     tr.appendChild(skuCell);
-    let rowSum = 0;
+    let rowQtySum = 0;
+    let rowRevSum = 0;
     months.forEach((m, colIdx) => {
       const val = Number(row.values[m] || 0);
-      rowSum += val;
+      rowQtySum += val;
+      const price = resolvePrice(state, row.sku, m);
+      const revenue = price == null ? null : val * price * (gross ? (1 + vatRate) : 1);
+      if (revenue != null) rowRevSum += revenue;
       const cell = document.createElement('div');
       cell.className = 'fg-cell fg-month-cell';
-      if (forecastUiPrefs.heatmap && val > 0) {
-        const level = Math.min(1, val / maxQty);
+      if (forecastUiPrefs.heatmap) {
+        const metric = mode === 'revenue' ? (revenue || 0) : val;
+        const level = Math.min(1, metric / maxHeat);
         cell.style.setProperty('--heat', level);
       }
       const input = document.createElement('input');
@@ -408,13 +444,44 @@ function renderTable(el, state) {
       input.dataset.month = m;
       input.dataset.row = String(rowIdx);
       input.dataset.col = String(colIdx);
-      cell.appendChild(input);
-      inputs.push(input);
+      if (mode === 'units' || mode === 'split') {
+        cell.appendChild(input);
+        inputs.push(input);
+      } else {
+        input.tabIndex = -1;
+        input.classList.add('fg-hidden');
+        cell.appendChild(input);
+      }
+
+      if (mode === 'revenue' || mode === 'split') {
+        const priceResolved = price == null ? 'Preis fehlt' : formatEuroDE(price);
+        const revenueText = revenue == null ? '—' : formatEuroDE(revenue);
+        const view = document.createElement('div');
+        view.className = `fg-revenue ${revenue == null ? 'missing-price' : ''}`;
+        view.innerHTML = `${mode === 'split' ? `<div class="fg-qty-val">${formatNumberDE(val)}</div>` : ''}<div class="fg-rev-val">${revenueText}</div>`;
+        cell.appendChild(view);
+        const priceBtn = document.createElement('button');
+        priceBtn.type = 'button';
+        priceBtn.className = 'fg-price-btn';
+        priceBtn.setAttribute('data-price-edit', row.sku);
+        priceBtn.setAttribute('data-price-month', m);
+        priceBtn.title = price == null ? 'Preis fehlt – klicken zum Pflegen' : `Preis: ${priceResolved}`;
+        priceBtn.textContent = '€';
+        cell.appendChild(priceBtn);
+        if (price == null && val > 0) missingPrices += 1;
+      }
+
       tr.appendChild(cell);
     });
     const sumCell = document.createElement('div');
     sumCell.className = 'fg-cell fg-sum fg-sticky-right';
-    sumCell.textContent = formatNumberDE(rowSum);
+    if (mode === 'split') {
+      sumCell.innerHTML = `<div class="fg-sum-qty">${formatNumberDE(rowQtySum)}</div><div class="fg-sum-rev">${formatEuroDE(rowRevSum)}</div>`;
+    } else if (mode === 'revenue') {
+      sumCell.textContent = formatEuroDE(rowRevSum);
+    } else {
+      sumCell.textContent = formatNumberDE(rowQtySum);
+    }
     tr.appendChild(sumCell);
     body.appendChild(tr);
   });
@@ -428,21 +495,48 @@ function renderTable(el, state) {
   totalLabel.className = 'fg-cell fg-sku fg-sticky';
   totalLabel.textContent = 'Gesamt';
   totalRow.appendChild(totalLabel);
-  let grand = 0;
+  let grandQty = 0;
+  let grandRev = 0;
   months.forEach(m => {
-    const colSum = tbodyRows.reduce((acc, row) => acc + (Number(row.values[m] || 0) || 0), 0);
-    grand += colSum;
+    const colQty = tbodyRows.reduce((acc, row) => acc + (Number(row.values[m] || 0) || 0), 0);
+    const colRev = tbodyRows.reduce((acc, row) => {
+      const qty = Number(row.values[m] || 0);
+      const price = resolvePrice(state, row.sku, m);
+      const rev = price == null ? 0 : qty * price * (gross ? (1 + vatRate) : 1);
+      return acc + (rev || 0);
+    }, 0);
+    grandQty += colQty;
+    grandRev += colRev;
     const cell = document.createElement('div');
     cell.className = 'fg-cell fg-month fg-total-cell';
-    cell.textContent = formatNumberDE(colSum);
+    if (mode === 'revenue') {
+      cell.textContent = formatEuroDE(colRev);
+    } else if (mode === 'split') {
+      cell.innerHTML = `<div class="fg-sum-qty">${formatNumberDE(colQty)}</div><div class="fg-sum-rev">${formatEuroDE(colRev)}</div>`;
+    } else {
+      cell.textContent = formatNumberDE(colQty);
+    }
     totalRow.appendChild(cell);
   });
   const grandCell = document.createElement('div');
   grandCell.className = 'fg-cell fg-sum fg-sticky-right';
-  grandCell.textContent = formatNumberDE(grand);
+  if (mode === 'split') {
+    grandCell.innerHTML = `<div class="fg-sum-qty">${formatNumberDE(grandQty)}</div><div class="fg-sum-rev">${formatEuroDE(grandRev)}</div>`;
+  } else if (mode === 'revenue') {
+    grandCell.textContent = formatEuroDE(grandRev);
+  } else {
+    grandCell.textContent = formatNumberDE(grandQty);
+  }
   totalRow.appendChild(grandCell);
   footer.appendChild(totalRow);
   table.appendChild(footer);
+
+  if ((mode === 'revenue' || mode === 'split') && missingPrices > 0) {
+    const warn = document.createElement('div');
+    warn.className = 'fg-price-warning';
+    warn.textContent = `Preise fehlen für ${missingPrices} Zellen – bitte Preise pflegen.`;
+    table.insertBefore(warn, header);
+  }
 
   table.addEventListener('change', ev => {
     const input = ev.target.closest('input[data-sku]');
@@ -473,6 +567,40 @@ function renderTable(el, state) {
       ev.preventDefault();
       next.focus();
       next.select();
+    }
+  });
+
+  const handlePriceUpdate = (sku, month, value) => {
+    const parsed = parseNumberDE(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return;
+    const st = loadState();
+    ensureForecastContainers(st);
+    if (month) {
+      if (!st.forecast.prices.byMonth[sku]) st.forecast.prices.byMonth[sku] = {};
+      st.forecast.prices.byMonth[sku][month] = parsed;
+    } else {
+      st.forecast.prices.defaults[sku] = parsed;
+    }
+    saveState(st);
+    render(el);
+  };
+
+  table.addEventListener('click', ev => {
+    const defBtn = ev.target.closest('[data-price-default]');
+    if (defBtn) {
+      const sku = defBtn.getAttribute('data-price-default');
+      const current = resolvePrice(state, sku, months[0]) ?? state.forecast?.prices?.defaults?.[sku] ?? '';
+      const next = prompt('Preis je Stück (EUR)', current ? formatEuroDE(current) : '');
+      if (next !== null) handlePriceUpdate(sku, null, next);
+      return;
+    }
+    const editBtn = ev.target.closest('[data-price-edit]');
+    if (editBtn) {
+      const sku = editBtn.getAttribute('data-price-edit');
+      const month = editBtn.getAttribute('data-price-month');
+      const current = resolvePrice(state, sku, month);
+      const next = prompt(`Preis für ${sku} – ${month.replace('-', '.')}`, current ? formatEuroDE(current) : '');
+      if (next !== null) handlePriceUpdate(sku, month, next);
     }
   });
 
@@ -530,6 +658,17 @@ function render(el) {
         <input type="checkbox" ${forecastUiPrefs.heatmap ? 'checked' : ''} data-forecast-heatmap />
         <span>Heatmap</span>
       </label>
+      <div class="segmented" role="group" aria-label="Ansicht wählen">
+        ${['units','revenue','split'].map(mode => `
+          <button type="button" data-forecast-mode="${mode}" class="${forecastUiPrefs.mode === mode ? 'active' : ''}">
+            ${mode === 'units' ? 'Absätze' : mode === 'revenue' ? 'Umsatz' : 'Split'}
+          </button>
+        `).join('')}
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${state.forecast.settings.grossRevenue ? 'checked' : ''} data-forecast-gross />
+        <span>Brutto anzeigen</span>
+      </label>
       <label class="select-inline">
         <span>Jahr</span>
         <select data-forecast-year>
@@ -541,9 +680,11 @@ function render(el) {
       </label>
     </div>
   `;
+  const monthsAll = monthSeries(state);
+  const months = forecastUiPrefs.year === 'all' ? monthsAll : monthsAll.filter(m => m.startsWith(forecastUiPrefs.year));
   const tableHost = document.createElement('div');
   tableHost.className = 'forecast-table-wrap';
-  tableHost.appendChild(renderTable(el, state));
+  tableHost.appendChild(renderTable(el, state, months));
   wrap.appendChild(tableHost);
   el.appendChild(wrap);
 
@@ -571,6 +712,21 @@ function render(el) {
 
   wrap.querySelector('[data-forecast-heatmap]').addEventListener('change', ev => {
     forecastUiPrefs.heatmap = ev.target.checked;
+    render(el);
+  });
+
+  wrap.querySelectorAll('[data-forecast-mode]').forEach(btn => {
+    btn.addEventListener('click', ev => {
+      forecastUiPrefs.mode = ev.currentTarget.getAttribute('data-forecast-mode');
+      render(el);
+    });
+  });
+
+  wrap.querySelector('[data-forecast-gross]').addEventListener('change', ev => {
+    const st = loadState();
+    ensureForecastContainers(st);
+    st.forecast.settings.grossRevenue = ev.target.checked;
+    saveState(st);
     render(el);
   });
 
@@ -643,6 +799,10 @@ function render(el) {
         importId: rec.importId || importId,
       };
       map.set(key, next);
+      if (rec.priceEur != null) {
+        if (!st.forecast.prices.byMonth[rec.sku]) st.forecast.prices.byMonth[rec.sku] = {};
+        st.forecast.prices.byMonth[rec.sku][rec.month] = Number(rec.priceEur) || 0;
+      }
     });
     const existing = st.forecast.items.filter(it => !map.has(`${it.sku}__${it.month}`));
     st.forecast.items = [...existing, ...map.values()];
