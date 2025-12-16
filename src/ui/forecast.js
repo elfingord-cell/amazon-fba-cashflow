@@ -712,7 +712,42 @@ function renderTable(el, state, months) {
   const scroller = document.createElement('div');
   scroller.className = 'forecast-scroll';
   scroller.appendChild(table);
-  return scroller;
+
+  // Persistent horizontal scrollbar for macOS overlay scrollbars: keeps header/body aligned
+  const scrollWrap = document.createElement('div');
+  scrollWrap.className = 'forecast-scroll-wrap';
+  scrollWrap.appendChild(scroller);
+
+  const fauxScroll = document.createElement('div');
+  fauxScroll.className = 'forecast-scrollbar';
+  const spacer = document.createElement('div');
+  spacer.className = 'forecast-scrollbar__spacer';
+  fauxScroll.appendChild(spacer);
+  scrollWrap.appendChild(fauxScroll);
+
+  let syncing = false;
+  const sync = (source, target) => {
+    if (syncing) return;
+    syncing = true;
+    target.scrollLeft = source.scrollLeft;
+    syncing = false;
+  };
+
+  scroller.addEventListener('scroll', () => sync(scroller, fauxScroll));
+  fauxScroll.addEventListener('scroll', () => sync(fauxScroll, scroller));
+
+  const updateSpacer = () => {
+    const width = Math.max(scroller.scrollWidth, scroller.clientWidth);
+    spacer.style.width = `${width}px`;
+    fauxScroll.scrollLeft = scroller.scrollLeft;
+  };
+
+  const resizeObs = new ResizeObserver(updateSpacer);
+  resizeObs.observe(scroller);
+  resizeObs.observe(table);
+  updateSpacer();
+
+  return scrollWrap;
 }
 
 function ensureForecastContainers(state) {

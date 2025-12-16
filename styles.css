@@ -662,10 +662,16 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-toolbar .segmented button + button{border-left:1px solid #cfd8dc;}
 .forecast-toolbar .segmented button.active{background:#26a69a; color:#fff;}
 .forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:10px; overflow:visible;}
+.forecast-scroll-wrap{display:flex; flex-direction:column; position:relative;}
 .forecast-scroll{max-height:520px; overflow-x:scroll; overflow-y:auto; scrollbar-gutter:stable both-edges;}
 .forecast-scroll::-webkit-scrollbar{height:12px;}
 .forecast-scroll::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.28); border-radius:8px;}
 .forecast-scroll{scrollbar-width:thin;}
+.forecast-scrollbar{height:14px; overflow-x:scroll; overflow-y:hidden; background:#f5f7fa; border-top:1px solid #e0e6ed; position:sticky; bottom:0; z-index:3; scrollbar-gutter:stable both-edges;}
+.forecast-scrollbar::-webkit-scrollbar{height:12px;}
+.forecast-scrollbar::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.35); border-radius:8px;}
+.forecast-scrollbar{scrollbar-width:thin;}
+.forecast-scrollbar__spacer{height:1px;}
 .forecast-grid{min-width:100%; display:flex; flex-direction:column; font-size:13px; color:#263238;}
 .forecast-grid .fg-head,.forecast-grid .fg-body,.forecast-grid .fg-footer{min-width:100%;}
 .forecast-grid .fg-row{display:grid; grid-auto-rows:1fr; align-items:stretch;}
