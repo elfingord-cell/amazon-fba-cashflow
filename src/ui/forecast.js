@@ -736,6 +736,15 @@ function renderTable(el, state, months) {
   scroller.addEventListener('scroll', () => sync(scroller, fauxScroll));
   fauxScroll.addEventListener('scroll', () => sync(fauxScroll, scroller));
 
+  // Allow horizontal wheel/trackpad gestures to drive the faux bar while the native scrollbar is hidden
+  scroller.addEventListener('wheel', ev => {
+    const primarilyHorizontal = Math.abs(ev.deltaX) >= Math.abs(ev.deltaY) || ev.shiftKey;
+    if (!primarilyHorizontal) return;
+    ev.preventDefault();
+    const delta = ev.deltaX || (ev.shiftKey ? ev.deltaY : 0);
+    fauxScroll.scrollLeft = Math.max(0, Math.min(fauxScroll.scrollWidth - fauxScroll.clientWidth, fauxScroll.scrollLeft + delta));
+  }, { passive: false });
+
   const updateSpacer = () => {
     const width = Math.max(scroller.scrollWidth, scroller.clientWidth);
     spacer.style.width = `${width}px`;
