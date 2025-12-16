@@ -1,4 +1,5 @@
-import { loadState, saveState, addStateListener } from '../data/storageLocal.js';
+import { loadState, saveState, addStateListener, getProductsSnapshot } from '../data/storageLocal.js';
+import { openProductDrawer } from './products.js';
 import { parseForecastJsonPayload, formatEuroDE, normalizeMonthToken } from '../domain/forecastImport.js';
 
 function parseNumberDE(value) {
@@ -364,7 +365,7 @@ const forecastUiPrefs = {
   mode: 'units',
 };
 
-function renderTable(el, state, months) {
+function renderTable(el, state, months, productMap, deepLink) {
   const grouped = new Map();
   const manualMap = new Map((state.forecast?.manualSkus || []).map(entry => [entry.sku, entry.alias || '']));
   (state.forecast?.items || []).forEach(item => {
@@ -482,13 +483,52 @@ function renderTable(el, state, months) {
     rowsToRender.forEach((row, rowIdx) => {
       const tr = document.createElement('div');
       tr.className = 'fg-row fg-data';
+      tr.dataset.sku = row.sku;
+      tr.dataset.alias = row.alias || '';
       if (row.isManual) tr.classList.add('fg-manual');
       const skuCell = document.createElement('div');
       const defaultPrice = state.forecast?.prices?.defaults?.[row.sku];
+      const product = productMap.get(row.sku.toLowerCase()) || null;
       skuCell.className = 'fg-cell fg-sku fg-sticky';
-      skuCell.innerHTML = `<div class="fg-sku-code">${row.sku}</div>${
-        forecastUiPrefs.showAlias && row.alias ? `<div class="fg-alias">${row.alias}</div>` : ''
-      }<button type="button" class="fg-price-chip" data-price-default="${row.sku}">${defaultPrice != null ? `${formatEuroDE(defaultPrice)} €` : 'Preis pflegen'}</button>`;
+
+      const skuLine = document.createElement('div');
+      skuLine.className = 'fg-sku-line';
+      const skuBtn = document.createElement('button');
+      skuBtn.type = 'button';
+      skuBtn.className = 'fg-sku-link';
+      skuBtn.textContent = row.sku;
+      skuBtn.setAttribute('data-open-product', row.sku);
+      skuLine.appendChild(skuBtn);
+      const badge = document.createElement('span');
+      badge.className = `badge ${product ? 'success' : 'danger'}`;
+      badge.textContent = product ? 'Verknüpft' : 'Produkt fehlt';
+      skuLine.appendChild(badge);
+      skuCell.appendChild(skuLine);
+
+      if (forecastUiPrefs.showAlias && row.alias) {
+        const aliasEl = document.createElement('div');
+        aliasEl.className = 'fg-alias';
+        aliasEl.textContent = row.alias;
+        skuCell.appendChild(aliasEl);
+      }
+
+      const priceChip = document.createElement('button');
+      priceChip.type = 'button';
+      priceChip.className = 'fg-price-chip';
+      priceChip.setAttribute('data-price-default', row.sku);
+      priceChip.textContent = defaultPrice != null ? `${formatEuroDE(defaultPrice)} €` : 'Preis pflegen';
+      skuCell.appendChild(priceChip);
+
+      if (!product) {
+        const createBtn = document.createElement('button');
+        createBtn.type = 'button';
+        createBtn.className = 'btn tertiary fg-create-product';
+        createBtn.setAttribute('data-create-sku', row.sku);
+        createBtn.setAttribute('data-create-alias', row.alias || '');
+        createBtn.textContent = 'Produkt anlegen';
+        skuCell.appendChild(createBtn);
+      }
+
       tr.appendChild(skuCell);
       let rowQtySum = 0;
       let rowRevSum = 0;
@@ -691,6 +731,21 @@ function renderTable(el, state, months) {
   };
 
   table.addEventListener('click', ev => {
+    const openBtn = ev.target.closest('[data-open-product]');
+    if (openBtn) {
+      const sku = openBtn.getAttribute('data-open-product');
+      const alias = openBtn.closest('[data-sku]')?.dataset.alias || '';
+      const product = productMap.get(sku.toLowerCase()) || null;
+      openProductDrawer(product || { sku, alias }, { onSaved: () => render(el) });
+      return;
+    }
+    const createBtn = ev.target.closest('[data-create-sku]');
+    if (createBtn) {
+      const sku = createBtn.getAttribute('data-create-sku');
+      const alias = createBtn.getAttribute('data-create-alias') || '';
+      openProductDrawer({ sku, alias }, { onSaved: () => render(el) });
+      return;
+    }
     const defBtn = ev.target.closest('[data-price-default]');
     if (defBtn) {
       const sku = defBtn.getAttribute('data-price-default');
@@ -755,6 +810,21 @@ function renderTable(el, state, months) {
   resizeObs.observe(scroller);
   resizeObs.observe(table);
   updateSpacer();
+
+  if (deepLink?.sku) {
+    const targetKey = deepLink.sku.toLowerCase();
+    const match = Array.from(scrollWrap.querySelectorAll('[data-sku]'))
+      .find(el => (el.dataset.sku || '').toLowerCase() === targetKey);
+    if (match) {
+      match.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (deepLink.openProduct) {
+        const sku = match.dataset.sku;
+        const alias = match.dataset.alias || '';
+        const product = productMap.get(sku.toLowerCase()) || null;
+        openProductDrawer(product || { sku, alias }, { onSaved: () => render(el) });
+      }
+    }
+  }
 
   return scrollWrap;
 }
@@ -839,9 +909,15 @@ function render(el) {
   `;
   const monthsAll = monthSeries(state);
   const months = forecastUiPrefs.year === 'all' ? monthsAll : monthsAll.filter(m => m.startsWith(forecastUiPrefs.year));
+  const productMap = new Map(getProductsSnapshot().map(p => [String(p.sku || '').toLowerCase(), p]));
+  const query = new URLSearchParams((location.hash.split('?')[1] || ''));
+  const deepLink = {
+    sku: (query.get('sku') || '').trim(),
+    openProduct: query.get('openProduct') === '1',
+  };
   const tableHost = document.createElement('div');
   tableHost.className = 'forecast-table-wrap';
-  tableHost.appendChild(renderTable(el, state, months));
+  tableHost.appendChild(renderTable(el, state, months, productMap, deepLink));
   wrap.appendChild(tableHost);
   el.appendChild(wrap);
 

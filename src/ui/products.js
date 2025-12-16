@@ -107,6 +107,139 @@ function openModal({ title, content, actions = [], onClose }) {
   return { overlay, modal, body, footer };
 }
 
+export function openProductDrawer(initialInput, { onSaved } = {}) {
+  const products = getProductsSnapshot();
+  const initialSku = (typeof initialInput === "string" ? initialInput : initialInput?.sku || "").trim();
+  const match = initialSku
+    ? products.find(prod => (prod.sku || "").toLowerCase() === initialSku.toLowerCase())
+    : null;
+  const base = match || {
+    sku: initialSku,
+    alias: typeof initialInput === "object" ? (initialInput?.alias || "") : "",
+    supplierId: "",
+    status: "active",
+    tags: [],
+    template: null,
+  };
+
+  const form = createEl("form", { class: "form" });
+  const errorMsg = createEl("p", { class: "form-error" }, ["SKU existiert bereits."]);
+  errorMsg.style.display = "none";
+
+  const skuInput = createEl("input", { value: base.sku || "", required: true });
+  const aliasInput = createEl("input", { value: base.alias || "", required: true });
+  const supplierInput = createEl("input", { value: base.supplierId || "" });
+  const statusSelect = createEl("select", {}, [
+    createEl("option", { value: "active", selected: base.status !== "inactive" }, ["Aktiv"]),
+    createEl("option", { value: "inactive", selected: base.status === "inactive" }, ["Inaktiv"]),
+  ]);
+  const tagsInput = createEl("input", { value: (base.tags || []).join(", ") });
+
+  const template = base.template?.fields ? { ...base.template.fields } : (base.template || {});
+  const templateFields = [
+    { key: "unitPriceUsd", label: "Stückpreis (USD)", valueType: "number" },
+    { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)", valueType: "number" },
+    { key: "extraFlatUsd", label: "Zusatz pauschal (USD)", valueType: "number" },
+    { key: "transport", label: "Transport", valueType: "text" },
+    { key: "productionDays", label: "Produktionstage", valueType: "number" },
+    { key: "transitDays", label: "Transit-Tage", valueType: "number" },
+    { key: "freightEur", label: "Fracht (€)", valueType: "number" },
+    { key: "dutyPct", label: "Zoll %", valueType: "number" },
+    { key: "dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox" },
+    { key: "vatImportPct", label: "EUSt %", valueType: "number" },
+    { key: "vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox" },
+    { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number" },
+    { key: "fxRate", label: "FX-Kurs", valueType: "number" },
+    { key: "fxFeePct", label: "FX-Gebühr %", valueType: "number" },
+    { key: "ddp", label: "DDP", type: "checkbox" },
+  ];
+
+  const templateGrid = createEl("div", { class: "template-grid" });
+  templateFields.forEach(field => {
+    const wrapper = createEl("label", { class: "template-field" }, [
+      createEl("span", {}, [field.label]),
+    ]);
+    const value = template[field.key] ?? "";
+    let input;
+    if (field.type === "checkbox") {
+      input = createEl("input", { type: "checkbox", checked: Boolean(value) });
+    } else if (field.valueType === "number") {
+      input = createEl("input", { type: "text", value: value === "" ? "" : String(value) });
+    } else {
+      input = createEl("input", { type: "text", value: value === "" ? "" : String(value) });
+    }
+    wrapper.append(input);
+    templateGrid.append(wrapper);
+    wrapper.dataset.key = field.key;
+  });
+
+  form.append(
+    createEl("label", {}, ["SKU", skuInput]),
+    createEl("label", {}, ["Alias", aliasInput]),
+    createEl("label", {}, ["Supplier", supplierInput]),
+    createEl("label", {}, ["Status", statusSelect]),
+    createEl("label", {}, ["Tags (kommagetrennt)", tagsInput]),
+    createEl("h4", {}, ["Template"]),
+    templateGrid,
+    errorMsg,
+  );
+
+  const saveBtn = createEl("button", { class: "btn primary", type: "submit" }, ["Speichern"]);
+  const cancelBtn = createEl("button", { class: "btn", type: "button" }, ["Abbrechen"]);
+
+  const dialog = openModal({
+    title: match ? `Produkt bearbeiten – ${base.alias || base.sku}` : "Produkt anlegen",
+    content: form,
+    actions: [cancelBtn, saveBtn],
+    onClose: () => {},
+  });
+
+  const close = () => {
+    dialog.overlay.remove();
+  };
+
+  cancelBtn.addEventListener("click", () => close());
+
+  form.addEventListener("submit", ev => {
+    ev.preventDefault();
+    errorMsg.style.display = "none";
+    const nextTemplate = {};
+    templateGrid.querySelectorAll(".template-field").forEach(field => {
+      const key = field.dataset.key;
+      const input = field.querySelector("input");
+      if (!input) return;
+      if (input.type === "checkbox") {
+        nextTemplate[key] = input.checked;
+      } else {
+        const parsed = parseNumber(input.value);
+        nextTemplate[key] = Number.isFinite(parsed) ? parsed : 0;
+      }
+    });
+
+    const payload = {
+      sku: skuInput.value.trim(),
+      alias: aliasInput.value.trim() || skuInput.value.trim(),
+      supplierId: supplierInput.value.trim(),
+      status: statusSelect.value,
+      tags: (tagsInput.value || "").split(",").map(t => t.trim()).filter(Boolean),
+      template: Object.keys(nextTemplate).length ? { fields: nextTemplate } : null,
+      originalSku: match?.sku || base.sku,
+    };
+
+    try {
+      upsertProduct(payload);
+      document.dispatchEvent(new Event("state:changed"));
+      close();
+      onSaved?.();
+    } catch (err) {
+      errorMsg.textContent = err?.message || "SKU existiert bereits.";
+      errorMsg.style.display = "block";
+    }
+  });
+
+  return { close };
+}
+
 function buildHistoryTable(state, sku) {
   const rows = (state.pos || [])
     .filter(po => (po?.sku || "").trim().toLowerCase() === String(sku || "").trim().toLowerCase())
@@ -151,9 +284,23 @@ function buildHistoryTable(state, sku) {
   return table;
 }
 
+function buildForecastUsage() {
+  const st = loadState();
+  const usage = new Map();
+  (st.forecast?.items || []).forEach(item => {
+    const key = (item.sku || '').trim();
+    if (!key) return;
+    const entry = usage.get(key.toLowerCase()) || { total: 0, months: [] };
+    const qty = Number(item.qty || 0);
+    entry.total += Number.isFinite(qty) ? qty : 0;
+    if (qty > 0 && item.month) entry.months.push(item.month);
+    usage.set(key.toLowerCase(), entry);
+  });
+  return usage;
+}
+
 function renderProducts(root) {
-  const state = loadState();
-  const products = getProductsSnapshot();
+  let products = getProductsSnapshot();
   let searchTerm = "";
 
   function applyFilter(list, term) {
@@ -167,169 +314,14 @@ function renderProducts(root) {
   }
 
   function showEditor(existing) {
-    const state = loadState();
-    const product = existing ? { ...existing } : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null };
-    const form = createEl("form", { class: "form" });
-
-    const skuInput = createEl("input", { value: product.sku || "", required: true });
-    const aliasInput = createEl("input", { value: product.alias || "", required: true });
-    const supplierInput = createEl("input", { value: product.supplierId || "" });
-    const statusSelect = createEl("select", {}, [
-      createEl("option", { value: "active", selected: product.status !== "inactive" }, ["Aktiv"]),
-      createEl("option", { value: "inactive", selected: product.status === "inactive" }, ["Inaktiv"]),
-    ]);
-    const tagsInput = createEl("input", { value: (product.tags || []).join(", ") });
-
-    const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
-
-    const templateFields = [
-      { key: "unitPriceUsd", label: "Stückpreis (USD)", valueType: "number" },
-      { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)", valueType: "number" },
-      { key: "extraFlatUsd", label: "Zusatz pauschal (USD)", valueType: "number" },
-      { key: "transport", label: "Transport", valueType: "text" },
-      { key: "productionDays", label: "Produktionstage", valueType: "number" },
-      { key: "transitDays", label: "Transit-Tage", valueType: "number" },
-      { key: "freightEur", label: "Fracht (€)", valueType: "number" },
-      { key: "dutyPct", label: "Zoll %", valueType: "number" },
-      { key: "dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox" },
-      { key: "vatImportPct", label: "EUSt %", valueType: "number" },
-      { key: "vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox" },
-      { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number" },
-      { key: "fxRate", label: "FX-Kurs", valueType: "number" },
-      { key: "fxFeePct", label: "FX-Gebühr %", valueType: "number" },
-      { key: "ddp", label: "DDP", type: "checkbox" },
-    ];
-
-    form.append(
-      createEl("label", {}, ["SKU", skuInput]),
-      createEl("label", {}, ["Alias", aliasInput]),
-      createEl("label", {}, ["Supplier", supplierInput]),
-      createEl("label", {}, ["Status", statusSelect]),
-      createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]),
-      createEl("hr"),
-      createEl("h4", {}, ["Template-Werte"])
-    );
-
-    const templateContainer = createEl("div", { class: "grid two" });
-    const templateInputs = {};
-    const templateFieldMeta = {};
-    templateFields.forEach(field => {
-      templateFieldMeta[field.key] = field;
-      if (field.type === "checkbox") {
-        const checkbox = createEl("input", { type: "checkbox", name: field.key, checked: Boolean(template[field.key]) });
-        templateInputs[field.key] = checkbox;
-        templateContainer.append(createEl("label", { class: "inline-checkbox" }, [checkbox, " ", field.label]));
-      } else {
-        const input = createEl("input", { name: field.key, value: template[field.key] != null ? String(template[field.key]) : "" });
-        templateInputs[field.key] = input;
-        templateContainer.append(
-          createEl("label", {}, [
-            field.label,
-            input,
-          ])
-        );
-      }
-    });
-    form.append(templateContainer);
-
-    const milestonesArea = createEl("textarea", {
-      placeholder: "Milestones im JSON-Format (optional)",
-      value: template.milestones ? JSON.stringify(template.milestones, null, 2) : "",
-      rows: 6,
-      style: "width:100%; margin-top:12px;"
-    });
-    form.append(createEl("label", {}, ["Meilensteine (JSON)", milestonesArea]));
-
-    const historySection = createEl("div", { class: "product-history" }, [
-      createEl("h4", {}, ["Historie"]),
-      buildHistoryTable(state, product.sku),
-    ]);
-
-    const saveBtn = createEl("button", { class: "btn", type: "submit" }, ["Speichern"]);
-    const cancelBtn = createEl("button", { class: "btn secondary", type: "button" }, ["Abbrechen"]);
-
-    let dialog;
-    dialog = openModal({
-      title: existing ? `Produkt bearbeiten – ${existing.alias || existing.sku}` : "Neues Produkt",
-      content: createEl("div", {}, [form, historySection]),
-      actions: [cancelBtn, saveBtn],
-      onClose: () => {},
-    });
-    cancelBtn.addEventListener("click", () => dialog.overlay.remove());
-    saveBtn.addEventListener("click", ev => {
-      ev.preventDefault();
-      form.requestSubmit();
-    });
-
-    form.addEventListener("submit", ev => {
-      ev.preventDefault();
-      const payload = {
-        sku: skuInput.value.trim(),
-        alias: aliasInput.value.trim(),
-        supplierId: supplierInput.value.trim(),
-        status: statusSelect.value,
-        tags: tagsInput.value
-          .split(",")
-          .map(tag => tag.trim())
-          .filter(Boolean),
-      };
-      if (existing?.sku) {
-        payload.originalSku = existing.sku;
-      }
-      const templateObj = {};
-      Object.entries(templateInputs).forEach(([key, input]) => {
-        if (!input) return;
-        if (input.type === "checkbox") {
-          templateObj[key] = input.checked;
-          return;
-        }
-        const raw = input.value.trim();
-        if (raw === "") return;
-        const meta = templateFieldMeta[key] || {};
-        if (meta.valueType === "text") {
-          templateObj[key] = raw;
-        } else {
-          templateObj[key] = parseNumber(raw);
-        }
-      });
-      const msValue = milestonesArea.value.trim();
-      if (msValue) {
-        try {
-          const parsed = JSON.parse(msValue);
-          if (Array.isArray(parsed)) {
-            const sum = parsed.reduce((acc, row) => acc + Number(row.percent || 0), 0);
-            if (Math.round(sum) !== 100) {
-              alert("Meilensteine müssen in Summe 100 % ergeben.");
-              return;
-            }
-            templateObj.milestones = parsed;
-          }
-        } catch (err) {
-          alert("Ungültiges Meilenstein-JSON: " + (err.message || err));
-          return;
-        }
-      }
-      if (Object.keys(templateObj).length) {
-        payload.template = {
-          scope: existing?.template?.scope || "SKU",
-          name: existing?.template?.name || "Standard (SKU)",
-          fields: templateObj,
-        };
-      } else {
-        payload.template = null;
-      }
-      try {
-        upsertProduct(payload);
-        dialog.overlay.remove();
+    openProductDrawer(existing, {
+      onSaved: () => {
         renderProducts(root);
-        document.dispatchEvent(new Event("state:changed"));
-      } catch (err) {
-        alert(err.message || String(err));
       }
     });
   }
 
-  function renderTable(list) {
+  function renderTable(list, forecastMap) {
     if (!list.length) {
       return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
     }
@@ -343,6 +335,7 @@ function renderProducts(root) {
           createEl("th", {}, ["Letzte PO"]),
           createEl("th", {}, ["Ø Stückpreis"]),
           createEl("th", {}, ["POs"]),
+          createEl("th", {}, ["Forecast"]),
           createEl("th", {}, ["Template"]),
           createEl("th", {}, ["Aktionen"]),
         ])
@@ -365,6 +358,13 @@ function renderProducts(root) {
           }
         } }, ["Löschen"]);
         actionCell.append(editBtn, historyBtn, statusBtn, deleteBtn);
+        const forecastKey = (product.sku || '').toLowerCase();
+        const forecastInfo = forecastMap.get(forecastKey);
+        const forecastCell = createEl("td", {}, [
+          createEl("span", { class: `badge ${forecastInfo ? 'success' : 'muted'}` }, [forecastInfo ? "Ja" : "Nein"]),
+          forecastInfo?.months?.length ? createEl("div", { class: "small text-muted" }, [`Nächster Bedarf: ${fmtMonthLong(forecastInfo.months.sort()[0])}`]) : null,
+        ]);
+
         return createEl("tr", {}, [
           createEl("td", {}, [product.alias || "—", product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null]),
           createEl("td", {}, [product.sku || "—"]),
@@ -372,6 +372,7 @@ function renderProducts(root) {
           createEl("td", {}, [product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—"]),
           createEl("td", {}, [product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—"]),
           createEl("td", {}, [product.stats?.poCount != null ? String(product.stats.poCount) : "0"]),
+          forecastCell,
           createEl("td", {}, [templateBadge]),
           actionCell,
         ]);
@@ -394,8 +395,10 @@ function renderProducts(root) {
   }
 
   function render() {
+    products = getProductsSnapshot();
     root.innerHTML = "";
     const filtered = applyFilter(products, searchTerm);
+    const forecastMap = buildForecastUsage();
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
     const header = createEl("div", { class: "products-header" });
     const title = createEl("h2", {}, ["Produkte"]);
@@ -418,7 +421,7 @@ function renderProducts(root) {
         `${bannerCount} Produkte ohne Alias – bitte ergänzen.`,
       ]));
     }
-    root.append(renderTable(filtered));
+    root.append(renderTable(filtered, forecastMap));
   }
 
   render();

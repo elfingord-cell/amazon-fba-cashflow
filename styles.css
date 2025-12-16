@@ -683,6 +683,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-grid .fg-cell{padding:10px 12px; border-right:1px solid #ecf0f4; border-bottom:1px solid #ecf0f4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:#fff;}
 .forecast-grid .fg-row:nth-child(odd) .fg-cell:not(.fg-sticky):not(.fg-sticky-right){background:#fafbfc;}
 .forecast-grid .fg-sku{font-weight:700; background:#f8fafc;}
+.forecast-grid .fg-sku-line{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+.forecast-grid .fg-sku-link{background:none; border:none; padding:0; font:inherit; color:#0b79d0; cursor:pointer; text-decoration:underline;}
+.forecast-grid .fg-sku .fg-create-product{margin-top:6px;}
 .forecast-grid .fg-alias{font-size:12px; color:#607d8b; margin-top:4px; background:#eceff1; display:inline-block; padding:2px 6px; border-radius:999px;}
 .forecast-grid .fg-price-chip{margin-top:6px; display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #cfd8dc; background:#fff; font-size:12px; cursor:pointer;}
 .forecast-grid .fg-price-chip:hover{background:#f1f5f9;}
