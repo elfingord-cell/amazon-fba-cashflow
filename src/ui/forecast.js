@@ -1,5 +1,5 @@
 import { loadState, saveState, addStateListener } from '../data/storageLocal.js';
-import { parseForecastJsonPayload, formatEuroDE } from '../domain/forecastImport.js';
+import { parseForecastJsonPayload, formatEuroDE, normalizeMonthToken } from '../domain/forecastImport.js';
 
 function parseNumberDE(value) {
   if (value == null) return 0;
@@ -13,70 +13,87 @@ function formatNumberDE(value) {
   return num.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+function detectMonthFromCell(cell) {
+  if (!cell) return null;
+  const trimmed = String(cell).trim().replace(/\s+/g, " ");
+  const direct = normalizeMonthToken(trimmed);
+  if (direct) return direct;
+  const ymMatch = trimmed.match(/(\d{4})[-/.](\d{2})/);
+  if (ymMatch) return `${ymMatch[1]}-${ymMatch[2]}`;
+  const nameYear = trimmed.match(/([A-Za-zÄÖÜäöü\.]+)\s+(\d{4})/);
+  if (nameYear) {
+    const cleanedName = nameYear[1].replace(/\./g, "");
+    const token = `${cleanedName} ${nameYear[2]}`;
+    const norm = normalizeMonthToken(token);
+    if (norm) return norm;
+  }
+  return null;
+}
+
 function parseCsv(text) {
-  const lines = text.split(/\r?\n/).filter(Boolean);
+  const lines = text.split(/\r?\n/).filter(line => line.length);
   if (!lines.length) return { records: [], warnings: [] };
+
+  const firstNonEmpty = lines.find(line => line.trim().length) || '';
+  const delimiter = firstNonEmpty.includes(';') ? ';' : ',';
+  const rows = lines.map(line => line.split(delimiter).map(col => col));
+
+  const headerIdx = rows.findIndex(r => r.some(cell => String(cell || '').trim().toLowerCase() === 'sku'));
+  if (headerIdx === -1) throw new Error("Spalte ‘SKU’ nicht gefunden. Bitte Datei prüfen oder Spalten im Wizard zuordnen.");
+
+  const headerRaw = rows[headerIdx].map(h => String(h ?? '').trim());
+  const headerLower = headerRaw.map(h => h.toLowerCase());
+  const maxCols = Math.max(...rows.map(r => r.length));
+
+  const monthByCol = Array(maxCols).fill(null);
+  let currentMonth = null;
+  for (let r = 0; r <= headerIdx; r++) {
+    const line = rows[r];
+    for (let c = 0; c < maxCols; c++) {
+      const token = line[c] ?? '';
+      const month = detectMonthFromCell(token);
+      if (month) {
+        currentMonth = month;
+        monthByCol[c] = month;
+      } else if (currentMonth && !monthByCol[c]) {
+        monthByCol[c] = currentMonth;
+      }
+    }
+  }
+
+  const skuIdx = headerLower.findIndex(h => h === 'sku');
+  const aliasIdx = headerLower.findIndex(h => h === 'alias' || h === 'produkt' || h === 'produktname');
+
+  const qtyCols = [];
+  for (let c = 0; c < maxCols; c++) {
+    const label = (headerLower[c] || '').trim();
+    const month = monthByCol[c];
+    const isQty = ['einheiten', 'qty', 'menge', 'units'].some(key => label.includes(key));
+    if (month && isQty) {
+      qtyCols.push({ idx: c, month });
+    }
+  }
+
+  if (!qtyCols.length) {
+    throw new Error('Keine Monats-Spalten erkannt (Ventory). Gültig: YYYY-MM, YYYY/MM, MM-YYYY, MMM YYYY.');
+  }
+
   const warnings = [];
-  const delimiter = lines[0].includes(';') ? ';' : ',';
-  const rawHeader = lines[0].split(delimiter).map(h => h.trim());
-  const header = rawHeader.map(h => h.toLowerCase());
-  const monthPattern = /^\d{4}[-/]\d{2}$/;
-  const hasMonthCols = header.some(h => monthPattern.test(h));
   const records = [];
-  if (hasMonthCols) {
-    const monthCols = header
-      .map((h, idx) => {
-        if (monthPattern.test(h)) {
-          const [y, m] = h.split(/[-/]/);
-          return { month: `${y}-${m}`, idx };
-        }
-        return null;
-      })
-      .filter(Boolean);
-    const skuIdx = header.findIndex(h => h === 'sku');
-    const aliasIdx = header.findIndex(h => h === 'alias' || h === 'produkt');
-    if (skuIdx === -1) throw new Error("Spalte ‘SKU’ nicht gefunden. Bitte Datei prüfen oder Spalten im Wizard zuordnen.");
-    monthCols.forEach(col => {
-      if (!monthPattern.test(col.month)) warnings.push(`Monatsspalte ${rawHeader[col.idx]} nicht als YYYY-MM erkannt.`);
+  for (let r = headerIdx + 1; r < rows.length; r++) {
+    const cols = rows[r].length ? rows[r] : [];
+    const sku = (cols[skuIdx] || '').trim();
+    if (!sku) continue;
+    const alias = aliasIdx >= 0 ? (cols[aliasIdx] || '').trim() : '';
+    qtyCols.forEach(col => {
+      const raw = (cols[col.idx] || '').toString().trim();
+      const cleaned = raw.replace(/[\s€]/g, '');
+      const qty = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : Number.parseInt(cleaned, 10);
+      if (!Number.isInteger(qty) || qty < 0) {
+        warnings.push(`Ungültige Menge in Zeile ${r + 1}, Spalte ${headerRaw[col.idx] || col.idx} → als 0 übernommen.`);
+      }
+      records.push({ sku, alias, month: col.month, qty: Number.isInteger(qty) && qty >= 0 ? qty : 0, source: 'ventory' });
     });
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(delimiter);
-      const sku = cols[skuIdx]?.trim();
-      if (!sku) continue;
-      const alias = aliasIdx >= 0 ? cols[aliasIdx]?.trim() : '';
-      monthCols.forEach(col => {
-        const raw = (cols[col.idx] || '').trim();
-        const cleaned = raw.replace(/[\s€]/g, '');
-        const qty = cleaned === '' || cleaned === '-' || cleaned === '—' ? 0 : Number.parseInt(cleaned, 10);
-        if (!Number.isInteger(qty) || qty < 0) {
-          warnings.push(`Ungültige Menge in Zeile ${i + 1}, Spalte ${rawHeader[col.idx]} → als 0 übernommen.`);
-          records.push({ sku, alias, month: col.month, qty: 0, source: 'ventory' });
-          return;
-        }
-        records.push({ sku, alias, month: col.month, qty, source: 'ventory' });
-      });
-    }
-  } else {
-    const skuIdx = header.findIndex(h => h === 'sku');
-    const monthIdx = header.findIndex(h => h === 'monat' || h === 'month');
-    const qtyIdx = header.findIndex(h => h === 'menge' || h === 'qty' || h === 'quantity');
-    if (skuIdx === -1 || monthIdx === -1 || qtyIdx === -1) {
-      throw new Error('Spalte ‘SKU’ oder Monat/Menge nicht gefunden. Bitte Spalten im Wizard zuordnen.');
-    }
-    const priceIdx = header.findIndex(h => h === 'preis' || h === 'price' || h === 'priceeur');
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(delimiter);
-      const sku = cols[skuIdx]?.trim();
-      const monthRaw = cols[monthIdx]?.trim();
-      const qtyRaw = (cols[qtyIdx] || '').trim();
-      const qty = qtyRaw === '' || qtyRaw === '-' || qtyRaw === '—' ? 0 : Number.parseInt(qtyRaw, 10);
-      if (!sku || !monthRaw) continue;
-      if (!Number.isInteger(qty) || qty < 0) warnings.push(`Ungültige Menge in Zeile ${i + 1} → als 0 übernommen.`);
-      const price = priceIdx >= 0 ? parseNumberDE(cols[priceIdx]) : 0;
-      const ymMatch = monthRaw.match(/^(\d{4})[-/.](\d{2})/);
-      const month = ymMatch ? `${ymMatch[1]}-${ymMatch[2]}` : monthRaw;
-      records.push({ sku, month, qty: Number.isInteger(qty) && qty >= 0 ? qty : 0, priceEur: price, source: 'ventory' });
-    }
   }
   return { records, warnings };
 }
