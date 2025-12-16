@@ -683,7 +683,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-grid .fg-month-cell input[value=""]{color:#b0bec5;}
 .forecast-grid .fg-month-cell input::-webkit-inner-spin-button,.forecast-grid .fg-month-cell input::-webkit-outer-spin-button{margin:0;}
 .forecast-grid .fg-total-cell{font-variant-numeric:tabular-nums; text-align:right;}
-.forecast-grid .fg-body{max-height:400px; overflow:auto;}
+.forecast-grid .fg-body{max-height:400px; overflow-y:auto; overflow-x:visible;}
 .forecast-grid .fg-row:hover .fg-cell{background:#f1f5f9;}
 .forecast-grid .fg-row:hover .fg-sticky,.forecast-grid .fg-row:hover .fg-sticky-right{background:#e8f5f2;}
 .forecast-grid .fg-row.fg-data .fg-month-cell input.error{border-color:#d32f2f;}
