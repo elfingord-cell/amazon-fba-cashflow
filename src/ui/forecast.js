@@ -280,7 +280,7 @@ async function parseJsonFile(file) {
   }
 }
 
-function renderTable(el, state) {
+function monthSeries(state) {
   const months = [];
   const horizon = Number(state.settings?.horizonMonths || 18);
   const start = state.settings?.startMonth || '2025-01';
@@ -290,6 +290,20 @@ function renderTable(el, state) {
     const m = ((m0 - 1 + i) % 12) + 1;
     months.push(`${y}-${String(m).padStart(2, '0')}`);
   }
+  return months;
+}
+
+const forecastUiPrefs = {
+  search: '',
+  year: 'all',
+  showAlias: true,
+  hideZero: false,
+  heatmap: false,
+};
+
+function renderTable(el, state) {
+  const monthsAll = monthSeries(state);
+  const months = forecastUiPrefs.year === 'all' ? monthsAll : monthsAll.filter(m => m.startsWith(forecastUiPrefs.year));
   const grouped = new Map();
   (state.forecast?.items || []).forEach(item => {
     const key = (item.sku || '').trim();
@@ -298,27 +312,138 @@ function renderTable(el, state) {
     row.values[item.month] = item.qty ?? 0;
     grouped.set(key, row);
   });
+
+  const filterTerm = forecastUiPrefs.search.trim().toLowerCase();
+  const rows = Array.from(grouped.values()).filter(row => {
+    if (!filterTerm) return true;
+    return row.sku.toLowerCase().includes(filterTerm) || (row.alias || '').toLowerCase().includes(filterTerm);
+  });
+
+  const tbodyRows = rows.filter(row => {
+    if (!forecastUiPrefs.hideZero) return true;
+    return months.some(m => (row.values[m] ?? 0) !== 0);
+  });
+
   const table = document.createElement('div');
-  table.className = 'table forecast-table';
+  table.className = `forecast-grid ${forecastUiPrefs.heatmap ? 'heatmap' : ''}`;
+  table.style.setProperty('--fg-months', months.length);
+
+  // Header rows with year grouping
   const header = document.createElement('div');
-  header.className = 'table-row head';
-  header.innerHTML = `<div class="cell sku">SKU</div><div class="cell alias">Alias</div>${months
-    .map(m => `<div class="cell month">${m}</div>`)
-    .join('')}`;
+  header.className = 'fg-head';
+  const years = Array.from(new Set(months.map(m => m.split('-')[0])));
+  const topRow = document.createElement('div');
+  topRow.className = 'fg-row fg-top';
+  const nameTop = document.createElement('div');
+  nameTop.className = 'fg-cell fg-sku fg-sticky fg-group';
+  nameTop.textContent = 'SKU';
+  topRow.appendChild(nameTop);
+  years.forEach(yr => {
+    const monthsInYear = months.filter(m => m.startsWith(yr));
+    const group = document.createElement('div');
+    group.className = 'fg-cell fg-year';
+    group.style.gridColumn = `span ${monthsInYear.length}`;
+    group.textContent = yr;
+    topRow.appendChild(group);
+  });
+  const sumTop = document.createElement('div');
+  sumTop.className = 'fg-cell fg-sum fg-sticky-right';
+  sumTop.textContent = 'Summe';
+  topRow.appendChild(sumTop);
+  header.appendChild(topRow);
+
+  const monthRow = document.createElement('div');
+  monthRow.className = 'fg-row fg-months';
+  const skuLabel = document.createElement('div');
+  skuLabel.className = 'fg-cell fg-sku fg-sticky';
+  skuLabel.textContent = forecastUiPrefs.showAlias ? 'SKU / Alias' : 'SKU';
+  monthRow.appendChild(skuLabel);
+  months.forEach(m => {
+    const cell = document.createElement('div');
+    cell.className = 'fg-cell fg-month';
+    cell.textContent = m.replace('-', '.');
+    monthRow.appendChild(cell);
+  });
+  const sumLabel = document.createElement('div');
+  sumLabel.className = 'fg-cell fg-sum fg-sticky-right';
+  sumLabel.textContent = 'Σ';
+  monthRow.appendChild(sumLabel);
+  header.appendChild(monthRow);
   table.appendChild(header);
-  grouped.forEach(row => {
+
+  const body = document.createElement('div');
+  body.className = 'fg-body';
+
+  const inputs = [];
+  const maxQty = Math.max(
+    1,
+    ...tbodyRows.flatMap(row => months.map(m => Number(row.values[m] || 0))),
+  );
+
+  tbodyRows.forEach((row, rowIdx) => {
     const tr = document.createElement('div');
-    tr.className = 'table-row';
-    tr.innerHTML = `<div class="cell sku">${row.sku}</div><div class="cell alias">${row.alias || ''}</div>`;
-    months.forEach(m => {
-      const val = row.values[m] ?? '';
+    tr.className = 'fg-row fg-data';
+    const skuCell = document.createElement('div');
+    skuCell.className = 'fg-cell fg-sku fg-sticky';
+    skuCell.innerHTML = `<div class="fg-sku-code">${row.sku}</div>${
+      forecastUiPrefs.showAlias && row.alias ? `<div class="fg-alias">${row.alias}</div>` : ''
+    }`;
+    tr.appendChild(skuCell);
+    let rowSum = 0;
+    months.forEach((m, colIdx) => {
+      const val = Number(row.values[m] || 0);
+      rowSum += val;
       const cell = document.createElement('div');
-      cell.className = 'cell month';
-      cell.innerHTML = `<input type="number" min="0" data-sku="${row.sku}" data-month="${m}" value="${val}">`;
+      cell.className = 'fg-cell fg-month-cell';
+      if (forecastUiPrefs.heatmap && val > 0) {
+        const level = Math.min(1, val / maxQty);
+        cell.style.setProperty('--heat', level);
+      }
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.inputMode = 'numeric';
+      input.min = '0';
+      input.value = val || '';
+      input.dataset.sku = row.sku;
+      input.dataset.month = m;
+      input.dataset.row = String(rowIdx);
+      input.dataset.col = String(colIdx);
+      cell.appendChild(input);
+      inputs.push(input);
       tr.appendChild(cell);
     });
-    table.appendChild(tr);
+    const sumCell = document.createElement('div');
+    sumCell.className = 'fg-cell fg-sum fg-sticky-right';
+    sumCell.textContent = formatNumberDE(rowSum);
+    tr.appendChild(sumCell);
+    body.appendChild(tr);
   });
+  table.appendChild(body);
+
+  const footer = document.createElement('div');
+  footer.className = 'fg-footer';
+  const totalRow = document.createElement('div');
+  totalRow.className = 'fg-row fg-total';
+  const totalLabel = document.createElement('div');
+  totalLabel.className = 'fg-cell fg-sku fg-sticky';
+  totalLabel.textContent = 'Gesamt';
+  totalRow.appendChild(totalLabel);
+  let grand = 0;
+  months.forEach(m => {
+    const colSum = tbodyRows.reduce((acc, row) => acc + (Number(row.values[m] || 0) || 0), 0);
+    grand += colSum;
+    const cell = document.createElement('div');
+    cell.className = 'fg-cell fg-month fg-total-cell';
+    cell.textContent = formatNumberDE(colSum);
+    totalRow.appendChild(cell);
+  });
+  const grandCell = document.createElement('div');
+  grandCell.className = 'fg-cell fg-sum fg-sticky-right';
+  grandCell.textContent = formatNumberDE(grand);
+  totalRow.appendChild(grandCell);
+  footer.appendChild(totalRow);
+  table.appendChild(footer);
+
   table.addEventListener('change', ev => {
     const input = ev.target.closest('input[data-sku]');
     if (!input) return;
@@ -333,6 +458,24 @@ function renderTable(el, state) {
     saveState(st);
     render(el);
   });
+
+  table.addEventListener('keydown', ev => {
+    const input = ev.target.closest('input[data-row]');
+    if (!input) return;
+    const row = Number(input.dataset.row);
+    const col = Number(input.dataset.col);
+    let next;
+    if (ev.key === 'ArrowRight') next = inputs.find(i => Number(i.dataset.row) === row && Number(i.dataset.col) === col + 1);
+    if (ev.key === 'ArrowLeft') next = inputs.find(i => Number(i.dataset.row) === row && Number(i.dataset.col) === col - 1);
+    if (ev.key === 'ArrowDown') next = inputs.find(i => Number(i.dataset.row) === row + 1 && Number(i.dataset.col) === col);
+    if (ev.key === 'ArrowUp') next = inputs.find(i => Number(i.dataset.row) === row - 1 && Number(i.dataset.col) === col);
+    if (next) {
+      ev.preventDefault();
+      next.focus();
+      next.select();
+    }
+  });
+
   return table;
 }
 
@@ -370,6 +513,30 @@ function render(el) {
       <input type="file" accept=".csv,.xls,.xlsx,.json" data-forecast-file />
       <p class="text-muted small">Bitte Ventory-Export als CSV, XLS, XLSX oder JSON hochladen.</p>
     </div>
+    <div class="forecast-toolbar">
+      <input type="search" placeholder="SKU oder Alias suchen" value="${forecastUiPrefs.search}" data-forecast-search />
+      <label class="toggle">
+        <input type="checkbox" ${forecastUiPrefs.hideZero ? 'checked' : ''} data-forecast-hidezero />
+        <span>Nur Monate ≠ 0</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" ${forecastUiPrefs.showAlias ? 'checked' : ''} data-forecast-showalias />
+        <span>Alias anzeigen</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" ${forecastUiPrefs.heatmap ? 'checked' : ''} data-forecast-heatmap />
+        <span>Heatmap</span>
+      </label>
+      <label class="select-inline">
+        <span>Jahr</span>
+        <select data-forecast-year>
+          <option value="all" ${forecastUiPrefs.year === 'all' ? 'selected' : ''}>Alle</option>
+          ${Array.from(new Set(monthSeries(state).map(m => m.split('-')[0]))).map(yr => `
+            <option value="${yr}" ${forecastUiPrefs.year === yr ? 'selected' : ''}>${yr}</option>
+          `).join('')}
+        </select>
+      </label>
+    </div>
   `;
   const tableHost = document.createElement('div');
   tableHost.className = 'forecast-table-wrap';
@@ -382,6 +549,31 @@ function render(el) {
     ensureForecastContainers(st);
     st.forecast.settings.useForecast = ev.target.checked;
     saveState(st);
+  });
+
+  wrap.querySelector('[data-forecast-search]').addEventListener('input', ev => {
+    forecastUiPrefs.search = ev.target.value || '';
+    render(el);
+  });
+
+  wrap.querySelector('[data-forecast-hidezero]').addEventListener('change', ev => {
+    forecastUiPrefs.hideZero = ev.target.checked;
+    render(el);
+  });
+
+  wrap.querySelector('[data-forecast-showalias]').addEventListener('change', ev => {
+    forecastUiPrefs.showAlias = ev.target.checked;
+    render(el);
+  });
+
+  wrap.querySelector('[data-forecast-heatmap]').addEventListener('change', ev => {
+    forecastUiPrefs.heatmap = ev.target.checked;
+    render(el);
+  });
+
+  wrap.querySelector('[data-forecast-year]').addEventListener('change', ev => {
+    forecastUiPrefs.year = ev.target.value || 'all';
+    render(el);
   });
 
   wrap.querySelector('[data-forecast-file]').addEventListener('change', async ev => {

@@ -653,8 +653,41 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vat-row .mono {font-variant-numeric:tabular-nums;}
 
 /* === Forecast Upload === */
-.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:8px; overflow-x:auto;}
-.forecast-table {min-width:100%;}
-.forecast-table .table-row {display:grid; grid-template-columns:140px 180px repeat(auto-fit, minmax(80px, 1fr)); gap:4px; align-items:center;}
-.forecast-table .cell {padding:6px 8px; font-size:13px; white-space:nowrap;}
-.forecast-table .cell input {width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;}
+.forecast-toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:12px 0;}
+.forecast-toolbar input[type="search"]{padding:8px 10px; min-width:200px; border:1px solid #d0d7de; border-radius:8px;}
+.forecast-toolbar .select-inline{display:flex; align-items:center; gap:6px; font-size:13px; color:#37474f;}
+.forecast-toolbar select{padding:6px 8px; border:1px solid #d0d7de; border-radius:8px;}
+.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:10px; overflow:auto; max-height:520px;}
+.forecast-grid{min-width:100%; display:flex; flex-direction:column; font-size:13px; color:#263238;}
+.forecast-grid .fg-head,.forecast-grid .fg-body,.forecast-grid .fg-footer{min-width:100%;}
+.forecast-grid .fg-row{display:grid; grid-auto-rows:1fr; align-items:stretch;}
+.forecast-grid .fg-top{grid-template-columns:220px repeat(var(--fg-months,12), minmax(90px,1fr)) 120px; position:sticky; top:0; z-index:3; background:#f5f7fa; border-bottom:1px solid #e0e6ed;}
+.forecast-grid .fg-months{grid-template-columns:220px repeat(var(--fg-months,12), minmax(90px,1fr)) 120px; position:sticky; top:32px; z-index:2; background:#fff; box-shadow:inset 0 -1px 0 #e0e6ed;}
+.forecast-grid .fg-body .fg-row{grid-template-columns:220px repeat(var(--fg-months,12), minmax(90px,1fr)) 120px;}
+.forecast-grid .fg-footer .fg-row{grid-template-columns:220px repeat(var(--fg-months,12), minmax(90px,1fr)) 120px; position:sticky; bottom:0; z-index:1; background:#f5f7fa; box-shadow:0 -4px 8px rgba(0,0,0,0.04);}
+.forecast-grid .fg-cell{padding:10px 12px; border-right:1px solid #ecf0f4; border-bottom:1px solid #ecf0f4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:#fff;}
+.forecast-grid .fg-row:nth-child(odd) .fg-cell:not(.fg-sticky):not(.fg-sticky-right){background:#fafbfc;}
+.forecast-grid .fg-sku{font-weight:700; background:#f8fafc;}
+.forecast-grid .fg-alias{font-size:12px; color:#607d8b; margin-top:4px; background:#eceff1; display:inline-block; padding:2px 6px; border-radius:999px;}
+.forecast-grid .fg-year{font-weight:700; text-align:center;}
+.forecast-grid .fg-month{font-size:12px; color:#455a64; text-align:center;}
+.forecast-grid .fg-sum{font-weight:700; background:#f8fafc; text-align:right;}
+.forecast-grid .fg-total{background:#eef2f6; font-weight:700;}
+.forecast-grid .fg-month-cell input{width:100%; border:1px solid #cfd8dc; border-radius:6px; padding:6px 8px; font-size:13px; text-align:right;}
+.forecast-grid .fg-month-cell input:focus{outline:2px solid #26a69a; outline-offset:1px;}
+.forecast-grid .fg-sticky{position:sticky; left:0; z-index:2;}
+.forecast-grid .fg-sticky-right{position:sticky; right:0; z-index:2; background:#f8fafc;}
+.forecast-grid .fg-top .fg-sticky,.forecast-grid .fg-top .fg-sticky-right{z-index:4;}
+.forecast-grid .fg-month-cell{position:relative;}
+.forecast-grid.heatmap .fg-month-cell{background:linear-gradient(90deg, rgba(38,166,154,0.08) calc(var(--heat,0)*100%), transparent calc(var(--heat,0)*100%));}
+.forecast-grid .fg-month-cell input[value=""]{color:#b0bec5;}
+.forecast-grid .fg-month-cell input::-webkit-inner-spin-button,.forecast-grid .fg-month-cell input::-webkit-outer-spin-button{margin:0;}
+.forecast-grid .fg-total-cell{font-variant-numeric:tabular-nums; text-align:right;}
+.forecast-grid .fg-body{max-height:400px; overflow:auto;}
+.forecast-grid .fg-row:hover .fg-cell{background:#f1f5f9;}
+.forecast-grid .fg-row:hover .fg-sticky,.forecast-grid .fg-row:hover .fg-sticky-right{background:#e8f5f2;}
+.forecast-grid .fg-row.fg-data .fg-month-cell input.error{border-color:#d32f2f;}
+.forecast-grid .fg-row.fg-data .fg-month-cell .error-text{color:#d32f2f; font-size:11px; margin-top:2px;}
+.forecast-grid .fg-body::-webkit-scrollbar,.forecast-table-wrap::-webkit-scrollbar{height:8px; width:8px;}
+.forecast-grid .fg-body::-webkit-scrollbar-thumb,.forecast-table-wrap::-webkit-scrollbar-thumb{background:#cfd8dc; border-radius:999px;}
+.forecast-grid .fg-body::-webkit-scrollbar-track,.forecast-table-wrap::-webkit-scrollbar-track{background:#eceff1;}
