@@ -68,7 +68,7 @@ const defaults = {
     items: [],
     settings: {
       useForecast: false,
-      grossRevenue: false,
+      grossRevenue: true,
       priceVatRate: 0.19,
     },
     prices: {
@@ -76,6 +76,7 @@ const defaults = {
       byMonth: {},
       vatRate: 0.19,
     },
+    manualSkus: [],
   },
   status: {
     autoManualCheck: false,
@@ -173,6 +174,7 @@ function ensureForecast(state) {
   }
   const vatPrice = Number(String(state.forecast.prices.vatRate ?? state.forecast.settings.priceVatRate ?? 0.19).replace(",", "."));
   state.forecast.prices.vatRate = Number.isFinite(vatPrice) ? vatPrice : 0.19;
+  if (!Array.isArray(state.forecast.manualSkus)) state.forecast.manualSkus = [];
 }
 
 function monthIndex(ym) {

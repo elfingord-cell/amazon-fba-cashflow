@@ -737,7 +737,7 @@ export function computeSeries(state) {
         price = parseEuro(item.price);
       }
       const revenueBase = qty * (Number.isFinite(price) ? price : 0);
-      const revenue = forecastGross ? revenueBase * (1 + forecastVat) : revenueBase;
+      const revenue = forecastGross ? revenueBase : revenueBase / (1 + forecastVat || 1);
       forecastMap[month] = (forecastMap[month] || 0) + revenue;
     });
   }

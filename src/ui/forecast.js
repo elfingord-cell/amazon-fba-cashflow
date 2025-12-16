@@ -13,6 +13,14 @@ function formatNumberDE(value) {
   return num.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+function formatQty(value) {
+  return `${formatNumberDE(value)} Stk`;
+}
+
+function formatEuroWithSymbol(value) {
+  return `${formatEuroDE(value)} €`;
+}
+
 function detectMonthFromCell(cell) {
   if (!cell) return null;
   const trimmed = String(cell).trim().replace(/\s+/g, " ");
@@ -28,6 +36,13 @@ function detectMonthFromCell(cell) {
     if (norm) return norm;
   }
   return null;
+}
+
+function calcRevenueFromGross(qty, priceGross, showGross, vatRate) {
+  if (priceGross == null) return null;
+  const base = Number(priceGross) || 0;
+  const effective = showGross ? base : base / (1 + vatRate);
+  return qty * effective;
 }
 
 function parseCsvLine(line, delimiter) {
@@ -351,12 +366,24 @@ const forecastUiPrefs = {
 
 function renderTable(el, state, months) {
   const grouped = new Map();
+  const manualMap = new Map((state.forecast?.manualSkus || []).map(entry => [entry.sku, entry.alias || '']));
   (state.forecast?.items || []).forEach(item => {
     const key = (item.sku || '').trim();
     if (!key) return;
-    const row = grouped.get(key) || { sku: item.sku, alias: item.alias || '', values: {} };
+    const row = grouped.get(key) || { sku: item.sku, alias: item.alias || manualMap.get(key) || '', values: {}, isManual: false };
     row.values[item.month] = item.qty ?? 0;
+    if (item.source === 'manual' || manualMap.has(key)) row.isManual = true;
     grouped.set(key, row);
+  });
+
+  manualMap.forEach((alias, sku) => {
+    if (!grouped.has(sku)) {
+      grouped.set(sku, { sku, alias, values: {}, isManual: true });
+    } else {
+      const row = grouped.get(sku);
+      row.alias = row.alias || alias;
+      row.isManual = true;
+    }
   });
 
   const filterTerm = forecastUiPrefs.search.trim().toLowerCase();
@@ -366,6 +393,7 @@ function renderTable(el, state, months) {
   });
 
   const tbodyRows = rows.filter(row => {
+    if (row.isManual) return true;
     if (!forecastUiPrefs.hideZero) return true;
     return months.some(m => (row.values[m] ?? 0) !== 0);
   });
@@ -430,88 +458,143 @@ function renderTable(el, state, months) {
     ...tbodyRows.flatMap(row => months.map(m => {
       const qty = Number(row.values[m] || 0);
       const price = resolvePrice(state, row.sku, m);
-      const rev = price == null ? 0 : qty * price * (gross ? (1 + vatRate) : 1);
+      const rev = calcRevenueFromGross(qty, price, gross, vatRate) || 0;
       return mode === 'revenue' ? rev : qty;
     })),
   );
 
   let missingPrices = 0;
+  const manualRows = tbodyRows.filter(r => r.isManual);
+  const importRows = tbodyRows.filter(r => !r.isManual);
 
-  tbodyRows.forEach((row, rowIdx) => {
-    const tr = document.createElement('div');
-    tr.className = 'fg-row fg-data';
-    const skuCell = document.createElement('div');
-    const defaultPrice = state.forecast?.prices?.defaults?.[row.sku];
-    skuCell.className = 'fg-cell fg-sku fg-sticky';
-    skuCell.innerHTML = `<div class="fg-sku-code">${row.sku}</div>${
-      forecastUiPrefs.showAlias && row.alias ? `<div class="fg-alias">${row.alias}</div>` : ''
-    }<button type="button" class="fg-price-chip" data-price-default="${row.sku}">${defaultPrice != null ? formatEuroDE(defaultPrice) : 'Preis pflegen'}</button>`;
-    tr.appendChild(skuCell);
-    let rowQtySum = 0;
-    let rowRevSum = 0;
-    months.forEach((m, colIdx) => {
-      const val = Number(row.values[m] || 0);
-      rowQtySum += val;
-      const price = resolvePrice(state, row.sku, m);
-      const revenue = price == null ? null : val * price * (gross ? (1 + vatRate) : 1);
-      if (revenue != null) rowRevSum += revenue;
-      const cell = document.createElement('div');
-      cell.className = 'fg-cell fg-month-cell';
-      if (forecastUiPrefs.heatmap) {
-        const metric = mode === 'revenue' ? (revenue || 0) : val;
-        const level = Math.min(1, metric / maxHeat);
-        cell.style.setProperty('--heat', level);
-      }
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.inputMode = 'numeric';
-      input.min = '0';
-      input.value = val || '';
-      input.dataset.sku = row.sku;
-      input.dataset.month = m;
-      input.dataset.row = String(rowIdx);
-      input.dataset.col = String(colIdx);
-      if (mode === 'units' || mode === 'split') {
-        cell.appendChild(input);
-        inputs.push(input);
+  const renderSection = (rowsToRender, label, sectionClass) => {
+    if (!rowsToRender.length) return { qty: 0, rev: 0, cols: {} };
+    const sectionHead = document.createElement('div');
+    sectionHead.className = `fg-section ${sectionClass || ''}`;
+    sectionHead.textContent = label;
+    body.appendChild(sectionHead);
+    let idxOffset = inputs.length;
+    let qtySum = 0;
+    let revSum = 0;
+    const colTotals = {};
+    months.forEach(m => { colTotals[m] = { qty: 0, rev: 0 }; });
+
+    rowsToRender.forEach((row, rowIdx) => {
+      const tr = document.createElement('div');
+      tr.className = 'fg-row fg-data';
+      if (row.isManual) tr.classList.add('fg-manual');
+      const skuCell = document.createElement('div');
+      const defaultPrice = state.forecast?.prices?.defaults?.[row.sku];
+      skuCell.className = 'fg-cell fg-sku fg-sticky';
+      skuCell.innerHTML = `<div class="fg-sku-code">${row.sku}</div>${
+        forecastUiPrefs.showAlias && row.alias ? `<div class="fg-alias">${row.alias}</div>` : ''
+      }<button type="button" class="fg-price-chip" data-price-default="${row.sku}">${defaultPrice != null ? `${formatEuroDE(defaultPrice)} €` : 'Preis pflegen'}</button>`;
+      tr.appendChild(skuCell);
+      let rowQtySum = 0;
+      let rowRevSum = 0;
+      months.forEach((m, colIdx) => {
+        const val = Number(row.values[m] || 0);
+        rowQtySum += val;
+        const price = resolvePrice(state, row.sku, m);
+        const revenue = calcRevenueFromGross(val, price, gross, vatRate);
+        if (revenue != null) rowRevSum += revenue;
+        const cell = document.createElement('div');
+        cell.className = 'fg-cell fg-month-cell';
+        if (forecastUiPrefs.heatmap) {
+          const metric = mode === 'revenue' ? (revenue || 0) : val;
+          const level = Math.min(1, metric / maxHeat);
+          cell.style.setProperty('--heat', level);
+        }
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.inputMode = 'numeric';
+        input.min = '0';
+        input.value = val || '';
+        input.dataset.sku = row.sku;
+        input.dataset.month = m;
+        input.dataset.row = String(rowIdx + idxOffset);
+        input.dataset.col = String(colIdx);
+        if (mode === 'units' || mode === 'split') {
+          cell.appendChild(input);
+          inputs.push(input);
+        } else {
+          input.tabIndex = -1;
+          input.classList.add('fg-hidden');
+          cell.appendChild(input);
+        }
+
+        if (mode === 'revenue' || mode === 'split') {
+          const priceResolved = price == null ? 'Preis fehlt' : `${formatEuroDE(price)} €`;
+          const revenueText = revenue == null ? '—' : formatEuroWithSymbol(revenue);
+          const view = document.createElement('div');
+          view.className = `fg-revenue ${revenue == null ? 'missing-price' : ''}`;
+          view.innerHTML = `${mode === 'split' ? `<div class=\"fg-qty-val\">${formatQty(val)}</div>` : ''}<div class=\"fg-rev-val\">${revenueText}</div>`;
+          cell.appendChild(view);
+          const priceBtn = document.createElement('button');
+          priceBtn.type = 'button';
+          priceBtn.className = 'fg-price-btn';
+          priceBtn.setAttribute('data-price-edit', row.sku);
+          priceBtn.setAttribute('data-price-month', m);
+          priceBtn.title = price == null ? 'Preis fehlt – klicken zum Pflegen' : `Preis: ${priceResolved}`;
+          priceBtn.textContent = '€';
+          cell.appendChild(priceBtn);
+          if (price == null && val > 0) missingPrices += 1;
+        }
+
+        tr.appendChild(cell);
+        colTotals[m].qty += val;
+        colTotals[m].rev += revenue || 0;
+      });
+      const sumCell = document.createElement('div');
+      sumCell.className = 'fg-cell fg-sum fg-sticky-right';
+      if (mode === 'split') {
+        sumCell.innerHTML = `<div class="fg-sum-qty">${formatQty(rowQtySum)}</div><div class="fg-sum-rev">${formatEuroWithSymbol(rowRevSum)}</div>`;
+      } else if (mode === 'revenue') {
+        sumCell.textContent = formatEuroWithSymbol(rowRevSum);
       } else {
-        input.tabIndex = -1;
-        input.classList.add('fg-hidden');
-        cell.appendChild(input);
+        sumCell.textContent = formatQty(rowQtySum);
       }
-
-      if (mode === 'revenue' || mode === 'split') {
-        const priceResolved = price == null ? 'Preis fehlt' : formatEuroDE(price);
-        const revenueText = revenue == null ? '—' : formatEuroDE(revenue);
-        const view = document.createElement('div');
-        view.className = `fg-revenue ${revenue == null ? 'missing-price' : ''}`;
-        view.innerHTML = `${mode === 'split' ? `<div class="fg-qty-val">${formatNumberDE(val)}</div>` : ''}<div class="fg-rev-val">${revenueText}</div>`;
-        cell.appendChild(view);
-        const priceBtn = document.createElement('button');
-        priceBtn.type = 'button';
-        priceBtn.className = 'fg-price-btn';
-        priceBtn.setAttribute('data-price-edit', row.sku);
-        priceBtn.setAttribute('data-price-month', m);
-        priceBtn.title = price == null ? 'Preis fehlt – klicken zum Pflegen' : `Preis: ${priceResolved}`;
-        priceBtn.textContent = '€';
-        cell.appendChild(priceBtn);
-        if (price == null && val > 0) missingPrices += 1;
-      }
-
-      tr.appendChild(cell);
+      tr.appendChild(sumCell);
+      body.appendChild(tr);
+      qtySum += rowQtySum;
+      revSum += rowRevSum;
     });
-    const sumCell = document.createElement('div');
-    sumCell.className = 'fg-cell fg-sum fg-sticky-right';
+
+    const sectionTotal = document.createElement('div');
+    sectionTotal.className = 'fg-row fg-total fg-section-total';
+    const labelCell = document.createElement('div');
+    labelCell.className = 'fg-cell fg-sku fg-sticky';
+    labelCell.textContent = `${label} Summe`;
+    sectionTotal.appendChild(labelCell);
+    months.forEach(m => {
+      const cell = document.createElement('div');
+      cell.className = 'fg-cell fg-month fg-total-cell';
+      if (mode === 'revenue') {
+        cell.textContent = formatEuroWithSymbol(colTotals[m].rev);
+      } else if (mode === 'split') {
+        cell.innerHTML = `<div class="fg-sum-qty">${formatQty(colTotals[m].qty)}</div><div class="fg-sum-rev">${formatEuroWithSymbol(colTotals[m].rev)}</div>`;
+      } else {
+        cell.textContent = formatQty(colTotals[m].qty);
+      }
+      sectionTotal.appendChild(cell);
+    });
+    const totalCell = document.createElement('div');
+    totalCell.className = 'fg-cell fg-sum fg-sticky-right';
     if (mode === 'split') {
-      sumCell.innerHTML = `<div class="fg-sum-qty">${formatNumberDE(rowQtySum)}</div><div class="fg-sum-rev">${formatEuroDE(rowRevSum)}</div>`;
+      totalCell.innerHTML = `<div class="fg-sum-qty">${formatQty(qtySum)}</div><div class="fg-sum-rev">${formatEuroWithSymbol(revSum)}</div>`;
     } else if (mode === 'revenue') {
-      sumCell.textContent = formatEuroDE(rowRevSum);
+      totalCell.textContent = formatEuroWithSymbol(revSum);
     } else {
-      sumCell.textContent = formatNumberDE(rowQtySum);
+      totalCell.textContent = formatQty(qtySum);
     }
-    tr.appendChild(sumCell);
-    body.appendChild(tr);
-  });
+    sectionTotal.appendChild(totalCell);
+    body.appendChild(sectionTotal);
+    return { qty: qtySum, rev: revSum, cols: colTotals };
+  };
+
+  const importTotals = renderSection(importRows, 'Importierte Produkte');
+  const manualTotals = renderSection(manualRows, 'Manuell hinzugefügt', 'fg-manual-head');
+
   table.appendChild(body);
 
   const footer = document.createElement('div');
@@ -525,34 +608,29 @@ function renderTable(el, state, months) {
   let grandQty = 0;
   let grandRev = 0;
   months.forEach(m => {
-    const colQty = tbodyRows.reduce((acc, row) => acc + (Number(row.values[m] || 0) || 0), 0);
-    const colRev = tbodyRows.reduce((acc, row) => {
-      const qty = Number(row.values[m] || 0);
-      const price = resolvePrice(state, row.sku, m);
-      const rev = price == null ? 0 : qty * price * (gross ? (1 + vatRate) : 1);
-      return acc + (rev || 0);
-    }, 0);
+    const colQty = (importTotals.cols?.[m]?.qty || 0) + (manualTotals.cols?.[m]?.qty || 0);
+    const colRev = (importTotals.cols?.[m]?.rev || 0) + (manualTotals.cols?.[m]?.rev || 0);
     grandQty += colQty;
     grandRev += colRev;
     const cell = document.createElement('div');
     cell.className = 'fg-cell fg-month fg-total-cell';
     if (mode === 'revenue') {
-      cell.textContent = formatEuroDE(colRev);
+      cell.textContent = formatEuroWithSymbol(colRev);
     } else if (mode === 'split') {
-      cell.innerHTML = `<div class="fg-sum-qty">${formatNumberDE(colQty)}</div><div class="fg-sum-rev">${formatEuroDE(colRev)}</div>`;
+      cell.innerHTML = `<div class="fg-sum-qty">${formatQty(colQty)}</div><div class="fg-sum-rev">${formatEuroWithSymbol(colRev)}</div>`;
     } else {
-      cell.textContent = formatNumberDE(colQty);
+      cell.textContent = formatQty(colQty);
     }
     totalRow.appendChild(cell);
   });
   const grandCell = document.createElement('div');
   grandCell.className = 'fg-cell fg-sum fg-sticky-right';
   if (mode === 'split') {
-    grandCell.innerHTML = `<div class="fg-sum-qty">${formatNumberDE(grandQty)}</div><div class="fg-sum-rev">${formatEuroDE(grandRev)}</div>`;
+    grandCell.innerHTML = `<div class="fg-sum-qty">${formatQty(grandQty)}</div><div class="fg-sum-rev">${formatEuroWithSymbol(grandRev)}</div>`;
   } else if (mode === 'revenue') {
-    grandCell.textContent = formatEuroDE(grandRev);
+    grandCell.textContent = formatEuroWithSymbol(grandRev);
   } else {
-    grandCell.textContent = formatNumberDE(grandQty);
+    grandCell.textContent = formatQty(grandQty);
   }
   totalRow.appendChild(grandCell);
   footer.appendChild(totalRow);
@@ -617,7 +695,7 @@ function renderTable(el, state, months) {
     if (defBtn) {
       const sku = defBtn.getAttribute('data-price-default');
       const current = resolvePrice(state, sku, months[0]) ?? state.forecast?.prices?.defaults?.[sku] ?? '';
-      const next = prompt('Preis je Stück (EUR)', current ? formatEuroDE(current) : '');
+      const next = prompt('Bruttopreis je Stück (EUR, inkl. USt)', current ? formatEuroDE(current) : '');
       if (next !== null) handlePriceUpdate(sku, null, next);
       return;
     }
@@ -626,7 +704,7 @@ function renderTable(el, state, months) {
       const sku = editBtn.getAttribute('data-price-edit');
       const month = editBtn.getAttribute('data-price-month');
       const current = resolvePrice(state, sku, month);
-      const next = prompt(`Preis für ${sku} – ${month.replace('-', '.')}`, current ? formatEuroDE(current) : '');
+      const next = prompt(`Bruttopreis für ${sku} – ${month.replace('-', '.')} (EUR, inkl. USt)`, current ? formatEuroDE(current) : '');
       if (next !== null) handlePriceUpdate(sku, month, next);
     }
   });
@@ -645,6 +723,13 @@ function ensureForecastContainers(state) {
   if (!state.forecast.settings || typeof state.forecast.settings !== 'object') {
     state.forecast.settings = { useForecast: false };
   }
+  if (state.forecast.settings.grossRevenue == null) state.forecast.settings.grossRevenue = true;
+  if (!state.forecast.prices || typeof state.forecast.prices !== 'object') {
+    state.forecast.prices = { defaults: {}, byMonth: {}, vatRate: 0.19 };
+  }
+  if (!state.forecast.prices.defaults) state.forecast.prices.defaults = {};
+  if (!state.forecast.prices.byMonth) state.forecast.prices.byMonth = {};
+  if (!Array.isArray(state.forecast.manualSkus)) state.forecast.manualSkus = [];
 }
 
 function render(el) {
@@ -705,6 +790,7 @@ function render(el) {
           `).join('')}
         </select>
       </label>
+      <button type="button" class="btn" data-forecast-addmanual>Produkt manuell hinzufügen</button>
     </div>
   `;
   const monthsAll = monthSeries(state);
@@ -759,6 +845,27 @@ function render(el) {
 
   wrap.querySelector('[data-forecast-year]').addEventListener('change', ev => {
     forecastUiPrefs.year = ev.target.value || 'all';
+    render(el);
+  });
+
+  wrap.querySelector('[data-forecast-addmanual]').addEventListener('click', () => {
+    const sku = prompt('Neue SKU (Pflicht)');
+    if (!sku || !sku.trim()) return;
+    const alias = prompt('Alias / Produktname (optional)') || '';
+    const normalizedSku = sku.trim();
+    const st = loadState();
+    ensureForecastContainers(st);
+    const existing = st.forecast.manualSkus.find(entry => entry.sku === normalizedSku);
+    if (existing) {
+      existing.alias = alias.trim() || existing.alias;
+    } else {
+      st.forecast.manualSkus.push({ sku: normalizedSku, alias: alias.trim() });
+    }
+    if (!st.forecast.items.some(it => it.sku === normalizedSku)) {
+      const seedMonth = months[0] || normalizeMonthToken(st.settings?.startMonth) || '2025-01';
+      st.forecast.items.push({ sku: normalizedSku, alias: alias.trim(), month: seedMonth, qty: 0, source: 'manual' });
+    }
+    saveState(st);
     render(el);
   });
 

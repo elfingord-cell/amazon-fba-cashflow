@@ -695,6 +695,10 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-grid .fg-month-cell input::-webkit-inner-spin-button,.forecast-grid .fg-month-cell input::-webkit-outer-spin-button{margin:0;}
 .forecast-grid .fg-total-cell{font-variant-numeric:tabular-nums; text-align:right;}
 .forecast-grid .fg-body{overflow:visible;}
+.forecast-grid .fg-section{padding:8px 12px; font-weight:700; background:#eef2f6; border-bottom:1px solid #e0e6ed; position:sticky; top:64px; z-index:1;}
+.forecast-grid .fg-manual-head{background:#fff4e0;}
+.forecast-grid .fg-row.fg-manual .fg-cell:not(.fg-sticky):not(.fg-sticky-right){background:#fffdf7;}
+.forecast-grid .fg-row.fg-section-total{background:#f6f8fb;}
 .forecast-grid .fg-revenue{font-size:12px; color:#37474f; margin-top:4px; text-align:right;}
 .forecast-grid .fg-revenue.missing-price{color:#b0bec5;}
 .forecast-grid .fg-qty-val{font-size:12px; color:#607d8b;}
