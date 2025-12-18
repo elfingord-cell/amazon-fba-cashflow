@@ -179,7 +179,7 @@ export function parseVentoryCsv(text) {
 
   for (let r = headerIdx + 1; r < rows.length; r++) {
     const cols = rows[r].length ? rows[r] : [];
-    const rawSku = (cols[skuIdx] || "").trim();
+    const rawSku = (cols[skuIdx] || "").toString().replace(/^\ufeff/, "").replace(/\s+/g, " ").trim();
     const lowerSku = rawSku.toLowerCase();
     if (!rawSku || lowerSku === "gesamt" || lowerSku === "summe" || lowerSku.startsWith("gesamt")) {
       continue;

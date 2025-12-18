@@ -663,11 +663,11 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .forecast-toolbar .segmented button.active{background:#26a69a; color:#fff;}
 .forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:10px; overflow:visible;}
 .forecast-scroll-wrap{display:flex; flex-direction:column; position:relative;}
-.forecast-scroll{max-height:520px; overflow-x:hidden; overflow-y:auto; scrollbar-gutter:stable both-edges;}
+.forecast-scroll{max-height:520px; overflow-x:auto; overflow-y:auto; scrollbar-gutter:stable both-edges;}
 /* hide native horizontal track; custom bar below handles X scrolling */
 .forecast-scroll::-webkit-scrollbar{height:0;}
 .forecast-scroll::-webkit-scrollbar-thumb{background:transparent;}
-.forecast-scroll{scrollbar-width:thin;}
+.forecast-scroll{scrollbar-width:none;}
 .forecast-scrollbar{height:14px; overflow-x:scroll; overflow-y:hidden; background:#f5f7fa; border-top:1px solid #e0e6ed; position:sticky; bottom:0; z-index:3; scrollbar-gutter:stable both-edges;}
 .forecast-scrollbar::-webkit-scrollbar{height:12px;}
 .forecast-scrollbar::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.35); border-radius:8px;}
