@@ -125,6 +125,17 @@ function ensureProducts(state) {
   if (!Array.isArray(state.recentProducts)) state.recentProducts = [];
 }
 
+function ensureOrders(state, key) {
+  if (!state || !key) return;
+  if (!Array.isArray(state[key])) state[key] = [];
+  state[key] = state[key].map(entry => {
+    if (!entry) return entry;
+    const next = { ...entry };
+    if (typeof next.archived !== "boolean") next.archived = false;
+    return next;
+  });
+}
+
 function ensureVatData(state) {
   if (!state) return;
   if (!state.settings) state.settings = {};
@@ -460,6 +471,8 @@ export function createEmptyState(){
   ensureFixcostContainers(clone);
   ensurePoTemplates(clone);
   ensureProducts(clone);
+  ensureOrders(clone, "pos");
+  ensureOrders(clone, "fos");
   ensureVatData(clone);
   ensureForecast(clone);
   return clone;
@@ -477,6 +490,8 @@ export function loadState(){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureOrders(_state, "pos");
+  ensureOrders(_state, "fos");
   ensureVatData(_state);
   ensureForecast(_state);
   migrateLegacyOutgoings(_state);
@@ -490,6 +505,8 @@ export function saveState(s){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureOrders(_state, "pos");
+  ensureOrders(_state, "fos");
   ensureVatData(_state);
   ensureForecast(_state);
   try {

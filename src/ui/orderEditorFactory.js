@@ -611,6 +611,7 @@ function defaultRecord(config, settings = getSettings()) {
   const record = {
     id: Math.random().toString(36).slice(2, 9),
     [config.numberField]: "",
+    archived: false,
     orderDate: today,
     sku: "",
     supplier: "",
@@ -930,12 +931,33 @@ function buildEventList(events, onStatusChange) {
   return wrapper;
 }
 
-function renderList(container, records, config, onEdit, onDelete) {
+function renderList(container, records, config, onEdit, onDelete, opts = {}) {
   container.innerHTML = "";
   refreshProductCache();
   const settings = getSettings();
   const rows = Array.isArray(records) ? records : [];
   for (const rec of rows) normaliseGoodsFields(rec, settings);
+
+  const filters = opts.filters || {};
+  const query = (filters.query || "").trim().toLowerCase();
+  const showArchived = !!filters.showArchived;
+
+  const filtered = rows.filter(rec => {
+    const isArchived = !!rec.archived;
+    if (!showArchived && isArchived) return false;
+    if (!query) return true;
+    const parts = [rec[config.numberField] || "", rec.sku || ""]; 
+    if (Array.isArray(rec.items)) {
+      rec.items.forEach(it => {
+        if (it?.sku) parts.push(it.sku);
+        const prod = productCache.find(p => p?.sku && it?.sku && p.sku.trim().toLowerCase() === it.sku.trim().toLowerCase());
+        if (prod?.alias) parts.push(prod.alias);
+      });
+    }
+    const haystack = parts.join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+
   const table = el("table", { class: "data-table" }, [
     el("thead", {}, [
       el("tr", {}, [
@@ -951,17 +973,33 @@ function renderList(container, records, config, onEdit, onDelete) {
         el("th", {}, ["Aktionen"]),
       ]),
     ]),
-    el("tbody", {}, rows.map(rec => {
+    el("tbody", {}, filtered.map(rec => {
       const goods = computeGoodsTotals(rec, settings);
       const productPrimary = formatSkuSummary(rec);
       const productSecondary = rec.items?.[0]?.sku || rec.sku || "";
       const actions = makeActionButtons([
         el("button", { class: "btn", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
+        opts.onArchive
+          ? el(
+              "button",
+              {
+                class: "btn secondary",
+                onclick: () => opts.onArchive(rec, !rec.archived),
+              },
+              [rec.archived ? "Reaktivieren" : "Archivieren"],
+            )
+          : null,
         el("button", { class: "btn danger", onclick: () => onDelete(rec) }, ["Löschen"]),
       ]);
+      const numberCell = el("td", {}, [rec[config.numberField] || "—"]);
+      if (rec.archived) {
+        numberCell.append(el("span", { class: "badge muted" }, ["Archiv"]));
+      }
       return el("tr", {}, [
-        el("td", {}, [rec[config.numberField] || "—"]),
-        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [primarySecondaryCell(productPrimary, productSecondary ? `SKU ${productSecondary}` : "")])] : []),
+        numberCell,
+        ...((config.slug === "po" || config.slug === "fo")
+          ? [el("td", {}, [primarySecondaryCell(productPrimary, productSecondary ? `SKU ${productSecondary}` : "")])]
+          : []),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
         el("td", {}, [formatTimelineSummary(rec)]),
         el("td", {}, [Number(goods.units || 0).toLocaleString("de-DE")]),
@@ -1444,6 +1482,8 @@ export function renderOrderModule(root, config) {
     ids.convert = `${config.slug}-convert`;
   }
 
+  const listFilters = { query: "", showArchived: false };
+
   root.innerHTML = `
     <section class="card table-card">
       <div class="card-header table-card-header">
@@ -1452,7 +1492,15 @@ export function renderOrderModule(root, config) {
           <h2>${config.listTitle}</h2>
         </div>
         <div class="table-toolbar">
-          <button class="btn primary" type="button" id="${ids.list}--create">${config.newButtonLabel}</button>
+          <div class="table-toolbar-left">
+            <input type="search" class="table-search" id="${ids.list}-search" placeholder="Suche nach Nummer, SKU oder Alias" />
+            <label class="inline-checkbox">
+              <input type="checkbox" id="${ids.list}-archived" /> Archiv anzeigen
+            </label>
+          </div>
+          <div class="table-toolbar-actions">
+            <button class="btn primary" type="button" id="${ids.list}--create">${config.newButtonLabel}</button>
+          </div>
         </div>
       </div>
       <div class="table-scroll table-scroll-sticky" id="${ids.list}"></div>
@@ -1587,6 +1635,8 @@ export function renderOrderModule(root, config) {
 
   const listZone = $(`#${ids.list}`, root);
   const listCreateBtn = $(`#${ids.list}--create`, root);
+  const listSearch = $(`#${ids.list}-search`, root);
+  const listArchiveToggle = $(`#${ids.list}-archived`, root);
   const skuInput = quickfillEnabled ? $(`#${ids.sku}`, root) : null;
   const skuList = quickfillEnabled ? $(`#${ids.skuList}`, root) : null;
   const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
@@ -1630,6 +1680,19 @@ export function renderOrderModule(root, config) {
     listCreateBtn.addEventListener("click", () => {
       loadForm(defaultRecord(config, getSettings()));
       listCreateBtn.blur();
+    });
+  }
+  if (listSearch) {
+    listSearch.addEventListener("input", () => {
+      listFilters.query = listSearch.value;
+      renderList(listZone, loadState()[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
+    });
+  }
+  if (listArchiveToggle) {
+    listArchiveToggle.checked = listFilters.showArchived;
+    listArchiveToggle.addEventListener("change", () => {
+      listFilters.showArchived = listArchiveToggle.checked;
+      renderList(listZone, loadState()[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
     });
   }
 
@@ -2395,7 +2458,7 @@ export function renderOrderModule(root, config) {
     else arr.push(editing);
     st[config.entityKey] = arr;
     saveState(st);
-    renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
+    renderList(listZone, st[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
     refreshQuickfillControls();
     if (quickfillEnabled && editing.sku) {
       recordRecentProduct(editing.sku);
@@ -2457,6 +2520,20 @@ export function renderOrderModule(root, config) {
     loadForm(record);
   }
 
+  function onArchive(record, archived) {
+    const st = loadState();
+    const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
+    st[config.entityKey] = arr.map(item => {
+      const sameId = item?.id && record?.id && item.id === record.id;
+      const sameNumber = item?.[config.numberField] && record?.[config.numberField] && item[config.numberField] === record[config.numberField];
+      if (sameId || sameNumber) return { ...item, archived: !!archived };
+      return item;
+    });
+    saveState(st);
+    renderList(listZone, st[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
+    window.dispatchEvent(new Event("state:changed"));
+  }
+
   function onDelete(record) {
     const st = loadState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
@@ -2465,7 +2542,7 @@ export function renderOrderModule(root, config) {
       return item[config.numberField] !== record[config.numberField];
     });
     saveState(st);
-    renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
+    renderList(listZone, st[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
     loadForm(defaultRecord(config, getSettings()));
     window.dispatchEvent(new Event("state:changed"));
   }
@@ -2632,7 +2709,7 @@ export function renderOrderModule(root, config) {
   };
   window.addEventListener("keydown", shortcutHandler);
 
-  renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
+  renderList(listZone, state[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
   refreshQuickfillControls();
   loadForm(defaultRecord(config, getSettings()));
 
@@ -2642,7 +2719,7 @@ export function renderOrderModule(root, config) {
   const handleStateChanged = () => {
     const freshState = loadState();
     const settings = getSettings();
-    renderList(listZone, freshState[config.entityKey], config, onEdit, onDelete);
+    renderList(listZone, freshState[config.entityKey], config, onEdit, onDelete, { filters: listFilters, onArchive });
     if (preview) updatePreview(settings);
   };
   root._orderStateListener = handleStateChanged;

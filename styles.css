@@ -729,6 +729,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .table-card{padding:0; border:1px solid #e0e6ed; border-radius:12px; box-shadow:0 1px 2px rgba(0,0,0,0.05); overflow:hidden; background:#fff;}
 .table-card-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; border-bottom:1px solid #e5e9ef;}
 .table-toolbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+.table-toolbar-left{display:flex; align-items:center; gap:8px; flex:1; min-width:240px;}
+.table-toolbar-actions{display:flex; align-items:center; gap:8px;}
+.table-search{border:1px solid var(--border); padding:8px 10px; border-radius:8px; min-width:200px;}
 .table-scroll.table-scroll-sticky{max-height:520px; overflow-x:auto; overflow-y:auto;}
 .data-table{width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; min-width:760px;}
 .data-table thead th{position:sticky; top:0; background:#f7f9fc; z-index:2; font-weight:600; text-align:left; padding:12px; border-bottom:1px solid #e0e6ed;}
