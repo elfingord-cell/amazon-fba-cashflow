@@ -8,6 +8,7 @@ import {
   recordRecentProduct,
   upsertProduct,
 } from "../data/storageLocal.js";
+import { createCardHeader, createTableShell, primarySecondaryCell, makeActionButtons } from "./components/tableKit.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -935,7 +936,7 @@ function renderList(container, records, config, onEdit, onDelete) {
   const settings = getSettings();
   const rows = Array.isArray(records) ? records : [];
   for (const rec of rows) normaliseGoodsFields(rec, settings);
-  const table = el("table", {}, [
+  const table = el("table", { class: "data-table" }, [
     el("thead", {}, [
       el("tr", {}, [
         el("th", {}, [`${config.entityLabel}-Nr.`]),
@@ -950,24 +951,27 @@ function renderList(container, records, config, onEdit, onDelete) {
         el("th", {}, ["Aktionen"]),
       ]),
     ]),
-    el("tbody", {}, rows.map(rec =>
-      el("tr", {}, [
+    el("tbody", {}, rows.map(rec => {
+      const goods = computeGoodsTotals(rec, settings);
+      const productPrimary = formatSkuSummary(rec);
+      const productSecondary = rec.items?.[0]?.sku || rec.sku || "";
+      const actions = makeActionButtons([
+        el("button", { class: "btn", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
+        el("button", { class: "btn danger", onclick: () => onDelete(rec) }, ["Löschen"]),
+      ]);
+      return el("tr", {}, [
         el("td", {}, [rec[config.numberField] || "—"]),
-        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [formatSkuSummary(rec)])] : []),
+        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [primarySecondaryCell(productPrimary, productSecondary ? `SKU ${productSecondary}` : "")])] : []),
         el("td", {}, [fmtDateDE(rec.orderDate)]),
         el("td", {}, [formatTimelineSummary(rec)]),
-        el("td", {}, [Number(computeGoodsTotals(rec, settings).units || 0).toLocaleString("de-DE")]),
-        el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
+        el("td", {}, [Number(goods.units || 0).toLocaleString("de-DE")]),
+        el("td", {}, [fmtUSD(goods.usd)]),
         el("td", {}, [fmtEUR(parseDE(rec.freightEur || 0))]),
         el("td", {}, [String((rec.milestones || []).length)]),
         el("td", {}, [`${rec.transport || "sea"} · ${rec.transitDays || 0}d`]),
-        el("td", {}, [
-          el("button", { class: "btn", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
-          " ",
-          el("button", { class: "btn danger", onclick: () => onDelete(rec) }, ["Löschen"]),
-        ]),
-      ]),
-    )),
+        el("td", {}, [actions]),
+      ]);
+    })),
   ]);
   container.append(table);
 }
@@ -1441,9 +1445,17 @@ export function renderOrderModule(root, config) {
   }
 
   root.innerHTML = `
-    <section class="card">
-      <h2>${config.listTitle}</h2>
-      <div id="${ids.list}"></div>
+    <section class="card table-card">
+      <div class="card-header table-card-header">
+        <div>
+          <p class="eyebrow">Übersicht</p>
+          <h2>${config.listTitle}</h2>
+        </div>
+        <div class="table-toolbar">
+          <button class="btn primary" type="button" id="${ids.list}--create">${config.newButtonLabel}</button>
+        </div>
+      </div>
+      <div class="table-scroll table-scroll-sticky" id="${ids.list}"></div>
     </section>
     <section class="card">
       <h3>${config.formTitle}</h3>
@@ -1574,6 +1586,7 @@ export function renderOrderModule(root, config) {
   `;
 
   const listZone = $(`#${ids.list}`, root);
+  const listCreateBtn = $(`#${ids.list}--create`, root);
   const skuInput = quickfillEnabled ? $(`#${ids.sku}`, root) : null;
   const skuList = quickfillEnabled ? $(`#${ids.skuList}`, root) : null;
   const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
@@ -1613,6 +1626,12 @@ export function renderOrderModule(root, config) {
   const deleteBtn = $(`#${ids.remove}`, root);
   const preview = $(`#${ids.preview}`, root);
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
+  if (listCreateBtn) {
+    listCreateBtn.addEventListener("click", () => {
+      loadForm(defaultRecord(config, getSettings()));
+      listCreateBtn.blur();
+    });
+  }
 
   let editing = defaultRecord(config, getSettings());
   let lastLoaded = JSON.parse(JSON.stringify(editing));

@@ -5,6 +5,7 @@ import {
   deleteProductBySku,
   setProductStatus,
 } from "../data/storageLocal.js";
+import { createCardHeader, createTableShell, primarySecondaryCell, makeActionButtons } from "./components/tableKit.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -329,14 +330,13 @@ function renderProducts(root) {
 
   function renderTable(list, forecastMap) {
     if (!list.length) {
-      return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
+      return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]); 
     }
-    const table = createEl("table", { class: "table products-table" });
+    const table = createEl("table", { class: "data-table" });
     table.append(
       createEl("thead", {}, [
         createEl("tr", {}, [
-          createEl("th", {}, ["Alias"]),
-          createEl("th", {}, ["SKU"]),
+          createEl("th", {}, ["Produkt"]),
           createEl("th", {}, ["Supplier"]),
           createEl("th", {}, ["Letzte PO"]),
           createEl("th", {}, ["Ø Stückpreis"]),
@@ -348,22 +348,22 @@ function renderProducts(root) {
       ]),
       createEl("tbody", {}, list.map(product => {
         const templateBadge = product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
-        const actionCell = createEl("td", { class: "actions" });
-        const editBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]);
-        const historyBtn = createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]);
-        const statusBtn = createEl("button", { class: "btn tertiary", type: "button", onclick: () => {
-          setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
-          renderProducts(root);
-          document.dispatchEvent(new Event("state:changed"));
-        } }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]);
-        const deleteBtn = createEl("button", { class: "btn danger", type: "button", onclick: () => {
-          if (confirm("Produkt wirklich löschen?")) {
-            deleteProductBySku(product.sku);
+        const actionCell = makeActionButtons([
+          createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+          createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+          createEl("button", { class: "btn tertiary", type: "button", onclick: () => {
+            setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
             renderProducts(root);
             document.dispatchEvent(new Event("state:changed"));
-          }
-        } }, ["Löschen"]);
-        actionCell.append(editBtn, historyBtn, statusBtn, deleteBtn);
+          } }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
+          createEl("button", { class: "btn danger", type: "button", onclick: () => {
+            if (confirm("Produkt wirklich löschen?")) {
+              deleteProductBySku(product.sku);
+              renderProducts(root);
+              document.dispatchEvent(new Event("state:changed"));
+            }
+          } }, ["Löschen"]),
+        ]);
         const forecastKey = (product.sku || '').toLowerCase();
         const forecastInfo = forecastMap.get(forecastKey);
         const forecastCell = createEl("td", {}, [
@@ -371,16 +371,20 @@ function renderProducts(root) {
           forecastInfo?.months?.length ? createEl("div", { class: "small text-muted" }, [`Nächster Bedarf: ${fmtMonthLong(forecastInfo.months.sort()[0])}`]) : null,
         ]);
 
+        const nameCell = createEl("td", {}, [
+          primarySecondaryCell(product.alias || "—", product.sku ? `SKU ${product.sku}` : ""),
+          product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
+        ]);
+
         return createEl("tr", {}, [
-          createEl("td", {}, [product.alias || "—", product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null]),
-          createEl("td", {}, [product.sku || "—"]),
+          nameCell,
           createEl("td", {}, [product.supplierId || "—"]),
           createEl("td", {}, [product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—"]),
           createEl("td", {}, [product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—"]),
           createEl("td", {}, [product.stats?.poCount != null ? String(product.stats.poCount) : "0"]),
           forecastCell,
           createEl("td", {}, [templateBadge]),
-          actionCell,
+          createEl("td", {}, [actionCell]),
         ]);
       }))
     );
@@ -406,10 +410,7 @@ function renderProducts(root) {
     const filtered = applyFilter(products, searchTerm);
     const forecastMap = buildForecastUsage();
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
-    const header = createEl("div", { class: "products-header" });
-    const title = createEl("h2", {}, ["Produkte"]);
-    const actions = createEl("div", { class: "products-actions" });
-    const createBtn = createEl("button", { class: "btn", type: "button", onclick: () => showEditor(null) }, ["+ Produkt anlegen"]);
+    const createBtn = createEl("button", { class: "btn primary", type: "button", onclick: () => showEditor(null) }, ["+ Produkt anlegen"]);
     const search = createEl("input", {
       type: "search",
       placeholder: "Suche nach Alias, SKU, Tag, Supplier",
@@ -419,15 +420,19 @@ function renderProducts(root) {
         render();
       }
     });
-    actions.append(search, createBtn);
-    header.append(title, actions);
-    root.append(header);
+    const toolbar = createEl("div", { class: "table-toolbar" }, [search, createBtn]);
+    const card = createEl("section", { class: "card table-card" });
+    card.append(createCardHeader("Produkte", "Stammdaten & Forecast-Verknüpfung", toolbar));
     if (bannerCount) {
-      root.append(createEl("div", { class: "banner info" }, [
+      card.append(createEl("div", { class: "banner info" }, [
         `${bannerCount} Produkte ohne Alias – bitte ergänzen.`,
       ]));
     }
-    root.append(renderTable(filtered, forecastMap));
+    const scroll = createTableShell();
+    const table = renderTable(filtered, forecastMap);
+    scroll.append(table);
+    card.append(scroll);
+    root.append(card);
   }
 
   render();

@@ -742,15 +742,15 @@ function render(el) {
   ensureForecastContainers(state);
   el.innerHTML = '';
   const wrap = document.createElement('section');
-  wrap.className = 'panel';
+  wrap.className = 'card table-card forecast-panel';
   wrap.innerHTML = `
-    <header class="panel__header">
+    <header class="card-header table-card-header">
       <div>
         <p class="eyebrow">Werkzeuge</p>
         <h1>Absatzprognose (Ventory)</h1>
         <p class="text-muted">CSV-Upload, Vorschau und Übergabe an Umsätze/Payout.</p>
       </div>
-      <div class="forecast-actions">
+      <div class="forecast-actions table-toolbar">
         <label class="toggle">
           <input type="checkbox" ${state.forecast.settings.useForecast ? 'checked' : ''} data-forecast-toggle />
           <span>Umsatz aus Prognose übernehmen</span>
@@ -761,7 +761,7 @@ function render(el) {
       <input type="file" accept=".csv,.xls,.xlsx,.json" data-forecast-file />
       <p class="text-muted small">Bitte Ventory-Export als CSV, XLS, XLSX oder JSON hochladen.</p>
     </div>
-    <div class="forecast-toolbar">
+    <div class="forecast-toolbar table-toolbar">
       <input type="search" placeholder="SKU oder Alias suchen" value="${forecastUiPrefs.search}" data-forecast-search />
       <label class="toggle">
         <input type="checkbox" ${forecastUiPrefs.hideZero ? 'checked' : ''} data-forecast-hidezero />
