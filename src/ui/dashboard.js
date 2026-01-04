@@ -133,6 +133,15 @@ function fmtSigned(value) {
   return fmtEUR2(num);
 }
 
+function fmtDelta(value, { invert = false, isPercent = false } = {}) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  const val = invert ? -Number(value) : Number(value);
+  if (isPercent) {
+    return `${val >= 0 ? "+" : ""}${val.toFixed(1)}%`;
+  }
+  return `${val >= 0 ? "+" : ""}${fmtEUR(val)}`;
+}
+
 function iconForDirection(direction) {
   return direction === "out" ? "↓" : "↑";
 }
@@ -831,6 +840,8 @@ export async function render(root) {
   plState.autoManualCheck = state?.status?.autoManualCheck === true;
   const computed = computeSeries(state);
   const kpis = computed.kpis || {};
+  const actuals = computed.actualComparisons || [];
+  const actualKpis = kpis.actuals || {};
   const zipped = (computed.months || []).map((month, idx) => ({
     month,
     series: computed.series ? computed.series[idx] : null,
@@ -1153,6 +1164,23 @@ export async function render(root) {
         <div class="kpi"><div class="kpi-label" title="Durchschnittliche Amazon-Auszahlungsquote über die sichtbaren Monate.">Sales × Payout (Monat ∅)</div><div class="kpi-value">${fmtEUR(kpis.salesPayoutAvg || 0)}</div></div>
         <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${firstNegativeDisplay}</div></div>
       </div>
+      <div class="grid three">
+        <div class="kpi">
+          <div class="kpi-label" title="Ist-Kontostand zum Monatsende des letzten abgeschlossenen Monats.">Kontostand (Ist, letzter Monat)</div>
+          <div class="kpi-value">${fmtEUR(actualKpis.lastClosing || 0)}</div>
+          <div class="kpi-sub">${actualKpis.lastMonth ? formatMonthShortLabel(actualKpis.lastMonth) : "—"} · ${fmtDelta(actualKpis.closingDelta || 0)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label" title="Differenz zwischen geplantem und tatsächlichem Umsatz (Durchschnitt über alle Ist-Monate).">Umsatz Ist vs Plan (Ø)</div>
+          <div class="kpi-value">${fmtDelta(actualKpis.avgRevenueDeltaPct, { isPercent: true })}</div>
+          <div class="kpi-sub">${actualKpis.lastMonth ? `Letzter Monat: ${fmtDelta(actualKpis.revenueDeltaPct, { isPercent: true })}` : "—"}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label" title="Differenz zwischen geplanter und tatsächlicher Amazon-Auszahlung (Durchschnitt über alle Ist-Monate).">Amazon Auszahlung Ist vs Plan (Ø)</div>
+          <div class="kpi-value">${fmtDelta(actualKpis.avgPayoutDeltaPct, { isPercent: true })}</div>
+          <div class="kpi-sub">${actualKpis.lastMonth ? `Letzter Monat: ${fmtDelta(actualKpis.payoutDeltaPct, { isPercent: true })}` : "—"}</div>
+        </div>
+      </div>
       <div class="vchart" style="--rows:${axisRows}; --zero:${zeroPct.toFixed(2)}">
         <div class="vchart-y">${yTicksBar.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
         <div class="vchart-y-right">${yAxisLineHtml}</div>
@@ -1175,6 +1203,44 @@ export async function render(root) {
       ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>
       <div class="net-strip">${netStrip}</div>
+    </section>
+    <section class="card">
+      <h3>Soll-Ist-Abgleich (Ist-Monate)</h3>
+      ${actuals.length ? `
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Monat</th>
+              <th>Umsatz Plan</th>
+              <th>Umsatz Ist</th>
+              <th>Δ Umsatz</th>
+              <th>Payout Plan</th>
+              <th>Payout Ist</th>
+              <th>Δ Payout</th>
+              <th>Kontostand Plan</th>
+              <th>Kontostand Ist</th>
+              <th>Δ Kontostand</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${actuals.map(row => `
+              <tr>
+                <td>${formatMonthShortLabel(row.month)}</td>
+                <td>${fmtEUR(row.plannedRevenue || 0)}</td>
+                <td>${fmtEUR(row.actualRevenue || 0)}</td>
+                <td class="${(row.revenueDelta || 0) < 0 ? "neg" : "pos"}">${fmtDelta(row.revenueDelta)}</td>
+                <td>${fmtEUR(row.plannedPayout || 0)}</td>
+                <td>${fmtEUR(row.actualPayout || 0)}</td>
+                <td class="${(row.payoutDelta || 0) < 0 ? "neg" : "pos"}">${fmtDelta(row.payoutDelta)}</td>
+                <td>${row.plannedClosing != null ? fmtEUR(row.plannedClosing) : "—"}</td>
+                <td>${row.actualClosing != null ? fmtEUR(row.actualClosing) : "—"}</td>
+                <td class="${(row.closingDelta || 0) < 0 ? "neg" : "pos"}">${row.closingDelta != null ? fmtDelta(row.closingDelta) : "—"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="muted">Trage Ist-Werte im Tab <strong>Eingaben</strong> ein, um Plan/Ist-KPIs zu sehen.</p>`}
+      <p class="muted">KPIs für den CFO: Tracke Abweichungen je Monat, erkenne Trends (Ø Delta) und nutze den Ist-Kontostand, um Puffer und Zahlungspläne anzupassen.</p>
     </section>
     <section class="card pl-container" id="pl-root"></section>
   `;

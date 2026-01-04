@@ -66,6 +66,7 @@ export async function render(root) {
   state.incomings = ensureArray(state.incomings);
   state.extras = ensureArray(state.extras);
   state.dividends = ensureArray(state.dividends);
+  state.actuals = ensureArray(state.actuals);
   state.settings = state.settings || {};
 
   root.innerHTML = `
@@ -122,12 +123,23 @@ export async function render(root) {
       </table>
       <button class="btn" id="dividend-add">+ Dividenden-Zeile</button>
     </section>
+
+    <section class="card">
+      <h3>Soll-Ist (abgeschlossene Monate)</h3>
+      <p class="muted">Trage Ist-Werte für abgeschlossene Monate ein, um sie im Dashboard mit der Planung zu vergleichen.</p>
+      <table class="table">
+        <thead><tr><th>Monat</th><th>Umsatz (Ist €)</th><th>Amazon Auszahlung (Ist €)</th><th>Kontostand Monatsende (Ist €)</th><th></th></tr></thead>
+        <tbody id="actual-rows"></tbody>
+      </table>
+      <button class="btn" id="actual-add">+ Ist-Wert hinzufügen</button>
+    </section>
   `;
 
   const incomeRows = $("#income-rows", root);
   const extrasRows = $("#extras-rows", root);
   const fixSummaryRows = $("#fix-summary-rows", root);
   const dividendRows = $("#dividend-rows", root);
+  const actualRows = $("#actual-rows", root);
 
   function renderIncomes() {
     if (!state.incomings.length) {
@@ -215,10 +227,29 @@ export async function render(root) {
       .join("");
   }
 
+  function renderActuals() {
+    if (!state.actuals.length) {
+      actualRows.innerHTML = `<tr><td colspan="5" class="muted">Keine Ist-Werte hinterlegt.</td></tr>`;
+      return;
+    }
+    actualRows.innerHTML = state.actuals
+      .map((row, idx) => `
+        <tr data-idx="${idx}">
+          <td><input type="month" data-field="month" value="${row.month || ""}"></td>
+          <td><input type="text" data-field="revenueEur" inputmode="decimal" value="${fmtCurrency(row.revenueEur)}"></td>
+          <td><input type="text" data-field="payoutEur" inputmode="decimal" value="${fmtCurrency(row.payoutEur)}"></td>
+          <td><input type="text" data-field="closingBalanceEur" inputmode="decimal" value="${fmtCurrency(row.closingBalanceEur)}"></td>
+          <td><button class="btn danger" data-remove="${idx}">Entfernen</button></td>
+        </tr>
+      `)
+      .join("");
+  }
+
   renderIncomes();
   renderExtras();
   renderFixSummary();
   renderDividends();
+  renderActuals();
 
   $("#opening", root)?.addEventListener("blur", (ev) => {
     const val = fmtCurrency(ev.target.value);
@@ -250,6 +281,15 @@ export async function render(root) {
     state.dividends.push({ month: state.settings.startMonth || "", label: "Dividende", amountEur: "0,00" });
     saveState(state);
     renderDividends();
+  });
+
+  $("#actual-add", root)?.addEventListener("click", () => {
+    const nextMonth = state.actuals.length
+      ? incMonth(state.actuals[state.actuals.length - 1].month || state.settings.startMonth || "")
+      : (state.settings.startMonth || "");
+    state.actuals.push({ month: nextMonth, revenueEur: "0,00", payoutEur: "0,00", closingBalanceEur: "0,00" });
+    saveState(state);
+    renderActuals();
   });
 
   incomeRows?.addEventListener("input", (ev) => {
@@ -376,5 +416,44 @@ export async function render(root) {
     state.dividends.splice(idx, 1);
     saveState(state);
     renderDividends();
+  });
+
+  actualRows?.addEventListener("input", (ev) => {
+    const tr = ev.target.closest("tr");
+    if (!tr) return;
+    const idx = Number(tr.dataset.idx);
+    const field = ev.target.dataset.field;
+    if (!(field && state.actuals[idx])) return;
+    state.actuals[idx][field] = ev.target.value;
+  });
+
+  actualRows?.addEventListener("focusout", (ev) => {
+    const input = ev.target.closest("input");
+    if (!input) return;
+    const tr = input.closest("tr");
+    if (!tr) return;
+    const idx = Number(tr.dataset.idx);
+    const field = input.dataset.field;
+    if (!(field && state.actuals[idx])) return;
+    if (field === "month") {
+      state.actuals[idx][field] = input.value;
+    } else {
+      const formatted = fmtCurrency(input.value);
+      state.actuals[idx][field] = formatted;
+      input.value = formatted;
+    }
+  });
+
+  actualRows?.addEventListener("change", () => {
+    saveState(state);
+  });
+
+  actualRows?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-remove]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.remove);
+    state.actuals.splice(idx, 1);
+    saveState(state);
+    renderActuals();
   });
 }

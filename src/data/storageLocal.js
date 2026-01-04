@@ -72,6 +72,7 @@ const defaults = {
     autoManualCheck: false,
     events: {},
   },
+  actuals: [],
 };
 
 function ensureFixcostContainers(state) {
@@ -126,6 +127,11 @@ function ensureForecast(state) {
   } else {
     state.forecast.settings.useForecast = Boolean(state.forecast.settings.useForecast);
   }
+}
+
+function ensureActuals(state) {
+  if (!state) return;
+  if (!Array.isArray(state.actuals)) state.actuals = [];
 }
 
 function monthIndex(ym) {
@@ -413,6 +419,7 @@ export function createEmptyState(){
   ensureProducts(clone);
   ensureVatData(clone);
   ensureForecast(clone);
+  ensureActuals(clone);
   return clone;
 }
 
@@ -430,6 +437,7 @@ export function loadState(){
   ensureProducts(_state);
   ensureVatData(_state);
   ensureForecast(_state);
+  ensureActuals(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
   return _state;
@@ -443,6 +451,7 @@ export function saveState(s){
   ensureProducts(_state);
   ensureVatData(_state);
   ensureForecast(_state);
+  ensureActuals(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -477,6 +486,7 @@ export function importStateFile(file, cb){
       ensureStatusSection(json);
       ensureFixcostContainers(json);
       ensureForecast(json);
+      ensureActuals(json);
       migrateLegacyOutgoings(json);
       cb(json);
     } catch (err) {

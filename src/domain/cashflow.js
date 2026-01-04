@@ -899,12 +899,31 @@ export function computeSeries(state) {
   const salesIn = series.map(x => x.itemsIn.filter(i => i.kind === 'sales-payout').reduce((a, b) => a + b.amount, 0));
   const avgSalesPayout = salesIn.length ? (salesIn.reduce((a, b) => a + b, 0) / (salesIn.filter(v => v > 0).length || 1)) : 0;
 
+  const plannedRevenueByMonth = {};
+  const plannedPayoutByMonth = {};
+  Object.keys(bucket).forEach(m => {
+    const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
+    const payoutPct = parsePct(payoutPctMap[m] || 0);
+    plannedRevenueByMonth[m] = revenue;
+    plannedPayoutByMonth[m] = revenue * (payoutPct / 100);
+  });
+
   const kpis = {
     opening,
     openingToday: opening,
     salesPayoutAvg: avgSalesPayout,
     avgSalesPayout,
     firstNegativeMonth: firstNeg,
+    actuals: {
+      count: actualComparisons.length,
+      lastMonth: lastActual ? lastActual.month : null,
+      lastClosing: lastActual ? lastActual.actualClosing : null,
+      closingDelta: lastActual ? lastActual.closingDelta : null,
+      revenueDeltaPct: lastActual ? lastActual.revenueDeltaPct : null,
+      payoutDeltaPct: lastActual ? lastActual.payoutDeltaPct : null,
+      avgRevenueDeltaPct,
+      avgPayoutDeltaPct,
+    },
   };
 
   let running = opening;
@@ -923,7 +942,69 @@ export function computeSeries(state) {
     };
   });
 
-  return { startMonth, horizon, months, series, kpis, breakdown };
+  const actuals = Array.isArray(s.actuals) ? s.actuals : [];
+  const actualMap = new Map();
+  actuals.forEach(entry => {
+    if (!entry || !entry.month) return;
+    const month = entry.month;
+    actualMap.set(month, {
+      revenue: parseEuro(entry.revenueEur),
+      payout: parseEuro(entry.payoutEur),
+      closing: parseEuro(entry.closingBalanceEur),
+    });
+  });
+
+  const actualComparisons = [];
+  actualMap.forEach((values, month) => {
+    const idx = months.indexOf(month);
+    if (idx === -1) return;
+    const plannedBreakdown = idx >= 0 && idx < breakdown.length ? breakdown[idx] : null;
+    const plannedClosingBalance = plannedBreakdown ? plannedBreakdown.closing : null;
+    const plannedRevenue = plannedRevenueByMonth[month] ?? null;
+    const plannedPayout = plannedPayoutByMonth[month] ?? null;
+    actualComparisons.push({
+      month,
+      plannedRevenue,
+      actualRevenue: values.revenue,
+      revenueDelta: (values.revenue ?? 0) - (plannedRevenue ?? 0),
+      revenueDeltaPct: plannedRevenue ? (((values.revenue ?? 0) - plannedRevenue) / plannedRevenue) * 100 : null,
+      plannedPayout,
+      actualPayout: values.payout,
+      payoutDelta: (values.payout ?? 0) - (plannedPayout ?? 0),
+      payoutDeltaPct: plannedPayout ? (((values.payout ?? 0) - plannedPayout) / plannedPayout) * 100 : null,
+      plannedClosing: plannedClosingBalance,
+      actualClosing: values.closing,
+      closingDelta: (values.closing ?? 0) - (plannedClosingBalance ?? 0),
+    });
+  });
+  actualComparisons.sort((a, b) => (a.month || '').localeCompare(b.month || ''));
+
+  const lastActual = actualComparisons[actualComparisons.length - 1] || null;
+  const avgRevenueDeltaPct = actualComparisons.length
+    ? actualComparisons
+        .map(entry => entry.revenueDeltaPct)
+        .filter(v => Number.isFinite(v))
+        .reduce((a, b, _, arr) => a + b / arr.length, 0)
+    : null;
+  const avgPayoutDeltaPct = actualComparisons.length
+    ? actualComparisons
+        .map(entry => entry.payoutDeltaPct)
+        .filter(v => Number.isFinite(v))
+        .reduce((a, b, _, arr) => a + b / arr.length, 0)
+    : null;
+
+  kpis.actuals = {
+    count: actualComparisons.length,
+    lastMonth: lastActual ? lastActual.month : null,
+    lastClosing: lastActual ? lastActual.actualClosing : null,
+    closingDelta: lastActual ? lastActual.closingDelta : null,
+    revenueDeltaPct: lastActual ? lastActual.revenueDeltaPct : null,
+    payoutDeltaPct: lastActual ? lastActual.payoutDeltaPct : null,
+    avgRevenueDeltaPct,
+    avgPayoutDeltaPct,
+  };
+
+  return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons };
 }
 
 // ---------- State ----------
