@@ -142,6 +142,16 @@ function fmtDelta(value, { invert = false, isPercent = false } = {}) {
   return `${val >= 0 ? "+" : ""}${fmtEUR(val)}`;
 }
 
+function fmtBalanceLabel(value) {
+  const num = Number(value || 0);
+  if (Math.abs(num) >= 10000) {
+    const k = num / 1000;
+    const rounded = Math.round(k * 10) / 10;
+    return `${rounded.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k€`;
+  }
+  return fmtEUR(num);
+}
+
 function iconForDirection(direction) {
   return direction === "out" ? "↓" : "↑";
 }
@@ -962,6 +972,15 @@ export async function render(root) {
         .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${YLine(v)}" r="6"></circle>`)
         .join("")
     : "";
+  const lineLabels = showNetLine
+    ? netLineValues
+        .map((v, i) => {
+          const x = X(centers[i] || 0);
+          const y = Math.max(12, YLine(v) - 20);
+          return `<text class="line-label" x="${x}" y="${y}">${escapeHtml(fmtBalanceLabel(v))}</text>`;
+        })
+        .join("")
+    : "";
   const axisRows = yTicksBar.length || 6;
   const yAxisLineHtml = yTicksLine
     .map(val => `<div class="ytick-line" style="top:${(YLine(val) / 10).toFixed(2)}%">${fmtTick(val)}</div>`)
@@ -1192,14 +1211,14 @@ export async function render(root) {
             <div class="vchart-bars">
               ${barGroupsHtml}
             </div>
-            <div class="vchart-lines" aria-hidden="true">
-              <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
-                ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}` : ""}
-              </svg>
-            </div>
+          <div class="vchart-lines" aria-hidden="true">
+            <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
+              ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}${lineLabels}` : ""}
+            </svg>
           </div>
-          <div class="vchart-x">${xLabelsHtml}</div>
         </div>
+        <div class="vchart-x">${xLabelsHtml}</div>
+      </div>
       </div>
       ${legendHtml}
       <div class="net-strip-label">Netto je Monat</div>
