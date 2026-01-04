@@ -835,6 +835,7 @@ function updatePLSection(plRoot) {
 }
 
 export async function render(root) {
+  try {
   dashboardRoot = root;
   const state = loadState();
   plState.autoManualCheck = state?.status?.autoManualCheck === true;
@@ -1359,6 +1360,17 @@ export async function render(root) {
     stateListenerOff = addStateListener(() => {
       if (location.hash.replace("#", "") === "dashboard" && dashboardRoot) render(dashboardRoot);
     });
+  }
+  } catch (err) {
+    console.error(err);
+    const message = err?.message || String(err);
+    root.innerHTML = `
+      <section class="card">
+        <h2>Dashboard</h2>
+        <p class="muted">Beim Rendern ist ein Fehler aufgetreten.</p>
+        <pre class="mono" style="white-space:pre-wrap">${escapeHtml(message)}</pre>
+      </section>
+    `;
   }
 }
 

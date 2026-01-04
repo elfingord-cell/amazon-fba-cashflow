@@ -914,16 +914,7 @@ export function computeSeries(state) {
     salesPayoutAvg: avgSalesPayout,
     avgSalesPayout,
     firstNegativeMonth: firstNeg,
-    actuals: {
-      count: actualComparisons.length,
-      lastMonth: lastActual ? lastActual.month : null,
-      lastClosing: lastActual ? lastActual.actualClosing : null,
-      closingDelta: lastActual ? lastActual.closingDelta : null,
-      revenueDeltaPct: lastActual ? lastActual.revenueDeltaPct : null,
-      payoutDeltaPct: lastActual ? lastActual.payoutDeltaPct : null,
-      avgRevenueDeltaPct,
-      avgPayoutDeltaPct,
-    },
+    actuals: {},
   };
 
   let running = opening;
@@ -980,17 +971,17 @@ export function computeSeries(state) {
   actualComparisons.sort((a, b) => (a.month || '').localeCompare(b.month || ''));
 
   const lastActual = actualComparisons[actualComparisons.length - 1] || null;
-  const avgRevenueDeltaPct = actualComparisons.length
-    ? actualComparisons
-        .map(entry => entry.revenueDeltaPct)
-        .filter(v => Number.isFinite(v))
-        .reduce((a, b, _, arr) => a + b / arr.length, 0)
+  const revenueDeltaList = actualComparisons
+    .map(entry => entry.revenueDeltaPct)
+    .filter(v => Number.isFinite(v));
+  const payoutDeltaList = actualComparisons
+    .map(entry => entry.payoutDeltaPct)
+    .filter(v => Number.isFinite(v));
+  const avgRevenueDeltaPct = revenueDeltaList.length
+    ? revenueDeltaList.reduce((a, b) => a + b, 0) / revenueDeltaList.length
     : null;
-  const avgPayoutDeltaPct = actualComparisons.length
-    ? actualComparisons
-        .map(entry => entry.payoutDeltaPct)
-        .filter(v => Number.isFinite(v))
-        .reduce((a, b, _, arr) => a + b / arr.length, 0)
+  const avgPayoutDeltaPct = payoutDeltaList.length
+    ? payoutDeltaList.reduce((a, b) => a + b, 0) / payoutDeltaList.length
     : null;
 
   kpis.actuals = {
