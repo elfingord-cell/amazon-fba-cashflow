@@ -39,6 +39,14 @@ const defaults = {
       feeRateDefault: 0.38,
       fixInputDefault: 0,
     },
+    transportLeadTimesDays: {
+      air: 10,
+      rail: 25,
+      sea: 45,
+    },
+    defaultBufferDays: 0,
+    defaultCurrency: "EUR",
+    lastUpdatedAt: null,
   },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
   extras:    [ ],
@@ -73,6 +81,7 @@ const defaults = {
     events: {},
   },
   actuals: [],
+  suppliers: [],
 };
 
 function ensureFixcostContainers(state) {
@@ -114,6 +123,28 @@ function ensureVatData(state) {
   if (!state.vatPreviewMonths || typeof state.vatPreviewMonths !== "object") {
     state.vatPreviewMonths = {};
   }
+}
+
+function ensureGlobalSettings(state) {
+  if (!state) return;
+  if (!state.settings || typeof state.settings !== "object") state.settings = {};
+  const settings = state.settings;
+  if (!settings.transportLeadTimesDays || typeof settings.transportLeadTimesDays !== "object") {
+    settings.transportLeadTimesDays = structuredClone(defaults.settings.transportLeadTimesDays);
+  } else {
+    const base = defaults.settings.transportLeadTimesDays;
+    settings.transportLeadTimesDays.air = Number(settings.transportLeadTimesDays.air ?? base.air) || base.air;
+    settings.transportLeadTimesDays.rail = Number(settings.transportLeadTimesDays.rail ?? base.rail) || base.rail;
+    settings.transportLeadTimesDays.sea = Number(settings.transportLeadTimesDays.sea ?? base.sea) || base.sea;
+  }
+  settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
+  settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
+  settings.lastUpdatedAt = settings.lastUpdatedAt || null;
+}
+
+function ensureSuppliers(state) {
+  if (!state) return;
+  if (!Array.isArray(state.suppliers)) state.suppliers = [];
 }
 
 function ensureForecast(state) {
@@ -420,6 +451,8 @@ export function createEmptyState(){
   ensureVatData(clone);
   ensureForecast(clone);
   ensureActuals(clone);
+  ensureGlobalSettings(clone);
+  ensureSuppliers(clone);
   return clone;
 }
 
@@ -438,6 +471,8 @@ export function loadState(){
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
+  ensureGlobalSettings(_state);
+  ensureSuppliers(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
   return _state;
@@ -452,6 +487,8 @@ export function saveState(s){
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
+  ensureGlobalSettings(_state);
+  ensureSuppliers(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -487,6 +524,8 @@ export function importStateFile(file, cb){
       ensureFixcostContainers(json);
       ensureForecast(json);
       ensureActuals(json);
+      ensureGlobalSettings(json);
+      ensureSuppliers(json);
       migrateLegacyOutgoings(json);
       cb(json);
     } catch (err) {
