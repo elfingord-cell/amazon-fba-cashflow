@@ -74,6 +74,7 @@ function monthIndex(ym) {
 function computeGoodsTotals(row, settings) {
   const items = Array.isArray(row?.items) ? row.items : [];
   let totalUsd = 0;
+  let totalUnits = 0;
   if (items.length) {
     items.forEach(item => {
       const units = parseEuro(item?.units ?? 0);
@@ -83,6 +84,7 @@ function computeGoodsTotals(row, settings) {
       const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
       const subtotal = Math.max(0, Math.round(rawUsd * 100) / 100);
       if (Number.isFinite(subtotal)) totalUsd += subtotal;
+      if (Number.isFinite(units)) totalUnits += units;
     });
   } else {
     const units = parseEuro(row?.units ?? 0);
@@ -91,6 +93,7 @@ function computeGoodsTotals(row, settings) {
     const extraFlatUsd = parseEuro(row?.extraFlatUsd ?? 0);
     const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
     totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+    if (Number.isFinite(units)) totalUnits = units;
   }
   const override = parseEuro(row?.fxOverride ?? 0);
   const fxRate = (Number.isFinite(override) && override > 0)
@@ -101,7 +104,19 @@ function computeGoodsTotals(row, settings) {
   return {
     usd: totalUsd,
     eur: derivedEur > 0 ? derivedEur : fallbackEur,
+    units: totalUnits,
   };
+}
+
+function computeFreightTotal(row, totals) {
+  const mode = row?.freightMode === 'per_unit' ? 'per_unit' : 'total';
+  if (mode === 'per_unit') {
+    const perUnit = parseEuro(row?.freightPerUnitEur ?? 0);
+    const units = Number(totals?.units ?? 0) || 0;
+    const total = perUnit * units;
+    return Math.round(total * 100) / 100;
+  }
+  return parseEuro(row?.freightEur ?? 0);
 }
 
 function clampDay(year, monthIndexValue, day) {
@@ -415,7 +430,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
   if (!row) return [];
   const totals = computeGoodsTotals(row, settings);
   const goods = totals.eur;
-  const freight = parseEuro(row.freightEur);
+  const freight = computeFreightTotal(row, totals);
   const anchors = anchorsFor(row);
   const manual = Array.isArray(row.milestones) ? row.milestones : [];
   const autoEvents = normaliseAutoEvents(row, settings, manual);
@@ -461,7 +476,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
 
     if (auto.type === 'freight') {
-      const amount = parseEuro(row.freightEur);
+      const amount = computeFreightTotal(row, totals);
       if (!amount) continue;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       events.push({

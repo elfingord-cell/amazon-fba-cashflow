@@ -169,6 +169,8 @@ const QUICKFILL_FIELD_MAP = [
   "prodDays",
   "transitDays",
   "freightEur",
+  "freightMode",
+  "freightPerUnitEur",
   "dutyRatePct",
   "dutyIncludeFreight",
   "eustRatePct",
@@ -190,6 +192,8 @@ const TEMPLATE_FIELD_OPTIONS = [
   { key: "prodDays", label: "Produktionstage" },
   { key: "transitDays", label: "Transit-Tage" },
   { key: "freightEur", label: "Fracht (€)" },
+  { key: "freightMode", label: "Fracht-Modus" },
+  { key: "freightPerUnitEur", label: "Fracht pro Stück (€)" },
   { key: "dutyRatePct", label: "Zoll (%)" },
   { key: "dutyIncludeFreight", label: "Freight einbeziehen" },
   { key: "eustRatePct", label: "EUSt (%)" },
@@ -259,6 +263,8 @@ function diffFields(current, incoming) {
     prodDays: "Produktionstage",
     transitDays: "Transit-Tage",
     freightEur: "Fracht (€)",
+    freightMode: "Fracht-Modus",
+    freightPerUnitEur: "Fracht pro Stück (€)",
     dutyRatePct: "Zoll (%)",
     dutyIncludeFreight: "Freight einbeziehen",
     eustRatePct: "EUSt (%)",
@@ -274,6 +280,7 @@ function diffFields(current, incoming) {
     "unitExtraUsd",
     "extraFlatUsd",
     "freightEur",
+    "freightPerUnitEur",
   ]);
 
   const percentFields = new Set([
@@ -300,11 +307,12 @@ function diffFields(current, incoming) {
     const format = (value) => {
       if (value == null) return "—";
       if (currencyFields.has(field)) {
-        if (field === "freightEur") return fmtEUR(parseDE(value));
+        if (field === "freightEur" || field === "freightPerUnitEur") return fmtEUR(parseDE(value));
         return fmtUSD(parseDE(value));
       }
       if (percentFields.has(field)) return `${fmtPercent(value)} %`;
       if (field === "fxOverride") return fmtFxRate(value);
+      if (field === "freightMode") return value === "per_unit" ? "Pro Stück" : "Gesamt";
       if (typeof value === "boolean") return value ? "Ja" : "Nein";
       return String(value);
     };
@@ -423,6 +431,18 @@ function computeGoodsTotals(record, settings = getSettings()) {
   };
 }
 
+function resolveFreightTotal(record, totals = computeGoodsTotals(record, getSettings())) {
+  const mode = record?.freightMode === "per_unit" ? "per_unit" : "total";
+  if (mode === "per_unit") {
+    const perUnit = parseDE(record?.freightPerUnitEur);
+    const units = Number(totals?.units || 0);
+    const total = perUnit * units;
+    return Number.isFinite(total) ? Math.round(total * 100) / 100 : 0;
+  }
+  const total = parseDE(record?.freightEur);
+  return Number.isFinite(total) ? Math.round(total * 100) / 100 : 0;
+}
+
 function normaliseGoodsFields(record, settings = getSettings()) {
   if (!record) return;
   ensureItems(record);
@@ -447,6 +467,9 @@ function normaliseGoodsFields(record, settings = getSettings()) {
   record.unitCostUsd = fmtCurrencyInput(record.items[0]?.unitCostUsd ?? "0,00");
   record.unitExtraUsd = fmtCurrencyInput(record.items[0]?.unitExtraUsd ?? "0,00");
   record.extraFlatUsd = fmtCurrencyInput(record.items[0]?.extraFlatUsd ?? "0,00");
+  record.freightMode = record.freightMode === "per_unit" ? "per_unit" : "total";
+  record.freightEur = fmtCurrencyInput(record.freightEur ?? "0,00");
+  record.freightPerUnitEur = fmtCurrencyInput(record.freightPerUnitEur ?? "0,00");
   if (!record.sku && record.items[0]?.sku) {
     record.sku = record.items[0].sku;
   }
@@ -626,6 +649,8 @@ function defaultRecord(config, settings = getSettings()) {
     goodsEur: "0,00",
     fxOverride: settings.fxRate || null,
     freightEur: "0,00",
+    freightMode: "total",
+    freightPerUnitEur: "0,00",
     prodDays: 60,
     transport: "sea",
     transitDays: 60,
@@ -669,7 +694,7 @@ function orderEvents(record, config, settings) {
     const fallback = parseDE(record.goodsEur);
     if (fallback) goods = fallback;
   }
-  const freight = parseDE(record.freightEur);
+  const freight = resolveFreightTotal(record, totals);
   const prefix = record[config.numberField] ? `${config.entityLabel} ${record[config.numberField]} – ` : "";
   const manual = Array.isArray(record.milestones) ? record.milestones : [];
   const auto = ensureAutoEvents(record, settings, manual);
@@ -728,7 +753,7 @@ function orderEvents(record, config, settings) {
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
 
     if (autoEvt.type === "freight") {
-      const amountAbs = parseDE(record.freightEur);
+      const amountAbs = resolveFreightTotal(record, totals);
       if (!amountAbs) {
         const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
         const dueIso = isoDate(due);
@@ -958,7 +983,7 @@ function renderList(container, records, config, onEdit, onDelete) {
         el("td", {}, [formatTimelineSummary(rec)]),
         el("td", {}, [Number(computeGoodsTotals(rec, settings).units || 0).toLocaleString("de-DE")]),
         el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
-        el("td", {}, [fmtEUR(parseDE(rec.freightEur || 0))]),
+        el("td", {}, [fmtEUR(resolveFreightTotal(rec, computeGoodsTotals(rec, settings)))]),
         el("td", {}, [String((rec.milestones || []).length)]),
         el("td", {}, [`${rec.transport || "sea"} · ${rec.transitDays || 0}d`]),
         el("td", {}, [
@@ -1255,7 +1280,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   (record.autoEvents || []).forEach((autoEvt) => {
     const computed = previewMap.get(autoEvt.id);
     const fallbackAmount = autoEvt.type === "freight"
-      ? -(parseDE(record.freightEur) || 0)
+      ? -(resolveFreightTotal(record, totals) || 0)
       : 0;
     const dueText = fmtDateDE(computed?.due || computed?.date);
     const amount = computed?.amount ?? fallbackAmount;
@@ -1403,6 +1428,8 @@ export function renderOrderModule(root, config) {
     goodsSummary: `${config.slug}-goods-summary`,
     fxRate: `${config.slug}-fx-rate`,
     freight: `${config.slug}-freight`,
+    freightMode: `${config.slug}-freight-mode`,
+    freightPerUnit: `${config.slug}-freight-per-unit`,
     prod: `${config.slug}-prod`,
     transport: `${config.slug}-transport`,
     transit: `${config.slug}-transit`,
@@ -1509,8 +1536,19 @@ export function renderOrderModule(root, config) {
       </div>
       <div class="grid two" style="margin-top:12px">
         <div>
-          <label>Fracht (€)</label>
+          <label>Fracht (Eingabeart)</label>
+          <select id="${ids.freightMode}">
+            <option value="total">Gesamtbetrag (€)</option>
+            <option value="per_unit">Pro Stück (€)</option>
+          </select>
+        </div>
+        <div>
+          <label>Fracht gesamt (€)</label>
           <input id="${ids.freight}" placeholder="z. B. 4.800,00" />
+        </div>
+        <div>
+          <label>Fracht pro Stück (€)</label>
+          <input id="${ids.freightPerUnit}" placeholder="z. B. 1,25" />
         </div>
         <div>
           <label>Produktionstage</label>
@@ -1593,7 +1631,9 @@ export function renderOrderModule(root, config) {
   const itemsDataListId = `${ids.items}-dl`;
   const goodsSummary = $(`#${ids.goodsSummary}`, root);
   const fxRateInput = $(`#${ids.fxRate}`, root);
+  const freightModeSelect = $(`#${ids.freightMode}`, root);
   const freightInput = $(`#${ids.freight}`, root);
+  const freightPerUnitInput = $(`#${ids.freightPerUnit}`, root);
   const prodInput = $(`#${ids.prod}`, root);
   const transportSelect = $(`#${ids.transport}`, root);
   const transitInput = $(`#${ids.transit}`, root);
@@ -1968,7 +2008,7 @@ export function renderOrderModule(root, config) {
         const diffs = diffFields(currentSnapshot, incoming);
         renderDiffList(diffs, diffZone);
       });
-      const freightText = fmtEUR(parseDE(normalized.freightEur || rec.freightEur || 0));
+      const freightText = fmtEUR(resolveFreightTotal(normalized, computeGoodsTotals(normalized, settings)));
       tableBody.append(
         el("tr", { class: index === 0 ? "po-history-latest" : "" }, [
           el("td", {}, [rec[config.numberField] || "—"]),
@@ -2221,6 +2261,13 @@ export function renderOrderModule(root, config) {
       : `Summe Warenwert: ${eurText} (${usdText})`;
   }
 
+  function updateFreightModeUI() {
+    if (!freightModeSelect || !freightInput || !freightPerUnitInput) return;
+    const mode = freightModeSelect.value === "per_unit" ? "per_unit" : "total";
+    freightInput.disabled = mode === "per_unit";
+    freightPerUnitInput.disabled = mode !== "per_unit";
+  }
+
   function syncEditingFromForm(settings = getSettings()) {
     if (quickfillEnabled) {
       editing.sku = skuInput ? parseSkuInputValue(skuInput.value) : "";
@@ -2254,7 +2301,9 @@ export function renderOrderModule(root, config) {
     normaliseGoodsFields(editing, settings);
     const totals = computeGoodsTotals(editing, settings);
     updateGoodsSummary(totals);
+    editing.freightMode = freightModeSelect?.value === "per_unit" ? "per_unit" : "total";
     editing.freightEur = fmtCurrencyInput(freightInput.value);
+    editing.freightPerUnitEur = fmtCurrencyInput(freightPerUnitInput?.value || "");
     editing.prodDays = Number(prodInput.value || 0);
     editing.transport = transportSelect.value;
     editing.transitDays = Number(transitInput.value || 0);
@@ -2343,7 +2392,10 @@ export function renderOrderModule(root, config) {
     const fxBase = editing.fxOverride ?? settings.fxRate ?? 0;
     if (fxRateInput) fxRateInput.value = fxBase ? fmtFxRate(fxBase) : "";
     updateGoodsSummary(computeGoodsTotals(editing, settings));
+    if (freightModeSelect) freightModeSelect.value = editing.freightMode === "per_unit" ? "per_unit" : "total";
     freightInput.value = fmtCurrencyInput(editing.freightEur ?? "0,00");
+    if (freightPerUnitInput) freightPerUnitInput.value = fmtCurrencyInput(editing.freightPerUnitEur ?? "0,00");
+    updateFreightModeUI();
     prodInput.value = String(editing.prodDays ?? 60);
     transportSelect.value = editing.transport || "sea";
     transitInput.value = String(editing.transitDays ?? (editing.transport === "air" ? 10 : editing.transport === "rail" ? 30 : 60));
@@ -2487,11 +2539,24 @@ export function renderOrderModule(root, config) {
       }
     });
   }
+  if (freightModeSelect) {
+    freightModeSelect.addEventListener("change", () => {
+      updateFreightModeUI();
+      onAnyChange();
+    });
+  }
   freightInput.addEventListener("input", onAnyChange);
   freightInput.addEventListener("blur", () => {
     freightInput.value = fmtCurrencyInput(freightInput.value);
     onAnyChange();
   });
+  if (freightPerUnitInput) {
+    freightPerUnitInput.addEventListener("input", onAnyChange);
+    freightPerUnitInput.addEventListener("blur", () => {
+      freightPerUnitInput.value = fmtCurrencyInput(freightPerUnitInput.value);
+      onAnyChange();
+    });
+  }
   dutyRateInput.addEventListener("input", onAnyChange);
   dutyRateInput.addEventListener("blur", () => {
     const next = clampPct(dutyRateInput.value);
