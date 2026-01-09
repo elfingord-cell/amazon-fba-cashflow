@@ -443,6 +443,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     const pct = parsePct(ms.percent);
     const baseDate = anchors[ms.anchor || 'ORDER_DATE'] || anchors.ORDER_DATE;
     const due = addDays(baseDate, Number(ms.lagDays || 0));
+    const manualId = ms.id || `${row.id || prefixBase}-${idx}-${ms.id || 'manual'}`;
     events.push({
       label: `${prefix}${ms.label ? ` – ${ms.label}` : ''}`,
       amount: goods * (pct / 100),
@@ -456,7 +457,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       sourceType: prefixBase,
       sourceNumber: ref,
       sourceId: row.id,
-      id: `${row.id || prefixBase}-${idx}-${ms.id || 'manual'}`,
+      id: manualId,
       tooltip: `Fälligkeit: ${ms.anchor || 'ORDER_DATE'} + ${Number(ms.lagDays || 0)} Tage`,
     });
   }
@@ -478,6 +479,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     if (auto.type === 'freight') {
       const amount = computeFreightTotal(row, totals);
       if (!amount) continue;
+      const freightId = auto.id || `${row.id || prefixBase}-auto-freight`;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       events.push({
         label: `${prefix} – ${auto.label || 'Fracht'}`,
@@ -491,7 +493,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-freight`,
+        id: freightId,
         tooltip: 'Frachtkosten laut Eingabe',
       });
       continue;
@@ -502,6 +504,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       const baseValue = goods + (dutyIncludeFreight ? freight : 0);
       const amount = baseValue * (percent / 100);
+      const dutyId = auto.id || `${row.id || prefixBase}-auto-duty`;
       autoResults.duty = { amount, due };
       events.push({
         label: `${prefix} – ${auto.label || 'Zoll'}`,
@@ -516,7 +519,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-duty`,
+        id: dutyId,
         tooltip: `Zoll = ${percent}% × (Warenwert${dutyIncludeFreight ? ' + Fracht' : ''})`,
       });
       continue;
@@ -528,6 +531,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const baseValue = goods + freight + dutyAbs;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       const amount = baseValue * (percent / 100);
+      const eustId = auto.id || `${row.id || prefixBase}-auto-eust`;
       autoResults.eust = { amount, due };
       events.push({
         label: `${prefix} – ${auto.label || 'EUSt'}`,
@@ -542,7 +546,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-eust`,
+        id: eustId,
         tooltip: `EUSt = ${percent}% × (Warenwert + Fracht + Zoll)`,
       });
       continue;
@@ -556,6 +560,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const baseDay = addDays(eust.due || baseDate, Number(auto.lagDays || 0));
       const due = monthEndDate(addMonthsDate(baseDay, months));
       const amount = Math.abs(eust.amount) * (percent / 100);
+      const vatId = auto.id || `${row.id || prefixBase}-auto-vat`;
       events.push({
         label: `${prefix} – ${auto.label || 'EUSt-Erstattung'}`,
         amount,
@@ -569,7 +574,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-vat`,
+        id: vatId,
         tooltip: `Erstattung am Monatsende nach ${months} Monaten`,
       });
       continue;
@@ -580,6 +585,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       if (!percent) continue;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       const amount = goods * (percent / 100);
+      const fxId = auto.id || `${row.id || prefixBase}-auto-fx`;
       events.push({
         label: `${prefix} – ${auto.label || 'FX-Gebühr'}`,
         amount,
@@ -593,7 +599,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-fx`,
+        id: fxId,
         tooltip: `FX-Gebühr = ${percent}% × Warenwert`,
       });
     }
