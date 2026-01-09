@@ -1241,7 +1241,7 @@ export async function render(root) {
             </div>
           <div class="vchart-lines" aria-hidden="true">
             <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
-              ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}${lineLabels}` : ""}
+              ${netLineValues.length ? `<polyline class="line" points="${points}"></polyline>${dots}${lineLabels}` : ""}
             </svg>
           </div>
         </div>
