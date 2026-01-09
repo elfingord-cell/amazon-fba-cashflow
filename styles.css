@@ -278,6 +278,11 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .segment-inflow-open{background:#A5D6A7;}
 .segment-outflow-paid{background:#D32F2F;}
 .segment-outflow-open{background:#EF9A9A;}
+.segment-outflow-fixedCosts{background:#94A3B8;}
+.segment-outflow-poPaid{background:#D32F2F;}
+.segment-outflow-poOpen{background:rgba(211, 47, 47, 0.35);}
+.segment-outflow-otherExpenses{background:#F59E0B;}
+.segment-outflow-foPlanned{background:#7C3AED;}
 .segment-net-paid{background:#1976D2;}
 .segment-net-open{background:#90CAF9;}
 
@@ -319,6 +324,11 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .legend-swatch.swatch-inflow{background:#26A69A;}
 .legend-swatch.swatch-outflow{background:#EF5350;}
 .legend-swatch.swatch-net-line{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px solid #37474F;}
+.legend-swatch.swatch-fixcost{background:#94A3B8;}
+.legend-swatch.swatch-po-paid{background:#D32F2F;}
+.legend-swatch.swatch-po-open{background:rgba(211, 47, 47, 0.35);}
+.legend-swatch.swatch-other-expenses{background:#F59E0B;}
+.legend-swatch.swatch-fo{background:#7C3AED;}
 
 /* Globaler Tooltip (fixed, nicht clipbar) */
 .chart-tip{ 

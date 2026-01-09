@@ -119,6 +119,43 @@ function computeFreightTotal(row, totals) {
   return parseEuro(row?.freightEur ?? 0);
 }
 
+export function computeOutflowStack(entries = []) {
+  const stack = {
+    fixedCosts: 0,
+    poPaid: 0,
+    poOpen: 0,
+    otherExpenses: 0,
+    foPlanned: 0,
+    total: 0,
+  };
+  for (const entry of entries || []) {
+    if (!entry || entry.direction !== 'out') continue;
+    const amount = Math.abs(Number(entry.amount || 0));
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    if (entry.group === 'Fixkosten') {
+      stack.fixedCosts += amount;
+      continue;
+    }
+    if (entry.source === 'po' && entry.kind === 'po') {
+      if (entry.paid) stack.poPaid += amount;
+      else stack.poOpen += amount;
+      continue;
+    }
+    if (entry.source === 'fo' && entry.kind === 'fo') {
+      stack.foPlanned += amount;
+      continue;
+    }
+    stack.otherExpenses += amount;
+  }
+  stack.total =
+    stack.fixedCosts
+    + stack.poPaid
+    + stack.poOpen
+    + stack.otherExpenses
+    + stack.foPlanned;
+  return stack;
+}
+
 function clampDay(year, monthIndexValue, day) {
   const max = new Date(year, monthIndexValue + 1, 0).getDate();
   const safeDay = Math.min(Math.max(1, day), max);

@@ -1,6 +1,6 @@
 // UI: Dashboard – Monatsübersicht & detaillierte Monats-P/L-Analyse
 import { loadState, addStateListener, setEventManualPaid, setEventsManualPaid, setAutoManualCheck } from "../data/storageLocal.js";
-import { computeSeries, fmtEUR } from "../domain/cashflow.js";
+import { computeOutflowStack, computeSeries, fmtEUR } from "../domain/cashflow.js";
 
 const fmtEUR0 = val =>
   new Intl.NumberFormat("de-DE", {
@@ -68,9 +68,11 @@ const plState = {
   defaultCollapseApplied: false,
   showAdvancedFilters: false,
   legend: {
-    inflow: true,
-    outflow: true,
-    netLine: true,
+    fixedCosts: true,
+    poPaid: true,
+    poOpen: true,
+    otherExpenses: true,
+    foPlanned: true,
   },
 };
 
@@ -860,7 +862,13 @@ export async function render(root) {
   }));
   zipped.sort((a, b) => a.month.localeCompare(b.month));
   const months = zipped.map(item => item.month);
-  const series = zipped.map(item => item.series || {});
+  const series = zipped.map(item => {
+    const base = item.series || {};
+    return {
+      ...base,
+      outflowStack: computeOutflowStack(base.entries || []),
+    };
+  });
   const breakdown = zipped.map(item => item.breakdown || {});
   plData = { months, breakdown };
   ensureSelection(months);
@@ -880,13 +888,9 @@ export async function render(root) {
   const closing = breakdown.map(b => Number(b?.closing || 0));
   const firstNegativeIndex = closing.findIndex(value => value < 0);
   const legend = plState.legend || {};
-  const showInflow = legend.inflow !== false;
-  const showOutflow = legend.outflow !== false;
-  const showNetLine = legend.netLine !== false;
-
-  const inflowTotals = showInflow ? series.map(r => Number(r.inflow?.total || 0)) : [];
-  const outflowTotals = showOutflow ? series.map(r => Number(r.outflow?.total || 0)) : [];
-  const netLineValues = showNetLine ? closing : [];
+  const inflowTotals = series.map(r => Number(r.inflow?.total || 0));
+  const outflowTotals = series.map(r => Number(r.outflow?.total || 0));
+  const netLineValues = closing;
 
   const barPosMax = Math.max(0, ...inflowTotals, ...outflowTotals);
   const barMin = 0;
@@ -964,15 +968,15 @@ export async function render(root) {
   };
   const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
 
-  const points = showNetLine
+  const points = netLineValues.length
     ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${YLine(v)}`).join(" ")
     : "";
-  const dots = showNetLine
+  const dots = netLineValues.length
     ? netLineValues
         .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${YLine(v)}" r="6"></circle>`)
         .join("")
     : "";
-  const lineLabels = showNetLine
+  const lineLabels = netLineValues.length
     ? netLineValues
         .map((v, i) => {
           const x = X(centers[i] || 0);
@@ -998,19 +1002,28 @@ export async function render(root) {
 
   function valuesFor(type, row) {
     if (type === "inflow") {
-      if (!plState.legend || plState.legend.inflow === false) return [];
       const total = Number(row?.inflow?.total || 0);
       if (!total) return [];
       return [{ key: "total", value: total }];
     }
     if (type === "outflow") {
-      if (!plState.legend || plState.legend.outflow === false) return [];
-      const paid = Number(row?.outflow?.paid || 0);
-      const open = Number(row?.outflow?.open || 0);
-      if (!paid && !open) return [];
       const segments = [];
-      if (paid) segments.push({ key: "paid", value: paid });
-      if (open) segments.push({ key: "open", value: open });
+      const stack = row?.outflowStack || computeOutflowStack(row?.entries || []);
+      if (legend.fixedCosts !== false && stack.fixedCosts) {
+        segments.push({ key: "fixedCosts", value: stack.fixedCosts });
+      }
+      if (legend.poPaid !== false && stack.poPaid) {
+        segments.push({ key: "poPaid", value: stack.poPaid });
+      }
+      if (legend.poOpen !== false && stack.poOpen) {
+        segments.push({ key: "poOpen", value: stack.poOpen });
+      }
+      if (legend.otherExpenses !== false && stack.otherExpenses) {
+        segments.push({ key: "otherExpenses", value: stack.otherExpenses });
+      }
+      if (legend.foPlanned !== false && stack.foPlanned) {
+        segments.push({ key: "foPlanned", value: stack.foPlanned });
+      }
       return segments;
     }
     return [];
@@ -1082,6 +1095,7 @@ export async function render(root) {
     const outflowOpen = Number(row?.outflow?.open || 0);
     const netPaid = Number(row?.net?.paid || 0);
     const netOpen = Number(row?.net?.open || 0);
+    const outflowStack = row?.outflowStack || computeOutflowStack(row?.entries || []);
     const formatSection = (title, paidValue, openValue, options = {}) => {
       const totalValue = paidValue + openValue;
       const paidLabel = escapeHtml(options.paidLabel || "bezahlt");
@@ -1110,11 +1124,19 @@ export async function render(root) {
       swatchPaid: "swatch-inflow",
       swatchOpen: "swatch-inflow",
     });
-    const outflowSection = formatSection("Outflow", outflowPaid, outflowOpen, {
-      swatchPaid: "swatch-outflow",
-      swatchOpen: "swatch-outflow",
-      negative: true,
-    });
+    const poTotal = outflowStack.poPaid + outflowStack.poOpen;
+    const poPct = poTotal > 0 ? Math.round((outflowStack.poPaid / poTotal) * 100) : null;
+    const outflowSection = `
+      <div class="tip-section">
+        <div class="tip-subtitle">Ausgaben</div>
+        <div class="tip-row"><span>Fixkosten</span><b>${fmtEUR(-outflowStack.fixedCosts)}</b></div>
+        <div class="tip-row"><span>PO bezahlt${poPct != null ? ` (${poPct}%)` : ""}</span><b>${fmtEUR(-outflowStack.poPaid)}</b></div>
+        <div class="tip-row"><span>PO offen</span><b>${fmtEUR(-outflowStack.poOpen)}</b></div>
+        <div class="tip-row"><span>Weitere Ausgaben</span><b>${fmtEUR(-outflowStack.otherExpenses)}</b></div>
+        <div class="tip-row"><span>FO</span><b>${fmtEUR(-outflowStack.foPlanned)}</b></div>
+        <div class="tip-row total"><span>Gesamt</span><b>${fmtEUR(-(outflowStack.total || 0))}</b></div>
+      </div>
+    `;
     const netSection = formatSection("Netto", netPaid, netOpen, {
       swatchPaid: "swatch-net",
       swatchOpen: "swatch-net",
@@ -1158,9 +1180,11 @@ export async function render(root) {
     .join("");
 
   const legendRows = [
-    { key: "inflow", label: "Inflow", swatch: "swatch-inflow" },
-    { key: "outflow", label: "Outflow", swatch: "swatch-outflow" },
-    { key: "netLine", label: "Kontostand", swatch: "swatch-net-line" },
+    { key: "fixedCosts", label: "Fixkosten", swatch: "swatch-fixcost" },
+    { key: "poPaid", label: "PO bezahlt", swatch: "swatch-po-paid" },
+    { key: "poOpen", label: "PO offen", swatch: "swatch-po-open" },
+    { key: "otherExpenses", label: "Weitere Ausgaben", swatch: "swatch-other-expenses" },
+    { key: "foPlanned", label: "FO", swatch: "swatch-fo" },
   ];
 
   const legendHtml = `
