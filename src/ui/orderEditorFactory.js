@@ -1876,11 +1876,16 @@ export function renderOrderModule(root, config) {
     const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
     const supplierValue = supplierInput?.value?.trim() || "";
     const latest = findLatestMatch(skuValue, supplierValue);
+    const templateCandidates = getTemplateCandidates(skuValue, supplierValue);
     if (quickLatestBtn) {
-      quickLatestBtn.disabled = !latest;
-      quickLatestBtn.title = latest
-        ? `Werte aus ${config.entityLabel} ${latest[config.numberField] || "—"} übernehmen`
-        : "Keine Vorgänger-POs für diese SKU";
+      quickLatestBtn.disabled = !latest && templateCandidates.length === 0;
+      if (latest) {
+        quickLatestBtn.title = `Werte aus ${config.entityLabel} ${latest[config.numberField] || "—"} übernehmen`;
+      } else if (templateCandidates.length) {
+        quickLatestBtn.title = `Werte aus ${templateCandidates[0].name} übernehmen`;
+      } else {
+        quickLatestBtn.title = "Keine Produktvorlage oder Vorgänger-POs für diese SKU";
+      }
     }
     if (quickHistoryBtn) {
       const hasHistory = skuValue && (getHistoryFor(skuValue, supplierValue).length > 0 || (!supplierValue && getHistoryFor(skuValue, null).length > 0));
@@ -2629,7 +2634,9 @@ export function renderOrderModule(root, config) {
     });
   }
   if (quickfillEnabled && quickLatestBtn) {
-    quickLatestBtn.addEventListener("click", () => {
+    quickLatestBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const skuValue = parseSkuInputValue(skuInput?.value || editing.sku || "");
       if (!skuValue) {
         window.alert("Bitte zuerst eine SKU wählen.");
@@ -2637,12 +2644,19 @@ export function renderOrderModule(root, config) {
       }
       const supplierValue = supplierInput?.value?.trim() || "";
       const latest = findLatestMatch(skuValue, supplierValue);
-      if (!latest) {
-        window.alert("Keine Vorgänger-POs für diese SKU gefunden.");
+      if (latest) {
+        const normalized = normaliseHistory([latest])[0];
+        applySourceRecord(normalized, `Werte aus ${config.entityLabel} ${latest[config.numberField] || ""} übernommen. Du kannst alles anpassen.`);
         return;
       }
-      const normalized = normaliseHistory([latest])[0];
-      applySourceRecord(normalized, `Werte aus ${config.entityLabel} ${latest[config.numberField] || ""} übernommen. Du kannst alles anpassen.`);
+      const candidates = getTemplateCandidates(skuValue, supplierValue);
+      if (!candidates.length) {
+        window.alert("Keine Produktvorlage oder Vorgänger-POs für diese SKU gefunden.");
+        return;
+      }
+      const entry = candidates[0];
+      const fields = entry.template.fields ? JSON.parse(JSON.stringify(entry.template.fields)) : JSON.parse(JSON.stringify(entry.template));
+      applySourceRecord(fields, `Werte aus ${entry.name} übernommen. Du kannst alles anpassen.`);
     });
   }
   if (quickfillEnabled && quickHistoryBtn) {
