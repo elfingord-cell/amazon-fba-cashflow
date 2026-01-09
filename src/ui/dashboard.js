@@ -976,7 +976,7 @@ export async function render(root) {
     ? netLineValues
         .map((v, i) => {
           const x = X(centers[i] || 0);
-          const y = Math.max(12, YLine(v) - 20);
+          const y = Math.max(16, YLine(v) - 26);
           return `<text class="line-label" x="${x}" y="${y}">${escapeHtml(fmtBalanceLabel(v))}</text>`;
         })
         .join("")

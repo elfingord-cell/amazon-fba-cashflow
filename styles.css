@@ -300,13 +300,13 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vchart-lines .dot.is-active{opacity:1;}
 .vchart-lines .line-label{
   fill:#0f172a;
-  font-size:13px;
+  font-size:15px;
   font-weight:800;
   text-anchor:middle;
   pointer-events:none;
   paint-order:stroke;
   stroke:#ffffff;
-  stroke-width:3px;
+  stroke-width:5px;
 }
 .chart-legend{margin:20px 32px 0 72px; display:flex; flex-wrap:nowrap; gap:14px; font-size:12px; color:var(--muted); overflow-x:auto; padding-bottom:4px;}
 .chart-legend::-webkit-scrollbar{height:6px;}
