@@ -50,10 +50,18 @@ function monthEndFromKey(yyyymm) {
 }
 function anchorsFor(row) {
   const od = row.orderDate ? new Date(row.orderDate) : new Date();
-  const prodDone = addDays(od, Number(row.prodDays || 0));
+  const prodDays = Number(row.productionLeadTimeDays ?? row.prodDays ?? 0);
+  const transitDays = Number(row.logisticsLeadTimeDays ?? row.transitDays ?? 0);
+  const prodDone = addDays(od, prodDays);
   const etd = prodDone; // einfache Konvention
-  const eta = addDays(etd, Number(row.transitDays || 0));
-  return { ORDER_DATE: od, PROD_DONE: prodDone, ETD: etd, ETA: eta };
+  const eta = addDays(etd, transitDays);
+  return {
+    ORDER_DATE: od,
+    PROD_DONE: prodDone,
+    PRODUCTION_END: prodDone,
+    ETD: etd,
+    ETA: eta,
+  };
 }
 function addMonthsDate(date, months) {
   const d = new Date(date.getTime());
@@ -465,15 +473,43 @@ function normaliseAutoEvents(row, settings, manual) {
 
 function expandOrderEvents(row, settings, entityLabel, numberField) {
   if (!row) return [];
+  const prefixBase = entityLabel || 'PO';
+  const ref = row[numberField];
+  const prefix = ref ? `${prefixBase} ${ref}` : prefixBase;
+  if (Array.isArray(row.payments) && row.payments.length) {
+    const anchors = anchorsFor(row);
+    return row.payments
+      .filter(Boolean)
+      .map((payment, idx) => {
+        const trigger = payment.triggerEvent || 'ORDER_DATE';
+        const anchorKey = trigger === 'PROD_DONE' ? 'PROD_DONE' : trigger;
+        const baseDate = anchors[anchorKey] || anchors.ORDER_DATE;
+        const due = payment.dueDate ? new Date(payment.dueDate) : addDays(baseDate, Number(payment.offsetDays || 0));
+        const amount = Number(payment.amount || 0);
+        return {
+          label: `${prefix}${payment.label ? ` – ${payment.label}` : ''}`,
+          amount,
+          due,
+          month: toMonthKey(due),
+          direction: 'out',
+          type: 'manual',
+          anchor: anchorKey,
+          lagDays: Number(payment.offsetDays || 0) || 0,
+          percent: Number(payment.percent || 0),
+          sourceType: prefixBase,
+          sourceNumber: ref,
+          sourceId: row.id,
+          id: payment.id || `${row.id || prefixBase}-pay-${idx}`,
+          tooltip: `Fälligkeit: ${anchorKey} + ${Number(payment.offsetDays || 0)} Tage`,
+        };
+      });
+  }
   const totals = computeGoodsTotals(row, settings);
   const goods = totals.eur;
   const freight = computeFreightTotal(row, totals);
   const anchors = anchorsFor(row);
   const manual = Array.isArray(row.milestones) ? row.milestones : [];
   const autoEvents = normaliseAutoEvents(row, settings, manual);
-  const prefixBase = entityLabel || 'PO';
-  const ref = row[numberField];
-  const prefix = ref ? `${prefixBase} ${ref}` : prefixBase;
   const events = [];
 
   for (const [idx, ms] of manual.entries()) {

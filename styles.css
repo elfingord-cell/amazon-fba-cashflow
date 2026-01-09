@@ -104,6 +104,14 @@ td.num, th.num{text-align:right}
 .table-card-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px}
 .pos{color:#15803d;}
 .neg{color:#b91c1c;}
+.fo-modal .suggested-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; font-size:11px;}
+.fo-date-list{display:flex; flex-direction:column; gap:10px;}
+.fo-date-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border-radius:10px; background:#f8fafc;}
+.fo-payments-footer{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;}
+.fo-banner-actions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
+.fo-banner-actions input{min-width:200px;}
+.fo-link{padding:0; border:none; box-shadow:none; background:none; color:var(--mint-700); font-weight:600;}
+.fo-link:hover{color:var(--mint-600);}
 
 .po-events-row td{background:rgba(240,251,247,0.6); padding-top:0; padding-bottom:14px;}
 .po-events-wrapper{display:flex; flex-direction:column; gap:6px; padding:10px 4px 0;}

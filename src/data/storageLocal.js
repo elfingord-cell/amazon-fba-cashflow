@@ -82,6 +82,7 @@ const defaults = {
   },
   actuals: [],
   suppliers: [],
+  productSuppliers: [],
 };
 
 function ensureFixcostContainers(state) {
@@ -145,6 +146,16 @@ function ensureGlobalSettings(state) {
 function ensureSuppliers(state) {
   if (!state) return;
   if (!Array.isArray(state.suppliers)) state.suppliers = [];
+}
+
+function ensureProductSuppliers(state) {
+  if (!state) return;
+  if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
+}
+
+function ensureFos(state) {
+  if (!state) return;
+  if (!Array.isArray(state.fos)) state.fos = [];
 }
 
 function ensureForecast(state) {
@@ -453,6 +464,8 @@ export function createEmptyState(){
   ensureActuals(clone);
   ensureGlobalSettings(clone);
   ensureSuppliers(clone);
+  ensureProductSuppliers(clone);
+  ensureFos(clone);
   return clone;
 }
 
@@ -473,6 +486,8 @@ export function loadState(){
   ensureActuals(_state);
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
+  ensureProductSuppliers(_state);
+  ensureFos(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
   return _state;
@@ -489,6 +504,8 @@ export function saveState(s){
   ensureActuals(_state);
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
+  ensureProductSuppliers(_state);
+  ensureFos(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -522,10 +539,15 @@ export function importStateFile(file, cb){
       const json = JSON.parse(reader.result || '{}');
       ensureStatusSection(json);
       ensureFixcostContainers(json);
+      ensurePoTemplates(json);
+      ensureProducts(json);
+      ensureVatData(json);
       ensureForecast(json);
       ensureActuals(json);
       ensureGlobalSettings(json);
       ensureSuppliers(json);
+      ensureProductSuppliers(json);
+      ensureFos(json);
       migrateLegacyOutgoings(json);
       cb(json);
     } catch (err) {

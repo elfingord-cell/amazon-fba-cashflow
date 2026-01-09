@@ -12,6 +12,7 @@ const routes = {
   '#fixkosten': () => import('./ui/fixkosten.js'),
   '#po': () => import('./ui/po.js'),
   '#forecast': () => import('./ui/forecast.js'),
+  '#fo': () => import('./ui/fo.js'),
   '#ust': () => import('./ui/ust.js'),
   '#produkte': () => import('./ui/products.js'),
   '#suppliers': () => import('./ui/suppliers.js'),
