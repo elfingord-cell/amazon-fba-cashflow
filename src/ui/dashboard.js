@@ -1005,9 +1005,13 @@ export async function render(root) {
     }
     if (type === "outflow") {
       if (!plState.legend || plState.legend.outflow === false) return [];
-      const total = Number(row?.outflow?.total || 0);
-      if (!total) return [];
-      return [{ key: "total", value: total }];
+      const paid = Number(row?.outflow?.paid || 0);
+      const open = Number(row?.outflow?.open || 0);
+      if (!paid && !open) return [];
+      const segments = [];
+      if (paid) segments.push({ key: "paid", value: paid });
+      if (open) segments.push({ key: "open", value: open });
+      return segments;
     }
     return [];
   }
