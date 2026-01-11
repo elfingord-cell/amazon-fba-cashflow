@@ -31,6 +31,7 @@ function el(tag, attrs = {}, children = []) {
 const TRANSPORT_MODES = ["SEA", "RAIL", "AIR"];
 const INCOTERMS = ["EXW", "DDP"];
 const PAYMENT_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
+const CURRENCIES = ["EUR", "USD", "CNY"];
 
 function defaultPaymentTerms() {
   return [
@@ -48,13 +49,27 @@ function formatDate(input) {
   return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-function parseNumber(value) {
-  const num = Number(value);
+function parseLocaleNumber(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const cleaned = String(value).trim().replace(/[^0-9,.-]+/g, "");
+  if (!cleaned) return null;
+  const comma = cleaned.lastIndexOf(",");
+  if (comma >= 0) {
+    const normalised = cleaned.slice(0, comma).replace(/\./g, "") + "." + cleaned.slice(comma + 1).replace(/\./g, "");
+    const num = Number(normalised);
+    return Number.isFinite(num) ? num : null;
+  }
+  const num = Number(cleaned.replace(/\./g, ""));
   return Number.isFinite(num) ? num : null;
 }
 
+function parseNumber(value) {
+  return parseLocaleNumber(value);
+}
+
 function parsePositive(value) {
-  const num = Number(value);
+  const num = parseLocaleNumber(value);
   if (!Number.isFinite(num) || num < 0) return null;
   return num;
 }
@@ -85,6 +100,12 @@ function formatCurrency(value, currency) {
   return amount.toLocaleString("de-DE", { style: "currency", currency: currency || "EUR" });
 }
 
+function formatNumber(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  return amount.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function shortId(id) {
   if (!id) return "—";
   return String(id).slice(-6).toUpperCase();
@@ -109,18 +130,58 @@ function findProductSupplier(state, sku, supplierId) {
   ) || null;
 }
 
+function getProductBySku(products, sku) {
+  if (!sku) return null;
+  const key = String(sku).trim().toLowerCase();
+  return products.find(product => String(product?.sku || "").trim().toLowerCase() === key) || null;
+}
+
+function getProductByAlias(products, alias) {
+  if (!alias) return null;
+  const key = String(alias).trim().toLowerCase();
+  return products.find(product => String(product?.alias || "").trim().toLowerCase() === key) || null;
+}
+
+function listProductsForSelect(products) {
+  return (products || [])
+    .filter(Boolean)
+    .map(product => {
+      const alias = String(product.alias || "").trim();
+      const sku = String(product.sku || "").trim();
+      const displayAlias = alias || sku;
+      return {
+        sku,
+        alias: displayAlias,
+        label: displayAlias,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 function buildSuggestedFields(state, form) {
   const settings = state.settings || {};
   const transport = String(form.transportMode || "SEA").toUpperCase();
   const leadTimes = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
   const supplier = (state.suppliers || []).find(item => item.id === form.supplierId) || null;
   const mapping = findProductSupplier(state, form.sku, form.supplierId);
+  const product = getProductBySku(state.products || [], form.sku);
   const logisticsLeadTimeDays = Number(leadTimes[transport.toLowerCase()] ?? 0);
+  let unitPrice = null;
+  let unitPriceSource = null;
+  if (mapping?.unitPrice != null) {
+    unitPrice = parseLocaleNumber(mapping.unitPrice);
+    unitPriceSource = "Product/Supplier Mapping";
+  } else if (product?.defaultUnitPrice != null || product?.unitPrice != null) {
+    unitPrice = parseLocaleNumber(product.defaultUnitPrice ?? product.unitPrice);
+    unitPriceSource = "Produktdatenbank";
+  }
+  const productCurrency = product?.defaultCurrency || product?.currency || null;
   return {
     transportMode: transport,
     incoterm: supplier?.incotermDefault || "EXW",
-    unitPrice: mapping?.unitPrice ?? null,
-    currency: supplier?.currencyDefault || settings.defaultCurrency || "EUR",
+    unitPrice,
+    unitPriceSource,
+    currency: supplier?.currencyDefault || productCurrency || settings.defaultCurrency || "EUR",
     productionLeadTimeDays: mapping?.productionLeadTimeDays ?? supplier?.productionLeadTimeDaysDefault ?? 30,
     logisticsLeadTimeDays: Number.isFinite(logisticsLeadTimeDays) ? logisticsLeadTimeDays : 0,
     bufferDays: settings.defaultBufferDays ?? 0,
@@ -201,7 +262,7 @@ function recomputePayments(payments, baseValue, schedule, currency) {
 
 function openModal(title, content, actions = []) {
   const overlay = el("div", { class: "po-modal-backdrop", role: "dialog", "aria-modal": "true" });
-  const card = el("div", { class: "po-modal" }, [
+  const card = el("div", { class: "po-modal fo-modal-frame" }, [
     el("header", { class: "po-modal-header" }, [
       el("h3", {}, [title]),
       el("button", { class: "btn ghost", type: "button", onclick: () => overlay.remove(), "aria-label": "Schließen" }, ["✕"]),
@@ -225,6 +286,7 @@ function normalizeFoRecord(form, schedule, payments) {
     transportMode: form.transportMode,
     incoterm: form.incoterm,
     unitPrice: Number(form.unitPrice || 0),
+    unitPriceIsOverridden: Boolean(form.unitPriceIsOverridden),
     currency: form.currency || "EUR",
     productionLeadTimeDays: Number(form.productionLeadTimeDays || 0),
     logisticsLeadTimeDays: Number(form.logisticsLeadTimeDays || 0),
@@ -334,6 +396,7 @@ export default function render(root) {
 
   function openFoModal(existing) {
     const products = getProductsSnapshot();
+    const productOptions = listProductsForSelect(products);
     const isExisting = Boolean(existing);
     const baseForm = existing
       ? JSON.parse(JSON.stringify(existing))
@@ -346,6 +409,7 @@ export default function render(root) {
           transportMode: "SEA",
           incoterm: "EXW",
           unitPrice: "",
+          unitPriceIsOverridden: false,
           currency: state.settings?.defaultCurrency || "EUR",
           productionLeadTimeDays: "",
           logisticsLeadTimeDays: "",
@@ -358,12 +422,14 @@ export default function render(root) {
     const overrides = {
       transportMode: isExisting,
       incoterm: isExisting,
-      unitPrice: isExisting,
       currency: isExisting,
       productionLeadTimeDays: isExisting,
       logisticsLeadTimeDays: isExisting,
       bufferDays: isExisting,
     };
+    if (typeof baseForm.unitPriceIsOverridden !== "boolean") {
+      baseForm.unitPriceIsOverridden = isExisting;
+    }
     let paymentsDirty = isExisting && Array.isArray(baseForm.payments) && baseForm.payments.length > 0;
     let suggested = buildSuggestedFields(state, baseForm);
 
@@ -378,7 +444,7 @@ export default function render(root) {
       suggested = buildSuggestedFields(state, baseForm);
       if (!overrides.transportMode) applySuggestedField("transportMode", suggested.transportMode);
       if (!overrides.incoterm) applySuggestedField("incoterm", suggested.incoterm);
-      if (!overrides.unitPrice && suggested.unitPrice != null) applySuggestedField("unitPrice", suggested.unitPrice);
+      if (!baseForm.unitPriceIsOverridden) applySuggestedField("unitPrice", suggested.unitPrice ?? "");
       if (!overrides.currency) applySuggestedField("currency", suggested.currency);
       if (!overrides.productionLeadTimeDays) applySuggestedField("productionLeadTimeDays", suggested.productionLeadTimeDays);
       if (!overrides.logisticsLeadTimeDays) applySuggestedField("logisticsLeadTimeDays", suggested.logisticsLeadTimeDays);
@@ -389,7 +455,12 @@ export default function render(root) {
     function updateSuggestedLabels() {
       $("#suggested-transport", content).textContent = `Suggested: ${suggested.transportMode}`;
       $("#suggested-incoterm", content).textContent = `Suggested: ${suggested.incoterm}`;
-      $("#suggested-unitPrice", content).textContent = suggested.unitPrice != null ? `Suggested: ${suggested.unitPrice}` : "Suggested: —";
+      if (suggested.unitPrice != null) {
+        const source = suggested.unitPriceSource ? ` (Quelle: ${suggested.unitPriceSource})` : "";
+        $("#suggested-unitPrice", content).textContent = `Suggested: ${formatNumber(suggested.unitPrice)}${source}`;
+      } else {
+        $("#suggested-unitPrice", content).textContent = "Suggested: —";
+      }
       $("#suggested-currency", content).textContent = `Suggested: ${suggested.currency}`;
       $("#suggested-productionLeadTimeDays", content).textContent = `Suggested: ${suggested.productionLeadTimeDays}`;
       $("#suggested-logisticsLeadTimeDays", content).textContent = `Suggested: ${suggested.logisticsLeadTimeDays}`;
@@ -405,6 +476,8 @@ export default function render(root) {
       } else {
         banner.style.display = "none";
       }
+      const skuDisplay = $("#fo-sku-display", content);
+      if (skuDisplay) skuDisplay.textContent = sku ? `SKU: ${sku}` : "SKU: —";
     }
 
     function updatePaymentsPreview() {
@@ -573,14 +646,18 @@ export default function render(root) {
           el("h3", {}, ["Inputs"]),
           el("div", { class: "grid two" }, [
             el("label", {}, [
-              "SKU",
-              el("input", {
-                type: "text",
-                id: "fo-sku",
-                list: "fo-sku-list",
-                value: baseForm.sku || "",
-              }),
-              el("datalist", { id: "fo-sku-list" }, products.map(prod => el("option", { value: prod.sku }, []))),
+              "Produkt (Alias)",
+              el("div", { class: "fo-product-picker" }, [
+                el("input", {
+                  type: "text",
+                  id: "fo-product-input",
+                  value: (getProductBySku(products, baseForm.sku)?.alias || baseForm.sku || ""),
+                  placeholder: "Alias oder SKU suchen",
+                  autocomplete: "off",
+                }),
+                el("div", { class: "fo-product-dropdown", id: "fo-product-dropdown" }, []),
+              ]),
+              el("div", { class: "muted fo-sku-display", id: "fo-sku-display" }, ["SKU: —"]),
             ]),
             el("label", {}, [
               "Units",
@@ -637,10 +714,16 @@ export default function render(root) {
                 el("span", { class: "muted", id: "suggested-unitPrice" }, []),
                 el("button", { class: "btn ghost", type: "button", id: "reset-unitPrice" }, ["Reset"]),
               ]),
+              el("small", { class: "form-error", id: "fo-unitPrice-error" }, []),
             ]),
             el("label", {}, [
               "Currency",
-              el("input", { type: "text", id: "fo-currency", value: baseForm.currency || "EUR" }),
+              (() => {
+                const select = el("select", { id: "fo-currency" });
+                CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
+                select.value = baseForm.currency || "EUR";
+                return select;
+              })(),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-currency" }, []),
                 el("button", { class: "btn ghost", type: "button", id: "reset-currency" }, ["Reset"]),
@@ -663,7 +746,15 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Buffer (days)",
+              el("span", { class: "fo-buffer-label" }, [
+                "Buffer (days)",
+                el("span", { class: "tooltip" }, [
+                  el("button", { class: "tooltip-trigger", type: "button", "aria-label": "Buffer Erklärung" }, ["ℹ️"]),
+                  el("span", { class: "tooltip-content" }, [
+                    "Puffer in Tagen, der zur Sicherheit zusätzlich eingeplant wird. Er wird zur Summe aus Produktions- und Logistik-Leadtimes addiert und verschiebt das Bestelldatum entsprechend nach vorne.",
+                  ]),
+                ]),
+              ]),
               el("input", { type: "number", min: "0", step: "1", id: "fo-bufferDays", value: baseForm.bufferDays ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-bufferDays" }, []),
@@ -695,7 +786,7 @@ export default function render(root) {
       el("section", { class: "card" }, [
         el("h3", {}, ["Payments"]),
         el("div", { class: "table-wrap" }, [
-          el("table", { class: "table" }, [
+          el("table", { class: "table fo-payments-table" }, [
             el("thead", {}, [
               el("tr", {}, [
                 el("th", {}, ["Label"]),
@@ -737,6 +828,10 @@ export default function render(root) {
       const hasProduct = products.some(prod => String(prod.sku || "").trim().toLowerCase() === sku.toLowerCase());
       const totalPercent = baseForm.payments.reduce((sum, row) => sum + (Number(row.percent) || 0), 0);
       const valid = sku && supplierId && units > 0 && unitPrice > 0 && target && Math.round(totalPercent) === 100 && hasProduct;
+      const unitPriceError = $("#fo-unitPrice-error", content);
+      if (unitPriceError) {
+        unitPriceError.textContent = unitPrice > 0 ? "" : "Unit Price ist erforderlich.";
+      }
       saveBtn.disabled = !valid;
     }
 
@@ -754,11 +849,61 @@ export default function render(root) {
       }, 300);
     }
 
-    $("#fo-sku", content).addEventListener("input", (e) => {
-      baseForm.sku = e.target.value.trim();
+    const productInput = $("#fo-product-input", content);
+    const dropdown = $("#fo-product-dropdown", content);
+
+    function resolveProductFromInput(value) {
+      const directSku = getProductBySku(products, value);
+      if (directSku) return directSku;
+      return getProductByAlias(products, value);
+    }
+
+    function renderProductDropdown(filter = "") {
+      dropdown.innerHTML = "";
+      const search = String(filter || "").trim().toLowerCase();
+      const matches = productOptions.filter(option => {
+        if (!search) return true;
+        return option.label.toLowerCase().includes(search) || option.sku.toLowerCase().includes(search);
+      }).slice(0, 12);
+      if (!matches.length) {
+        dropdown.append(el("div", { class: "muted fo-product-empty" }, ["Keine Produkte gefunden."]));
+        return;
+      }
+      matches.forEach(option => {
+        const row = el("button", {
+          class: "fo-product-option",
+          type: "button",
+          onclick: () => {
+            baseForm.sku = option.sku;
+            productInput.value = option.alias || option.sku;
+            dropdown.style.display = "none";
+            updateSuggestedFields();
+            updateProductBanner();
+            scheduleRecompute();
+          },
+        }, [
+          el("span", { class: "fo-product-alias" }, [option.alias || option.sku]),
+          el("span", { class: "fo-product-sku muted" }, [option.sku]),
+        ]);
+        dropdown.append(row);
+      });
+    }
+
+    productInput.addEventListener("focus", () => {
+      dropdown.style.display = "block";
+      renderProductDropdown(productInput.value);
+    });
+    productInput.addEventListener("input", (e) => {
+      const value = e.target.value;
+      renderProductDropdown(value);
+      const match = resolveProductFromInput(value);
+      baseForm.sku = match ? match.sku : value.trim();
       updateSuggestedFields();
       updateProductBanner();
       scheduleRecompute();
+    });
+    productInput.addEventListener("blur", () => {
+      setTimeout(() => { dropdown.style.display = "none"; }, 150);
     });
 
     $("#fo-units", content).addEventListener("input", (e) => {
@@ -796,12 +941,13 @@ export default function render(root) {
     });
 
     $("#fo-unitPrice", content).addEventListener("input", (e) => {
-      setFieldOverride("unitPrice", parsePositive(e.target.value) ?? "");
+      baseForm.unitPrice = parsePositive(e.target.value) ?? "";
+      baseForm.unitPriceIsOverridden = true;
       updateSuggestedLabels();
       scheduleRecompute();
     });
 
-    $("#fo-currency", content).addEventListener("input", (e) => {
+    $("#fo-currency", content).addEventListener("change", (e) => {
       setFieldOverride("currency", e.target.value.trim() || "EUR");
       updateSuggestedLabels();
       scheduleRecompute();
@@ -837,6 +983,7 @@ export default function render(root) {
     });
     $("#reset-unitPrice", content).addEventListener("click", () => {
       applySuggestedField("unitPrice", suggested.unitPrice ?? "");
+      baseForm.unitPriceIsOverridden = false;
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -870,6 +1017,7 @@ export default function render(root) {
       try {
         upsertProduct({ sku, alias: name || sku, supplierId: baseForm.supplierId || "" });
         products.push({ sku, alias: name || sku });
+        productOptions.push({ sku, alias: name || sku, label: name || sku });
         $("#fo-product-banner", content).style.display = "none";
         scheduleRecompute();
       } catch (err) {

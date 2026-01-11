@@ -21,6 +21,7 @@ function el(tag, attrs = {}, children = []) {
 }
 
 const TRIGGER_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
+const CURRENCIES = ["EUR", "USD", "CNY"];
 
 function defaultPaymentTerms() {
   return [
@@ -232,7 +233,12 @@ export function render(root) {
         el("option", { value: "DDP" }, ["DDP"]),
       ]),
       el("label", { style: "margin-top:12px" }, ["Currency"]),
-      el("input", { type: "text", id: "supplier-currency", value: supplier.currencyDefault || "EUR" }),
+      (() => {
+        const select = el("select", { id: "supplier-currency" });
+        CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
+        select.value = supplier.currencyDefault || "EUR";
+        return select;
+      })(),
       el("h4", { style: "margin-top:16px" }, ["Payment Terms"]),
       el("div", { class: "table-wrap" }, [termsTable]),
       el("button", { class: "btn secondary", type: "button", id: "terms-add" }, ["+ Milestone"]),

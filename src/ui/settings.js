@@ -1,5 +1,7 @@
 import { loadState, saveState } from "../data/storageLocal.js";
 
+const CURRENCIES = ["EUR", "USD", "CNY"];
+
 function $(sel, root = document) { return root.querySelector(sel); }
 
 function clampNonNegative(value) {
@@ -67,11 +69,14 @@ export function render(root) {
         </label>
         <label>
           Currency
-          <input id="default-currency" type="text" value="${settings.defaultCurrency || "EUR"}">
+          <select id="default-currency">
+            ${CURRENCIES.map(currency => `<option value="${currency}">${currency}</option>`).join("")}
+          </select>
         </label>
       </div>
     </section>
   `;
+  $("#default-currency", root).value = settings.defaultCurrency || "EUR";
 
   function validate() {
     errors.air = "";
