@@ -113,6 +113,9 @@ td.num, th.num{text-align:right}
 .fo-product-cell{display:flex; flex-direction:column; gap:2px;}
 .fo-date-stack{display:flex; flex-direction:column; gap:2px;}
 .fo-converted-banner{margin-bottom:12px;}
+.fo-convert-modal label{display:flex; flex-direction:column; gap:6px;}
+.fo-convert-actions{margin-top:6px; display:flex; justify-content:flex-start;}
+.fo-convert-preview{margin-top:12px; padding:10px 12px; border-radius:10px; background:#f8fafc; border:1px solid rgba(15,27,45,0.08);}
 .fo-date-list{display:flex; flex-direction:column; gap:10px;}
 .fo-date-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border-radius:10px; background:#f8fafc;}
 .fo-payments-footer{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;}

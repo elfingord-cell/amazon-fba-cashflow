@@ -347,6 +347,51 @@ function buildCostValues(form) {
   };
 }
 
+function buildScheduleFromOrderDate(orderDateIso, productionDays, bufferDays, transitDays) {
+  const orderDate = parseISODate(orderDateIso);
+  if (!orderDate) {
+    return {
+      orderDate: null,
+      productionEndDate: null,
+      etdDate: null,
+      etaDate: null,
+    };
+  }
+  const productionEndDate = addDays(orderDate, Number(productionDays || 0) + Number(bufferDays || 0));
+  const etdDate = productionEndDate;
+  const etaDate = addDays(etdDate, Number(transitDays || 0));
+  return {
+    orderDate: toISO(orderDate),
+    productionEndDate: toISO(productionEndDate),
+    etdDate: toISO(etdDate),
+    etaDate: toISO(etaDate),
+  };
+}
+
+function recomputePaymentDueDates(payments, schedule) {
+  return payments.map(payment => {
+    const triggerEvent = PAYMENT_EVENTS.includes(payment.triggerEvent) ? payment.triggerEvent : "ORDER_DATE";
+    const offsetDays = Number(payment.offsetDays || 0);
+    const offsetMonths = Number(payment.offsetMonths || 0);
+    const baseDate = schedule[triggerEvent] ? parseISODate(schedule[triggerEvent]) : null;
+    let dueDate = payment.dueDate;
+    if (!payment.isOverridden) {
+      let nextDate = baseDate ? addDays(baseDate, offsetDays) : null;
+      if (nextDate && offsetMonths) {
+        nextDate = addMonthsDate(nextDate, offsetMonths);
+      }
+      dueDate = nextDate ? toISO(nextDate) : null;
+    }
+    return {
+      ...payment,
+      triggerEvent,
+      offsetDays,
+      offsetMonths,
+      dueDate,
+    };
+  });
+}
+
 function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
   const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
     ? supplier.paymentTermsDefault
@@ -591,9 +636,9 @@ export default function render(root) {
   const searchInput = $("#fo-search", root);
   const statusFilter = $("#fo-status-filter", root);
 
-  function buildPoFromFo(fo) {
+  function buildPoFromFo(fo, poNumber, orderDateOverride) {
     const poId = `po-${Math.random().toString(36).slice(2, 9)}`;
-    const poNo = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
+    const poNo = String(poNumber || "").trim();
     const fxRate = parseLocaleNumber(fo.fxRate) || 0;
     const freightEur = convertToEur(parseLocaleNumber(fo.freight) || 0, fo.freightCurrency, fxRate);
     const milestones = (fo.payments || [])
@@ -605,6 +650,9 @@ export default function render(root) {
         anchor: mapPaymentAnchor(payment.triggerEvent),
         lagDays: Number(payment.offsetDays || 0),
       }));
+    const prodDays = Number(fo.productionLeadTimeDays || 0) + Number(fo.bufferDays || 0);
+    const transitDays = Number(fo.logisticsLeadTimeDays || 0);
+    const schedule = buildScheduleFromOrderDate(orderDateOverride, prodDays, 0, transitDays);
     return {
       id: poId,
       poNo,
@@ -614,9 +662,9 @@ export default function render(root) {
       unitCostUsd: formatNumber(fo.unitPrice || 0),
       unitExtraUsd: "0,00",
       extraFlatUsd: "0,00",
-      orderDate: fo.orderDate || null,
-      prodDays: Number(fo.productionLeadTimeDays || 0),
-      transitDays: Number(fo.logisticsLeadTimeDays || 0),
+      orderDate: schedule.orderDate || fo.orderDate || null,
+      prodDays,
+      transitDays,
       transport: fo.transportMode || "SEA",
       freightEur: formatNumber(freightEur),
       dutyRatePct: formatPercent(fo.dutyRatePct || 0),
@@ -724,6 +772,109 @@ export default function render(root) {
       : null;
     const overlay = openModal(title, list, goBtn ? [closeBtn, goBtn] : [closeBtn]);
     closeBtn.addEventListener("click", () => overlay.remove());
+  }
+
+  function openConvertModal(fo) {
+    const existingPoNumbers = (state.pos || []).map(po => String(po.poNo || "").trim()).filter(Boolean);
+    const schedule = buildSchedule(fo);
+    let orderDate = schedule.orderDate || fo.orderDate || "";
+    let preview = buildScheduleFromOrderDate(orderDate, fo.productionLeadTimeDays || 0, fo.bufferDays || 0, fo.logisticsLeadTimeDays || 0);
+
+    const content = el("div", { class: "fo-convert-modal" }, [
+      el("label", {}, [
+        "PO Number (Ventory One)",
+        el("input", { type: "text", id: "fo-po-number", placeholder: "e.g. 250029", maxlength: "30" }),
+        el("small", { class: "muted" }, ["Must match Ventory One PO number"]),
+        el("small", { class: "form-error", id: "fo-po-error" }, []),
+      ]),
+      el("label", { style: "margin-top:10px" }, [
+        "Order Date (PO)",
+        el("input", { type: "date", id: "fo-po-order-date", value: orderDate }),
+        el("div", { class: "fo-convert-actions" }, [
+          el("button", { class: "btn secondary", type: "button", id: "fo-po-today" }, ["Today"]),
+        ]),
+        el("small", { class: "muted" }, ["Default is calculated from FO backward scheduling."]),
+      ]),
+      el("div", { class: "fo-convert-preview" }, [
+        el("p", { class: "muted" }, ["This will update PO dates:"]),
+        el("div", { class: "fo-date-stack" }, [
+          el("span", { id: "fo-preview-production-convert" }, ["Production End: —"]),
+          el("span", { id: "fo-preview-etd-convert" }, ["ETD: —"]),
+          el("span", { id: "fo-preview-eta-convert" }, ["ETA: —"]),
+        ]),
+      ]),
+    ]);
+
+    const convertBtn = el("button", { class: "btn primary", type: "button", disabled: "true" }, ["Convert"]);
+    const cancelBtn = el("button", { class: "btn", type: "button" }, ["Cancel"]);
+    const overlay = openModal("Convert FO to PO", content, [cancelBtn, convertBtn]);
+
+    const poInput = $("#fo-po-number", content);
+    const orderInput = $("#fo-po-order-date", content);
+    const poError = $("#fo-po-error", content);
+
+    function updatePreview() {
+      preview = buildScheduleFromOrderDate(orderDate, fo.productionLeadTimeDays || 0, fo.bufferDays || 0, fo.logisticsLeadTimeDays || 0);
+      $("#fo-preview-production-convert", content).textContent = `Production End: ${formatDate(preview.productionEndDate)}`;
+      $("#fo-preview-etd-convert", content).textContent = `ETD: ${formatDate(preview.etdDate)}`;
+      $("#fo-preview-eta-convert", content).textContent = `ETA: ${formatDate(preview.etaDate)}`;
+    }
+
+    function validate() {
+      const value = poInput.value.trim();
+      let error = "";
+      if (!value) error = "PO number is required.";
+      if (value.length > 30) error = "Max length is 30.";
+      if (existingPoNumbers.includes(value)) error = "PO number already exists.";
+      if (!orderDate) error = error || "Order date is required.";
+      poError.textContent = error;
+      convertBtn.disabled = Boolean(error);
+      return !error;
+    }
+
+    $("#fo-po-today", content).addEventListener("click", () => {
+      const today = new Date();
+      orderDate = toISO(new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())));
+      orderInput.value = orderDate;
+      updatePreview();
+    });
+
+    poInput.addEventListener("input", validate);
+    orderInput.addEventListener("input", (e) => {
+      orderDate = e.target.value;
+      updatePreview();
+    });
+
+    cancelBtn.addEventListener("click", () => overlay.remove());
+    updatePreview();
+    validate();
+
+    convertBtn.addEventListener("click", () => {
+      if (!validate()) return;
+      const updatedSchedule = buildScheduleFromOrderDate(orderDate, fo.productionLeadTimeDays || 0, fo.bufferDays || 0, fo.logisticsLeadTimeDays || 0);
+      fo.orderDate = updatedSchedule.orderDate;
+      fo.productionEndDate = updatedSchedule.productionEndDate;
+      fo.etdDate = updatedSchedule.etdDate;
+      fo.etaDate = updatedSchedule.etaDate;
+      fo.payments = recomputePaymentDueDates(fo.payments || [], {
+        ORDER_DATE: parseISODate(updatedSchedule.orderDate),
+        PRODUCTION_END: parseISODate(updatedSchedule.productionEndDate),
+        ETD: parseISODate(updatedSchedule.etdDate),
+        ETA: parseISODate(updatedSchedule.etaDate),
+      });
+      const po = buildPoFromFo(fo, poInput.value, updatedSchedule.orderDate);
+      if (!Array.isArray(state.pos)) state.pos = [];
+      state.pos.push(po);
+      fo.status = "CONVERTED";
+      fo.convertedPoId = po.id;
+      fo.convertedPoNo = po.poNo;
+      fo.updatedAt = new Date().toISOString();
+      saveState(state);
+      renderRows();
+      overlay.remove();
+      const openPo = window.confirm("PO created. Open PO?");
+      if (openPo) location.hash = "#po";
+    });
   }
 
   function openFoModal(existing) {
@@ -1754,19 +1905,7 @@ export default function render(root) {
       openFoModal(fo);
     } else if (action === "convert") {
       if (String(fo.status || "").toUpperCase() === "CONVERTED") return;
-      const confirmed = window.confirm("PO wird aus FO erzeugt. FO bleibt als Referenz bestehen und wird auf Converted gesetzt. Fortfahren?");
-      if (!confirmed) return;
-      const po = buildPoFromFo(fo);
-      if (!Array.isArray(state.pos)) state.pos = [];
-      state.pos.push(po);
-      fo.status = "CONVERTED";
-      fo.convertedPoId = po.id;
-      fo.convertedPoNo = po.poNo;
-      fo.updatedAt = new Date().toISOString();
-      saveState(state);
-      renderRows();
-      const openPo = window.confirm("PO created. Open PO?");
-      if (openPo) location.hash = "#po";
+      openConvertModal(fo);
     } else if (action === "delete") {
       if (String(fo.status || "").toUpperCase() === "CONVERTED") {
         window.alert("Converted FOs können nicht gelöscht werden.");
