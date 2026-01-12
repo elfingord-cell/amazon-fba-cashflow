@@ -6,7 +6,7 @@ import {
   setProductStatus,
   setPreferredProductSupplier,
 } from "../data/storageLocal.js";
-import { createDataTable } from "./components/dataTable.js";
+import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -181,12 +181,16 @@ function buildHistoryTable(state, sku) {
 function renderProducts(root) {
   const state = loadState();
   const products = getProductsSnapshot();
+  const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
+  const categoryById = new Map(categories.map(category => [String(category.id), category]));
+  const supplierLabelMap = buildSupplierLabelMap(state, products);
   let searchTerm = "";
   let viewMode = localStorage.getItem("productsView");
   if (viewMode !== "table" && viewMode !== "list") {
     viewMode = "list";
   }
   const pendingEdits = new Map();
+  const collapseKey = "productsCategoryCollapse";
   const focusRaw = sessionStorage.getItem("healthFocus");
   if (focusRaw) {
     try {
@@ -204,10 +208,52 @@ function renderProducts(root) {
     if (!term) return list;
     const needle = term.trim().toLowerCase();
     return list.filter(item => {
-      return [item.alias, item.sku, item.supplierId, ...(item.tags || [])]
+      const categoryName = getCategoryLabel(item.categoryId);
+      const supplierLabel = supplierLabelMap.get(item.supplierId);
+      return [item.alias, item.sku, item.supplierId, supplierLabel, categoryName, ...(item.tags || [])]
         .filter(Boolean)
         .some(val => String(val).toLowerCase().includes(needle));
     });
+  }
+
+  function getCategoryLabel(categoryId) {
+    if (!categoryId) return "Ohne Kategorie";
+    const category = categoryById.get(String(categoryId));
+    return category?.name || "Ohne Kategorie";
+  }
+
+  function loadCollapseState() {
+    try {
+      return JSON.parse(localStorage.getItem(collapseKey) || "{}");
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function saveCollapseState(next) {
+    localStorage.setItem(collapseKey, JSON.stringify(next));
+  }
+
+  function buildCategoryGroups(list) {
+    const categoryMap = new Map();
+    list.forEach(product => {
+      const key = product.categoryId ? String(product.categoryId) : "";
+      if (!categoryMap.has(key)) categoryMap.set(key, []);
+      categoryMap.get(key).push(product);
+    });
+    const sortedCategories = categories
+      .slice()
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
+    const groups = sortedCategories.map(category => ({
+      id: String(category.id),
+      name: category.name || "Ohne Kategorie",
+      items: categoryMap.get(String(category.id)) || [],
+    }));
+    const uncategorized = categoryMap.get("") || [];
+    if (uncategorized.length) {
+      groups.push({ id: "uncategorized", name: "Ohne Kategorie", items: uncategorized });
+    }
+    return groups;
   }
 
   function showEditor(existing) {
@@ -217,11 +263,29 @@ function renderProducts(root) {
 
     const skuInput = createEl("input", { value: product.sku || "", required: true });
     const aliasInput = createEl("input", { value: product.alias || "", required: true });
-    const supplierInput = createEl("input", { value: product.supplierId || "" });
+    const supplierInput = (() => {
+      const select = createEl("select");
+      select.append(createEl("option", { value: "" }, ["Ohne Supplier"]));
+      (state.suppliers || []).forEach(supplier => {
+        const label = supplierLabelMap.get(supplier.id) || supplier.name || supplier.id;
+        select.append(createEl("option", { value: supplier.id }, [label]));
+      });
+      select.value = product.supplierId || "";
+      return select;
+    })();
     const statusSelect = createEl("select", {}, [
       createEl("option", { value: "active", selected: product.status !== "inactive" }, ["Aktiv"]),
       createEl("option", { value: "inactive", selected: product.status === "inactive" }, ["Inaktiv"]),
     ]);
+    const categorySelect = (() => {
+      const select = createEl("select");
+      select.append(createEl("option", { value: "" }, ["Ohne Kategorie"]));
+      categories.forEach(category => {
+        select.append(createEl("option", { value: category.id }, [category.name]));
+      });
+      select.value = product.categoryId || "";
+      return select;
+    })();
     const tagsInput = createEl("input", { value: (product.tags || []).join(", ") });
 
     const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
@@ -275,6 +339,7 @@ function renderProducts(root) {
       createEl("label", {}, ["SKU", skuInput]),
       createEl("label", {}, ["Alias", aliasInput]),
       createEl("label", {}, ["Supplier", supplierInput]),
+      createEl("label", {}, ["Kategorie", categorySelect]),
       createEl("label", {}, ["Status", statusSelect]),
       createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]),
       createEl("hr"),
@@ -563,6 +628,7 @@ function renderProducts(root) {
         sku: skuInput.value.trim(),
         alias: aliasInput.value.trim(),
         supplierId: supplierInput.value.trim(),
+        categoryId: categorySelect.value.trim() || null,
         status: statusSelect.value,
         tags: tagsInput.value
           .split(",")
@@ -634,7 +700,7 @@ function renderProducts(root) {
     });
   }
 
-  function renderTable(list) {
+  function renderList(list) {
     if (!list.length) {
       return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
     }
@@ -642,6 +708,7 @@ function renderProducts(root) {
       { key: "alias", label: "Alias" },
       { key: "sku", label: "SKU" },
       { key: "supplier", label: "Supplier" },
+      { key: "category", label: "Kategorie" },
       { key: "status", label: "Status" },
       { key: "lastPo", label: "Letzte PO" },
       { key: "avg", label: "Ø Stückpreis", className: "num" },
@@ -649,68 +716,106 @@ function renderProducts(root) {
       { key: "template", label: "Template" },
       { key: "actions", label: "Aktionen" },
     ];
-    return createDataTable({
-      columns,
-      rows: list,
-      rowKey: row => row.id,
-      className: "products-list",
-      renderCell: (product, col) => {
-        switch (col.key) {
-          case "alias":
-            return createEl("div", {}, [
-              product.alias || "—",
-              product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
-            ]);
-          case "sku":
-            return product.sku || "—";
-          case "supplier":
-            return product.supplierId || "—";
-          case "status":
-            return product.status === "inactive"
-              ? createEl("span", { class: "badge muted" }, ["inaktiv"])
-              : createEl("span", { class: "badge" }, ["aktiv"]);
-          case "lastPo":
-            return product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—";
-          case "avg":
-            return product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—";
-          case "count":
-            return product.stats?.poCount != null ? String(product.stats.poCount) : "0";
-          case "template":
-            return product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
-          case "actions":
-            return createEl("div", { class: "table-actions" }, [
-              createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
-              createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
-              createEl("button", {
-                class: "btn tertiary",
-                type: "button",
-                onclick: () => {
-                  setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
+    const colCount = columns.length;
+    const table = createEl("table", { class: "table products-list-table" });
+    const thead = createEl("thead", {}, [
+      createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "" }, [col.label])))
+    ]);
+    const tbody = createEl("tbody");
+    const collapseState = loadCollapseState();
+    const groups = buildCategoryGroups(list);
+
+    const renderCell = (product, col) => {
+      switch (col.key) {
+        case "alias":
+          return createEl("div", {}, [
+            product.alias || "—",
+            product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
+          ]);
+        case "sku":
+          return product.sku || "—";
+        case "supplier":
+          return createEl("span", { title: supplierLabelMap.get(product.supplierId) || product.supplierId || "—" }, [
+            supplierLabelMap.get(product.supplierId) || product.supplierId || "—"
+          ]);
+        case "category":
+          return createEl("span", { title: getCategoryLabel(product.categoryId) }, [getCategoryLabel(product.categoryId)]);
+        case "status":
+          return product.status === "inactive"
+            ? createEl("span", { class: "badge muted" }, ["inaktiv"])
+            : createEl("span", { class: "badge" }, ["aktiv"]);
+        case "lastPo":
+          return product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—";
+        case "avg":
+          return product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—";
+        case "count":
+          return product.stats?.poCount != null ? String(product.stats.poCount) : "0";
+        case "template":
+          return product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
+        case "actions":
+          return createEl("div", { class: "table-actions" }, [
+            createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+            createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+            createEl("button", {
+              class: "btn tertiary",
+              type: "button",
+              onclick: () => {
+                setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
+                renderProducts(root);
+                document.dispatchEvent(new Event("state:changed"));
+              }
+            }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
+            createEl("button", {
+              class: "btn danger",
+              type: "button",
+              onclick: () => {
+                if (confirm("Produkt wirklich löschen?")) {
+                  deleteProductBySku(product.sku);
                   renderProducts(root);
                   document.dispatchEvent(new Event("state:changed"));
                 }
-              }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
-              createEl("button", {
-                class: "btn danger",
-                type: "button",
-                onclick: () => {
-                  if (confirm("Produkt wirklich löschen?")) {
-                    deleteProductBySku(product.sku);
-                    renderProducts(root);
-                    document.dispatchEvent(new Event("state:changed"));
-                  }
-                }
-              }, ["Löschen"]),
-            ]);
-          default:
-            return "—";
-        }
-      },
-    });
-  }
+              }
+            }, ["Löschen"]),
+          ]);
+        default:
+          return "—";
+      }
+    };
 
-  function renderList(list) {
-    return renderTable(list);
+    groups.forEach(group => {
+      const isCollapsed = Boolean(collapseState[group.id]);
+      tbody.append(createEl("tr", { class: "product-group-row" }, [
+        createEl("td", { colspan: String(colCount) }, [
+          createEl("button", {
+            class: "product-group-toggle",
+            type: "button",
+            dataset: { categoryId: group.id },
+            "aria-expanded": String(!isCollapsed),
+          }, [`${group.name} (${group.items.length})`]),
+        ]),
+      ]));
+      if (isCollapsed) return;
+      group.items.forEach(product => {
+        const row = createEl("tr");
+        columns.forEach(col => {
+          row.append(createEl("td", { class: col.className || "" }, [renderCell(product, col)]));
+        });
+        tbody.append(row);
+      });
+    });
+
+    table.append(thead, tbody);
+    table.addEventListener("click", (event) => {
+      const toggle = event.target.closest(".product-group-toggle");
+      if (!toggle) return;
+      const next = loadCollapseState();
+      const id = toggle.dataset.categoryId;
+      next[id] = !next[id];
+      saveCollapseState(next);
+      render();
+    });
+
+    return createEl("div", { class: "table-wrap products-list" }, [table]);
   }
 
   function renderGrid(list) {
@@ -741,13 +846,18 @@ function renderProducts(root) {
     const suppliers = Array.isArray(state.suppliers) ? state.suppliers : [];
     const supplierOptions = suppliers.map(supplier => ({
       value: String(supplier.id || "").trim(),
-      label: supplier.name || supplier.id || "—",
+      label: supplierLabelMap.get(supplier.id) || supplier.name || supplier.id || "—",
     })).filter(option => option.value);
+    const categoryOptions = categories.map(category => ({
+      value: String(category.id),
+      label: category.name || "Ohne Kategorie",
+    }));
 
     const fields = [
       { key: "alias", label: "Alias", type: "text", width: "240px", className: "col-alias" },
       { key: "sku", label: "SKU", type: "text", width: "160px", readOnly: true, className: "col-sku" },
       { key: "supplierId", label: "Supplier", type: "select", options: supplierOptions, width: "180px", className: "col-supplier" },
+      { key: "categoryId", label: "Kategorie", type: "select", options: [{ value: "", label: "Ohne Kategorie" }, ...categoryOptions], width: "180px", className: "col-category" },
       { key: "status", label: "Status", type: "select", options: [
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
@@ -788,6 +898,9 @@ function renderProducts(root) {
       if (field.key.startsWith("template.")) {
         const key = field.key.replace("template.", "");
         return getTemplateFields(product)[key];
+      }
+      if (field.key === "categoryId") {
+        return product.categoryId || "";
       }
       if (field.key === "tags") {
         return Array.isArray(product.tags) ? product.tags.join(", ") : "";
@@ -867,6 +980,9 @@ function renderProducts(root) {
 
     function applyChange(input, product, field) {
       const raw = field.type === "checkbox" ? input.checked : input.value;
+      if (field.type === "select") {
+        input.title = input.options[input.selectedIndex]?.textContent || String(raw ?? "");
+      }
       const normalized = normalizeValue(raw, field);
       const original = normalizeValue(getFieldValue(product, field), field);
       const isDirty = field.type === "number"
@@ -902,74 +1018,101 @@ function renderProducts(root) {
       ]),
     ]);
     const tbody = createEl("tbody");
+    const collapseState = loadCollapseState();
+    const groups = buildCategoryGroups(list);
 
-    list.forEach(product => {
-      const row = createEl("tr");
-      fields.forEach(field => {
-        const cell = createEl("td", { class: field.className || "" });
-        const value = pendingEdits.get(product.sku)?.[field.key] ?? getFieldValue(product, field);
-        if (field.type === "checkbox") {
-          const input = createEl("input", {
-            type: "checkbox",
-            checked: Boolean(value),
-            onchange: () => applyChange(input, product, field),
-            title: field.label,
-          });
-          cell.append(input);
-        } else if (field.type === "select") {
-          const select = createEl("select", { onchange: () => applyChange(select, product, field) });
-          const options = field.options || [];
-          const currentValue = String(value ?? "");
-          if (["supplierId", "status", "template.transportMode", "template.currency"].includes(field.key)) {
-            select.title = currentValue;
-          }
-          if (!options.some(option => option.value === currentValue) && currentValue) {
-            select.append(createEl("option", { value: currentValue }, [currentValue]));
-          }
+    groups.forEach(group => {
+      const isCollapsed = Boolean(collapseState[group.id]);
+      tbody.append(createEl("tr", { class: "product-group-row" }, [
+        createEl("td", { colspan: String(fields.length + 1) }, [
+          createEl("button", {
+            class: "product-group-toggle",
+            type: "button",
+            dataset: { categoryId: group.id },
+            "aria-expanded": String(!isCollapsed),
+          }, [`${group.name} (${group.items.length})`]),
+        ]),
+      ]));
+      if (isCollapsed) return;
+      group.items.forEach(product => {
+        const row = createEl("tr");
+        fields.forEach(field => {
+          const cell = createEl("td", { class: field.className || "" });
+          const value = pendingEdits.get(product.sku)?.[field.key] ?? getFieldValue(product, field);
+          if (field.type === "checkbox") {
+            const input = createEl("input", {
+              type: "checkbox",
+              checked: Boolean(value),
+              onchange: () => applyChange(input, product, field),
+              title: field.label,
+            });
+            cell.append(input);
+          } else if (field.type === "select") {
+            const select = createEl("select", { onchange: () => applyChange(select, product, field) });
+            const options = field.options || [];
+            const currentValue = String(value ?? "");
+            if (["supplierId", "status", "categoryId", "template.transportMode", "template.currency"].includes(field.key)) {
+              select.title = currentValue;
+            }
+            if (!options.some(option => option.value === currentValue) && currentValue) {
+              select.append(createEl("option", { value: currentValue }, [currentValue]));
+            }
           options.forEach(option => {
             select.append(createEl("option", { value: option.value }, [option.label]));
           });
           select.value = currentValue;
+          select.title = select.options[select.selectedIndex]?.textContent || currentValue;
           cell.append(select);
-        } else {
-          const input = createEl("input", {
-            value: formatValue(value, field),
-            inputmode: field.type === "number" ? "decimal" : "text",
-            readonly: field.readOnly ? "readonly" : null,
-            title: ["alias", "sku", "supplierId"].includes(field.key) ? String(value ?? "") : null,
-            oninput: () => applyChange(input, product, field),
-            onblur: () => {
-              if (field.type === "number") {
-                const parsed = parseDeNumber(input.value);
-                input.value = parsed == null ? "" : formatDeNumber(parsed, field.decimals ?? 2);
-              }
-            },
-          });
-          cell.append(input);
-        }
-        const original = normalizeValue(getFieldValue(product, field), field);
-        const current = normalizeValue(value, field);
-        const isDirty = field.type === "number"
-          ? Number(current) !== Number(original)
-          : current !== original;
-        if (isDirty) {
-          cell.classList.add("is-dirty");
-        }
-        row.append(cell);
+          } else {
+            const input = createEl("input", {
+              value: formatValue(value, field),
+              inputmode: field.type === "number" ? "decimal" : "text",
+              readonly: field.readOnly ? "readonly" : null,
+              title: ["alias", "sku", "supplierId"].includes(field.key) ? String(value ?? "") : null,
+              oninput: () => applyChange(input, product, field),
+              onblur: () => {
+                if (field.type === "number") {
+                  const parsed = parseDeNumber(input.value);
+                  input.value = parsed == null ? "" : formatDeNumber(parsed, field.decimals ?? 2);
+                }
+              },
+            });
+            cell.append(input);
+          }
+          const original = normalizeValue(getFieldValue(product, field), field);
+          const current = normalizeValue(value, field);
+          const isDirty = field.type === "number"
+            ? Number(current) !== Number(original)
+            : current !== original;
+          if (isDirty) {
+            cell.classList.add("is-dirty");
+          }
+          row.append(cell);
+        });
+        const actions = createEl("td", { class: "actions" }, [
+          createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+          createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+        ]);
+        row.append(actions);
+        updateRowDirty(row);
+        tbody.append(row);
       });
-      const actions = createEl("td", { class: "actions" }, [
-        createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
-        createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
-      ]);
-      row.append(actions);
-      updateRowDirty(row);
-      tbody.append(row);
     });
 
     table.append(colgroup, thead, tbody);
     scroll.append(table);
     wrapper.append(toolbar, scroll);
     updateToolbar();
+
+    table.addEventListener("click", (event) => {
+      const toggle = event.target.closest(".product-group-toggle");
+      if (!toggle) return;
+      const next = loadCollapseState();
+      const id = toggle.dataset.categoryId;
+      next[id] = !next[id];
+      saveCollapseState(next);
+      render();
+    });
 
     discardBtn.addEventListener("click", () => {
       pendingEdits.clear();
@@ -1006,6 +1149,8 @@ function renderProducts(root) {
               payload.template.fields = { ...templateFields };
             }
             payload.template.fields[fieldKey] = value;
+          } else if (key === "categoryId") {
+            payload.categoryId = value ? String(value) : null;
           } else if (key === "tags") {
             payload.tags = String(value || "")
               .split(",")
@@ -1117,11 +1262,9 @@ export default function mountProducts(root) {
   if (root.__productsCleanup) {
     root.__productsCleanup();
   }
-  root.classList.add("products-page");
   document.addEventListener("state:changed", handler);
   root.__productsCleanup = () => {
     document.removeEventListener("state:changed", handler);
-    root.classList.remove("products-page");
   };
   renderProducts(root);
   return { cleanup: root.__productsCleanup };

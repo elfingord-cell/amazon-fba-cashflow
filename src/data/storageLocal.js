@@ -58,6 +58,7 @@ const defaults = {
   fixcostOverrides: {},
   poTemplates: [],
   products: [],
+  productCategories: [],
   recentProducts: [],
   vatCostRules: [
     { name: "Lizenz", isGrossInput: true, vatRate: "19", reverseCharge: false },
@@ -104,6 +105,28 @@ function ensureProducts(state) {
   if (!Array.isArray(state.recentProducts)) state.recentProducts = [];
 }
 
+function ensureProductCategories(state) {
+  if (!state) return;
+  if (!Array.isArray(state.productCategories)) {
+    state.productCategories = [];
+    return;
+  }
+  state.productCategories = state.productCategories
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      const name = String(entry.name || "").trim();
+      const sortOrder = entry.sortOrder != null ? Number(entry.sortOrder) : null;
+      return {
+        id: entry.id || `cat-${Math.random().toString(36).slice(2, 9)}`,
+        name: name || "Ohne Kategorie",
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+    });
+}
+
 function ensureVatData(state) {
   if (!state) return;
   if (!state.settings) state.settings = {};
@@ -148,7 +171,28 @@ function ensureGlobalSettings(state) {
 
 function ensureSuppliers(state) {
   if (!state) return;
-  if (!Array.isArray(state.suppliers)) state.suppliers = [];
+  if (!Array.isArray(state.suppliers)) {
+    state.suppliers = [];
+    return;
+  }
+  state.suppliers = state.suppliers
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      const name = String(entry.name || "").trim();
+      return {
+        ...entry,
+        id: entry.id || `sup-${Math.random().toString(36).slice(2, 9)}`,
+        name: name || "Unbenannt",
+        company_name: entry.company_name != null ? String(entry.company_name).trim() : "",
+        productionLeadTimeDaysDefault: entry.productionLeadTimeDaysDefault ?? 30,
+        incotermDefault: entry.incotermDefault || "EXW",
+        currencyDefault: entry.currencyDefault || "EUR",
+        paymentTermsDefault: Array.isArray(entry.paymentTermsDefault) ? entry.paymentTermsDefault : null,
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+    });
 }
 
 function ensureProductSuppliers(state) {
@@ -370,6 +414,7 @@ function migrateProducts(state) {
       supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
       status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
       tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
+      categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
       template: normaliseTemplate(prod.template || base.template),
       createdAt: prod.createdAt || base.createdAt || now,
       updatedAt: prod.updatedAt || now,
@@ -465,6 +510,10 @@ function normaliseProductInput(input) {
   if (!sku) throw new Error("SKU darf nicht leer sein.");
   const alias = cleanAlias(input.alias, sku);
   const supplierId = input.supplierId != null ? String(input.supplierId).trim() : "";
+  const categoryValue = input.categoryId ?? input.category_id ?? null;
+  const categoryId = categoryValue != null && String(categoryValue).trim()
+    ? String(categoryValue).trim()
+    : null;
   const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
   const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
   const template = normaliseTemplate(input.template);
@@ -472,7 +521,7 @@ function normaliseProductInput(input) {
   const jurisdiction = input.jurisdiction || "DE";
   const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
   const vatExempt = input.vatExempt === true;
-  return { sku, alias, supplierId, status, tags, template, vatRate, jurisdiction, returnsRate, vatExempt };
+  return { sku, alias, supplierId, categoryId, status, tags, template, vatRate, jurisdiction, returnsRate, vatExempt };
 }
 
 function updateProductStatsMeta(state, product) {
@@ -512,6 +561,7 @@ export function createEmptyState(){
   ensureFixcostContainers(clone);
   ensurePoTemplates(clone);
   ensureProducts(clone);
+  ensureProductCategories(clone);
   ensureVatData(clone);
   ensureForecast(clone);
   ensureActuals(clone);
@@ -534,6 +584,7 @@ export function loadState(){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureProductCategories(_state);
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
@@ -552,6 +603,7 @@ export function saveState(s){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureProductCategories(_state);
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
@@ -594,6 +646,7 @@ export function importStateFile(file, cb){
       ensureFixcostContainers(json);
       ensurePoTemplates(json);
       ensureProducts(json);
+      ensureProductCategories(json);
       ensureVatData(json);
       ensureForecast(json);
       ensureActuals(json);
@@ -761,6 +814,7 @@ export function upsertProduct(input){
       sku: normalised.sku,
       alias: normalised.alias,
       supplierId: normalised.supplierId,
+      categoryId: normalised.categoryId,
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
@@ -771,6 +825,7 @@ export function upsertProduct(input){
   } else {
     target.alias = normalised.alias;
     target.supplierId = normalised.supplierId;
+    target.categoryId = normalised.categoryId;
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;

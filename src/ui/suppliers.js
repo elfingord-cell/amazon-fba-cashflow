@@ -7,6 +7,7 @@ import {
   setPreferredProductSupplier,
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
+import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 
 function $(sel, root = document) { return root.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -98,6 +99,7 @@ export function render(root) {
   if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
   const products = getProductsSnapshot();
   const productBySku = new Map(products.map(prod => [String(prod.sku || "").trim().toLowerCase(), prod]));
+  const supplierLabelMap = buildSupplierLabelMap(state, products);
 
   function productLabel(sku) {
     const key = String(sku || "").trim().toLowerCase();
@@ -128,6 +130,7 @@ export function render(root) {
       .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     const columns = [
       { key: "name", label: "Supplier Name" },
+      { key: "company", label: "Company" },
       { key: "lead", label: "Production LT (days)", className: "num" },
       { key: "incoterm", label: "Incoterm" },
       { key: "currency", label: "Currency" },
@@ -145,6 +148,8 @@ export function render(root) {
         switch (col.key) {
           case "name":
             return supplier.name;
+          case "company":
+            return supplier.company_name || "—";
           case "lead":
             return supplier.productionLeadTimeDaysDefault;
           case "incoterm":
@@ -442,7 +447,8 @@ export function render(root) {
     const supplierSelect = el("select", { id: "global-mapping-supplier", class: "wide-select" });
     supplierSelect.append(el("option", { value: "" }, ["Bitte Supplier wählen"]));
     state.suppliers.forEach(supplier => {
-      supplierSelect.append(el("option", { value: supplier.id }, [supplier.name]));
+      const label = supplierLabelMap.get(supplier.id) || supplier.name || supplier.id;
+      supplierSelect.append(el("option", { value: supplier.id }, [label]));
     });
     const content = el("div", {}, [
       el("label", {}, ["Supplier", supplierSelect]),
@@ -469,6 +475,7 @@ export function render(root) {
       : {
           id: `sup-${Math.random().toString(36).slice(2, 9)}`,
           name: "",
+          company_name: "",
           productionLeadTimeDaysDefault: 30,
           incotermDefault: "EXW",
           currencyDefault: "EUR",
@@ -619,6 +626,8 @@ export function render(root) {
     const content = el("div", {}, [
       el("label", {}, ["Name"]),
       el("input", { type: "text", id: "supplier-name", value: supplier.name }),
+      el("label", { style: "margin-top:12px" }, ["Company"]),
+      el("input", { type: "text", id: "supplier-company", value: supplier.company_name || "" }),
       el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
       el("input", { type: "number", min: "0", step: "1", id: "supplier-lt", value: supplier.productionLeadTimeDaysDefault }),
       el("label", { style: "margin-top:12px" }, ["Incoterm"]),
@@ -688,6 +697,7 @@ export function render(root) {
     cancelBtn.addEventListener("click", () => overlay.remove());
     saveBtn.addEventListener("click", () => {
       const name = $("#supplier-name", content).value.trim();
+      const companyName = $("#supplier-company", content).value.trim();
       const lt = parseNumber($("#supplier-lt", content).value);
       const currency = ($("#supplier-currency", content).value || "EUR").trim() || "EUR";
       const percentOk = updateWarning();
@@ -708,6 +718,7 @@ export function render(root) {
         return;
       }
       supplier.name = name;
+      supplier.company_name = companyName;
       supplier.productionLeadTimeDaysDefault = lt;
       supplier.incotermDefault = $("#supplier-incoterm", content).value;
       supplier.currencyDefault = currency;

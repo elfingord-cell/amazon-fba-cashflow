@@ -5,6 +5,7 @@ import {
   upsertProduct,
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
+import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 
 function $(sel, root = document) {
   return root.querySelector(sel);
@@ -628,6 +629,8 @@ export default function render(root) {
   if (!Array.isArray(state.fos)) state.fos = [];
   if (!Array.isArray(state.suppliers)) state.suppliers = [];
   if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
+  const products = getProductsSnapshot();
+  const supplierLabelMap = buildSupplierLabelMap(state, products);
 
   root.innerHTML = `
     <section class="card">
@@ -696,7 +699,6 @@ export default function render(root) {
   }
 
   function renderRows() {
-    const products = getProductsSnapshot();
     const searchValue = ($("#fo-search", root)?.value || "").trim().toLowerCase();
     const statusFilter = $("#fo-status-filter", root)?.value || "ALL";
     const rows = state.fos
@@ -727,7 +729,7 @@ export default function render(root) {
       const status = String(fo.status || "DRAFT").toUpperCase();
       return {
         fo,
-        supplierLabel: supplier?.name || "—",
+        supplierLabel: supplier ? (supplierLabelMap.get(supplier.id) || supplier.name || "—") : "—",
         alias: product?.alias || fo.sku || "—",
         skuLabel: fo.sku || "—",
         schedule,
@@ -1431,7 +1433,8 @@ export default function render(root) {
                 const select = el("select", { id: "fo-supplierId" });
                 select.append(el("option", { value: "" }, ["Bitte auswählen"]));
                 state.suppliers.forEach(supplier => {
-                  select.append(el("option", { value: supplier.id }, [supplier.name]));
+                  const label = supplierLabelMap.get(supplier.id) || supplier.name || supplier.id;
+                  select.append(el("option", { value: supplier.id }, [label]));
                 });
                 select.value = baseForm.supplierId || "";
                 return select;
