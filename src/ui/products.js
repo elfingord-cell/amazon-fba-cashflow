@@ -182,7 +182,11 @@ function renderProducts(root) {
   const state = loadState();
   const products = getProductsSnapshot();
   let searchTerm = "";
-  let viewMode = localStorage.getItem("productsView") || "table";
+  let viewMode = localStorage.getItem("productsView");
+  if (viewMode !== "table" && viewMode !== "list") {
+    viewMode = "list";
+  }
+  const pendingEdits = new Map();
   const focusRaw = sessionStorage.getItem("healthFocus");
   if (focusRaw) {
     try {
@@ -638,6 +642,7 @@ function renderProducts(root) {
       { key: "alias", label: "Alias" },
       { key: "sku", label: "SKU" },
       { key: "supplier", label: "Supplier" },
+      { key: "status", label: "Status" },
       { key: "lastPo", label: "Letzte PO" },
       { key: "avg", label: "Ø Stückpreis", className: "num" },
       { key: "count", label: "POs", className: "num" },
@@ -648,6 +653,7 @@ function renderProducts(root) {
       columns,
       rows: list,
       rowKey: row => row.id,
+      className: "products-list",
       renderCell: (product, col) => {
         switch (col.key) {
           case "alias":
@@ -659,6 +665,10 @@ function renderProducts(root) {
             return product.sku || "—";
           case "supplier":
             return product.supplierId || "—";
+          case "status":
+            return product.status === "inactive"
+              ? createEl("span", { class: "badge muted" }, ["inaktiv"])
+              : createEl("span", { class: "badge" }, ["aktiv"]);
           case "lastPo":
             return product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—";
           case "avg":
@@ -699,54 +709,322 @@ function renderProducts(root) {
     });
   }
 
-  function renderCards(list) {
+  function renderList(list) {
+    return renderTable(list);
+  }
+
+  function renderGrid(list) {
     if (!list.length) {
       return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
     }
-    const grid = createEl("div", { class: "product-card-grid" });
+    const settings = state.settings || {};
+    const fxRateDefault = parseDeNumber(settings.fxRate) ?? null;
+    const templateDefaults = {
+      unitPriceUsd: 0,
+      extraPerUnitUsd: 0,
+      extraFlatUsd: 0,
+      transportMode: "SEA",
+      productionDays: 0,
+      transitDays: 0,
+      freightEur: 0,
+      dutyPct: 0,
+      dutyIncludesFreight: false,
+      vatImportPct: 19,
+      vatRefundActive: false,
+      vatRefundLag: 0,
+      fxRate: fxRateDefault ?? 0,
+      fxFeePct: 0,
+      ddp: false,
+      currency: "USD",
+    };
+
+    const suppliers = Array.isArray(state.suppliers) ? state.suppliers : [];
+    const supplierOptions = suppliers.map(supplier => ({
+      value: String(supplier.id || "").trim(),
+      label: supplier.name || supplier.id || "—",
+    })).filter(option => option.value);
+
+    const fields = [
+      { key: "alias", label: "Alias", type: "text", width: "180px" },
+      { key: "sku", label: "SKU", type: "text", width: "140px", readOnly: true },
+      { key: "supplierId", label: "Supplier", type: "select", options: supplierOptions, width: "160px" },
+      { key: "status", label: "Status", type: "select", options: [
+        { value: "active", label: "Aktiv" },
+        { value: "inactive", label: "Inaktiv" },
+      ], width: "120px" },
+      { key: "tags", label: "Tags", type: "text", width: "200px" },
+      { key: "template.unitPriceUsd", label: "Stückpreis (USD)", type: "number", decimals: 2, width: "150px" },
+      { key: "template.extraPerUnitUsd", label: "Zusatz je Stück (USD)", type: "number", decimals: 2, width: "170px" },
+      { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "170px" },
+      { key: "template.transportMode", label: "Transport", type: "select", options: [
+        { value: "SEA", label: "SEA" },
+        { value: "RAIL", label: "RAIL" },
+        { value: "AIR", label: "AIR" },
+      ], width: "130px" },
+      { key: "template.productionDays", label: "Produktionstage", type: "number", decimals: 0, width: "150px" },
+      { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "140px" },
+      { key: "template.freightEur", label: "Fracht (€ / Stück)", type: "number", decimals: 2, width: "170px" },
+      { key: "template.dutyPct", label: "Zoll %", type: "number", decimals: 2, width: "110px" },
+      { key: "template.dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox", width: "160px" },
+      { key: "template.vatImportPct", label: "EUSt %", type: "number", decimals: 2, width: "110px" },
+      { key: "template.vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox", width: "170px" },
+      { key: "template.vatRefundLag", label: "EUSt-Lag", type: "number", decimals: 0, width: "120px" },
+      { key: "template.fxRate", label: "FX-Kurs", type: "number", decimals: 4, width: "140px" },
+      { key: "template.fxFeePct", label: "FX-Gebühr %", type: "number", decimals: 2, width: "140px" },
+      { key: "template.currency", label: "Currency", type: "select", options: [
+        { value: "USD", label: "USD" },
+        { value: "EUR", label: "EUR" },
+        { value: "CNY", label: "CNY" },
+      ], width: "120px" },
+      { key: "template.ddp", label: "DDP", type: "checkbox", width: "80px" },
+    ];
+
+    function getTemplateFields(product) {
+      const base = product.template?.fields || product.template || {};
+      return { ...templateDefaults, ...base };
+    }
+
+    function getFieldValue(product, field) {
+      if (field.key.startsWith("template.")) {
+        const key = field.key.replace("template.", "");
+        return getTemplateFields(product)[key];
+      }
+      if (field.key === "tags") {
+        return Array.isArray(product.tags) ? product.tags.join(", ") : "";
+      }
+      return product[field.key] ?? "";
+    }
+
+    function formatValue(value, field) {
+      if (field.type === "number") {
+        const parsed = parseDeNumber(value);
+        return parsed == null ? "" : formatDeNumber(parsed, field.decimals ?? 2);
+      }
+      if (field.type === "checkbox") {
+        return Boolean(value);
+      }
+      return value ?? "";
+    }
+
+    function normalizeValue(raw, field) {
+      if (field.type === "number") {
+        return parseDeNumber(raw);
+      }
+      if (field.type === "checkbox") {
+        return Boolean(raw);
+      }
+      if (field.key === "tags") {
+        return String(raw || "")
+          .split(",")
+          .map(tag => tag.trim())
+          .filter(Boolean)
+          .join(", ");
+      }
+      return String(raw ?? "").trim();
+    }
+
+    function getEditBucket(sku) {
+      if (!pendingEdits.has(sku)) {
+        pendingEdits.set(sku, {});
+      }
+      return pendingEdits.get(sku);
+    }
+
+    function clearEdit(sku, fieldKey) {
+      const bucket = pendingEdits.get(sku);
+      if (!bucket) return;
+      delete bucket[fieldKey];
+      if (!Object.keys(bucket).length) {
+        pendingEdits.delete(sku);
+      }
+    }
+
+    function countEdits() {
+      let total = 0;
+      pendingEdits.forEach(bucket => {
+        total += Object.keys(bucket).length;
+      });
+      return total;
+    }
+
+    const toolbar = createEl("div", { class: "products-grid-toolbar" });
+    const counter = createEl("span", { class: "muted" }, ["0 Änderungen"]);
+    const saveBtn = createEl("button", { class: "btn", type: "button", disabled: true }, ["Änderungen speichern"]);
+    const discardBtn = createEl("button", { class: "btn secondary", type: "button", disabled: true }, ["Änderungen verwerfen"]);
+    toolbar.append(counter, createEl("div", { class: "products-grid-actions" }, [discardBtn, saveBtn]));
+
+    function updateToolbar() {
+      const edits = countEdits();
+      counter.textContent = `${edits} Änderungen`;
+      saveBtn.disabled = edits === 0;
+      discardBtn.disabled = edits === 0;
+    }
+
+    function updateRowDirty(row) {
+      const hasDirty = Boolean(row.querySelector("td.is-dirty"));
+      row.classList.toggle("is-dirty", hasDirty);
+    }
+
+    function applyChange(input, product, field) {
+      const raw = field.type === "checkbox" ? input.checked : input.value;
+      const normalized = normalizeValue(raw, field);
+      const original = normalizeValue(getFieldValue(product, field), field);
+      const isDirty = field.type === "number"
+        ? Number(normalized) !== Number(original)
+        : normalized !== original;
+      if (isDirty) {
+        const bucket = getEditBucket(product.sku);
+        bucket[field.key] = normalized;
+      } else {
+        clearEdit(product.sku, field.key);
+      }
+      const cell = input.closest("td");
+      if (cell) {
+        cell.classList.toggle("is-dirty", isDirty);
+        const row = cell.closest("tr");
+        if (row) updateRowDirty(row);
+      }
+      updateToolbar();
+    }
+
+    const wrapper = createEl("div", { class: "products-grid" });
+    const scroll = createEl("div", { class: "products-grid-scroll" });
+    const table = createEl("table", { class: "products-grid-table" });
+    const thead = createEl("thead", {}, [
+      createEl("tr", {}, [
+        ...fields.map(field => createEl("th", { style: field.width ? `width:${field.width}` : null }, [field.label])),
+        createEl("th", { class: "actions" }, ["Aktionen"]),
+      ]),
+    ]);
+    const tbody = createEl("tbody");
+
     list.forEach(product => {
-      const header = createEl("div", { class: "product-card-header" }, [
-        createEl("div", { class: "product-card-title" }, [
-          createEl("span", { class: "product-card-alias" }, [product.alias || "—"]),
-          product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
-        ]),
-        createEl("div", { class: "product-card-sku" }, [product.sku || "—"]),
-      ]);
-      const meta = createEl("div", { class: "product-card-meta" }, [
-        createEl("div", {}, ["Supplier: ", product.supplierId || "—"]),
-        createEl("div", {}, ["Letzte PO: ", product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—"]),
-        createEl("div", {}, ["Ø Stückpreis: ", product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—"]),
-        createEl("div", {}, ["POs: ", product.stats?.poCount != null ? String(product.stats.poCount) : "0"]),
-        createEl("div", {}, ["Template: ", product.template ? "vorhanden" : "—"]),
-      ]);
-      const actions = createEl("div", { class: "product-card-actions" }, [
+      const row = createEl("tr");
+      fields.forEach(field => {
+        const cell = createEl("td");
+        const value = pendingEdits.get(product.sku)?.[field.key] ?? getFieldValue(product, field);
+        if (field.type === "checkbox") {
+          const input = createEl("input", {
+            type: "checkbox",
+            checked: Boolean(value),
+            onchange: () => applyChange(input, product, field),
+          });
+          cell.append(input);
+        } else if (field.type === "select") {
+          const select = createEl("select", { onchange: () => applyChange(select, product, field) });
+          const options = field.options || [];
+          const currentValue = String(value ?? "");
+          if (!options.some(option => option.value === currentValue) && currentValue) {
+            select.append(createEl("option", { value: currentValue }, [currentValue]));
+          }
+          options.forEach(option => {
+            select.append(createEl("option", { value: option.value }, [option.label]));
+          });
+          select.value = currentValue;
+          cell.append(select);
+        } else {
+          const input = createEl("input", {
+            value: formatValue(value, field),
+            inputmode: field.type === "number" ? "decimal" : "text",
+            readonly: field.readOnly ? "readonly" : null,
+            oninput: () => applyChange(input, product, field),
+            onblur: () => {
+              if (field.type === "number") {
+                const parsed = parseDeNumber(input.value);
+                input.value = parsed == null ? "" : formatDeNumber(parsed, field.decimals ?? 2);
+              }
+            },
+          });
+          cell.append(input);
+        }
+        const original = normalizeValue(getFieldValue(product, field), field);
+        const current = normalizeValue(value, field);
+        const isDirty = field.type === "number"
+          ? Number(current) !== Number(original)
+          : current !== original;
+        if (isDirty) {
+          cell.classList.add("is-dirty");
+        }
+        row.append(cell);
+      });
+      const actions = createEl("td", { class: "actions" }, [
         createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
         createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
-        createEl("button", {
-          class: "btn tertiary",
-          type: "button",
-          onclick: () => {
-            setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
-            renderProducts(root);
-            document.dispatchEvent(new Event("state:changed"));
-          }
-        }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
-        createEl("button", {
-          class: "btn danger",
-          type: "button",
-          onclick: () => {
-            if (confirm("Produkt wirklich löschen?")) {
-              deleteProductBySku(product.sku);
-              renderProducts(root);
-              document.dispatchEvent(new Event("state:changed"));
-            }
-          }
-        }, ["Löschen"]),
       ]);
-      const card = createEl("div", { class: "product-card" }, [header, meta, actions]);
-      grid.append(card);
+      row.append(actions);
+      updateRowDirty(row);
+      tbody.append(row);
     });
-    return grid;
+
+    table.append(thead, tbody);
+    scroll.append(table);
+    wrapper.append(toolbar, scroll);
+    updateToolbar();
+
+    discardBtn.addEventListener("click", () => {
+      pendingEdits.clear();
+      render();
+    });
+
+    saveBtn.addEventListener("click", async () => {
+      const editsBySku = Array.from(pendingEdits.entries());
+      if (!editsBySku.length) return;
+      const errors = [];
+      await Promise.allSettled(editsBySku.map(([sku, edits]) => {
+        const original = products.find(prod => prod.sku === sku);
+        if (!original) {
+          errors.push(sku);
+          return Promise.resolve();
+        }
+        const hasTemplateEdits = Object.keys(edits).some(key => key.startsWith("template."));
+        const templateFields = hasTemplateEdits ? getTemplateFields(original) : null;
+        const payload = {
+          sku: original.sku,
+          alias: original.alias,
+          supplierId: original.supplierId,
+          status: original.status,
+          tags: Array.isArray(original.tags) ? [...original.tags] : [],
+          template: original.template ? { ...original.template } : null,
+        };
+        Object.entries(edits).forEach(([key, value]) => {
+          if (key.startsWith("template.")) {
+            const fieldKey = key.replace("template.", "");
+            if (!payload.template) {
+              payload.template = { scope: "SKU", name: "Standard (SKU)", fields: {} };
+            }
+            if (!payload.template.fields) {
+              payload.template.fields = { ...templateFields };
+            }
+            payload.template.fields[fieldKey] = value;
+          } else if (key === "tags") {
+            payload.tags = String(value || "")
+              .split(",")
+              .map(tag => tag.trim())
+              .filter(Boolean);
+          } else {
+            payload[key] = value;
+          }
+        });
+        if (hasTemplateEdits && payload.template?.fields && templateFields) {
+          payload.template.fields = { ...templateFields, ...payload.template.fields };
+        }
+        try {
+          upsertProduct(payload);
+        } catch (err) {
+          errors.push(sku);
+        }
+      }));
+      if (errors.length) {
+        showToast(`Fehler bei SKUs: ${errors.join(", ")}`);
+      } else {
+        showToast("Änderungen gespeichert");
+      }
+      pendingEdits.clear();
+      render();
+      document.dispatchEvent(new Event("state:changed"));
+    });
+
+    return wrapper;
   }
 
   function showHistory(product) {
@@ -785,14 +1063,14 @@ function renderProducts(root) {
     const viewToggle = createEl("div", { class: "view-toggle" }, [
       createEl("button", {
         type: "button",
-        class: `btn tertiary${viewMode === "cards" ? " is-active" : ""}`,
-        "aria-pressed": viewMode === "cards",
+        class: `btn tertiary${viewMode === "list" ? " is-active" : ""}`,
+        "aria-pressed": viewMode === "list",
         onclick: () => {
-          viewMode = "cards";
+          viewMode = "list";
           localStorage.setItem("productsView", viewMode);
           render();
         },
-      }, ["Karten"]),
+      }, ["Liste"]),
       createEl("button", {
         type: "button",
         class: `btn tertiary${viewMode === "table" ? " is-active" : ""}`,
@@ -812,7 +1090,7 @@ function renderProducts(root) {
         `${bannerCount} Produkte ohne Alias – bitte ergänzen.`,
       ]));
     }
-    root.append(viewMode === "table" ? renderTable(filtered) : renderCards(filtered));
+    root.append(viewMode === "table" ? renderGrid(filtered) : renderList(filtered));
     if (shouldFocusSearch) {
       search.focus();
       if (cursorPos != null) {
@@ -829,8 +1107,12 @@ export default function mountProducts(root) {
   if (root.__productsCleanup) {
     root.__productsCleanup();
   }
+  root.classList.add("products-page");
   document.addEventListener("state:changed", handler);
-  root.__productsCleanup = () => document.removeEventListener("state:changed", handler);
+  root.__productsCleanup = () => {
+    document.removeEventListener("state:changed", handler);
+    root.classList.remove("products-page");
+  };
   renderProducts(root);
   return { cleanup: root.__productsCleanup };
 }
