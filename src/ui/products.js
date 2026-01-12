@@ -394,6 +394,9 @@ function renderProducts(root) {
   }
 
   function render() {
+    const prevSearch = root.querySelector('input[type="search"]');
+    const shouldFocusSearch = document.activeElement === prevSearch;
+    const cursorPos = shouldFocusSearch ? prevSearch.selectionStart : null;
     root.innerHTML = "";
     const filtered = applyFilter(products, searchTerm);
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
@@ -419,6 +422,12 @@ function renderProducts(root) {
       ]));
     }
     root.append(renderTable(filtered));
+    if (shouldFocusSearch) {
+      search.focus();
+      if (cursorPos != null) {
+        search.setSelectionRange(cursorPos, cursorPos);
+      }
+    }
   }
 
   render();
