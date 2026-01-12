@@ -138,6 +138,9 @@ function ensureGlobalSettings(state) {
     settings.transportLeadTimesDays.rail = Number(settings.transportLeadTimesDays.rail ?? base.rail) || base.rail;
     settings.transportLeadTimesDays.sea = Number(settings.transportLeadTimesDays.sea ?? base.sea) || base.sea;
   }
+  if (settings.fxRate == null || String(settings.fxRate).trim() === "") {
+    settings.fxRate = defaults.settings.fxRate;
+  }
   settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
