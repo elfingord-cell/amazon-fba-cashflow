@@ -12,7 +12,19 @@ function clampNonNegative(value) {
 
 function parseRate(value) {
   if (value == null) return null;
-  const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
+  const raw = String(value).trim().replace(/\s+/g, "");
+  if (!raw) return null;
+  const lastComma = raw.lastIndexOf(",");
+  const lastDot = raw.lastIndexOf(".");
+  const decimalIndex = Math.max(lastComma, lastDot);
+  let cleaned = raw;
+  if (decimalIndex >= 0) {
+    const intPart = raw.slice(0, decimalIndex).replace(/[.,]/g, "");
+    const fracPart = raw.slice(decimalIndex + 1).replace(/[.,]/g, "");
+    cleaned = `${intPart}.${fracPart}`;
+  } else {
+    cleaned = raw.replace(/[.,]/g, "");
+  }
   if (!cleaned) return null;
   const num = Number(cleaned);
   if (!Number.isFinite(num) || num <= 0) return null;

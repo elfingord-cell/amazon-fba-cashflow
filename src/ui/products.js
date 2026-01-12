@@ -1136,6 +1136,7 @@ function renderProducts(root) {
           sku: original.sku,
           alias: original.alias,
           supplierId: original.supplierId,
+          categoryId: original.categoryId ?? null,
           status: original.status,
           tags: Array.isArray(original.tags) ? [...original.tags] : [],
           template: original.template ? { ...original.template } : null,
