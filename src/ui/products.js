@@ -745,38 +745,38 @@ function renderProducts(root) {
     })).filter(option => option.value);
 
     const fields = [
-      { key: "alias", label: "Alias", type: "text", width: "180px" },
-      { key: "sku", label: "SKU", type: "text", width: "140px", readOnly: true },
-      { key: "supplierId", label: "Supplier", type: "select", options: supplierOptions, width: "160px" },
+      { key: "alias", label: "Alias", type: "text", width: "240px", className: "col-alias" },
+      { key: "sku", label: "SKU", type: "text", width: "160px", readOnly: true, className: "col-sku" },
+      { key: "supplierId", label: "Supplier", type: "select", options: supplierOptions, width: "180px", className: "col-supplier" },
       { key: "status", label: "Status", type: "select", options: [
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
-      ], width: "120px" },
-      { key: "tags", label: "Tags", type: "text", width: "200px" },
-      { key: "template.unitPriceUsd", label: "Stückpreis (USD)", type: "number", decimals: 2, width: "150px" },
-      { key: "template.extraPerUnitUsd", label: "Zusatz je Stück (USD)", type: "number", decimals: 2, width: "170px" },
-      { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "170px" },
+      ], width: "110px", className: "col-status" },
+      { key: "tags", label: "Tags", type: "text", width: "280px", className: "col-tags" },
+      { key: "template.unitPriceUsd", label: "Stückpreis (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
+      { key: "template.extraPerUnitUsd", label: "Zusatz je Stück (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
+      { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.transportMode", label: "Transport", type: "select", options: [
         { value: "SEA", label: "SEA" },
         { value: "RAIL", label: "RAIL" },
         { value: "AIR", label: "AIR" },
-      ], width: "130px" },
-      { key: "template.productionDays", label: "Produktionstage", type: "number", decimals: 0, width: "150px" },
-      { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "140px" },
-      { key: "template.freightEur", label: "Fracht (€ / Stück)", type: "number", decimals: 2, width: "170px" },
-      { key: "template.dutyPct", label: "Zoll %", type: "number", decimals: 2, width: "110px" },
-      { key: "template.dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox", width: "160px" },
-      { key: "template.vatImportPct", label: "EUSt %", type: "number", decimals: 2, width: "110px" },
-      { key: "template.vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox", width: "170px" },
-      { key: "template.vatRefundLag", label: "EUSt-Lag", type: "number", decimals: 0, width: "120px" },
-      { key: "template.fxRate", label: "FX-Kurs", type: "number", decimals: 4, width: "140px" },
-      { key: "template.fxFeePct", label: "FX-Gebühr %", type: "number", decimals: 2, width: "140px" },
+      ], width: "130px", className: "col-transport" },
+      { key: "template.productionDays", label: "Produktionstage", type: "number", decimals: 0, width: "120px", className: "col-days" },
+      { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "120px", className: "col-days" },
+      { key: "template.freightEur", label: "Fracht (€ / Stück)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
+      { key: "template.dutyPct", label: "Zoll %", type: "number", decimals: 2, width: "90px", className: "col-short" },
+      { key: "template.dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox", width: "56px", className: "col-check" },
+      { key: "template.vatImportPct", label: "EUSt %", type: "number", decimals: 2, width: "90px", className: "col-short" },
+      { key: "template.vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox", width: "56px", className: "col-check" },
+      { key: "template.vatRefundLag", label: "EUSt-Lag", type: "number", decimals: 0, width: "80px", className: "col-short" },
+      { key: "template.fxRate", label: "FX-Kurs", type: "number", decimals: 4, width: "140px", className: "col-amount" },
+      { key: "template.fxFeePct", label: "FX-Gebühr %", type: "number", decimals: 2, width: "90px", className: "col-short" },
       { key: "template.currency", label: "Currency", type: "select", options: [
         { value: "USD", label: "USD" },
         { value: "EUR", label: "EUR" },
         { value: "CNY", label: "CNY" },
-      ], width: "120px" },
-      { key: "template.ddp", label: "DDP", type: "checkbox", width: "80px" },
+      ], width: "110px", className: "col-currency" },
+      { key: "template.ddp", label: "DDP", type: "checkbox", width: "56px", className: "col-check" },
     ];
 
     function getTemplateFields(product) {
@@ -890,9 +890,14 @@ function renderProducts(root) {
     const wrapper = createEl("div", { class: "products-grid" });
     const scroll = createEl("div", { class: "products-grid-scroll" });
     const table = createEl("table", { class: "products-grid-table" });
+    const colgroup = createEl("colgroup");
+    fields.forEach(field => {
+      colgroup.append(createEl("col", { style: field.width ? `width:${field.width}` : null }));
+    });
+    colgroup.append(createEl("col", { style: "width:180px" }));
     const thead = createEl("thead", {}, [
       createEl("tr", {}, [
-        ...fields.map(field => createEl("th", { style: field.width ? `width:${field.width}` : null }, [field.label])),
+        ...fields.map(field => createEl("th", { class: field.className || "" }, [field.label])),
         createEl("th", { class: "actions" }, ["Aktionen"]),
       ]),
     ]);
@@ -901,19 +906,23 @@ function renderProducts(root) {
     list.forEach(product => {
       const row = createEl("tr");
       fields.forEach(field => {
-        const cell = createEl("td");
+        const cell = createEl("td", { class: field.className || "" });
         const value = pendingEdits.get(product.sku)?.[field.key] ?? getFieldValue(product, field);
         if (field.type === "checkbox") {
           const input = createEl("input", {
             type: "checkbox",
             checked: Boolean(value),
             onchange: () => applyChange(input, product, field),
+            title: field.label,
           });
           cell.append(input);
         } else if (field.type === "select") {
           const select = createEl("select", { onchange: () => applyChange(select, product, field) });
           const options = field.options || [];
           const currentValue = String(value ?? "");
+          if (["supplierId", "status", "template.transportMode", "template.currency"].includes(field.key)) {
+            select.title = currentValue;
+          }
           if (!options.some(option => option.value === currentValue) && currentValue) {
             select.append(createEl("option", { value: currentValue }, [currentValue]));
           }
@@ -927,6 +936,7 @@ function renderProducts(root) {
             value: formatValue(value, field),
             inputmode: field.type === "number" ? "decimal" : "text",
             readonly: field.readOnly ? "readonly" : null,
+            title: ["alias", "sku", "supplierId"].includes(field.key) ? String(value ?? "") : null,
             oninput: () => applyChange(input, product, field),
             onblur: () => {
               if (field.type === "number") {
@@ -956,7 +966,7 @@ function renderProducts(root) {
       tbody.append(row);
     });
 
-    table.append(thead, tbody);
+    table.append(colgroup, thead, tbody);
     scroll.append(table);
     wrapper.append(toolbar, scroll);
     updateToolbar();

@@ -252,12 +252,21 @@ td.num, th.num{text-align:right}
 .products-grid-scroll::-webkit-scrollbar{height:10px;}
 .products-grid-scroll::-webkit-scrollbar-track{background:rgba(15,27,45,0.06); border-radius:999px;}
 .products-grid-scroll::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.25); border-radius:999px;}
-.products-grid-table{width:100%; border-collapse:collapse; min-width:1400px;}
+.products-grid-table{width:100%; border-collapse:collapse; min-width:1600px; table-layout:fixed;}
 .products-grid-table th{position:sticky; top:0; background:#f8fafc; font-size:11px; text-transform:uppercase; letter-spacing:.4px; padding:8px 10px; border-bottom:1px solid rgba(15,27,45,0.1); z-index:1;}
+.products-grid-table th,
+.products-grid-table td{white-space:nowrap; text-overflow:ellipsis; overflow:hidden;}
 .products-grid-table td{padding:6px 8px; border-bottom:1px solid rgba(15,27,45,0.06); font-variant-numeric:tabular-nums;}
 .products-grid-table td.actions{white-space:nowrap;}
 .products-grid-table input,
 .products-grid-table select{width:100%; min-height:32px; border-radius:8px; border:1px solid rgba(15,27,45,0.18); padding:4px 6px; font-size:0.85rem; background:#fff;}
+.products-grid-table td.col-check{text-align:center;}
+.products-grid-table td.col-short,
+.products-grid-table td.col-amount,
+.products-grid-table td.col-days{ text-align:right; }
+.products-grid-table th.col-short,
+.products-grid-table th.col-amount,
+.products-grid-table th.col-days{ text-align:right; }
 .products-grid-table input[readonly]{background:#f1f5f9; color:#6b7280;}
 .products-grid-table td.is-dirty{background:rgba(59,194,167,0.12);}
 .products-grid-table tr.is-dirty td{border-bottom-color:rgba(59,194,167,0.35);}
