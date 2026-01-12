@@ -485,13 +485,15 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         const anchorKey = trigger === 'PROD_DONE' ? 'PROD_DONE' : trigger;
         const baseDate = anchors[anchorKey] || anchors.ORDER_DATE;
         const due = payment.dueDate ? new Date(payment.dueDate) : addDays(baseDate, Number(payment.offsetDays || 0));
-        const amount = Number(payment.amount || 0);
+        const amountRaw = Number(payment.amount || 0);
+        const direction = amountRaw >= 0 ? 'out' : 'in';
+        const amount = Math.abs(amountRaw);
         return {
           label: `${prefix}${payment.label ? ` – ${payment.label}` : ''}`,
           amount,
           due,
           month: toMonthKey(due),
-          direction: 'out',
+          direction,
           type: 'manual',
           anchor: anchorKey,
           lagDays: Number(payment.offsetDays || 0) || 0,

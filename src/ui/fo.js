@@ -99,6 +99,12 @@ function addDays(date, days) {
   return copy;
 }
 
+function addMonthsDate(date, months) {
+  const copy = new Date(date.getTime());
+  copy.setUTCMonth(copy.getUTCMonth() + months);
+  return copy;
+}
+
 function formatCurrency(value, currency) {
   const amount = Number(value || 0);
   if (!Number.isFinite(amount)) return "—";
@@ -180,11 +186,12 @@ function listProductsForSelect(products) {
 
 function resolveDefault(field, context) {
   const { product, supplier, mapping, settings, transportMode, incoterm } = context;
+  const incotermValue = String(incoterm || "").toUpperCase();
   if (field === "supplierId") return product?.supplierId || "";
   if (field === "transportMode") return product?.defaultTransportMode || "SEA";
   if (field === "incoterm") return mapping?.incoterm || product?.defaultIncoterm || supplier?.incotermDefault || "EXW";
-  if (field === "currency") return supplier?.currencyDefault || product?.defaultCurrency || settings.defaultCurrency || "EUR";
-  if (field === "freightCurrency") return product?.freightCurrency || "EUR";
+  if (field === "currency") return "USD";
+  if (field === "freightCurrency") return incotermValue === "DDP" ? "USD" : (product?.freightCurrency || "EUR");
   if (field === "unitPrice") {
     if (mapping?.unitPrice != null) return parseLocaleNumber(mapping.unitPrice);
     if (product?.defaultUnitPrice != null || product?.unitPrice != null) {
@@ -199,10 +206,12 @@ function resolveDefault(field, context) {
     return parseLocaleNumber(settings?.freightDefault ?? 0);
   }
   if (field === "dutyRatePct") {
+    if (incotermValue === "DDP") return 0;
     if (product?.dutyRatePct != null) return parseLocaleNumber(product.dutyRatePct);
     return parseLocaleNumber(settings?.dutyRatePct ?? 0);
   }
   if (field === "eustRatePct") {
+    if (incotermValue === "DDP") return 0;
     if (product?.eustRatePct != null) return parseLocaleNumber(product.eustRatePct);
     return parseLocaleNumber(settings?.eustRatePct ?? 0);
   }
@@ -273,7 +282,7 @@ function buildSchedule(form) {
   };
 }
 
-function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur }) {
+function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
   const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
     ? supplier.paymentTermsDefault
     : defaultPaymentTerms();
@@ -298,6 +307,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
   });
 
   const extraRows = [];
+  const incotermValue = String(incoterm || "").toUpperCase();
   const freightAmount = Number(freight || 0);
   if (freightAmount > 0) {
     extraRows.push({
@@ -315,7 +325,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
   }
 
   const dutyRate = Number(dutyRatePct || 0);
-  if (dutyRate > 0) {
+  if (incotermValue !== "DDP" && dutyRate > 0) {
     const dutyBase = supplierCostEur;
     extraRows.push({
       id: `duty-${Math.random().toString(36).slice(2, 9)}`,
@@ -332,15 +342,16 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
   }
 
   const eustRate = Number(eustRatePct || 0);
-  if (eustRate > 0) {
+  if (incotermValue !== "DDP" && eustRate > 0) {
     const freightEur = convertToEur(freightAmount, freightCurrency, fxRate);
     const dutyAmount = dutyRate > 0 ? supplierCostEur * (dutyRate / 100) : 0;
     const base = supplierCostEur + dutyAmount + freightEur;
+    const eustAmount = base * (eustRate / 100);
     extraRows.push({
       id: `eust-${Math.random().toString(36).slice(2, 9)}`,
       label: "EUSt",
       percent: eustRate,
-      amount: base * (eustRate / 100),
+      amount: eustAmount,
       currency: "EUR",
       triggerEvent: "ETA",
       offsetDays: 0,
@@ -348,36 +359,58 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       isOverridden: false,
       category: "eust",
     });
+    extraRows.push({
+      id: `eust-refund-${Math.random().toString(36).slice(2, 9)}`,
+      label: "EUSt Erstattung",
+      percent: eustRate,
+      amount: -eustAmount,
+      currency: "EUR",
+      triggerEvent: "ETA",
+      offsetDays: 0,
+      offsetMonths: 2,
+      dueDate: schedule.etaDate ? toISO(addMonthsDate(parseISODate(schedule.etaDate), 2)) : null,
+      isOverridden: false,
+      category: "eust_refund",
+    });
   }
 
   return [...supplierRows, ...extraRows];
 }
 
 function recomputePayments(payments, values) {
-  const { baseValue, schedule, currency, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur } = values;
+  const { baseValue, schedule, currency, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm } = values;
   const dutyRate = Number(dutyRatePct || 0);
   const eustRate = Number(eustRatePct || 0);
   const freightAmount = Number(freight || 0);
   const freightEur = convertToEur(freightAmount, freightCurrency, fxRate);
   const dutyAmount = dutyRate > 0 ? supplierCostEur * (dutyRate / 100) : 0;
   const eustBase = supplierCostEur + dutyAmount + freightEur;
+  const incotermValue = String(incoterm || "").toUpperCase();
   return payments.map(payment => {
     const triggerEvent = PAYMENT_EVENTS.includes(payment.triggerEvent) ? payment.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(payment.offsetDays || 0);
+    const offsetMonths = Number(payment.offsetMonths || 0);
     let amount = Number(payment.amount || 0);
     if (payment.category === "supplier") {
       amount = baseValue * (Number(payment.percent || 0) / 100);
     } else if (payment.category === "freight") {
       amount = freightAmount;
     } else if (payment.category === "duty") {
-      amount = dutyAmount;
+      amount = incotermValue === "DDP" ? 0 : dutyAmount;
     } else if (payment.category === "eust") {
+      amount = incotermValue === "DDP" ? 0 : (eustRate > 0 ? eustBase * (eustRate / 100) : 0);
+    } else if (payment.category === "eust_refund") {
       amount = eustRate > 0 ? eustBase * (eustRate / 100) : 0;
+      amount = -amount;
     }
     let dueDate = payment.dueDate;
     if (!payment.isOverridden) {
       const baseDate = schedule[triggerEvent] ? parseISODate(schedule[triggerEvent]) : null;
-      dueDate = baseDate ? toISO(addDays(baseDate, offsetDays)) : null;
+      let nextDate = baseDate ? addDays(baseDate, offsetDays) : null;
+      if (nextDate && offsetMonths) {
+        nextDate = addMonthsDate(nextDate, offsetMonths);
+      }
+      dueDate = nextDate ? toISO(nextDate) : null;
     }
     const nextCurrency = payment.category === "supplier"
       ? (currency || "EUR")
@@ -420,7 +453,7 @@ function normalizeFoRecord(form, schedule, payments) {
     incoterm: form.incoterm,
     unitPrice: parseLocaleNumber(form.unitPrice) || 0,
     unitPriceIsOverridden: Boolean(form.unitPriceIsOverridden),
-    currency: form.currency || "EUR",
+    currency: "USD",
     freight: parseLocaleNumber(form.freight) || 0,
     freightCurrency: form.freightCurrency || "EUR",
     dutyRatePct: parseLocaleNumber(form.dutyRatePct) || 0,
@@ -548,7 +581,7 @@ export default function render(root) {
           incoterm: "EXW",
           unitPrice: "",
           unitPriceIsOverridden: false,
-          currency: state.settings?.defaultCurrency || "EUR",
+          currency: "USD",
           freight: "",
           freightCurrency: "EUR",
           dutyRatePct: state.settings?.dutyRatePct ?? 0,
@@ -566,6 +599,7 @@ export default function render(root) {
     if (baseForm.dutyRatePct == null) baseForm.dutyRatePct = state.settings?.dutyRatePct ?? 0;
     if (baseForm.eustRatePct == null) baseForm.eustRatePct = state.settings?.eustRatePct ?? 0;
     if (baseForm.fxRate == null) baseForm.fxRate = state.settings?.fxRate ?? "";
+    if (!baseForm.currency) baseForm.currency = "USD";
     if (Array.isArray(baseForm.payments)) {
       baseForm.payments = baseForm.payments.map(payment => ({
         ...payment,
@@ -618,7 +652,7 @@ export default function render(root) {
       if (!overrides.transportMode) applySuggestedField("transportMode", suggested.transportMode);
       if (!overrides.incoterm) applySuggestedField("incoterm", suggested.incoterm);
       if (!baseForm.unitPriceIsOverridden) applySuggestedField("unitPrice", suggested.unitPrice ?? "");
-      if (!overrides.currency) applySuggestedField("currency", suggested.currency);
+      if (!overrides.currency) applySuggestedField("currency", "USD");
       if (!overrides.freight) applySuggestedField("freight", suggested.freight ?? "");
       if (!overrides.freightCurrency) applySuggestedField("freightCurrency", suggested.freightCurrency || "EUR");
       if (!overrides.dutyRatePct) applySuggestedField("dutyRatePct", suggested.dutyRatePct ?? "");
@@ -633,6 +667,10 @@ export default function render(root) {
         const baseValue = computeBaseValue();
         const supplier = state.suppliers.find(item => item.id === baseForm.supplierId) || null;
         const costs = buildCostValues(baseForm);
+        if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
+          costs.dutyRatePct = 0;
+          costs.eustRatePct = 0;
+        }
         baseForm.payments = buildSuggestedPayments({
           supplier,
           baseValue,
@@ -644,6 +682,7 @@ export default function render(root) {
           eustRatePct: costs.eustRatePct,
           fxRate: costs.fxRate,
           supplierCostEur: costs.supplierCostEur,
+          incoterm: baseForm.incoterm,
         });
       }
     }
@@ -657,7 +696,7 @@ export default function render(root) {
       } else {
         $("#suggested-unitPrice", content).textContent = "Suggested: —";
       }
-      $("#suggested-currency", content).textContent = `Suggested: ${suggested.currency}`;
+      $("#suggested-currency", content).textContent = "Suggested: USD";
       $("#suggested-freight", content).textContent = `Suggested: ${suggested.freight != null ? formatNumber(suggested.freight) : "—"}`;
       $("#suggested-freightCurrency", content).textContent = `Suggested: ${suggested.freightCurrency || "EUR"}`;
       $("#suggested-dutyRatePct", content).textContent = `Suggested: ${suggested.dutyRatePct != null ? formatPercent(suggested.dutyRatePct) : "—"} %`;
@@ -685,6 +724,10 @@ export default function render(root) {
       const schedule = buildSchedule(baseForm);
       const baseValue = computeBaseValue();
       const values = buildCostValues(baseForm);
+      if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
+        values.dutyRatePct = 0;
+        values.eustRatePct = 0;
+      }
       baseForm.payments = recomputePayments(baseForm.payments, {
         baseValue,
         schedule,
@@ -695,6 +738,7 @@ export default function render(root) {
         eustRatePct: values.eustRatePct,
         fxRate: values.fxRate,
         supplierCostEur: values.supplierCostEur,
+        incoterm: baseForm.incoterm,
       });
       renderPaymentsTable();
       updatePaymentTotals();
@@ -739,7 +783,7 @@ export default function render(root) {
       const units = Number(form.units || 0);
       const supplierCost = units * unitPrice;
       const fxRate = parseLocaleNumber(form.fxRate) || 0;
-      const supplierCostEur = convertToEur(supplierCost, form.currency, fxRate);
+    const supplierCostEur = convertToEur(supplierCost, "USD", fxRate);
       const freight = parseLocaleNumber(form.freight) || 0;
       const freightCurrency = form.freightCurrency || "EUR";
       const freightEur = convertToEur(freight, freightCurrency, fxRate);
@@ -764,7 +808,7 @@ export default function render(root) {
     }
 
     function updateCostSummary(values) {
-      $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, baseForm.currency);
+      $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, "USD");
       $("#fo-landed-cost", content).textContent = formatCurrency(values.landedCostEur, "EUR");
     }
 
@@ -894,6 +938,10 @@ export default function render(root) {
                 const schedule = buildSchedule(baseForm);
                 const baseValue = computeBaseValue();
                 const costs = buildCostValues(baseForm);
+                if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
+                  costs.dutyRatePct = 0;
+                  costs.eustRatePct = 0;
+                }
                 const suggestedPayments = buildSuggestedPayments({
                   supplier,
                   baseValue,
@@ -905,6 +953,7 @@ export default function render(root) {
                   eustRatePct: costs.eustRatePct,
                   fxRate: costs.fxRate,
                   supplierCostEur: costs.supplierCostEur,
+                  incoterm: baseForm.incoterm,
                 });
                 const suggestedRow = suggestedPayments[idx];
                 if (suggestedRow) {
@@ -961,6 +1010,7 @@ export default function render(root) {
                 select.value = baseForm.supplierId || "";
                 return select;
               })(),
+              el("small", { class: "form-error", id: "fo-supplier-error" }, []),
             ]),
           ]),
           el("div", { class: "grid two" }, [
@@ -991,7 +1041,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Unit Price",
+              "Unit Price (USD)",
               el("input", { type: "text", inputmode: "decimal", id: "fo-unitPrice", value: baseForm.unitPrice ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-unitPrice" }, []),
@@ -1002,13 +1052,13 @@ export default function render(root) {
             el("label", {}, [
               "Currency",
               (() => {
-                const select = el("select", { id: "fo-currency" });
-                CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
-                select.value = baseForm.currency || "EUR";
+                const select = el("select", { id: "fo-currency", disabled: "true" });
+                select.append(el("option", { value: "USD" }, ["USD"]));
+                select.value = "USD";
                 return select;
               })(),
               el("div", { class: "suggested-row" }, [
-                el("span", { class: "muted", id: "suggested-currency" }, []),
+                el("span", { class: "muted", id: "suggested-currency" }, ["USD"]),
                 el("button", { class: "btn ghost", type: "button", id: "reset-currency" }, ["Reset"]),
               ]),
             ]),
@@ -1173,6 +1223,7 @@ export default function render(root) {
       const unitsError = $("#fo-units-error", content);
       const targetError = $("#fo-target-error", content);
       const productError = $("#fo-product-error", content);
+      const supplierError = $("#fo-supplier-error", content);
       if (unitPriceError) {
         unitPriceError.textContent = unitPrice > 0 ? "" : "Unit Price ist erforderlich.";
       }
@@ -1184,6 +1235,9 @@ export default function render(root) {
       }
       if (productError) {
         productError.textContent = hasProduct ? "" : "Produkt fehlt in der Datenbank.";
+      }
+      if (supplierError) {
+        supplierError.textContent = supplierId ? "" : "Supplier ist erforderlich.";
       }
       saveBtn.disabled = !valid;
       $("#fo-save-error", content).textContent = valid ? "" : "Bitte fehlende Felder korrigieren.";
@@ -1314,6 +1368,7 @@ export default function render(root) {
 
     $("#fo-incoterm", content).addEventListener("change", (e) => {
       setFieldOverride("incoterm", e.target.value);
+      updateSuggestedFields();
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -1326,7 +1381,7 @@ export default function render(root) {
     });
 
     $("#fo-currency", content).addEventListener("change", (e) => {
-      setFieldOverride("currency", e.target.value.trim() || "EUR");
+      setFieldOverride("currency", "USD");
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -1396,7 +1451,7 @@ export default function render(root) {
       scheduleRecompute();
     });
     $("#reset-currency", content).addEventListener("click", () => {
-      applySuggestedField("currency", suggested.currency);
+      applySuggestedField("currency", "USD");
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -1491,6 +1546,10 @@ export default function render(root) {
       const baseValue = computeBaseValue();
       const supplier = state.suppliers.find(item => item.id === baseForm.supplierId) || null;
       const costs = buildCostValues(baseForm);
+      if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
+        costs.dutyRatePct = 0;
+        costs.eustRatePct = 0;
+      }
       baseForm.payments = buildSuggestedPayments({
         supplier,
         baseValue,
@@ -1502,6 +1561,7 @@ export default function render(root) {
         eustRatePct: costs.eustRatePct,
         fxRate: costs.fxRate,
         supplierCostEur: costs.supplierCostEur,
+        incoterm: baseForm.incoterm,
       });
     }
 
