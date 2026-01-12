@@ -318,6 +318,35 @@ function buildSchedule(form) {
   };
 }
 
+function buildCostValues(form) {
+  const unitPrice = parseLocaleNumber(form.unitPrice) || 0;
+  const units = Number(form.units || 0);
+  const supplierCost = units * unitPrice;
+  const fxRate = parseLocaleNumber(form.fxRate) || 0;
+  const supplierCostEur = convertToEur(supplierCost, "USD", fxRate);
+  const freight = parseLocaleNumber(form.freight) || 0;
+  const freightCurrency = form.freightCurrency || "EUR";
+  const freightEur = convertToEur(freight, freightCurrency, fxRate);
+  const dutyRatePct = parseLocaleNumber(form.dutyRatePct) || 0;
+  const dutyAmount = dutyRatePct > 0 ? supplierCostEur * (dutyRatePct / 100) : 0;
+  const eustRatePct = parseLocaleNumber(form.eustRatePct) || 0;
+  const eustAmount = eustRatePct > 0 ? (supplierCostEur + dutyAmount + freightEur) * (eustRatePct / 100) : 0;
+  const landedCostEur = supplierCostEur + dutyAmount + freightEur + eustAmount;
+  return {
+    unitPrice,
+    units,
+    supplierCost,
+    supplierCostEur,
+    freight,
+    freightCurrency,
+    freightEur,
+    dutyRatePct,
+    eustRatePct,
+    fxRate,
+    landedCostEur,
+  };
+}
+
 function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
   const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
     ? supplier.paymentTermsDefault
@@ -928,35 +957,6 @@ export default function render(root) {
         info.textContent = `Summe: ${total.toFixed(2)}% (muss 100% sein)`;
         info.style.color = "#c23636";
       }
-    }
-
-    function buildCostValues(form) {
-      const unitPrice = parseLocaleNumber(form.unitPrice) || 0;
-      const units = Number(form.units || 0);
-      const supplierCost = units * unitPrice;
-      const fxRate = parseLocaleNumber(form.fxRate) || 0;
-    const supplierCostEur = convertToEur(supplierCost, "USD", fxRate);
-      const freight = parseLocaleNumber(form.freight) || 0;
-      const freightCurrency = form.freightCurrency || "EUR";
-      const freightEur = convertToEur(freight, freightCurrency, fxRate);
-      const dutyRatePct = parseLocaleNumber(form.dutyRatePct) || 0;
-      const dutyAmount = dutyRatePct > 0 ? supplierCostEur * (dutyRatePct / 100) : 0;
-      const eustRatePct = parseLocaleNumber(form.eustRatePct) || 0;
-      const eustAmount = eustRatePct > 0 ? (supplierCostEur + dutyAmount + freightEur) * (eustRatePct / 100) : 0;
-      const landedCostEur = supplierCostEur + dutyAmount + freightEur + eustAmount;
-      return {
-        unitPrice,
-        units,
-        supplierCost,
-        supplierCostEur,
-        freight,
-        freightCurrency,
-        freightEur,
-        dutyRatePct,
-        eustRatePct,
-        fxRate,
-        landedCostEur,
-      };
     }
 
     function updateCostSummary(values) {
