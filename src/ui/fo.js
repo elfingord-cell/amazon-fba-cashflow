@@ -32,6 +32,12 @@ const TRANSPORT_MODES = ["SEA", "RAIL", "AIR"];
 const INCOTERMS = ["EXW", "DDP"];
 const PAYMENT_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
+const STATUS_LABELS = {
+  DRAFT: "Draft",
+  PLANNED: "Planned",
+  CONVERTED: "Converted",
+  CANCELLED: "Cancelled",
+};
 
 function defaultPaymentTerms() {
   return [
@@ -145,6 +151,36 @@ function formatPaymentsSummary(payments = []) {
     .join(", ");
   const rest = payments.length > 2 ? ` +${payments.length - 2}` : "";
   return `${payments.length} payments: ${preview}${rest}`;
+}
+
+function paymentSummaryTotal(payments = [], fxRate = 0) {
+  const total = payments.reduce((sum, payment) => {
+    const amount = Number(payment.amount || 0);
+    if (!Number.isFinite(amount)) return sum;
+    const currency = payment.currency || "EUR";
+    const amountEur = convertToEur(amount, currency, fxRate);
+    return sum + amountEur;
+  }, 0);
+  return total;
+}
+
+function formatPaymentTooltip(payments = [], fxRate = 0) {
+  if (!payments.length) return "";
+  return payments
+    .map(payment => {
+      const amount = Number(payment.amount || 0);
+      if (!Number.isFinite(amount)) return null;
+      const currency = payment.currency || "EUR";
+      const amountEur = convertToEur(amount, currency, fxRate);
+      return `${payment.label || "Payment"}: ${formatCurrency(amount, currency)} (${formatCurrency(amountEur, "EUR")})`;
+    })
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function mapPaymentAnchor(trigger) {
+  if (trigger === "PRODUCTION_END") return "PROD_DONE";
+  return trigger || "ORDER_DATE";
 }
 
 function findProductSupplier(state, sku, supplierId) {
@@ -469,6 +505,8 @@ function normalizeFoRecord(form, schedule, payments) {
     deliveryDate: schedule.deliveryDate,
     payments,
     status: form.status || "DRAFT",
+    convertedPoId: form.convertedPoId || null,
+    convertedPoNo: form.convertedPoNo || null,
     createdAt: form.createdAt || now,
     updatedAt: now,
   };
@@ -485,21 +523,32 @@ export default function render(root) {
       <h2>Forecast Orders (FO)</h2>
       <div class="table-card-header">
         <span class="muted">Planung neuer Bestände</span>
-        <button class="btn primary" id="fo-add">Create FO</button>
+        <div class="fo-toolbar">
+          <input type="text" id="fo-search" placeholder="Alias oder SKU suchen" />
+          <select id="fo-status-filter">
+            <option value="ALL">Status: Alle</option>
+            <option value="DRAFT">Draft</option>
+            <option value="PLANNED">Planned</option>
+            <option value="CONVERTED">Converted</option>
+            <option value="CANCELLED">Cancelled</option>
+          </select>
+          <button class="btn primary" id="fo-add">Create FO</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
               <th>FO ID</th>
-              <th>SKU</th>
+              <th>Produkt</th>
               <th>Supplier</th>
               <th class="num">Units</th>
               <th>Target Delivery</th>
-              <th>Transport</th>
               <th>Order Date</th>
-              <th class="num">Total Value</th>
+              <th>ETD / ETA</th>
+              <th class="num">Total Value (EUR)</th>
               <th>Payments</th>
+              <th>Status</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -510,41 +559,124 @@ export default function render(root) {
   `;
 
   const rowsEl = $("#fo-rows", root);
+  const searchInput = $("#fo-search", root);
+  const statusFilter = $("#fo-status-filter", root);
+
+  function buildPoFromFo(fo) {
+    const poId = `po-${Math.random().toString(36).slice(2, 9)}`;
+    const poNo = `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
+    const fxRate = parseLocaleNumber(fo.fxRate) || 0;
+    const freightEur = convertToEur(parseLocaleNumber(fo.freight) || 0, fo.freightCurrency, fxRate);
+    const milestones = (fo.payments || [])
+      .filter(payment => payment.category === "supplier")
+      .map(payment => ({
+        id: payment.id || `ms-${Math.random().toString(36).slice(2, 9)}`,
+        label: payment.label || "Milestone",
+        percent: Number(payment.percent || 0),
+        anchor: mapPaymentAnchor(payment.triggerEvent),
+        lagDays: Number(payment.offsetDays || 0),
+      }));
+    return {
+      id: poId,
+      poNo,
+      sku: fo.sku,
+      supplierId: fo.supplierId,
+      units: Number(fo.units || 0),
+      unitCostUsd: formatNumber(fo.unitPrice || 0),
+      unitExtraUsd: "0,00",
+      extraFlatUsd: "0,00",
+      orderDate: fo.orderDate || null,
+      prodDays: Number(fo.productionLeadTimeDays || 0),
+      transitDays: Number(fo.logisticsLeadTimeDays || 0),
+      transport: fo.transportMode || "SEA",
+      freightEur: formatNumber(freightEur),
+      dutyRatePct: formatPercent(fo.dutyRatePct || 0),
+      eustRatePct: formatPercent(fo.eustRatePct || 0),
+      fxOverride: formatNumber(fxRate || 0),
+      ddp: String(fo.incoterm || "").toUpperCase() === "DDP",
+      milestones,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
 
   function renderRows() {
-    if (!state.fos.length) {
-      rowsEl.innerHTML = `<tr><td colspan="10" class="muted">Keine Forecast Orders vorhanden.</td></tr>`;
+    const products = getProductsSnapshot();
+    const searchValue = ($("#fo-search", root)?.value || "").trim().toLowerCase();
+    const statusFilter = $("#fo-status-filter", root)?.value || "ALL";
+    const rows = state.fos
+      .slice()
+      .filter(fo => {
+        if (statusFilter !== "ALL" && String(fo.status || "DRAFT").toUpperCase() !== statusFilter) return false;
+        if (!searchValue) return true;
+        const product = getProductBySku(products, fo.sku);
+        const alias = String(product?.alias || "").toLowerCase();
+        const sku = String(fo.sku || "").toLowerCase();
+        return alias.includes(searchValue) || sku.includes(searchValue);
+      })
+      .sort((a, b) => (a.targetDeliveryDate || "").localeCompare(b.targetDeliveryDate || ""));
+
+    if (!rows.length) {
+      rowsEl.innerHTML = `<tr><td colspan="11" class="muted">Keine Forecast Orders vorhanden.</td></tr>`;
       return;
     }
-    rowsEl.innerHTML = state.fos
-      .slice()
-      .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))
+
+    rowsEl.innerHTML = rows
       .map(fo => {
         const supplier = state.suppliers.find(item => item.id === fo.supplierId);
-        const total = Number(fo.units || 0) * Number(fo.unitPrice || 0);
+        const product = getProductBySku(products, fo.sku);
+        const alias = product?.alias || fo.sku || "—";
         const skuLabel = fo.sku || "—";
         const supplierLabel = supplier?.name || "—";
-        const transportLabel = `${fo.transportMode || "SEA"} / ${fo.incoterm || "EXW"}`;
+        const schedule = buildSchedule(fo);
+        const costValues = buildCostValues(fo);
+        const paymentsSummary = formatPaymentsSummary(fo.payments);
+        const paymentsTotal = paymentSummaryTotal(fo.payments, fo.fxRate);
+        const paymentsTooltip = formatPaymentTooltip(fo.payments, fo.fxRate);
+        const status = String(fo.status || "DRAFT").toUpperCase();
+        const statusLabel = STATUS_LABELS[status] || status;
+        const statusClass = `badge${status === "CONVERTED" ? " muted" : ""}`;
         return `
           <tr data-id="${fo.id}">
             <td>${shortId(fo.id)}</td>
-            <td><button class="btn ghost fo-link" data-action="sku">${skuLabel}</button></td>
+            <td>
+              <div class="fo-product-cell">
+                <strong>${alias}</strong>
+                <small class="muted">${skuLabel}</small>
+              </div>
+            </td>
             <td><button class="btn ghost fo-link" data-action="supplier">${supplierLabel}</button></td>
             <td class="num">${Number(fo.units || 0).toLocaleString("de-DE")}</td>
             <td>${formatDate(fo.targetDeliveryDate)}</td>
-            <td>${transportLabel}</td>
             <td>${formatDate(fo.orderDate)}</td>
-            <td class="num">${formatCurrency(total, fo.currency)}</td>
-            <td>${formatPaymentsSummary(fo.payments)}</td>
+            <td>
+              <div class="fo-date-stack">
+                <span>ETD ${formatDate(fo.etdDate || schedule.etdDate)}</span>
+                <span class="muted">ETA ${formatDate(fo.etaDate || schedule.etaDate)}</span>
+              </div>
+            </td>
+            <td class="num">${formatCurrency(costValues.landedCostEur, "EUR")}</td>
+            <td title="${paymentsTooltip}">
+              ${paymentsSummary}<br>
+              <span class="muted">${formatCurrency(paymentsTotal, "EUR")}</span>
+            </td>
+            <td><span class="${statusClass}">${statusLabel}</span></td>
             <td>
               <button class="btn" data-action="edit">View/Edit</button>
-              <button class="btn" data-action="duplicate">Duplicate</button>
-              <button class="btn danger" data-action="delete">Delete</button>
+              <button class="btn secondary" data-action="convert"${status === "CONVERTED" ? " disabled" : ""}>Convert to PO</button>
+              <button class="btn danger" data-action="delete"${status === "CONVERTED" ? " disabled" : ""}>Delete</button>
             </td>
           </tr>
         `;
       })
       .join("");
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener("input", renderRows);
+  }
+  if (statusFilter) {
+    statusFilter.addEventListener("change", renderRows);
   }
 
   function openInfoModal(title, lines = [], actionLabel) {
@@ -569,6 +701,7 @@ export default function render(root) {
     const products = getProductsSnapshot();
     const productOptions = listProductsForSelect(products);
     const isExisting = Boolean(existing);
+    const isConverted = String(existing?.status || "").toUpperCase() === "CONVERTED";
     const baseForm = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
@@ -662,6 +795,7 @@ export default function render(root) {
       if (!overrides.logisticsLeadTimeDays) applySuggestedField("logisticsLeadTimeDays", suggested.logisticsLeadTimeDays);
       if (!overrides.bufferDays) applySuggestedField("bufferDays", suggested.bufferDays);
       updateSuggestedLabels();
+      updateIncotermState();
       if (!paymentsDirty && baseForm.supplierId && baseForm.supplierId !== previousSupplier) {
         const schedule = buildSchedule(baseForm);
         const baseValue = computeBaseValue();
@@ -705,6 +839,24 @@ export default function render(root) {
       $("#suggested-productionLeadTimeDays", content).textContent = `Suggested: ${suggested.productionLeadTimeDays}`;
       $("#suggested-logisticsLeadTimeDays", content).textContent = `Suggested: ${suggested.logisticsLeadTimeDays}`;
       $("#suggested-bufferDays", content).textContent = `Suggested: ${suggested.bufferDays}`;
+    }
+
+    function updateIncotermState() {
+      const isDdp = String(baseForm.incoterm || "").toUpperCase() === "DDP";
+      const dutyInput = $("#fo-dutyRatePct", content);
+      const eustInput = $("#fo-eustRatePct", content);
+      const freightCurrencySelect = $("#fo-freightCurrency", content);
+      if (isDdp) {
+        baseForm.dutyRatePct = 0;
+        baseForm.eustRatePct = 0;
+        baseForm.freightCurrency = "USD";
+        if (dutyInput) dutyInput.value = formatPercent(0);
+        if (eustInput) eustInput.value = formatPercent(0);
+        if (freightCurrencySelect) freightCurrencySelect.value = "USD";
+      }
+      if (dutyInput) dutyInput.disabled = isDdp;
+      if (eustInput) eustInput.disabled = isDdp;
+      if (freightCurrencySelect) freightCurrencySelect.disabled = isDdp;
     }
 
     function updateProductBanner() {
@@ -970,6 +1122,12 @@ export default function render(root) {
     }
 
     const content = el("div", { class: "fo-modal" }, [
+      isConverted
+        ? el("div", { class: "banner info fo-converted-banner" }, [
+          el("strong", {}, ["Converted to PO."]),
+          el("span", { class: "muted" }, [` PO: ${baseForm.convertedPoNo || baseForm.convertedPoId || "—"}`]),
+        ])
+        : null,
       el("div", { class: "grid two" }, [
         el("section", { class: "card" }, [
           el("h3", {}, ["Inputs"]),
@@ -1202,6 +1360,12 @@ export default function render(root) {
     const overlay = openModal(isExisting ? "FO bearbeiten" : "FO anlegen", content, [cancelBtn, saveBtn]);
 
     cancelBtn.addEventListener("click", () => overlay.remove());
+    if (isConverted) {
+      saveBtn.disabled = true;
+      content.querySelectorAll("input, select, textarea, button.btn.secondary, button.btn.ghost").forEach((el) => {
+        if (el !== cancelBtn) el.setAttribute("disabled", "true");
+      });
+    }
 
     function setFieldOverride(field, value) {
       baseForm[field] = value;
@@ -1370,6 +1534,7 @@ export default function render(root) {
       setFieldOverride("incoterm", e.target.value);
       updateSuggestedFields();
       updateSuggestedLabels();
+      updateIncotermState();
       scheduleRecompute();
     });
 
@@ -1530,6 +1695,11 @@ export default function render(root) {
     saveBtn.addEventListener("click", () => {
       validateForm();
       if (saveBtn.disabled) return;
+      if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
+        baseForm.dutyRatePct = 0;
+        baseForm.eustRatePct = 0;
+        baseForm.freightCurrency = "USD";
+      }
       const schedule = buildSchedule(baseForm);
       const normalized = normalizeFoRecord(baseForm, schedule, baseForm.payments);
       const existingIndex = state.fos.findIndex(item => item.id === normalized.id);
@@ -1582,33 +1752,31 @@ export default function render(root) {
     const action = ev.target.closest("button")?.dataset?.action;
     if (action === "edit") {
       openFoModal(fo);
-    } else if (action === "duplicate") {
-      const copy = JSON.parse(JSON.stringify(fo));
-      copy.id = `fo-${Math.random().toString(36).slice(2, 9)}`;
-      copy.createdAt = new Date().toISOString();
-      copy.updatedAt = copy.createdAt;
-      copy.status = "DRAFT";
-      state.fos.push(copy);
+    } else if (action === "convert") {
+      if (String(fo.status || "").toUpperCase() === "CONVERTED") return;
+      const confirmed = window.confirm("PO wird aus FO erzeugt. FO bleibt als Referenz bestehen und wird auf Converted gesetzt. Fortfahren?");
+      if (!confirmed) return;
+      const po = buildPoFromFo(fo);
+      if (!Array.isArray(state.pos)) state.pos = [];
+      state.pos.push(po);
+      fo.status = "CONVERTED";
+      fo.convertedPoId = po.id;
+      fo.convertedPoNo = po.poNo;
+      fo.updatedAt = new Date().toISOString();
       saveState(state);
       renderRows();
-      openFoModal(copy);
+      const openPo = window.confirm("PO created. Open PO?");
+      if (openPo) location.hash = "#po";
     } else if (action === "delete") {
+      if (String(fo.status || "").toUpperCase() === "CONVERTED") {
+        window.alert("Converted FOs können nicht gelöscht werden.");
+        return;
+      }
       const confirmed = window.confirm("Forecast Order wirklich löschen?");
       if (!confirmed) return;
       state.fos = state.fos.filter(item => item.id !== id);
       saveState(state);
       renderRows();
-    } else if (action === "sku") {
-      const product = (getProductsSnapshot() || []).find(prod => String(prod.sku || "").trim().toLowerCase() === String(fo.sku || "").trim().toLowerCase());
-      if (product) {
-        openInfoModal("Produktdetails", [
-          `SKU: ${product.sku}`,
-          `Name: ${product.alias || "—"}`,
-          `Status: ${product.status || "—"}`,
-        ], "produkte");
-      } else {
-        openInfoModal("Produktdetails", ["SKU ist nicht in der Produktdatenbank vorhanden."], "produkte");
-      }
     } else if (action === "supplier") {
       const supplier = state.suppliers.find(item => item.id === fo.supplierId);
       if (supplier) {

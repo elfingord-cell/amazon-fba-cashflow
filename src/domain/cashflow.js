@@ -907,6 +907,7 @@ export function computeSeries(state) {
 
   // FO-Events (Milestones & Importkosten)
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
+    if (String(fo?.status || "").toUpperCase() === "CONVERTED") return;
     expandOrderEvents(fo, settingsNorm, 'FO', 'foNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
       const kind = ev.type === 'manual' ? 'fo' : (ev.type === 'vat_refund' ? 'fo-refund' : 'fo-import');

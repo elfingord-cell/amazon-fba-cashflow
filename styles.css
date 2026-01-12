@@ -107,6 +107,12 @@ td.num, th.num{text-align:right}
 .fo-modal .suggested-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; font-size:11px;}
 .fo-modal-frame{width:min(1200px, 96vw);}
 .fo-modal .card{width:100%;}
+.fo-toolbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+.fo-toolbar input{min-width:220px; height:40px;}
+.fo-toolbar select{min-width:180px; height:40px;}
+.fo-product-cell{display:flex; flex-direction:column; gap:2px;}
+.fo-date-stack{display:flex; flex-direction:column; gap:2px;}
+.fo-converted-banner{margin-bottom:12px;}
 .fo-date-list{display:flex; flex-direction:column; gap:10px;}
 .fo-date-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border-radius:10px; background:#f8fafc;}
 .fo-payments-footer{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;}
