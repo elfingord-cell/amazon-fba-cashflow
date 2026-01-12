@@ -178,6 +178,17 @@ export function render(root) {
       window.alert("Supplier nicht gefunden.");
       return;
     }
+    const productDefaults = (skuValue) => {
+      const key = String(skuValue || "").trim().toLowerCase();
+      const product = productBySku.get(key);
+      const fields = product?.template?.fields || product?.template || {};
+      return {
+        unitPrice: fields.unitPriceUsd,
+        currency: fields.currency,
+        productionLeadTimeDays: fields.productionDays,
+      };
+    };
+    const presetDefaults = productDefaults(presetSku);
     const base = mapping
       ? JSON.parse(JSON.stringify(mapping))
       : {
@@ -187,9 +198,9 @@ export function render(root) {
           isPreferred: false,
           isActive: true,
           supplierSku: "",
-          unitPrice: "",
-          currency: supplier.currencyDefault || "USD",
-          productionLeadTimeDays: supplier.productionLeadTimeDaysDefault ?? 0,
+          unitPrice: presetDefaults.unitPrice ?? "",
+          currency: presetDefaults.currency || supplier.currencyDefault || "USD",
+          productionLeadTimeDays: presetDefaults.productionLeadTimeDays ?? supplier.productionLeadTimeDaysDefault ?? 0,
           incoterm: supplier.incotermDefault || "EXW",
           paymentTermsTemplate: null,
           minOrderQty: "",
@@ -375,6 +386,24 @@ export function render(root) {
     const saveBtn = el("button", { class: "btn primary", type: "button" }, ["Speichern"]);
     const cancelBtn = el("button", { class: "btn", type: "button" }, ["Abbrechen"]);
     const overlay = buildModal(mapping ? "SKU Mapping bearbeiten" : "SKU Mapping hinzufügen", content, [cancelBtn, saveBtn]);
+
+    productSelect.addEventListener("change", (event) => {
+      const skuValue = event.target.value;
+      if (!skuValue) return;
+      const defaults = productDefaults(skuValue);
+      const unitInput = $("#mapping-unit-price", content);
+      const currencySelect = $("#mapping-currency", content);
+      const leadInput = $("#mapping-lead-time", content);
+      if (unitInput && !unitInput.value && defaults.unitPrice != null) {
+        unitInput.value = formatNumber(defaults.unitPrice);
+      }
+      if (currencySelect && defaults.currency) {
+        currencySelect.value = defaults.currency;
+      }
+      if (leadInput && (leadInput.value === "" || Number(leadInput.value) === 0) && defaults.productionLeadTimeDays != null) {
+        leadInput.value = defaults.productionLeadTimeDays;
+      }
+    });
 
     cancelBtn.addEventListener("click", () => overlay.remove());
     saveBtn.addEventListener("click", () => {

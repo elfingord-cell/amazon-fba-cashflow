@@ -715,12 +715,13 @@ function renderProducts(root) {
       { key: "avg", label: "Ø Stückpreis", className: "num" },
       { key: "count", label: "POs", className: "num" },
       { key: "template", label: "Template" },
+      { key: "tags", label: "Tags" },
       { key: "actions", label: "Aktionen" },
     ];
     const colCount = columns.length;
     const table = createEl("table", { class: "table products-list-table" });
     const thead = createEl("thead", {}, [
-      createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "" }, [col.label])))
+      createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "", title: col.label }, [col.label])))
     ]);
     const tbody = createEl("tbody");
     const collapseState = loadCollapseState();
@@ -753,6 +754,8 @@ function renderProducts(root) {
           return product.stats?.poCount != null ? String(product.stats.poCount) : "0";
         case "template":
           return product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
+        case "tags":
+          return (product.tags || []).length ? (product.tags || []).join(", ") : "—";
         case "actions":
           return createEl("div", { class: "table-actions" }, [
             createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
@@ -863,7 +866,6 @@ function renderProducts(root) {
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
       ], width: "110px", className: "col-status" },
-      { key: "tags", label: "Tags", type: "text", width: "280px", className: "col-tags" },
       { key: "template.unitPriceUsd", label: "Stückpreis (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.extraPerUnitUsd", label: "Zusatz je Stück (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
@@ -888,6 +890,7 @@ function renderProducts(root) {
         { value: "CNY", label: "CNY" },
       ], width: "110px", className: "col-currency" },
       { key: "template.ddp", label: "DDP", type: "checkbox", width: "56px", className: "col-check" },
+      { key: "tags", label: "Tags", type: "text", width: "280px", className: "col-tags" },
     ];
 
     function getTemplateFields(product) {
@@ -1013,8 +1016,18 @@ function renderProducts(root) {
     });
     colgroup.append(createEl("col", { style: "width:180px" }));
     const thead = createEl("thead", {}, [
+      createEl("tr", { class: "products-grid-group-header" }, [
+        createEl("th", { colspan: "5" }, ["Stammdaten"]),
+        createEl("th", { colspan: "3" }, ["Kosten"]),
+        createEl("th", { colspan: "4" }, ["Logistik"]),
+        createEl("th", { colspan: "5" }, ["Steuern"]),
+        createEl("th", { colspan: "3" }, ["FX & Währung"]),
+        createEl("th", { colspan: "1" }, ["Sonstiges"]),
+        createEl("th", { colspan: "1" }, ["Tags"]),
+        createEl("th", { colspan: "1", class: "actions" }, ["Aktionen"]),
+      ]),
       createEl("tr", {}, [
-        ...fields.map(field => createEl("th", { class: field.className || "" }, [field.label])),
+        ...fields.map(field => createEl("th", { class: field.className || "", title: field.label }, [field.label])),
         createEl("th", { class: "actions" }, ["Aktionen"]),
       ]),
     ]);
