@@ -1,6 +1,7 @@
 import {
   loadState,
   getProductsSnapshot,
+  getProductBySku,
   upsertProduct,
   deleteProductBySku,
   setProductStatus,
@@ -1124,7 +1125,7 @@ function renderProducts(root) {
       if (!editsBySku.length) return;
       const errors = [];
       await Promise.allSettled(editsBySku.map(([sku, edits]) => {
-        const original = products.find(prod => prod.sku === sku);
+        const original = getProductBySku(sku);
         if (!original) {
           errors.push(sku);
           return Promise.resolve();
