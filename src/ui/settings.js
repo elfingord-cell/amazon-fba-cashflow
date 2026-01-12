@@ -100,8 +100,102 @@ export function render(root) {
         </label>
       </div>
     </section>
+
+    <section class="card" id="settings-health">
+      <h3>Data Health</h3>
+      <p class="muted">Schnell-Checks für fehlende Stammdaten und Defaults.</p>
+      <div class="health-list" id="health-list"></div>
+    </section>
   `;
   $("#default-currency", root).value = settings.defaultCurrency || "EUR";
+
+  function computeHealth() {
+    const mappings = Array.isArray(state.productSuppliers) ? state.productSuppliers : [];
+    const products = Array.isArray(state.products) ? state.products : [];
+    const suppliers = Array.isArray(state.suppliers) ? state.suppliers : [];
+    const supplierById = new Map(suppliers.map(s => [s.id, s]));
+
+    const missingMappings = products.filter(prod => {
+      const sku = String(prod.sku || "").trim().toLowerCase();
+      if (!sku) return false;
+      return !mappings.some(entry => String(entry.sku || "").trim().toLowerCase() === sku && entry.isActive !== false);
+    });
+
+    const preferredBySku = new Map();
+    mappings.forEach(entry => {
+      if (!entry.isPreferred) return;
+      const sku = String(entry.sku || "").trim().toLowerCase();
+      preferredBySku.set(sku, (preferredBySku.get(sku) || 0) + 1);
+    });
+    const multiplePreferred = [...preferredBySku.entries()].filter(([, count]) => count > 1);
+
+    const incompleteMappings = mappings.filter(entry => {
+      const supplier = supplierById.get(entry.supplierId);
+      const hasTerms = Array.isArray(entry.paymentTermsTemplate) && entry.paymentTermsTemplate.length
+        ? true
+        : Boolean(supplier?.paymentTermsDefault?.length);
+      return entry.unitPrice == null || !entry.currency || entry.productionLeadTimeDays == null || !entry.incoterm || !hasTerms;
+    });
+
+    const productsMissingCosts = products.filter(prod => {
+      const templateFields = prod.template?.fields || {};
+      const hasFreight = prod.freight != null || prod.freightAir != null || prod.freightSea != null || prod.freightRail != null || templateFields.freightEur != null;
+      const hasDuty = prod.dutyRatePct != null || templateFields.dutyPct != null;
+      const hasEust = prod.eustRatePct != null || templateFields.vatImportPct != null;
+      return !hasFreight || !hasDuty || !hasEust;
+    });
+
+    const settingsMissing = !settings.fxRate || !settings.defaultCurrency;
+
+    return {
+      missingMappings,
+      multiplePreferred,
+      incompleteMappings,
+      productsMissingCosts,
+      settingsMissing,
+    };
+  }
+
+  function renderHealth() {
+    const list = $("#health-list", root);
+    const health = computeHealth();
+    const items = [];
+
+    items.push({
+      label: `SKU ohne Supplier-Mapping (${health.missingMappings.length})`,
+      count: health.missingMappings.length,
+      tab: "suppliers",
+      sku: health.missingMappings[0]?.sku,
+    });
+    items.push({
+      label: `Mehrere Preferred Supplier für SKU (${health.multiplePreferred.length})`,
+      count: health.multiplePreferred.length,
+      tab: "suppliers",
+    });
+    items.push({
+      label: `Mappings ohne Pflichtfelder (${health.incompleteMappings.length})`,
+      count: health.incompleteMappings.length,
+      tab: "suppliers",
+    });
+    items.push({
+      label: `Produkte ohne Pflicht-Produktkosten (${health.productsMissingCosts.length})`,
+      count: health.productsMissingCosts.length,
+      tab: "produkte",
+      sku: health.productsMissingCosts[0]?.sku,
+    });
+    items.push({
+      label: `Settings ohne Exchange Rate/Currency (${health.settingsMissing ? 1 : 0})`,
+      count: health.settingsMissing ? 1 : 0,
+      tab: "settings",
+    });
+
+    list.innerHTML = items.map(item => `
+      <div class="health-item">
+        <span>${item.label}</span>
+        ${item.count ? `<button class="btn secondary" data-action="fix" data-tab="${item.tab}" data-sku="${item.sku || ""}">Fix now</button>` : `<span class="muted">OK</span>`}
+      </div>
+    `).join("");
+  }
 
   function validate() {
     errors.air = "";
@@ -145,6 +239,7 @@ export function render(root) {
     };
     updateSettings(state, patch);
     saveState(state);
+    renderHealth();
   });
 
   root.querySelectorAll("input[type=number]").forEach((input) => {
@@ -158,6 +253,23 @@ export function render(root) {
       validate();
     });
   }
+
+  root.addEventListener("click", (event) => {
+    const btn = event.target.closest("button[data-action='fix']");
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+    const sku = btn.dataset.sku;
+    sessionStorage.setItem("healthFocus", JSON.stringify({ tab, sku }));
+    if (tab === "produkte") {
+      location.hash = "#produkte";
+    } else if (tab === "suppliers") {
+      location.hash = "#suppliers";
+    } else {
+      location.hash = "#settings";
+    }
+  });
+
+  renderHealth();
 }
 
 export default { render };

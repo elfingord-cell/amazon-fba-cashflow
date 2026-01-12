@@ -154,6 +154,39 @@ function ensureSuppliers(state) {
 function ensureProductSuppliers(state) {
   if (!state) return;
   if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
+  const seenPreferred = new Set();
+  state.productSuppliers = state.productSuppliers
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      const normalized = {
+        id: entry.id || `sp-${Math.random().toString(36).slice(2, 9)}`,
+        supplierId: String(entry.supplierId || "").trim(),
+        sku: String(entry.sku || "").trim(),
+        isPreferred: Boolean(entry.isPreferred),
+        isActive: entry.isActive !== false,
+        supplierSku: entry.supplierSku != null ? String(entry.supplierSku) : "",
+        unitPrice: entry.unitPrice != null ? entry.unitPrice : null,
+        currency: String(entry.currency || "").trim() || "USD",
+        productionLeadTimeDays: entry.productionLeadTimeDays != null ? Number(entry.productionLeadTimeDays) : null,
+        incoterm: String(entry.incoterm || "").trim() || "EXW",
+        paymentTermsTemplate: Array.isArray(entry.paymentTermsTemplate) ? entry.paymentTermsTemplate : null,
+        minOrderQty: entry.minOrderQty != null ? Number(entry.minOrderQty) : null,
+        notes: entry.notes != null ? String(entry.notes) : "",
+        validFrom: entry.validFrom || null,
+        validTo: entry.validTo || null,
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+      if (!normalized.sku || !normalized.supplierId) return null;
+      const key = productKey(normalized.sku);
+      if (normalized.isPreferred) {
+        if (seenPreferred.has(key)) normalized.isPreferred = false;
+        else seenPreferred.add(key);
+      }
+      return normalized;
+    })
+    .filter(Boolean);
 }
 
 function ensureFos(state) {
@@ -744,6 +777,102 @@ export function upsertProduct(input){
 
   saveState(state);
   return updateProductStatsMeta(loadState(), target);
+}
+
+function clampPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  if (num > 100) return 100;
+  return num;
+}
+
+function normalisePaymentTerms(terms) {
+  if (!Array.isArray(terms) || !terms.length) return null;
+  return terms.map(term => ({
+    label: term.label ? String(term.label) : "Milestone",
+    percent: clampPercent(term.percent ?? 0),
+    triggerEvent: String(term.triggerEvent || "ORDER_DATE"),
+    offsetDays: Number(term.offsetDays || 0),
+    currency: term.currency ? String(term.currency) : undefined,
+  }));
+}
+
+function normaliseProductSupplierInput(input = {}) {
+  return {
+    id: input.id,
+    supplierId: String(input.supplierId || "").trim(),
+    sku: String(input.sku || "").trim(),
+    isPreferred: Boolean(input.isPreferred),
+    isActive: input.isActive !== false,
+    supplierSku: input.supplierSku != null ? String(input.supplierSku).trim() : "",
+    unitPrice: input.unitPrice != null && input.unitPrice !== "" ? Number(input.unitPrice) : null,
+    currency: String(input.currency || "").trim() || "USD",
+    productionLeadTimeDays: input.productionLeadTimeDays != null && input.productionLeadTimeDays !== ""
+      ? Number(input.productionLeadTimeDays)
+      : null,
+    incoterm: String(input.incoterm || "").trim() || "EXW",
+    paymentTermsTemplate: normalisePaymentTerms(input.paymentTermsTemplate),
+    minOrderQty: input.minOrderQty != null && input.minOrderQty !== "" ? Number(input.minOrderQty) : null,
+    notes: input.notes != null ? String(input.notes) : "",
+    validFrom: input.validFrom || null,
+    validTo: input.validTo || null,
+  };
+}
+
+export function upsertProductSupplier(input) {
+  const state = loadState();
+  ensureProductSuppliers(state);
+  const normalised = normaliseProductSupplierInput(input);
+  if (!normalised.sku || !normalised.supplierId) {
+    throw new Error("Supplier und SKU sind erforderlich.");
+  }
+  const now = new Date().toISOString();
+  let target = state.productSuppliers.find(entry => entry.id === normalised.id) || null;
+  if (!target) {
+    target = {
+      id: normalised.id || `sp-${Math.random().toString(36).slice(2, 9)}`,
+      createdAt: now,
+    };
+    state.productSuppliers.push(target);
+  }
+  Object.assign(target, normalised, { updatedAt: now, createdAt: target.createdAt || now });
+  if (target.isPreferred) {
+    const skuKey = productKey(target.sku);
+    state.productSuppliers.forEach(entry => {
+      if (entry.id !== target.id && productKey(entry.sku) === skuKey) {
+        entry.isPreferred = false;
+      }
+    });
+  }
+  saveState(state);
+  return target;
+}
+
+export function deleteProductSupplier(id) {
+  if (!id) return;
+  const state = loadState();
+  ensureProductSuppliers(state);
+  const before = state.productSuppliers.length;
+  state.productSuppliers = state.productSuppliers.filter(entry => entry.id !== id);
+  if (state.productSuppliers.length !== before) {
+    saveState(state);
+  }
+}
+
+export function setPreferredProductSupplier(id) {
+  if (!id) return;
+  const state = loadState();
+  ensureProductSuppliers(state);
+  const target = state.productSuppliers.find(entry => entry.id === id);
+  if (!target) return;
+  const skuKey = productKey(target.sku);
+  state.productSuppliers.forEach(entry => {
+    if (productKey(entry.sku) === skuKey) {
+      entry.isPreferred = entry.id === id;
+    }
+  });
+  target.updatedAt = new Date().toISOString();
+  saveState(state);
 }
 
 export function setProductStatus(sku, status){

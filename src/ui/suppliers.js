@@ -1,4 +1,11 @@
-import { loadState, saveState } from "../data/storageLocal.js";
+import {
+  loadState,
+  saveState,
+  getProductsSnapshot,
+  upsertProductSupplier,
+  deleteProductSupplier,
+  setPreferredProductSupplier,
+} from "../data/storageLocal.js";
 
 function $(sel, root = document) { return root.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -22,6 +29,21 @@ function el(tag, attrs = {}, children = []) {
 
 const TRIGGER_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
+const INCOTERMS = ["EXW", "FOB", "DDP"];
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("de-DE");
+}
+
+function formatNumber(value) {
+  if (value == null || value === "") return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  return num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 function defaultPaymentTerms() {
   return [
@@ -72,6 +94,15 @@ function buildModal(title, content, actions) {
 export function render(root) {
   const state = loadState();
   if (!Array.isArray(state.suppliers)) state.suppliers = [];
+  if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
+  const products = getProductsSnapshot();
+  const productBySku = new Map(products.map(prod => [String(prod.sku || "").trim().toLowerCase(), prod]));
+
+  function productLabel(sku) {
+    const key = String(sku || "").trim().toLowerCase();
+    const product = productBySku.get(key);
+    return product?.alias || product?.sku || sku || "—";
+  }
 
   root.innerHTML = `
     <section class="card">
@@ -124,6 +155,302 @@ export function render(root) {
         </tr>
       `)
       .join("");
+  }
+
+  function openMappingModal({ supplierId, mapping = null, presetSku = "" }) {
+    const supplier = state.suppliers.find(item => item.id === supplierId) || null;
+    if (!supplier) {
+      window.alert("Supplier nicht gefunden.");
+      return;
+    }
+    const base = mapping
+      ? JSON.parse(JSON.stringify(mapping))
+      : {
+          id: null,
+          supplierId,
+          sku: presetSku || "",
+          isPreferred: false,
+          isActive: true,
+          supplierSku: "",
+          unitPrice: "",
+          currency: supplier.currencyDefault || "USD",
+          productionLeadTimeDays: supplier.productionLeadTimeDaysDefault ?? 0,
+          incoterm: supplier.incotermDefault || "EXW",
+          paymentTermsTemplate: null,
+          minOrderQty: "",
+          notes: "",
+          validFrom: "",
+          validTo: "",
+        };
+
+    const useSupplierTerms = !Array.isArray(base.paymentTermsTemplate) || !base.paymentTermsTemplate.length;
+    let useDefaultTerms = useSupplierTerms;
+    const editableTerms = Array.isArray(base.paymentTermsTemplate) && base.paymentTermsTemplate.length
+      ? base.paymentTermsTemplate.map(term => ({ ...term }))
+      : defaultPaymentTerms();
+
+    const termsTable = el("table", { class: "table" }, [
+      el("thead", {}, [
+        el("tr", {}, [
+          el("th", {}, ["Label"]),
+          el("th", { class: "num" }, ["Percent"]),
+          el("th", {}, ["Trigger Event"]),
+          el("th", { class: "num" }, ["Offset Days"]),
+          el("th", {}, [""]),
+        ]),
+      ]),
+    ]);
+    const termsBody = el("tbody");
+    termsTable.append(termsBody);
+    const warning = el("p", { class: "muted", style: "margin-top:6px" }, ["Summe: 100%"]);
+
+    function renderTerms() {
+      termsBody.innerHTML = "";
+      editableTerms.forEach((term, idx) => {
+        const row = el("tr", {}, [
+          el("td", {}, [
+            el("input", {
+              type: "text",
+              value: term.label || "",
+              oninput: (e) => { term.label = e.target.value; },
+            }),
+          ]),
+          el("td", { class: "num" }, [
+            el("input", {
+              type: "number",
+              min: "0",
+              max: "100",
+              step: "1",
+              value: term.percent ?? 0,
+              oninput: (e) => { term.percent = e.target.value; updateWarning(); },
+            }),
+          ]),
+          el("td", {}, [
+            (() => {
+              const select = el("select", { onchange: (e) => { term.triggerEvent = e.target.value; } });
+              TRIGGER_EVENTS.forEach(evt => {
+                select.append(el("option", { value: evt }, [evt]));
+              });
+              select.value = term.triggerEvent || "ORDER_DATE";
+              return select;
+            })(),
+          ]),
+          el("td", { class: "num" }, [
+            el("input", {
+              type: "number",
+              step: "1",
+              value: term.offsetDays ?? 0,
+              oninput: (e) => { term.offsetDays = e.target.value; },
+            }),
+          ]),
+          el("td", {}, [
+            el("button", {
+              class: "btn danger",
+              type: "button",
+              onclick: () => {
+                editableTerms.splice(idx, 1);
+                renderTerms();
+                updateWarning();
+              },
+            }, ["✕"]),
+          ]),
+        ]);
+        termsBody.append(row);
+      });
+    }
+
+    function updateWarning() {
+      const sum = editableTerms.reduce((acc, row) => acc + (clampPercent(row.percent) || 0), 0);
+      if (Math.round(sum) === 100) {
+        warning.textContent = "Summe: 100%";
+        warning.style.color = "#0f9960";
+        return true;
+      }
+      warning.textContent = `Summe: ${sum}% (muss 100% sein)`;
+      warning.style.color = "#c23636";
+      return false;
+    }
+
+    const productSelect = (() => {
+      const select = el("select", { id: "mapping-sku", class: "wide-select" });
+      select.append(el("option", { value: "" }, ["Bitte SKU wählen"]));
+      products.forEach(prod => {
+        select.append(el("option", { value: prod.sku }, [`${prod.alias || prod.sku} (${prod.sku})`]));
+      });
+      select.value = base.sku || "";
+      return select;
+    })();
+
+    const content = el("div", {}, [
+      el("label", {}, ["SKU", productSelect]),
+      el("label", { style: "margin-top:12px" }, ["Supplier SKU (optional)"]),
+      el("input", { type: "text", id: "mapping-supplier-sku", value: base.supplierSku || "" }),
+      el("label", { style: "margin-top:12px" }, ["Unit Price"]),
+      el("input", { type: "text", inputmode: "decimal", id: "mapping-unit-price", value: base.unitPrice ?? "" }),
+      el("label", { style: "margin-top:12px" }, ["Currency"]),
+      (() => {
+        const select = el("select", { id: "mapping-currency", class: "wide-select" });
+        CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
+        select.value = base.currency || supplier.currencyDefault || "USD";
+        return select;
+      })(),
+      el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
+      el("input", { type: "number", min: "0", step: "1", id: "mapping-lead-time", value: base.productionLeadTimeDays ?? "" }),
+      el("label", { style: "margin-top:12px" }, ["Incoterm"]),
+      (() => {
+        const select = el("select", { id: "mapping-incoterm", class: "wide-select" });
+        INCOTERMS.forEach(term => select.append(el("option", { value: term }, [term])));
+        select.value = base.incoterm || supplier.incotermDefault || "EXW";
+        return select;
+      })(),
+      el("div", { class: "grid two", style: "margin-top:12px" }, [
+        el("label", { class: "inline-checkbox" }, [
+          el("input", { type: "checkbox", id: "mapping-preferred", checked: Boolean(base.isPreferred) }),
+          " Preferred",
+        ]),
+        el("label", { class: "inline-checkbox" }, [
+          el("input", { type: "checkbox", id: "mapping-active", checked: base.isActive !== false }),
+          " Active",
+        ]),
+      ]),
+      el("label", { style: "margin-top:12px" }, ["Min. Order Qty (optional)"]),
+      el("input", { type: "number", min: "0", step: "1", id: "mapping-min-qty", value: base.minOrderQty ?? "" }),
+      el("label", { style: "margin-top:12px" }, ["Notizen (optional)"]),
+      el("textarea", { id: "mapping-notes", rows: "3" }, [base.notes || ""]),
+      el("div", { class: "grid two", style: "margin-top:12px" }, [
+        el("label", {}, ["Gültig ab", el("input", { type: "date", id: "mapping-valid-from", value: base.validFrom || "" })]),
+        el("label", {}, ["Gültig bis", el("input", { type: "date", id: "mapping-valid-to", value: base.validTo || "" })]),
+      ]),
+      el("h4", { style: "margin-top:16px" }, ["Payment Terms"]),
+      el("label", { class: "inline-checkbox" }, [
+        el("input", {
+          type: "checkbox",
+          id: "mapping-terms-default",
+          checked: useDefaultTerms,
+          onchange: (e) => {
+            useDefaultTerms = e.target.checked;
+            termsTable.style.display = useDefaultTerms ? "none" : "table";
+            termsAdd.style.display = useDefaultTerms ? "none" : "inline-flex";
+            warning.style.display = useDefaultTerms ? "none" : "block";
+          },
+        }),
+        " Supplier Default verwenden",
+      ]),
+      el("div", { class: "table-wrap" }, [termsTable]),
+      el("button", { class: "btn secondary", type: "button", id: "mapping-terms-add" }, ["+ Milestone"]),
+      warning,
+    ]);
+
+    const termsAdd = $("#mapping-terms-add", content);
+    if (useDefaultTerms) {
+      termsTable.style.display = "none";
+      termsAdd.style.display = "none";
+      warning.style.display = "none";
+    }
+
+    renderTerms();
+    updateWarning();
+
+    termsAdd.addEventListener("click", () => {
+      editableTerms.push({ label: "Milestone", percent: 0, triggerEvent: "ORDER_DATE", offsetDays: 0 });
+      renderTerms();
+      updateWarning();
+    });
+
+    const saveBtn = el("button", { class: "btn primary", type: "button" }, ["Speichern"]);
+    const cancelBtn = el("button", { class: "btn", type: "button" }, ["Abbrechen"]);
+    const overlay = buildModal(mapping ? "SKU Mapping bearbeiten" : "SKU Mapping hinzufügen", content, [cancelBtn, saveBtn]);
+
+    cancelBtn.addEventListener("click", () => overlay.remove());
+    saveBtn.addEventListener("click", () => {
+      const sku = $("#mapping-sku", content).value.trim();
+      const unitPrice = parseNumber($("#mapping-unit-price", content).value);
+      const currency = ($("#mapping-currency", content).value || "USD").trim() || "USD";
+      const leadTime = parseNumber($("#mapping-lead-time", content).value);
+      const incoterm = ($("#mapping-incoterm", content).value || "EXW").trim() || "EXW";
+      const preferred = Boolean($("#mapping-preferred", content).checked);
+      const isActive = Boolean($("#mapping-active", content).checked);
+      const minQty = parseNumber($("#mapping-min-qty", content).value);
+      const validFrom = $("#mapping-valid-from", content).value || null;
+      const validTo = $("#mapping-valid-to", content).value || null;
+      if (!sku) {
+        window.alert("SKU ist erforderlich.");
+        return;
+      }
+      if (unitPrice == null) {
+        window.alert("Unit Price ist erforderlich.");
+        return;
+      }
+      if (!currency) {
+        window.alert("Currency ist erforderlich.");
+        return;
+      }
+      if (leadTime == null) {
+        window.alert("Production Lead Time ist erforderlich.");
+        return;
+      }
+      if (!incoterm) {
+        window.alert("Incoterm ist erforderlich.");
+        return;
+      }
+      if (!useDefaultTerms) {
+        const percentOk = updateWarning();
+        if (!editableTerms.length || !percentOk) {
+          window.alert("Payment Terms müssen vorhanden sein und 100% ergeben.");
+          return;
+        }
+      }
+      const payload = {
+        id: base.id,
+        supplierId,
+        sku,
+        supplierSku: $("#mapping-supplier-sku", content).value.trim(),
+        unitPrice,
+        currency,
+        productionLeadTimeDays: leadTime,
+        incoterm,
+        isPreferred: preferred,
+        isActive,
+        minOrderQty: minQty,
+        notes: $("#mapping-notes", content).value.trim(),
+        validFrom,
+        validTo,
+        paymentTermsTemplate: useDefaultTerms ? null : editableTerms,
+      };
+      try {
+        upsertProductSupplier(payload);
+        state.productSuppliers = loadState().productSuppliers || [];
+        renderRows();
+        overlay.remove();
+      } catch (err) {
+        window.alert(err?.message || "Mapping konnte nicht gespeichert werden.");
+      }
+    });
+  }
+
+  function openGlobalMappingModal(presetSku) {
+    const supplierSelect = el("select", { id: "global-mapping-supplier", class: "wide-select" });
+    supplierSelect.append(el("option", { value: "" }, ["Bitte Supplier wählen"]));
+    state.suppliers.forEach(supplier => {
+      supplierSelect.append(el("option", { value: supplier.id }, [supplier.name]));
+    });
+    const content = el("div", {}, [
+      el("label", {}, ["Supplier", supplierSelect]),
+      el("p", { class: "muted" }, ["Wähle einen Supplier, um das Mapping anzulegen."]),
+    ]);
+    const proceedBtn = el("button", { class: "btn primary", type: "button" }, ["Weiter"]);
+    const cancelBtn = el("button", { class: "btn", type: "button" }, ["Abbrechen"]);
+    const overlay = buildModal("SKU Mapping anlegen", content, [cancelBtn, proceedBtn]);
+    cancelBtn.addEventListener("click", () => overlay.remove());
+    proceedBtn.addEventListener("click", () => {
+      const supplierId = supplierSelect.value;
+      if (!supplierId) {
+        window.alert("Supplier auswählen.");
+        return;
+      }
+      overlay.remove();
+      openMappingModal({ supplierId, presetSku });
+    });
   }
 
   function openSupplierModal(existing) {
@@ -222,16 +549,74 @@ export function render(root) {
       return false;
     }
 
+    const mappingSearch = el("input", { type: "search", placeholder: "SKU oder Alias suchen", id: "mapping-search" });
+    const mappingsTable = el("table", { class: "table" }, [
+      el("thead", {}, [
+        el("tr", {}, [
+          el("th", {}, ["SKU Alias"]),
+          el("th", {}, ["SKU"]),
+          el("th", { class: "num" }, ["Unit Price"]),
+          el("th", {}, ["Currency"]),
+          el("th", { class: "num" }, ["Prod LT"]),
+          el("th", {}, ["Incoterm"]),
+          el("th", {}, ["Preferred"]),
+          el("th", {}, ["Active"]),
+          el("th", {}, ["Updated"]),
+          el("th", {}, ["Actions"]),
+        ]),
+      ]),
+      el("tbody", { id: "mapping-rows" }, []),
+    ]);
+
+    function renderMappings(filter = "") {
+      const rows = $("#mapping-rows", mappingsTable);
+      const needle = String(filter || "").trim().toLowerCase();
+      const list = (state.productSuppliers || [])
+        .filter(entry => entry.supplierId === supplier.id)
+        .filter(entry => {
+          if (!needle) return true;
+          const label = `${productLabel(entry.sku)} ${entry.sku}`.toLowerCase();
+          return label.includes(needle);
+        })
+        .sort((a, b) => (a.sku || "").localeCompare(b.sku || ""));
+
+      if (!list.length) {
+        rows.innerHTML = `<tr><td colspan="10" class="muted">Keine SKU-Mappings vorhanden.</td></tr>`;
+        return;
+      }
+
+      rows.innerHTML = list.map(entry => `
+        <tr data-id="${entry.id}">
+          <td title="${productLabel(entry.sku)}">${productLabel(entry.sku)}</td>
+          <td>${entry.sku}</td>
+          <td class="num">${formatNumber(entry.unitPrice)}</td>
+          <td>${entry.currency || "—"}</td>
+          <td class="num">${entry.productionLeadTimeDays ?? "—"}</td>
+          <td>${entry.incoterm || "—"}</td>
+          <td>${entry.isPreferred ? "✓" : "—"}</td>
+          <td>${entry.isActive !== false ? "✓" : "—"}</td>
+          <td>${formatDate(entry.updatedAt)}</td>
+          <td>
+            <button class="btn secondary" data-action="edit">Edit</button>
+            <button class="btn ghost" data-action="preferred">Set preferred</button>
+            <button class="btn danger" data-action="delete">Delete</button>
+          </td>
+        </tr>
+      `).join("");
+    }
+
+
     const content = el("div", {}, [
       el("label", {}, ["Name"]),
       el("input", { type: "text", id: "supplier-name", value: supplier.name }),
       el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
       el("input", { type: "number", min: "0", step: "1", id: "supplier-lt", value: supplier.productionLeadTimeDaysDefault }),
       el("label", { style: "margin-top:12px" }, ["Incoterm"]),
-      el("select", { id: "supplier-incoterm" }, [
-        el("option", { value: "EXW" }, ["EXW"]),
-        el("option", { value: "DDP" }, ["DDP"]),
-      ]),
+      (() => {
+        const select = el("select", { id: "supplier-incoterm" });
+        INCOTERMS.forEach(term => select.append(el("option", { value: term }, [term])));
+        return select;
+      })(),
       el("label", { style: "margin-top:12px" }, ["Currency"]),
       (() => {
         const select = el("select", { id: "supplier-currency" });
@@ -243,6 +628,13 @@ export function render(root) {
       el("div", { class: "table-wrap" }, [termsTable]),
       el("button", { class: "btn secondary", type: "button", id: "terms-add" }, ["+ Milestone"]),
       warning,
+      el("h4", { style: "margin-top:20px" }, ["Supplied SKUs"]),
+      el("div", { class: "table-card-header" }, [
+        el("span", { class: "muted" }, ["Mappings für diesen Supplier"]),
+        el("button", { class: "btn secondary", type: "button", id: "mapping-add" }, ["Add SKU to Supplier"]),
+      ]),
+      mappingSearch,
+      el("div", { class: "table-wrap" }, [mappingsTable]),
     ]);
 
     const saveBtn = el("button", { class: "btn primary", type: "button" }, ["Speichern"]);
@@ -252,11 +644,35 @@ export function render(root) {
     $("#supplier-incoterm", content).value = supplier.incotermDefault || "EXW";
     renderTerms();
     updateWarning();
+    renderMappings();
 
     $("#terms-add", content).addEventListener("click", () => {
       supplier.paymentTermsDefault.push({ label: "Milestone", percent: 0, triggerEvent: "ORDER_DATE", offsetDays: 0 });
       renderTerms();
       updateWarning();
+    });
+
+    $("#mapping-add", content).addEventListener("click", () => openMappingModal({ supplierId: supplier.id }));
+    mappingSearch.addEventListener("input", (e) => renderMappings(e.target.value));
+    mappingsTable.addEventListener("click", (e) => {
+      const row = e.target.closest("tr[data-id]");
+      if (!row) return;
+      const action = e.target.closest("button")?.dataset?.action;
+      const entry = state.productSuppliers.find(item => item.id === row.dataset.id);
+      if (!entry) return;
+      if (action === "edit") {
+        openMappingModal({ supplierId: supplier.id, mapping: entry });
+      } else if (action === "preferred") {
+        setPreferredProductSupplier(entry.id);
+        state.productSuppliers = loadState().productSuppliers || [];
+        renderMappings(mappingSearch.value);
+      } else if (action === "delete") {
+        const confirmed = window.confirm("Mapping wirklich löschen?");
+        if (!confirmed) return;
+        deleteProductSupplier(entry.id);
+        state.productSuppliers = loadState().productSuppliers || [];
+        renderMappings(mappingSearch.value);
+      }
     });
 
     cancelBtn.addEventListener("click", () => overlay.remove());
@@ -322,6 +738,19 @@ export function render(root) {
   });
 
   renderRows();
+
+  const focusRaw = sessionStorage.getItem("healthFocus");
+  if (focusRaw) {
+    try {
+      const focus = JSON.parse(focusRaw);
+      if (focus?.tab === "suppliers" && focus.sku) {
+        openGlobalMappingModal(focus.sku);
+      }
+    } catch (err) {
+      // ignore
+    }
+    sessionStorage.removeItem("healthFocus");
+  }
 }
 
 export default { render };

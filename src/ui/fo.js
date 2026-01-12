@@ -188,8 +188,25 @@ function findProductSupplier(state, sku, supplierId) {
   const keySku = String(sku).trim().toLowerCase();
   const keySup = String(supplierId).trim();
   return (state.productSuppliers || []).find(
-    entry => String(entry.sku || "").trim().toLowerCase() === keySku && String(entry.supplierId || "").trim() === keySup,
+    entry => String(entry.sku || "").trim().toLowerCase() === keySku
+      && String(entry.supplierId || "").trim() === keySup
+      && entry.isActive !== false,
   ) || null;
+}
+
+function listActiveMappings(state, sku) {
+  const keySku = String(sku || "").trim().toLowerCase();
+  return (state.productSuppliers || [])
+    .filter(entry => String(entry.sku || "").trim().toLowerCase() === keySku)
+    .filter(entry => entry.isActive !== false);
+}
+
+function findPreferredMapping(state, sku) {
+  const list = listActiveMappings(state, sku);
+  const preferred = list.find(entry => entry.isPreferred);
+  if (preferred) return preferred;
+  if (list.length === 1) return list[0];
+  return null;
 }
 
 function getProductBySku(products, sku) {
@@ -223,10 +240,10 @@ function listProductsForSelect(products) {
 function resolveDefault(field, context) {
   const { product, supplier, mapping, settings, transportMode, incoterm } = context;
   const incotermValue = String(incoterm || "").toUpperCase();
-  if (field === "supplierId") return product?.supplierId || "";
+  if (field === "supplierId") return mapping?.supplierId || product?.supplierId || "";
   if (field === "transportMode") return product?.defaultTransportMode || "SEA";
   if (field === "incoterm") return mapping?.incoterm || product?.defaultIncoterm || supplier?.incotermDefault || "EXW";
-  if (field === "currency") return "USD";
+  if (field === "currency") return mapping?.currency || supplier?.currencyDefault || "USD";
   if (field === "freightCurrency") return incotermValue === "DDP" ? "USD" : (product?.freightCurrency || "EUR");
   if (field === "unitPrice") {
     if (mapping?.unitPrice != null) return parseLocaleNumber(mapping.unitPrice);
@@ -260,8 +277,10 @@ function resolveDefault(field, context) {
 
 function buildSuggestedFields(state, form) {
   const settings = state.settings || {};
-  const supplier = (state.suppliers || []).find(item => item.id === form.supplierId) || null;
-  const mapping = findProductSupplier(state, form.sku, form.supplierId);
+  const suggestedMapping = form.sku ? findPreferredMapping(state, form.sku) : null;
+  const supplierId = form.supplierId || suggestedMapping?.supplierId || "";
+  const supplier = (state.suppliers || []).find(item => item.id === supplierId) || null;
+  const mapping = findProductSupplier(state, form.sku, supplierId) || suggestedMapping;
   const product = getProductBySku(state.products || [], form.sku);
   const baseContext = { product, supplier, mapping, settings, transportMode: form.transportMode, incoterm: form.incoterm };
   const resolvedTransport = resolveDefault("transportMode", baseContext);
@@ -271,8 +290,16 @@ function buildSuggestedFields(state, form) {
   const logisticsLeadTimeDays = Number(leadTimes[transport.toLowerCase()] ?? 0);
   const unitPrice = resolveDefault("unitPrice", context);
   const unitPriceSource = mapping?.unitPrice != null
-    ? "Product/Supplier Mapping"
+    ? "Supplier/SKU Mapping"
     : (product?.defaultUnitPrice != null || product?.unitPrice != null ? "Produktdatenbank" : null);
+  const leadTimeSource = mapping?.productionLeadTimeDays != null
+    ? "Supplier/SKU Mapping"
+    : (supplier?.productionLeadTimeDaysDefault != null ? "Supplier Default" : null);
+  const incotermSource = mapping?.incoterm ? "Supplier/SKU Mapping" : (product?.defaultIncoterm ? "Produktdatenbank" : "Supplier Default");
+  const paymentTermsSource = mapping?.paymentTermsTemplate?.length
+    ? "Supplier/SKU Mapping"
+    : (supplier?.paymentTermsDefault?.length ? "Supplier Default" : "System Default");
+  const fxRateSource = settings?.fxRate ? "Settings" : null;
   return {
     transportMode: transport,
     incoterm: resolveDefault("incoterm", context),
@@ -284,8 +311,14 @@ function buildSuggestedFields(state, form) {
     dutyRatePct: resolveDefault("dutyRatePct", context),
     eustRatePct: resolveDefault("eustRatePct", context),
     fxRate: resolveDefault("fxRate", context),
-    supplierId: resolveDefault("supplierId", context),
+    fxRateSource,
+    supplierId,
+    supplierSource: mapping?.supplierId ? "Supplier/SKU Mapping" : (product?.supplierId ? "Produktdatenbank" : null),
     productionLeadTimeDays: mapping?.productionLeadTimeDays ?? supplier?.productionLeadTimeDaysDefault ?? 30,
+    productionLeadTimeSource: leadTimeSource,
+    incotermSource,
+    paymentTermsSource,
+    preferredSupplier: Boolean(mapping?.isPreferred),
     logisticsLeadTimeDays: Number.isFinite(logisticsLeadTimeDays) ? logisticsLeadTimeDays : 0,
     bufferDays: settings.defaultBufferDays ?? 0,
   };
@@ -323,7 +356,8 @@ function buildCostValues(form) {
   const units = Number(form.units || 0);
   const supplierCost = units * unitPrice;
   const fxRate = parseLocaleNumber(form.fxRate) || 0;
-  const supplierCostEur = convertToEur(supplierCost, "USD", fxRate);
+  const baseCurrency = form.currency || "USD";
+  const supplierCostEur = convertToEur(supplierCost, baseCurrency, fxRate);
   const freight = parseLocaleNumber(form.freight) || 0;
   const freightCurrency = form.freightCurrency || "EUR";
   const freightEur = convertToEur(freight, freightCurrency, fxRate);
@@ -392,10 +426,12 @@ function recomputePaymentDueDates(payments, schedule) {
   });
 }
 
-function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
-  const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
-    ? supplier.paymentTermsDefault
-    : defaultPaymentTerms();
+function buildSuggestedPayments({ supplier, mapping, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
+  const terms = Array.isArray(mapping?.paymentTermsTemplate) && mapping.paymentTermsTemplate.length
+    ? mapping.paymentTermsTemplate
+    : (Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
+      ? supplier.paymentTermsDefault
+      : defaultPaymentTerms());
   const supplierRows = terms.map(term => {
     const triggerEvent = PAYMENT_EVENTS.includes(term.triggerEvent) ? term.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(term.offsetDays || 0);
@@ -965,7 +1001,7 @@ export default function render(root) {
       if (!overrides.transportMode) applySuggestedField("transportMode", suggested.transportMode);
       if (!overrides.incoterm) applySuggestedField("incoterm", suggested.incoterm);
       if (!baseForm.unitPriceIsOverridden) applySuggestedField("unitPrice", suggested.unitPrice ?? "");
-      if (!overrides.currency) applySuggestedField("currency", "USD");
+      if (!overrides.currency) applySuggestedField("currency", suggested.currency || "USD");
       if (!overrides.freight) applySuggestedField("freight", suggested.freight ?? "");
       if (!overrides.freightCurrency) applySuggestedField("freightCurrency", suggested.freightCurrency || "EUR");
       if (!overrides.dutyRatePct) applySuggestedField("dutyRatePct", suggested.dutyRatePct ?? "");
@@ -976,6 +1012,7 @@ export default function render(root) {
       if (!overrides.bufferDays) applySuggestedField("bufferDays", suggested.bufferDays);
       updateSuggestedLabels();
       updateIncotermState();
+      updateWarnings();
       if (!paymentsDirty && baseForm.supplierId && baseForm.supplierId !== previousSupplier) {
         const schedule = buildSchedule(baseForm);
         const baseValue = computeBaseValue();
@@ -987,6 +1024,7 @@ export default function render(root) {
         }
         baseForm.payments = buildSuggestedPayments({
           supplier,
+          mapping: findProductSupplier(state, baseForm.sku, baseForm.supplierId),
           baseValue,
           currency: baseForm.currency,
           schedule,
@@ -1010,7 +1048,7 @@ export default function render(root) {
       } else {
         $("#suggested-unitPrice", content).textContent = "Suggested: —";
       }
-      $("#suggested-currency", content).textContent = "Suggested: USD";
+      $("#suggested-currency", content).textContent = `Suggested: ${suggested.currency || "USD"}`;
       $("#suggested-freight", content).textContent = `Suggested: ${suggested.freight != null ? formatNumber(suggested.freight) : "—"}`;
       $("#suggested-freightCurrency", content).textContent = `Suggested: ${suggested.freightCurrency || "EUR"}`;
       $("#suggested-dutyRatePct", content).textContent = `Suggested: ${suggested.dutyRatePct != null ? formatPercent(suggested.dutyRatePct) : "—"} %`;
@@ -1019,6 +1057,64 @@ export default function render(root) {
       $("#suggested-productionLeadTimeDays", content).textContent = `Suggested: ${suggested.productionLeadTimeDays}`;
       $("#suggested-logisticsLeadTimeDays", content).textContent = `Suggested: ${suggested.logisticsLeadTimeDays}`;
       $("#suggested-bufferDays", content).textContent = `Suggested: ${suggested.bufferDays}`;
+      updateSuggestionInfo();
+    }
+
+    function updateSuggestionInfo() {
+      const list = $(".fo-suggestion-list", content);
+      if (!list) return;
+      list.innerHTML = "";
+      const supplierSource = baseForm.supplierId && baseForm.supplierId !== suggested.supplierId
+        ? "Manual override"
+        : (suggested.supplierSource || "—");
+      const unitPriceSource = baseForm.unitPriceIsOverridden ? "Manual override" : (suggested.unitPriceSource || "—");
+      const leadTimeSource = overrides.productionLeadTimeDays ? "Manual override" : (suggested.productionLeadTimeSource || "—");
+      const incotermSource = overrides.incoterm ? "Manual override" : (suggested.incotermSource || "—");
+      const paymentTermsSource = Array.isArray(baseForm.payments) && baseForm.payments.length ? (suggested.paymentTermsSource || "—") : "—";
+      const fxSource = overrides.fxRate ? "Manual override" : (suggested.fxRateSource || "—");
+
+      list.append(
+        el("li", {}, [`Preferred Supplier: ${suggested.preferredSupplier ? "Yes" : "No"}`]),
+        el("li", {}, [`Supplier source: ${supplierSource}`]),
+        el("li", {}, [`Price source: ${unitPriceSource}`]),
+        el("li", {}, [`Lead time source: ${leadTimeSource}`]),
+        el("li", {}, [`Incoterm source: ${incotermSource}`]),
+        el("li", {}, [`Payment terms source: ${paymentTermsSource}`]),
+        el("li", {}, [`FX source: ${fxSource}`]),
+      );
+    }
+
+    function updateWarnings() {
+      const warningBox = $("#fo-warning-info", content);
+      const warningList = $(".fo-warning-list", content);
+      if (!warningBox || !warningList) return;
+      warningList.innerHTML = "";
+      const sku = String(baseForm.sku || "").trim();
+      if (sku) {
+        const mappingCount = listActiveMappings(state, sku).length;
+        if (mappingCount === 0) {
+          warningList.append(el("li", {}, [
+            "Kein Supplier-SKU Mapping gefunden.",
+            " ",
+            el("button", { class: "btn ghost fo-fix-now", type: "button", dataset: { sku, tab: "suppliers" } }, ["Fix now"]),
+          ]));
+        }
+      }
+      const product = getProductBySku(products, baseForm.sku);
+      if (product) {
+        const templateFields = product.template?.fields || {};
+        const hasFreight = product.freight != null || product.freightAir != null || product.freightSea != null || product.freightRail != null || templateFields.freightEur != null;
+        const hasDuty = product.dutyRatePct != null || templateFields.dutyPct != null;
+        const hasEust = product.eustRatePct != null || templateFields.vatImportPct != null;
+        if (!hasFreight || !hasDuty || !hasEust) {
+          warningList.append(el("li", {}, [
+            "Produktkosten fehlen (Freight/Zoll/EUSt).",
+            " ",
+            el("button", { class: "btn ghost fo-fix-now", type: "button", dataset: { sku: product.sku, tab: "produkte" } }, ["Fix now"]),
+          ]));
+        }
+      }
+      warningBox.style.display = warningList.childElementCount ? "block" : "none";
     }
 
     function updateIncotermState() {
@@ -1111,7 +1207,7 @@ export default function render(root) {
     }
 
     function updateCostSummary(values) {
-      $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, "USD");
+      $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, baseForm.currency || "USD");
       $("#fo-landed-cost", content).textContent = formatCurrency(values.landedCostEur, "EUR");
     }
 
@@ -1247,6 +1343,7 @@ export default function render(root) {
                 }
                 const suggestedPayments = buildSuggestedPayments({
                   supplier,
+                  mapping: findProductSupplier(state, baseForm.sku, baseForm.supplierId),
                   baseValue,
                   currency: baseForm.currency,
                   schedule,
@@ -1350,7 +1447,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Unit Price (USD)",
+              "Unit Price",
               el("input", { type: "text", inputmode: "decimal", id: "fo-unitPrice", value: baseForm.unitPrice ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-unitPrice" }, []),
@@ -1361,15 +1458,16 @@ export default function render(root) {
             el("label", {}, [
               "Currency",
               (() => {
-                const select = el("select", { id: "fo-currency", disabled: "true" });
-                select.append(el("option", { value: "USD" }, ["USD"]));
-                select.value = "USD";
+                const select = el("select", { id: "fo-currency" });
+                CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
+                select.value = baseForm.currency || "USD";
                 return select;
               })(),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-currency" }, ["USD"]),
                 el("button", { class: "btn ghost", type: "button", id: "reset-currency" }, ["Reset"]),
               ]),
+              el("small", { class: "form-error", id: "fo-currency-error" }, []),
             ]),
             el("label", {}, [
               "Freight",
@@ -1459,6 +1557,14 @@ export default function render(root) {
               el("strong", { id: "fo-landed-cost" }, ["—"]),
             ]),
           ]),
+          el("div", { class: "banner info", id: "fo-suggestion-info" }, [
+            el("strong", {}, ["Why this suggestion"]),
+            el("ul", { class: "fo-suggestion-list" }, []),
+          ]),
+          el("div", { class: "banner warning", id: "fo-warning-info", style: "display:none" }, [
+            el("strong", {}, ["Hinweise"]),
+            el("ul", { class: "fo-warning-list" }, []),
+          ]),
           el("div", { class: "banner info", id: "fo-product-banner", style: "display:none" }, [
             el("strong", {}, ["SKU nicht in Produktdatenbank."]),
             el("span", { class: "muted" }, [" Bitte Produkt anlegen."]),
@@ -1501,6 +1607,7 @@ export default function render(root) {
         ]),
         el("div", { class: "fo-payments-footer" }, [
           el("p", { class: "muted", id: "fo-payment-total" }, ["Summe: 100%"]),
+          el("p", { class: "form-error", id: "fo-payment-error" }, []),
           el("button", { class: "btn secondary", type: "button", id: "fo-payment-normalize" }, ["Normalize to 100%"]),
         ]),
       ]),
@@ -1530,15 +1637,18 @@ export default function render(root) {
       const unitPrice = parseLocaleNumber(baseForm.unitPrice) || 0;
       const target = baseForm.targetDeliveryDate;
       const hasProduct = products.some(prod => String(prod.sku || "").trim().toLowerCase() === sku.toLowerCase());
-      const totalPercent = baseForm.payments
-        .filter(row => row.category === "supplier")
-        .reduce((sum, row) => sum + (Number(row.percent) || 0), 0);
-      const valid = sku && supplierId && units > 0 && unitPrice > 0 && target && Math.round(totalPercent) === 100 && hasProduct;
+      const supplierPayments = baseForm.payments.filter(row => row.category === "supplier");
+      const totalPercent = supplierPayments.reduce((sum, row) => sum + (Number(row.percent) || 0), 0);
+      const currency = String(baseForm.currency || "").trim();
+      const paymentsValid = supplierPayments.length > 0 && Math.round(totalPercent) === 100;
+      const valid = sku && supplierId && units > 0 && unitPrice > 0 && target && paymentsValid && currency && hasProduct;
       const unitPriceError = $("#fo-unitPrice-error", content);
       const unitsError = $("#fo-units-error", content);
       const targetError = $("#fo-target-error", content);
       const productError = $("#fo-product-error", content);
       const supplierError = $("#fo-supplier-error", content);
+      const currencyError = $("#fo-currency-error", content);
+      const paymentError = $("#fo-payment-error", content);
       if (unitPriceError) {
         unitPriceError.textContent = unitPrice > 0 ? "" : "Unit Price ist erforderlich.";
       }
@@ -1553,6 +1663,12 @@ export default function render(root) {
       }
       if (supplierError) {
         supplierError.textContent = supplierId ? "" : "Supplier ist erforderlich.";
+      }
+      if (currencyError) {
+        currencyError.textContent = currency ? "" : "Currency ist erforderlich.";
+      }
+      if (paymentError) {
+        paymentError.textContent = paymentsValid ? "" : "Payment Terms fehlen oder ergeben nicht 100%.";
       }
       saveBtn.disabled = !valid;
       $("#fo-save-error", content).textContent = valid ? "" : "Bitte fehlende Felder korrigieren.";
@@ -1579,6 +1695,7 @@ export default function render(root) {
         updateSchedulePreview(schedule);
         updatePaymentTotals();
         validateForm();
+        updateWarnings();
         renderPaymentsTable();
         updateCostSummary(values);
       }, 300);
@@ -1697,7 +1814,7 @@ export default function render(root) {
     });
 
     $("#fo-currency", content).addEventListener("change", (e) => {
-      setFieldOverride("currency", "USD");
+      setFieldOverride("currency", e.target.value.trim() || "USD");
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -1767,7 +1884,7 @@ export default function render(root) {
       scheduleRecompute();
     });
     $("#reset-currency", content).addEventListener("click", () => {
-      applySuggestedField("currency", "USD");
+      applySuggestedField("currency", suggested.currency || "USD");
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -1843,6 +1960,21 @@ export default function render(root) {
       }
     });
 
+    content.addEventListener("click", (e) => {
+      const btn = e.target.closest(".fo-fix-now");
+      if (!btn) return;
+      const sku = btn.dataset.sku;
+      const tab = btn.dataset.tab || "suppliers";
+      if (!sku) return;
+      sessionStorage.setItem("healthFocus", JSON.stringify({ tab, sku }));
+      if (tab === "produkte") {
+        location.hash = "#produkte";
+      } else {
+        location.hash = "#suppliers";
+      }
+      overlay.remove();
+    });
+
     saveBtn.addEventListener("click", () => {
       validateForm();
       if (saveBtn.disabled) return;
@@ -1873,6 +2005,7 @@ export default function render(root) {
       }
       baseForm.payments = buildSuggestedPayments({
         supplier,
+        mapping: findProductSupplier(state, baseForm.sku, baseForm.supplierId),
         baseValue,
         currency: baseForm.currency,
         schedule,

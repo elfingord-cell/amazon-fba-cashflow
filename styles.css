@@ -223,6 +223,12 @@ td.num, th.num{text-align:right}
 .products-actions input{min-height:44px; padding:8px 12px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; min-width:240px;}
 .products-actions .btn{min-height:44px;}
 .banner.info{padding:12px 16px; border-radius:12px; background:rgba(38,132,255,0.12); color:#0b3d91; margin-bottom:16px;}
+.banner.warning{padding:12px 16px; border-radius:12px; background:rgba(245,166,35,0.16); color:#7a4b00; margin-bottom:16px;}
+.fo-suggestion-list,
+.fo-warning-list{margin:8px 0 0; padding-left:18px;}
+.health-list{display:grid; gap:10px;}
+.health-item{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid rgba(15,27,45,0.12); border-radius:12px; background:#fff;}
+.wide-select{min-width:340px;}
 .products-table .actions{display:flex; gap:8px; flex-wrap:wrap;}
 .products-table .badge{display:inline-flex; align-items:center; justify-content:center; padding:2px 8px; border-radius:999px; font-size:11px; background:rgba(15,27,45,0.08);}
 .products-table .badge.muted{background:rgba(15,27,45,0.05); color:var(--muted);}
