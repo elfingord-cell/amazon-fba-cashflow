@@ -154,6 +154,7 @@ export function render(root) {
     const missingMappings = products.filter(prod => {
       const sku = String(prod.sku || "").trim().toLowerCase();
       if (!sku) return false;
+      if (String(prod.supplierId || "").trim()) return false;
       return !mappings.some(entry => String(entry.sku || "").trim().toLowerCase() === sku && entry.isActive !== false);
     });
 

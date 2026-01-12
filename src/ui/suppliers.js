@@ -68,7 +68,11 @@ function clampPercent(value) {
 }
 
 function parseNumber(value) {
-  const num = Number(value);
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const cleaned = raw.replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
+  const num = Number(cleaned);
   return Number.isFinite(num) ? num : null;
 }
 
