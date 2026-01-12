@@ -394,14 +394,14 @@ export function render(root) {
       const unitInput = $("#mapping-unit-price", content);
       const currencySelect = $("#mapping-currency", content);
       const leadInput = $("#mapping-lead-time", content);
-      if (unitInput && !unitInput.value && defaults.unitPrice != null) {
-        unitInput.value = formatNumber(defaults.unitPrice);
+      if (unitInput) {
+        unitInput.value = defaults.unitPrice != null ? formatNumber(defaults.unitPrice) : "";
       }
       if (currencySelect && defaults.currency) {
         currencySelect.value = defaults.currency;
       }
-      if (leadInput && (leadInput.value === "" || Number(leadInput.value) === 0) && defaults.productionLeadTimeDays != null) {
-        leadInput.value = defaults.productionLeadTimeDays;
+      if (leadInput) {
+        leadInput.value = defaults.productionLeadTimeDays != null ? defaults.productionLeadTimeDays : "";
       }
     });
 
