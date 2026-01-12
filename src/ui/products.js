@@ -48,25 +48,36 @@ function fmtMonthLong(isoMonth) {
 }
 
 function fmtUSD(value) {
-  return Number(value || 0).toLocaleString("de-DE", { style: "currency", currency: "USD" });
+  const parsed = parseDeNumber(value);
+  if (parsed == null) return "—";
+  return parsed.toLocaleString("de-DE", { style: "currency", currency: "USD" });
 }
 
 function fmtEUR(value) {
-  return Number(value || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  const parsed = parseDeNumber(value);
+  if (parsed == null) return "—";
+  return parsed.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 }
 
-function parseNumber(value) {
-  if (typeof value === "number") return value;
-  if (!value) return 0;
-  const cleaned = String(value).trim().replace(/[^0-9,.-]+/g, "");
-  const comma = cleaned.lastIndexOf(",");
-  if (comma >= 0) {
-    const replaced = cleaned.slice(0, comma).replace(/\./g, "") + "." + cleaned.slice(comma + 1).replace(/\./g, "");
-    const num = Number(replaced);
-    return Number.isFinite(num) ? num : 0;
-  }
-  const num = Number(cleaned.replace(/\./g, ""));
-  return Number.isFinite(num) ? num : 0;
+function parseDeNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (value == null) return null;
+  const cleaned = String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  if (!cleaned) return null;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatDeNumber(value, decimals = 2) {
+  if (!Number.isFinite(Number(value))) return "—";
+  return Number(value).toLocaleString("de-DE", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
 }
 
 function openModal({ title, content, actions = [], onClose }) {
@@ -138,15 +149,15 @@ function buildHistoryTable(state, sku) {
     tbody.append(createEl("tr", {}, [
       createEl("td", {}, [po.poNumber || po.number || "—"]),
       createEl("td", {}, [fmtDate(po.orderDate)]),
-      createEl("td", {}, [po.units != null ? String(po.units) : "—"]),
+      createEl("td", {}, [po.units != null ? formatDeNumber(parseDeNumber(po.units), 0) : "—"]),
       createEl("td", {}, [fmtUSD(po.unitCostUsd)]),
-      createEl("td", {}, [po.prodDays != null ? String(po.prodDays) : "—"]),
-      createEl("td", {}, [po.transitDays != null ? String(po.transitDays) : "—"]),
+      createEl("td", {}, [Number.isFinite(Number(po.prodDays)) ? String(po.prodDays) : "—"]),
+      createEl("td", {}, [Number.isFinite(Number(po.transitDays)) ? String(po.transitDays) : "—"]),
       createEl("td", {}, [po.transport || "—"]),
       createEl("td", {}, [fmtEUR(po.freightEur)]),
-      createEl("td", {}, [po.dutyRatePct != null ? String(po.dutyRatePct) : "—"]),
-      createEl("td", {}, [po.eustRatePct != null ? String(po.eustRatePct) : "—"]),
-      createEl("td", {}, [po.fxFeePct != null ? String(po.fxFeePct) : "—"]),
+      createEl("td", {}, [po.dutyRatePct != null ? formatDeNumber(parseDeNumber(po.dutyRatePct), 2) : "—"]),
+      createEl("td", {}, [po.eustRatePct != null ? formatDeNumber(parseDeNumber(po.eustRatePct), 2) : "—"]),
+      createEl("td", {}, [po.fxFeePct != null ? formatDeNumber(parseDeNumber(po.fxFeePct), 2) : "—"]),
     ]));
   });
   table.append(thead, tbody);
@@ -197,20 +208,20 @@ function renderProducts(root) {
     const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
 
     const templateFields = [
-      { key: "unitPriceUsd", label: "Stückpreis (USD)", valueType: "number" },
-      { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)", valueType: "number" },
-      { key: "extraFlatUsd", label: "Zusatz pauschal (USD)", valueType: "number" },
+      { key: "unitPriceUsd", label: "Stückpreis (USD)", valueType: "number", decimals: 2 },
+      { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)", valueType: "number", decimals: 2 },
+      { key: "extraFlatUsd", label: "Zusatz pauschal (USD)", valueType: "number", decimals: 2 },
       { key: "transport", label: "Transport", valueType: "text" },
-      { key: "productionDays", label: "Produktionstage", valueType: "number" },
-      { key: "transitDays", label: "Transit-Tage", valueType: "number" },
-      { key: "freightEur", label: "Fracht (€)", valueType: "number" },
-      { key: "dutyPct", label: "Zoll %", valueType: "number" },
+      { key: "productionDays", label: "Produktionstage", valueType: "number", decimals: 0 },
+      { key: "transitDays", label: "Transit-Tage", valueType: "number", decimals: 0 },
+      { key: "freightEur", label: "Fracht pro Stück (€)", valueType: "number", decimals: 2 },
+      { key: "dutyPct", label: "Zoll %", valueType: "number", decimals: 2 },
       { key: "dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox" },
-      { key: "vatImportPct", label: "EUSt %", valueType: "number" },
+      { key: "vatImportPct", label: "EUSt %", valueType: "number", decimals: 2 },
       { key: "vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox" },
-      { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number" },
-      { key: "fxRate", label: "FX-Kurs", valueType: "number" },
-      { key: "fxFeePct", label: "FX-Gebühr %", valueType: "number" },
+      { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number", decimals: 0 },
+      { key: "fxRate", label: "FX-Kurs", valueType: "number", decimals: 4 },
+      { key: "fxFeePct", label: "FX-Gebühr %", valueType: "number", decimals: 2 },
       { key: "ddp", label: "DDP", type: "checkbox" },
     ];
 
@@ -227,6 +238,23 @@ function renderProducts(root) {
     const templateContainer = createEl("div", { class: "grid two" });
     const templateInputs = {};
     const templateFieldMeta = {};
+    const freightHint = (() => {
+      const history = (state.pos || [])
+        .filter(po => String(po?.sku || "").trim().toLowerCase() === String(product.sku || "").trim().toLowerCase())
+        .sort((a, b) => (b.orderDate || "").localeCompare(a.orderDate || ""));
+      const latest = history[0];
+      if (!latest) {
+        return "Hinweis: Keine PO-Historie vorhanden.";
+      }
+      const freightPerUnit = parseDeNumber(latest.freightPerUnitEur);
+      const units = parseDeNumber(latest.units);
+      const freightTotal = parseDeNumber(latest.freightEur);
+      const computed = freightPerUnit ?? (freightTotal != null && units ? freightTotal / units : null);
+      if (computed == null || !Number.isFinite(computed)) {
+        return "Hinweis: Keine PO-Historie vorhanden.";
+      }
+      return `Hinweis: Frachtkosten pro Stück aus letzter PO: ${formatDeNumber(computed, 2)} €`;
+    })();
     templateFields.forEach(field => {
       templateFieldMeta[field.key] = field;
       if (field.type === "checkbox") {
@@ -234,14 +262,24 @@ function renderProducts(root) {
         templateInputs[field.key] = checkbox;
         templateContainer.append(createEl("label", { class: "inline-checkbox" }, [checkbox, " ", field.label]));
       } else {
-        const input = createEl("input", { name: field.key, value: template[field.key] != null ? String(template[field.key]) : "" });
+        const decimals = typeof field.decimals === "number" ? field.decimals : 2;
+        const rawValue = template[field.key];
+        const parsedValue = parseDeNumber(rawValue);
+        const displayValue = parsedValue != null ? formatDeNumber(parsedValue, decimals) : "";
+        const input = createEl("input", { name: field.key, value: displayValue, inputmode: "decimal" });
+        input.addEventListener("blur", () => {
+          const parsed = parseDeNumber(input.value);
+          input.value = parsed == null ? "" : formatDeNumber(parsed, decimals);
+        });
         templateInputs[field.key] = input;
-        templateContainer.append(
-          createEl("label", {}, [
-            field.label,
-            input,
-          ])
-        );
+        const label = createEl("label", {}, [
+          field.label,
+          input,
+        ]);
+        if (field.key === "freightEur") {
+          label.append(createEl("small", { class: "muted" }, [freightHint]));
+        }
+        templateContainer.append(label);
       }
     });
     form.append(templateContainer);
@@ -356,7 +394,8 @@ function renderProducts(root) {
         if (meta.valueType === "text") {
           templateObj[key] = raw;
         } else {
-          templateObj[key] = parseNumber(raw);
+          const parsed = parseDeNumber(raw);
+          if (parsed != null) templateObj[key] = parsed;
         }
       });
       const msValue = milestonesArea.value.trim();
