@@ -301,26 +301,46 @@ function normaliseTemplate(template) {
   }
   if (template.name) next.name = String(template.name);
   if (template.supplierId) next.supplierId = String(template.supplierId);
-  const copyFields = [
-    "unitPriceUsd",
-    "extraPerUnitUsd",
-    "extraFlatUsd",
-    "transport",
-    "productionDays",
-    "transitDays",
-    "freightEur",
-    "dutyPct",
-    "dutyIncludesFreight",
-    "vatImportPct",
-    "vatRefundActive",
-    "vatRefundLag",
-    "fxRate",
-    "fxFeePct",
-    "ddp",
-  ];
-  for (const field of copyFields) {
-    if (template[field] != null) next[field] = template[field];
-  }
+  const rawFields = template.fields && typeof template.fields === "object"
+    ? template.fields
+    : template;
+  const transportRaw = rawFields.transportMode || rawFields.transport || "SEA";
+  const currencyRaw = rawFields.currency || "USD";
+  const parseNumber = (value) => {
+    if (value == null || value === "") return null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
+    if (!cleaned) return null;
+    const num = Number(cleaned);
+    return Number.isFinite(num) ? num : null;
+  };
+  const clamp = (value, min, max) => {
+    if (!Number.isFinite(value)) return null;
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  };
+  const normalizedFields = {
+    unitPriceUsd: clamp(parseNumber(rawFields.unitPriceUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    extraPerUnitUsd: clamp(parseNumber(rawFields.extraPerUnitUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    extraFlatUsd: clamp(parseNumber(rawFields.extraFlatUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    transportMode: String(transportRaw || "SEA").toUpperCase(),
+    productionDays: Math.max(0, Math.round(parseNumber(rawFields.productionDays ?? 0) ?? 0)),
+    transitDays: Math.max(0, Math.round(parseNumber(rawFields.transitDays ?? 0) ?? 0)),
+    freightEur: clamp(parseNumber(rawFields.freightEur ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    dutyPct: clamp(parseNumber(rawFields.dutyPct ?? 0) ?? 0, 0, 100),
+    dutyIncludesFreight: rawFields.dutyIncludesFreight === true,
+    vatImportPct: clamp(parseNumber(rawFields.vatImportPct ?? 19) ?? 19, 0, 100),
+    vatRefundActive: rawFields.vatRefundActive === true,
+    vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
+    fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
+    fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
+    ddp: rawFields.ddp === true,
+    currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
+      ? String(currencyRaw).toUpperCase()
+      : "USD",
+  };
+  next.fields = normalizedFields;
   if (Array.isArray(template.milestones)) {
     next.milestones = template.milestones.map(row => ({
       id: row.id || `ms-${Math.random().toString(36).slice(2, 9)}`,
@@ -329,9 +349,6 @@ function normaliseTemplate(template) {
       anchor: row.anchor || "ETA",
       lagDays: Number(row.lagDays) || 0,
     }));
-  }
-  if (template.fields && typeof template.fields === "object") {
-    next.fields = JSON.parse(JSON.stringify(template.fields));
   }
   return next;
 }

@@ -77,7 +77,21 @@ function formatDeNumber(value, decimals = 2) {
   return Number(value).toLocaleString("de-DE", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
+    useGrouping: false,
   });
+}
+
+function showToast(message) {
+  let toast = document.getElementById("products-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "products-toast";
+    toast.className = "po-toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.hidden = false;
+  setTimeout(() => { toast.hidden = true; }, 2000);
 }
 
 function openModal({ title, content, actions = [], onClose }) {
@@ -206,15 +220,36 @@ function renderProducts(root) {
     const tagsInput = createEl("input", { value: (product.tags || []).join(", ") });
 
     const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
+    if (!template.transportMode && template.transport) {
+      template.transportMode = template.transport;
+    }
+    const settings = state.settings || {};
+    const fxRateDefault = parseDeNumber(settings.fxRate) ?? parseDeNumber(settings.fxRate) ?? null;
+    const templateDefaults = {
+      unitPriceUsd: 0,
+      extraPerUnitUsd: 0,
+      extraFlatUsd: 0,
+      transportMode: "SEA",
+      productionDays: 0,
+      transitDays: 0,
+      freightEur: 0,
+      dutyPct: 0,
+      vatImportPct: 19,
+      vatRefundLag: 0,
+      fxRate: fxRateDefault,
+      fxFeePct: 0,
+      ddp: false,
+      currency: "USD",
+    };
 
     const templateFields = [
       { key: "unitPriceUsd", label: "Stückpreis (USD)", valueType: "number", decimals: 2 },
       { key: "extraPerUnitUsd", label: "Zusatz je Stück (USD)", valueType: "number", decimals: 2 },
       { key: "extraFlatUsd", label: "Zusatz pauschal (USD)", valueType: "number", decimals: 2 },
-      { key: "transport", label: "Transport", valueType: "text" },
+      { key: "transportMode", label: "Transport", type: "select", options: ["SEA", "RAIL", "AIR"] },
       { key: "productionDays", label: "Produktionstage", valueType: "number", decimals: 0 },
       { key: "transitDays", label: "Transit-Tage", valueType: "number", decimals: 0 },
-      { key: "freightEur", label: "Fracht pro Stück (€)", valueType: "number", decimals: 2 },
+      { key: "freightEur", label: "Fracht (€ / Stück)", valueType: "number", decimals: 2 },
       { key: "dutyPct", label: "Zoll %", valueType: "number", decimals: 2 },
       { key: "dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox" },
       { key: "vatImportPct", label: "EUSt %", valueType: "number", decimals: 2 },
@@ -222,8 +257,14 @@ function renderProducts(root) {
       { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number", decimals: 0 },
       { key: "fxRate", label: "FX-Kurs", valueType: "number", decimals: 4 },
       { key: "fxFeePct", label: "FX-Gebühr %", valueType: "number", decimals: 2 },
+      { key: "currency", label: "Currency", type: "select", options: ["USD", "EUR", "CNY"] },
       { key: "ddp", label: "DDP", type: "checkbox" },
     ];
+
+    const templateHeader = createEl("div", { class: "table-card-header" }, [
+      createEl("h4", {}, ["Template-Werte"]),
+      createEl("button", { class: "btn secondary", type: "button", id: "product-apply-latest" }, ["Letzte PO Werte übernehmen"]),
+    ]);
 
     form.append(
       createEl("label", {}, ["SKU", skuInput]),
@@ -232,26 +273,86 @@ function renderProducts(root) {
       createEl("label", {}, ["Status", statusSelect]),
       createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]),
       createEl("hr"),
-      createEl("h4", {}, ["Template-Werte"])
+      templateHeader
     );
 
     const templateContainer = createEl("div", { class: "grid two" });
     const templateInputs = {};
+    const templateErrors = {};
     const templateFieldMeta = {};
+    const fieldRules = {
+      unitPriceUsd: { min: 0 },
+      extraPerUnitUsd: { min: 0 },
+      extraFlatUsd: { min: 0 },
+      productionDays: { min: 0, integer: true },
+      transitDays: { min: 0, integer: true },
+      freightEur: { min: 0 },
+      dutyPct: { min: 0, max: 100 },
+      vatImportPct: { min: 0, max: 100 },
+      vatRefundLag: { min: 0, integer: true },
+      fxRate: { min: 0.0001 },
+      fxFeePct: { min: 0, max: 100 },
+    };
+
+    function validateField(key) {
+      const rule = fieldRules[key];
+      if (!rule) return true;
+      const input = templateInputs[key];
+      const error = templateErrors[key];
+      if (!input || !error) return true;
+      const raw = String(input.value || "").trim();
+      if (!raw) {
+        const defaultValue = templateDefaults[key];
+        if (key === "fxRate" && (defaultValue == null || defaultValue <= 0)) {
+          error.textContent = "FX-Kurs ist erforderlich.";
+          return false;
+        }
+        error.textContent = "";
+        return true;
+      }
+      const parsed = parseDeNumber(raw);
+      if (parsed == null) {
+        error.textContent = "Ungültiger Wert.";
+        return false;
+      }
+      if (rule.integer && !Number.isInteger(parsed)) {
+        error.textContent = "Bitte eine ganze Zahl eingeben.";
+        return false;
+      }
+      if (rule.min != null && parsed < rule.min) {
+        error.textContent = `Wert muss ≥ ${rule.min} sein.`;
+        return false;
+      }
+      if (rule.max != null && parsed > rule.max) {
+        error.textContent = `Wert muss ≤ ${rule.max} sein.`;
+        return false;
+      }
+      error.textContent = "";
+      return true;
+    }
+
+    function validateAll() {
+      return Object.keys(fieldRules).every(key => validateField(key));
+    }
+
+    function updateSaveState() {
+      const valid = validateAll();
+      saveBtn.disabled = !valid;
+    }
     const freightHint = (() => {
       const history = (state.pos || [])
         .filter(po => String(po?.sku || "").trim().toLowerCase() === String(product.sku || "").trim().toLowerCase())
         .sort((a, b) => (b.orderDate || "").localeCompare(a.orderDate || ""));
       const latest = history[0];
       if (!latest) {
-        return "Hinweis: Keine PO-Historie vorhanden.";
+        return "Hinweis: —";
       }
       const freightPerUnit = parseDeNumber(latest.freightPerUnitEur);
       const units = parseDeNumber(latest.units);
       const freightTotal = parseDeNumber(latest.freightEur);
       const computed = freightPerUnit ?? (freightTotal != null && units ? freightTotal / units : null);
       if (computed == null || !Number.isFinite(computed)) {
-        return "Hinweis: Keine PO-Historie vorhanden.";
+        return "Hinweis: —";
       }
       return `Hinweis: Frachtkosten pro Stück aus letzter PO: ${formatDeNumber(computed, 2)} €`;
     })();
@@ -261,20 +362,45 @@ function renderProducts(root) {
         const checkbox = createEl("input", { type: "checkbox", name: field.key, checked: Boolean(template[field.key]) });
         templateInputs[field.key] = checkbox;
         templateContainer.append(createEl("label", { class: "inline-checkbox" }, [checkbox, " ", field.label]));
+      } else if (field.type === "select") {
+        const select = createEl("select", { name: field.key });
+        (field.options || []).forEach(option => {
+          select.append(createEl("option", { value: option }, [option]));
+        });
+        const baseValue = template[field.key] ?? templateDefaults[field.key];
+        select.value = baseValue || (field.options ? field.options[0] : "");
+        templateInputs[field.key] = select;
+        templateContainer.append(
+          createEl("label", {}, [
+            field.label,
+            select,
+          ])
+        );
       } else {
         const decimals = typeof field.decimals === "number" ? field.decimals : 2;
-        const rawValue = template[field.key];
+        const rawValue = template[field.key] ?? templateDefaults[field.key];
         const parsedValue = parseDeNumber(rawValue);
         const displayValue = parsedValue != null ? formatDeNumber(parsedValue, decimals) : "";
         const input = createEl("input", { name: field.key, value: displayValue, inputmode: "decimal" });
         input.addEventListener("blur", () => {
           const parsed = parseDeNumber(input.value);
-          input.value = parsed == null ? "" : formatDeNumber(parsed, decimals);
+          const defaultValue = templateDefaults[field.key];
+          const nextValue = parsed == null ? defaultValue : parsed;
+          input.value = nextValue == null ? "" : formatDeNumber(nextValue, decimals);
+          validateField(field.key);
+          updateSaveState();
+        });
+        input.addEventListener("input", () => {
+          validateField(field.key);
+          updateSaveState();
         });
         templateInputs[field.key] = input;
+        const error = createEl("small", { class: "form-error" }, []);
+        templateErrors[field.key] = error;
         const label = createEl("label", {}, [
           field.label,
           input,
+          error,
         ]);
         if (field.key === "freightEur") {
           label.append(createEl("small", { class: "muted" }, [freightHint]));
@@ -283,6 +409,56 @@ function renderProducts(root) {
       }
     });
     form.append(templateContainer);
+
+    function setFieldValue(key, value) {
+      const input = templateInputs[key];
+      if (!input) return;
+      const meta = templateFieldMeta[key] || {};
+      if (input.type === "checkbox") {
+        input.checked = Boolean(value);
+        return;
+      }
+      if (input.tagName === "SELECT") {
+        input.value = value != null ? String(value) : input.value;
+        return;
+      }
+      const decimals = typeof meta.decimals === "number" ? meta.decimals : 2;
+      const parsed = parseDeNumber(value);
+      input.value = parsed == null ? "" : formatDeNumber(parsed, decimals);
+      validateField(key);
+    }
+
+    function applyLatestPoValues() {
+      const sku = skuInput.value.trim();
+      if (!sku) {
+        showToast("Bitte zuerst eine SKU angeben.");
+        return;
+      }
+      const latestPo = (state.pos || [])
+        .filter(po => String(po?.sku || "").trim().toLowerCase() === sku.toLowerCase())
+        .sort((a, b) => (b.orderDate || "").localeCompare(a.orderDate || ""))[0];
+      if (!latestPo) {
+        showToast("Keine PO vorhanden.");
+        return;
+      }
+      const freightPerUnit = parseDeNumber(latestPo.freightPerUnitEur);
+      const units = parseDeNumber(latestPo.units);
+      const freightTotal = parseDeNumber(latestPo.freightEur);
+      const computedFreight = freightPerUnit ?? (freightTotal != null && units ? freightTotal / units : null);
+      setFieldValue("unitPriceUsd", latestPo.unitCostUsd);
+      setFieldValue("freightEur", computedFreight);
+      setFieldValue("productionDays", latestPo.prodDays);
+      setFieldValue("transitDays", latestPo.transitDays);
+      setFieldValue("transportMode", String(latestPo.transport || "SEA").toUpperCase());
+      setFieldValue("dutyPct", latestPo.dutyRatePct);
+      setFieldValue("vatImportPct", latestPo.eustRatePct);
+      setFieldValue("fxRate", latestPo.fxOverride ?? settings.fxRate);
+      setFieldValue("fxFeePct", latestPo.fxFeePct);
+      setFieldValue("ddp", latestPo.ddp === true);
+      setFieldValue("currency", "USD");
+      updateSaveState();
+      showToast("Letzte PO Werte übernommen.");
+    }
 
     const milestonesArea = createEl("textarea", {
       placeholder: "Milestones im JSON-Format (optional)",
@@ -365,9 +541,19 @@ function renderProducts(root) {
       ev.preventDefault();
       form.requestSubmit();
     });
+    const applyBtn = $("#product-apply-latest", form);
+    if (applyBtn) {
+      applyBtn.addEventListener("click", applyLatestPoValues);
+    }
+    Object.keys(fieldRules).forEach(key => validateField(key));
+    updateSaveState();
 
     form.addEventListener("submit", ev => {
       ev.preventDefault();
+      if (!validateAll()) {
+        updateSaveState();
+        return;
+      }
       const payload = {
         sku: skuInput.value.trim(),
         alias: aliasInput.value.trim(),
@@ -388,15 +574,23 @@ function renderProducts(root) {
           templateObj[key] = input.checked;
           return;
         }
+        if (input.tagName === "SELECT") {
+          templateObj[key] = input.value;
+          return;
+        }
         const raw = input.value.trim();
-        if (raw === "") return;
         const meta = templateFieldMeta[key] || {};
+        if (raw === "") {
+          const fallback = templateDefaults[key];
+          if (fallback != null) templateObj[key] = fallback;
+          return;
+        }
         if (meta.valueType === "text") {
           templateObj[key] = raw;
-        } else {
-          const parsed = parseDeNumber(raw);
-          if (parsed != null) templateObj[key] = parsed;
+          return;
         }
+        const parsed = parseDeNumber(raw);
+        if (parsed != null) templateObj[key] = parsed;
       });
       const msValue = milestonesArea.value.trim();
       if (msValue) {
