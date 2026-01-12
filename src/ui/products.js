@@ -1139,6 +1139,7 @@ function renderProducts(root) {
           status: original.status,
           tags: Array.isArray(original.tags) ? [...original.tags] : [],
           template: original.template ? { ...original.template } : null,
+          originalSku: original.sku,
         };
         Object.entries(edits).forEach(([key, value]) => {
           if (key.startsWith("template.")) {
