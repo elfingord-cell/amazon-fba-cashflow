@@ -8,6 +8,7 @@ import {
   recordRecentProduct,
   upsertProduct,
 } from "../data/storageLocal.js";
+import { createDataTable } from "./components/dataTable.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -960,40 +961,57 @@ function renderList(container, records, config, onEdit, onDelete) {
   const settings = getSettings();
   const rows = Array.isArray(records) ? records : [];
   for (const rec of rows) normaliseGoodsFields(rec, settings);
-  const table = el("table", {}, [
-    el("thead", {}, [
-      el("tr", {}, [
-        el("th", {}, [`${config.entityLabel}-Nr.`]),
-        ...((config.slug === "po" || config.slug === "fo") ? [el("th", {}, ["Produkt"])] : []),
-        el("th", {}, ["Order"]),
-        el("th", {}, ["Timeline"]),
-        el("th", {}, ["Stück"]),
-        el("th", {}, ["Summe USD"]),
-        el("th", {}, ["Fracht (€)"]),
-        el("th", {}, ["Zahlungen"]),
-        el("th", {}, ["Transport"]),
-        el("th", {}, ["Aktionen"]),
-      ]),
-    ]),
-    el("tbody", {}, rows.map(rec =>
-      el("tr", {}, [
-        el("td", {}, [rec[config.numberField] || "—"]),
-        ...((config.slug === "po" || config.slug === "fo") ? [el("td", {}, [formatSkuSummary(rec)])] : []),
-        el("td", {}, [fmtDateDE(rec.orderDate)]),
-        el("td", {}, [formatTimelineSummary(rec)]),
-        el("td", {}, [Number(computeGoodsTotals(rec, settings).units || 0).toLocaleString("de-DE")]),
-        el("td", {}, [fmtUSD(computeGoodsTotals(rec, settings).usd)]),
-        el("td", {}, [fmtEUR(resolveFreightTotal(rec, computeGoodsTotals(rec, settings)))]),
-        el("td", {}, [String((rec.milestones || []).length)]),
-        el("td", {}, [`${rec.transport || "sea"} · ${rec.transitDays || 0}d`]),
-        el("td", {}, [
-          el("button", { class: "btn", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
-          " ",
-          el("button", { class: "btn danger", onclick: () => onDelete(rec) }, ["Löschen"]),
-        ]),
-      ]),
-    )),
-  ]);
+  const listRows = rows.map(rec => {
+    const totals = computeGoodsTotals(rec, settings);
+    return { rec, totals };
+  });
+  const columns = [
+    { key: "number", label: `${config.entityLabel}-Nr.` },
+    ...((config.slug === "po" || config.slug === "fo") ? [{ key: "product", label: "Produkt" }] : []),
+    { key: "order", label: "Order" },
+    { key: "timeline", label: "Timeline" },
+    { key: "units", label: "Stück", className: "num" },
+    { key: "usd", label: "Summe USD", className: "num" },
+    { key: "freight", label: "Fracht (€)", className: "num" },
+    { key: "payments", label: "Zahlungen" },
+    { key: "transport", label: "Transport" },
+    { key: "actions", label: "Aktionen" },
+  ];
+  const table = createDataTable({
+    columns,
+    rows: listRows,
+    rowKey: row => row.rec.id,
+    renderCell: (row, col) => {
+      const rec = row.rec;
+      switch (col.key) {
+        case "number":
+          return rec[config.numberField] || "—";
+        case "product":
+          return formatSkuSummary(rec);
+        case "order":
+          return fmtDateDE(rec.orderDate);
+        case "timeline":
+          return formatTimelineSummary(rec);
+        case "units":
+          return Number(row.totals.units || 0).toLocaleString("de-DE");
+        case "usd":
+          return fmtUSD(row.totals.usd);
+        case "freight":
+          return fmtEUR(resolveFreightTotal(rec, row.totals));
+        case "payments":
+          return String((rec.milestones || []).length);
+        case "transport":
+          return `${rec.transport || "sea"} · ${rec.transitDays || 0}d`;
+        case "actions":
+          return el("div", { class: "table-actions" }, [
+            el("button", { class: "btn", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
+            el("button", { class: "btn danger", onclick: () => onDelete(rec) }, ["Löschen"]),
+          ]);
+        default:
+          return "—";
+      }
+    },
+  });
   container.append(table);
 }
 

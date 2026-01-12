@@ -6,6 +6,7 @@ import {
   deleteProductSupplier,
   setPreferredProductSupplier,
 } from "../data/storageLocal.js";
+import { createDataTable } from "./components/dataTable.js";
 
 function $(sel, root = document) { return root.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -111,50 +112,59 @@ export function render(root) {
         <span class="muted">Lieferanten-Stammdaten</span>
         <button class="btn primary" id="supplier-add">Lieferant hinzufügen</button>
       </div>
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Supplier Name</th>
-              <th class="num">Production LT (days)</th>
-              <th>Incoterm</th>
-              <th>Currency</th>
-              <th>Payment Terms</th>
-              <th>Updated</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="supplier-rows"></tbody>
-        </table>
-      </div>
+      <div id="supplier-table"></div>
     </section>
   `;
 
-  const rowsEl = $("#supplier-rows", root);
+  const tableHost = $("#supplier-table", root);
 
   function renderRows() {
     if (!state.suppliers.length) {
-      rowsEl.innerHTML = `<tr><td colspan="7" class="muted">Keine Lieferanten vorhanden.</td></tr>`;
+      tableHost.innerHTML = `<p class="muted">Keine Lieferanten vorhanden.</p>`;
       return;
     }
-    rowsEl.innerHTML = state.suppliers
+    const rows = state.suppliers
       .slice()
-      .sort((a, b) => (a.name || "").localeCompare(b.name || ""))
-      .map(supplier => `
-        <tr data-id="${supplier.id}">
-          <td>${supplier.name}</td>
-          <td class="num">${supplier.productionLeadTimeDaysDefault}</td>
-          <td>${supplier.incotermDefault}</td>
-          <td>${supplier.currencyDefault || "EUR"}</td>
-          <td>${formatTermsSummary(supplier.paymentTermsDefault)}</td>
-          <td>${supplier.updatedAt ? new Date(supplier.updatedAt).toLocaleDateString("de-DE") : "—"}</td>
-          <td>
-            <button class="btn" data-action="edit">Bearbeiten</button>
-            <button class="btn danger" data-action="delete">Löschen</button>
-          </td>
-        </tr>
-      `)
-      .join("");
+      .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    const columns = [
+      { key: "name", label: "Supplier Name" },
+      { key: "lead", label: "Production LT (days)", className: "num" },
+      { key: "incoterm", label: "Incoterm" },
+      { key: "currency", label: "Currency" },
+      { key: "terms", label: "Payment Terms" },
+      { key: "updated", label: "Updated" },
+      { key: "actions", label: "Actions" },
+    ];
+    tableHost.innerHTML = "";
+    tableHost.append(createDataTable({
+      columns,
+      rows,
+      rowKey: row => row.id,
+      rowAttrs: row => ({ dataset: { id: row.id } }),
+      renderCell: (supplier, col) => {
+        switch (col.key) {
+          case "name":
+            return supplier.name;
+          case "lead":
+            return supplier.productionLeadTimeDaysDefault;
+          case "incoterm":
+            return supplier.incotermDefault;
+          case "currency":
+            return supplier.currencyDefault || "EUR";
+          case "terms":
+            return formatTermsSummary(supplier.paymentTermsDefault);
+          case "updated":
+            return supplier.updatedAt ? new Date(supplier.updatedAt).toLocaleDateString("de-DE") : "—";
+          case "actions":
+            return el("div", { class: "table-actions" }, [
+              el("button", { class: "btn", type: "button", dataset: { action: "edit" } }, ["Bearbeiten"]),
+              el("button", { class: "btn danger", type: "button", dataset: { action: "delete" } }, ["Löschen"]),
+            ]);
+          default:
+            return "—";
+        }
+      },
+    }));
   }
 
   function openMappingModal({ supplierId, mapping = null, presetSku = "" }) {
@@ -719,7 +729,7 @@ export function render(root) {
 
   $("#supplier-add", root).addEventListener("click", () => openSupplierModal(null));
 
-  rowsEl.addEventListener("click", (ev) => {
+  tableHost.addEventListener("click", (ev) => {
     const row = ev.target.closest("tr[data-id]");
     if (!row) return;
     const id = row.dataset.id;

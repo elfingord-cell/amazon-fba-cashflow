@@ -4,6 +4,7 @@ import {
   getProductsSnapshot,
   upsertProduct,
 } from "../data/storageLocal.js";
+import { createDataTable } from "./components/dataTable.js";
 
 function $(sel, root = document) {
   return root.querySelector(sel);
@@ -599,7 +600,7 @@ function normalizeFoRecord(form, schedule, payments) {
     incoterm: form.incoterm,
     unitPrice: parseLocaleNumber(form.unitPrice) || 0,
     unitPriceIsOverridden: Boolean(form.unitPriceIsOverridden),
-    currency: "USD",
+    currency: form.currency || "USD",
     freight: parseLocaleNumber(form.freight) || 0,
     freightCurrency: form.freightCurrency || "EUR",
     dutyRatePct: parseLocaleNumber(form.dutyRatePct) || 0,
@@ -645,30 +646,11 @@ export default function render(root) {
           <button class="btn primary" id="fo-add">Create FO</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>FO ID</th>
-              <th>Produkt</th>
-              <th>Supplier</th>
-              <th class="num">Units</th>
-              <th>Target Delivery</th>
-              <th>Order Date</th>
-              <th>ETD / ETA</th>
-              <th class="num">Total Value (EUR)</th>
-              <th>Payments</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="fo-rows"></tbody>
-        </table>
-      </div>
+      <div id="fo-table"></div>
     </section>
   `;
 
-  const rowsEl = $("#fo-rows", root);
+  const tableHost = $("#fo-table", root);
   const searchInput = $("#fo-search", root);
   const statusFilter = $("#fo-status-filter", root);
 
@@ -730,59 +712,97 @@ export default function render(root) {
       .sort((a, b) => (a.targetDeliveryDate || "").localeCompare(b.targetDeliveryDate || ""));
 
     if (!rows.length) {
-      rowsEl.innerHTML = `<tr><td colspan="11" class="muted">Keine Forecast Orders vorhanden.</td></tr>`;
+      tableHost.innerHTML = `<p class="muted">Keine Forecast Orders vorhanden.</p>`;
       return;
     }
 
-    rowsEl.innerHTML = rows
-      .map(fo => {
-        const supplier = state.suppliers.find(item => item.id === fo.supplierId);
-        const product = getProductBySku(products, fo.sku);
-        const alias = product?.alias || fo.sku || "—";
-        const skuLabel = fo.sku || "—";
-        const supplierLabel = supplier?.name || "—";
-        const schedule = buildSchedule(fo);
-        const costValues = buildCostValues(fo);
-        const paymentsSummary = formatPaymentsSummary(fo.payments);
-        const paymentsTotal = paymentSummaryTotal(fo.payments, fo.fxRate);
-        const paymentsTooltip = formatPaymentTooltip(fo.payments, fo.fxRate);
-        const status = String(fo.status || "DRAFT").toUpperCase();
-        const statusLabel = STATUS_LABELS[status] || status;
-        const statusClass = `badge${status === "CONVERTED" ? " muted" : ""}`;
-        return `
-          <tr data-id="${fo.id}">
-            <td>${shortId(fo.id)}</td>
-            <td>
-              <div class="fo-product-cell">
-                <strong>${alias}</strong>
-                <small class="muted">${skuLabel}</small>
-              </div>
-            </td>
-            <td><button class="btn ghost fo-link" data-action="supplier">${supplierLabel}</button></td>
-            <td class="num">${Number(fo.units || 0).toLocaleString("de-DE")}</td>
-            <td>${formatDate(fo.targetDeliveryDate)}</td>
-            <td>${formatDate(fo.orderDate)}</td>
-            <td>
-              <div class="fo-date-stack">
-                <span>ETD ${formatDate(fo.etdDate || schedule.etdDate)}</span>
-                <span class="muted">ETA ${formatDate(fo.etaDate || schedule.etaDate)}</span>
-              </div>
-            </td>
-            <td class="num">${formatCurrency(costValues.landedCostEur, "EUR")}</td>
-            <td title="${paymentsTooltip}">
-              ${paymentsSummary}<br>
-              <span class="muted">${formatCurrency(paymentsTotal, "EUR")}</span>
-            </td>
-            <td><span class="${statusClass}">${statusLabel}</span></td>
-            <td>
-              <button class="btn" data-action="edit">View/Edit</button>
-              <button class="btn secondary" data-action="convert"${status === "CONVERTED" ? " disabled" : ""}>Convert to PO</button>
-              <button class="btn danger" data-action="delete"${status === "CONVERTED" ? " disabled" : ""}>Delete</button>
-            </td>
-          </tr>
-        `;
-      })
-      .join("");
+    const listRows = rows.map(fo => {
+      const supplier = state.suppliers.find(item => item.id === fo.supplierId);
+      const product = getProductBySku(products, fo.sku);
+      const schedule = buildSchedule(fo);
+      const costValues = buildCostValues(fo);
+      const paymentsSummary = formatPaymentsSummary(fo.payments);
+      const paymentsTotal = paymentSummaryTotal(fo.payments, fo.fxRate);
+      const paymentsTooltip = formatPaymentTooltip(fo.payments, fo.fxRate);
+      const status = String(fo.status || "DRAFT").toUpperCase();
+      return {
+        fo,
+        supplierLabel: supplier?.name || "—",
+        alias: product?.alias || fo.sku || "—",
+        skuLabel: fo.sku || "—",
+        schedule,
+        costValues,
+        paymentsSummary,
+        paymentsTotal,
+        paymentsTooltip,
+        status,
+        statusLabel: STATUS_LABELS[status] || status,
+        statusClass: `badge${status === "CONVERTED" ? " muted" : ""}`,
+      };
+    });
+    const columns = [
+      { key: "id", label: "FO ID" },
+      { key: "product", label: "Produkt" },
+      { key: "supplier", label: "Supplier" },
+      { key: "units", label: "Units", className: "num" },
+      { key: "target", label: "Target Delivery" },
+      { key: "order", label: "Order Date" },
+      { key: "timeline", label: "ETD / ETA" },
+      { key: "total", label: "Total Value (EUR)", className: "num" },
+      { key: "payments", label: "Payments" },
+      { key: "status", label: "Status" },
+      { key: "actions", label: "Actions" },
+    ];
+    tableHost.innerHTML = "";
+    tableHost.append(createDataTable({
+      columns,
+      rows: listRows,
+      rowKey: row => row.fo.id,
+      rowAttrs: row => ({ dataset: { id: row.fo.id } }),
+      renderCell: (row, col) => {
+        const { fo } = row;
+        switch (col.key) {
+          case "id":
+            return shortId(fo.id);
+          case "product":
+            return el("div", { class: "fo-product-cell" }, [
+              el("strong", {}, [row.alias]),
+              el("small", { class: "muted" }, [row.skuLabel]),
+            ]);
+          case "supplier":
+            return el("button", { class: "btn ghost fo-link", type: "button", dataset: { action: "supplier" } }, [row.supplierLabel]);
+          case "units":
+            return Number(fo.units || 0).toLocaleString("de-DE");
+          case "target":
+            return formatDate(fo.targetDeliveryDate);
+          case "order":
+            return formatDate(fo.orderDate);
+          case "timeline":
+            return el("div", { class: "fo-date-stack" }, [
+              el("span", {}, [`ETD ${formatDate(fo.etdDate || row.schedule.etdDate)}`]),
+              el("span", { class: "muted" }, [`ETA ${formatDate(fo.etaDate || row.schedule.etaDate)}`]),
+            ]);
+          case "total":
+            return formatCurrency(row.costValues.landedCostEur, "EUR");
+          case "payments":
+            return el("div", { title: row.paymentsTooltip }, [
+              row.paymentsSummary,
+              el("br"),
+              el("span", { class: "muted" }, [formatCurrency(row.paymentsTotal, "EUR")]),
+            ]);
+          case "status":
+            return el("span", { class: row.statusClass }, [row.statusLabel]);
+          case "actions":
+            return el("div", { class: "table-actions" }, [
+              el("button", { class: "btn", type: "button", dataset: { action: "edit" } }, ["View/Edit"]),
+              el("button", { class: "btn secondary", type: "button", dataset: { action: "convert" }, disabled: row.status === "CONVERTED" ? "true" : null }, ["Convert to PO"]),
+              el("button", { class: "btn danger", type: "button", dataset: { action: "delete" }, disabled: row.status === "CONVERTED" ? "true" : null }, ["Delete"]),
+            ]);
+          default:
+            return "—";
+        }
+      },
+    }));
   }
 
   if (searchInput) {
@@ -2027,7 +2047,7 @@ export default function render(root) {
 
   $("#fo-add", root).addEventListener("click", () => openFoModal(null));
 
-  rowsEl.addEventListener("click", (ev) => {
+  tableHost.addEventListener("click", (ev) => {
     const row = ev.target.closest("tr[data-id]");
     if (!row) return;
     const id = row.dataset.id;

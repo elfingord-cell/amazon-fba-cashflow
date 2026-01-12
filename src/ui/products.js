@@ -6,6 +6,7 @@ import {
   setProductStatus,
   setPreferredProductSupplier,
 } from "../data/storageLocal.js";
+import { createDataTable } from "./components/dataTable.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -399,51 +400,69 @@ function renderProducts(root) {
     if (!list.length) {
       return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
     }
-    const table = createEl("table", { class: "table products-table" });
-    table.append(
-      createEl("thead", {}, [
-        createEl("tr", {}, [
-          createEl("th", {}, ["Alias"]),
-          createEl("th", {}, ["SKU"]),
-          createEl("th", {}, ["Supplier"]),
-          createEl("th", {}, ["Letzte PO"]),
-          createEl("th", {}, ["Ø Stückpreis"]),
-          createEl("th", {}, ["POs"]),
-          createEl("th", {}, ["Template"]),
-          createEl("th", {}, ["Aktionen"]),
-        ])
-      ]),
-      createEl("tbody", {}, list.map(product => {
-        const templateBadge = product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
-        const actionCell = createEl("td", { class: "actions" });
-        const editBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]);
-        const historyBtn = createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]);
-        const statusBtn = createEl("button", { class: "btn tertiary", type: "button", onclick: () => {
-          setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
-          renderProducts(root);
-          document.dispatchEvent(new Event("state:changed"));
-        } }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]);
-        const deleteBtn = createEl("button", { class: "btn danger", type: "button", onclick: () => {
-          if (confirm("Produkt wirklich löschen?")) {
-            deleteProductBySku(product.sku);
-            renderProducts(root);
-            document.dispatchEvent(new Event("state:changed"));
-          }
-        } }, ["Löschen"]);
-        actionCell.append(editBtn, historyBtn, statusBtn, deleteBtn);
-        return createEl("tr", {}, [
-          createEl("td", {}, [product.alias || "—", product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null]),
-          createEl("td", {}, [product.sku || "—"]),
-          createEl("td", {}, [product.supplierId || "—"]),
-          createEl("td", {}, [product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—"]),
-          createEl("td", {}, [product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—"]),
-          createEl("td", {}, [product.stats?.poCount != null ? String(product.stats.poCount) : "0"]),
-          createEl("td", {}, [templateBadge]),
-          actionCell,
-        ]);
-      }))
-    );
-    return table;
+    const columns = [
+      { key: "alias", label: "Alias" },
+      { key: "sku", label: "SKU" },
+      { key: "supplier", label: "Supplier" },
+      { key: "lastPo", label: "Letzte PO" },
+      { key: "avg", label: "Ø Stückpreis", className: "num" },
+      { key: "count", label: "POs", className: "num" },
+      { key: "template", label: "Template" },
+      { key: "actions", label: "Aktionen" },
+    ];
+    return createDataTable({
+      columns,
+      rows: list,
+      rowKey: row => row.id,
+      renderCell: (product, col) => {
+        switch (col.key) {
+          case "alias":
+            return createEl("div", {}, [
+              product.alias || "—",
+              product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
+            ]);
+          case "sku":
+            return product.sku || "—";
+          case "supplier":
+            return product.supplierId || "—";
+          case "lastPo":
+            return product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—";
+          case "avg":
+            return product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—";
+          case "count":
+            return product.stats?.poCount != null ? String(product.stats.poCount) : "0";
+          case "template":
+            return product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
+          case "actions":
+            return createEl("div", { class: "table-actions" }, [
+              createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+              createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+              createEl("button", {
+                class: "btn tertiary",
+                type: "button",
+                onclick: () => {
+                  setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
+                  renderProducts(root);
+                  document.dispatchEvent(new Event("state:changed"));
+                }
+              }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
+              createEl("button", {
+                class: "btn danger",
+                type: "button",
+                onclick: () => {
+                  if (confirm("Produkt wirklich löschen?")) {
+                    deleteProductBySku(product.sku);
+                    renderProducts(root);
+                    document.dispatchEvent(new Event("state:changed"));
+                  }
+                }
+              }, ["Löschen"]),
+            ]);
+          default:
+            return "—";
+        }
+      },
+    });
   }
 
   function showHistory(product) {
