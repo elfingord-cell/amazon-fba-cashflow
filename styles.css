@@ -260,6 +260,10 @@ td.num, th.num{text-align:right}
 .products-grid-table{width:100%; border-collapse:collapse; min-width:3000px; table-layout:fixed;}
 .products-grid-table th{position:sticky; top:0; background:#f8fafc; font-size:11px; text-transform:uppercase; letter-spacing:.4px; padding:8px 10px; border-bottom:1px solid rgba(15,27,45,0.1); z-index:1;}
 .products-grid-group-header th{background:#e8eef5; font-size:11px; text-transform:none; letter-spacing:.2px; font-weight:700;}
+.products-grid-group-header th{border-bottom:2px solid rgba(15,27,45,0.2);}
+.products-grid-group-header th:not(:last-child){border-right:2px solid rgba(15,27,45,0.15);}
+.products-grid-table th.col-group-end,
+.products-grid-table td.col-group-end{border-right:2px solid rgba(15,27,45,0.12);}
 .products-grid-table th,
 .products-grid-table td{white-space:nowrap; text-overflow:ellipsis; overflow:hidden;}
 .products-grid-table td{padding:6px 8px; border-bottom:1px solid rgba(15,27,45,0.06); font-variant-numeric:tabular-nums;}

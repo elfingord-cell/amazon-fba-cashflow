@@ -235,6 +235,15 @@ function renderProducts(root) {
     localStorage.setItem(collapseKey, JSON.stringify(next));
   }
 
+  function setAllCategoriesCollapsed(collapsed) {
+    const next = {};
+    const groups = buildCategoryGroups(products);
+    groups.forEach(group => {
+      next[group.id] = collapsed;
+    });
+    saveCollapseState(next);
+  }
+
   function buildCategoryGroups(list) {
     const categoryMap = new Map();
     list.forEach(product => {
@@ -865,31 +874,31 @@ function renderProducts(root) {
       { key: "status", label: "Status", type: "select", options: [
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
-      ], width: "110px", className: "col-status" },
+      ], width: "110px", className: "col-status col-group-end" },
       { key: "template.unitPriceUsd", label: "Stückpreis (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.extraPerUnitUsd", label: "Zusatz je Stück (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
-      { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
+      { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount col-group-end" },
       { key: "template.transportMode", label: "Transport", type: "select", options: [
         { value: "SEA", label: "SEA" },
         { value: "RAIL", label: "RAIL" },
         { value: "AIR", label: "AIR" },
       ], width: "130px", className: "col-transport" },
       { key: "template.productionDays", label: "Produktionstage", type: "number", decimals: 0, width: "120px", className: "col-days" },
-      { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "120px", className: "col-days" },
+      { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "120px", className: "col-days col-group-end" },
       { key: "template.freightEur", label: "Fracht (€ / Stück)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.dutyPct", label: "Zoll %", type: "number", decimals: 2, width: "90px", className: "col-short" },
       { key: "template.dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox", width: "56px", className: "col-check" },
       { key: "template.vatImportPct", label: "EUSt %", type: "number", decimals: 2, width: "90px", className: "col-short" },
       { key: "template.vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox", width: "56px", className: "col-check" },
-      { key: "template.vatRefundLag", label: "EUSt-Lag", type: "number", decimals: 0, width: "80px", className: "col-short" },
+      { key: "template.vatRefundLag", label: "EUSt-Lag", type: "number", decimals: 0, width: "80px", className: "col-short col-group-end" },
       { key: "template.fxRate", label: "FX-Kurs", type: "number", decimals: 4, width: "140px", className: "col-amount" },
-      { key: "template.fxFeePct", label: "FX-Gebühr %", type: "number", decimals: 2, width: "90px", className: "col-short" },
+      { key: "template.fxFeePct", label: "FX-Gebühr %", type: "number", decimals: 2, width: "90px", className: "col-short col-group-end" },
       { key: "template.currency", label: "Currency", type: "select", options: [
         { value: "USD", label: "USD" },
         { value: "EUR", label: "EUR" },
         { value: "CNY", label: "CNY" },
       ], width: "110px", className: "col-currency" },
-      { key: "template.ddp", label: "DDP", type: "checkbox", width: "56px", className: "col-check" },
+      { key: "template.ddp", label: "DDP", type: "checkbox", width: "56px", className: "col-check col-group-end" },
       { key: "tags", label: "Tags", type: "text", width: "280px", className: "col-tags" },
     ];
 
@@ -1222,6 +1231,8 @@ function renderProducts(root) {
     const title = createEl("h2", {}, ["Produkte"]);
     const actions = createEl("div", { class: "products-actions" });
     const createBtn = createEl("button", { class: "btn", type: "button", onclick: () => showEditor(null) }, ["+ Produkt anlegen"]);
+    const expandBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(false); render(); } }, ["Alles aufklappen"]);
+    const collapseBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(true); render(); } }, ["Alles zuklappen"]);
     const search = createEl("input", {
       type: "search",
       placeholder: "Suche nach Alias, SKU, Tag, Supplier",
@@ -1253,7 +1264,7 @@ function renderProducts(root) {
         },
       }, ["Tabelle"]),
     ]);
-    actions.append(search, viewToggle, createBtn);
+    actions.append(search, expandBtn, collapseBtn, viewToggle, createBtn);
     header.append(title, actions);
     root.append(header);
     if (bannerCount) {
