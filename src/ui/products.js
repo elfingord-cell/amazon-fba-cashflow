@@ -182,6 +182,7 @@ function renderProducts(root) {
   const state = loadState();
   const products = getProductsSnapshot();
   let searchTerm = "";
+  let viewMode = localStorage.getItem("productsView") || "table";
   const focusRaw = sessionStorage.getItem("healthFocus");
   if (focusRaw) {
     try {
@@ -698,6 +699,56 @@ function renderProducts(root) {
     });
   }
 
+  function renderCards(list) {
+    if (!list.length) {
+      return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
+    }
+    const grid = createEl("div", { class: "product-card-grid" });
+    list.forEach(product => {
+      const header = createEl("div", { class: "product-card-header" }, [
+        createEl("div", { class: "product-card-title" }, [
+          createEl("span", { class: "product-card-alias" }, [product.alias || "—"]),
+          product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
+        ]),
+        createEl("div", { class: "product-card-sku" }, [product.sku || "—"]),
+      ]);
+      const meta = createEl("div", { class: "product-card-meta" }, [
+        createEl("div", {}, ["Supplier: ", product.supplierId || "—"]),
+        createEl("div", {}, ["Letzte PO: ", product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—"]),
+        createEl("div", {}, ["Ø Stückpreis: ", product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—"]),
+        createEl("div", {}, ["POs: ", product.stats?.poCount != null ? String(product.stats.poCount) : "0"]),
+        createEl("div", {}, ["Template: ", product.template ? "vorhanden" : "—"]),
+      ]);
+      const actions = createEl("div", { class: "product-card-actions" }, [
+        createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+        createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+        createEl("button", {
+          class: "btn tertiary",
+          type: "button",
+          onclick: () => {
+            setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
+            renderProducts(root);
+            document.dispatchEvent(new Event("state:changed"));
+          }
+        }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
+        createEl("button", {
+          class: "btn danger",
+          type: "button",
+          onclick: () => {
+            if (confirm("Produkt wirklich löschen?")) {
+              deleteProductBySku(product.sku);
+              renderProducts(root);
+              document.dispatchEvent(new Event("state:changed"));
+            }
+          }
+        }, ["Löschen"]),
+      ]);
+      const card = createEl("div", { class: "product-card" }, [header, meta, actions]);
+      grid.append(card);
+    });
+    return grid;
+  }
+
   function showHistory(product) {
     const state = loadState();
     const historyTable = buildHistoryTable(state, product.sku);
@@ -731,7 +782,29 @@ function renderProducts(root) {
         render();
       }
     });
-    actions.append(search, createBtn);
+    const viewToggle = createEl("div", { class: "view-toggle" }, [
+      createEl("button", {
+        type: "button",
+        class: `btn tertiary${viewMode === "cards" ? " is-active" : ""}`,
+        "aria-pressed": viewMode === "cards",
+        onclick: () => {
+          viewMode = "cards";
+          localStorage.setItem("productsView", viewMode);
+          render();
+        },
+      }, ["Karten"]),
+      createEl("button", {
+        type: "button",
+        class: `btn tertiary${viewMode === "table" ? " is-active" : ""}`,
+        "aria-pressed": viewMode === "table",
+        onclick: () => {
+          viewMode = "table";
+          localStorage.setItem("productsView", viewMode);
+          render();
+        },
+      }, ["Tabelle"]),
+    ]);
+    actions.append(search, viewToggle, createBtn);
     header.append(title, actions);
     root.append(header);
     if (bannerCount) {
@@ -739,7 +812,7 @@ function renderProducts(root) {
         `${bannerCount} Produkte ohne Alias – bitte ergänzen.`,
       ]));
     }
-    root.append(renderTable(filtered));
+    root.append(viewMode === "table" ? renderTable(filtered) : renderCards(filtered));
     if (shouldFocusSearch) {
       search.focus();
       if (cursorPos != null) {
