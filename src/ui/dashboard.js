@@ -1,6 +1,7 @@
 // UI: Dashboard – Monatsübersicht & detaillierte Monats-P/L-Analyse
 import { loadState, addStateListener, setEventManualPaid, setEventsManualPaid, setAutoManualCheck } from "../data/storageLocal.js";
 import { computeOutflowStack, computeSeries, fmtEUR } from "../domain/cashflow.js";
+import { computeNiceTickStep, formatEUR, formatSignedEUR } from "./chartUtils.js";
 
 const fmtEUR0 = val =>
   new Intl.NumberFormat("de-DE", {
@@ -68,6 +69,7 @@ const plState = {
   defaultCollapseApplied: false,
   showAdvancedFilters: false,
   legend: {
+    inflow: true,
     fixedCosts: true,
     poPaid: true,
     poOpen: true,
@@ -142,16 +144,6 @@ function fmtDelta(value, { invert = false, isPercent = false } = {}) {
     return `${val >= 0 ? "+" : ""}${val.toFixed(1)}%`;
   }
   return `${val >= 0 ? "+" : ""}${fmtEUR(val)}`;
-}
-
-function fmtBalanceLabel(value) {
-  const num = Number(value || 0);
-  if (Math.abs(num) >= 10000) {
-    const k = num / 1000;
-    const rounded = Math.round(k * 10) / 10;
-    return `${rounded.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k€`;
-  }
-  return fmtEUR(num);
 }
 
 function iconForDirection(direction) {
@@ -884,324 +876,14 @@ export async function render(root) {
   }
 
   const opening = Number(kpis.opening || 0);
-  const monthOpening = breakdown.map(b => Number(b?.opening || 0));
   const closing = breakdown.map(b => Number(b?.closing || 0));
   const firstNegativeIndex = closing.findIndex(value => value < 0);
-  const legend = plState.legend || {};
-  const inflowTotals = series.map(r => Number(r.inflow?.total || 0));
-  const outflowTotals = series.map(r => Number(r.outflow?.total || 0));
-  const netLineValues = closing;
-
-  const barPosMax = Math.max(0, ...inflowTotals, ...outflowTotals);
-  const barMin = 0;
-
-  const lineValues = [...netLineValues, opening];
-  const linePosMaxRaw = Math.max(0, ...lineValues);
-  const lineNegMaxRaw = Math.min(0, ...lineValues);
-
-  function buildScale(maxVal, minVal) {
-    const steps = 5;
-    const headroomFactor = 1.05;
-    const paddedTop = maxVal === 0 ? 0 : maxVal * headroomFactor;
-    const paddedBottom = minVal === 0 ? 0 : minVal * headroomFactor;
-    const range = (paddedTop - paddedBottom) / steps || 1;
-    const niceStep = niceStepSize(range);
-    const topVal = Math.max(niceStep, Math.ceil(paddedTop / niceStep) * niceStep);
-    const bottomVal = minVal < 0 ? Math.floor(paddedBottom / niceStep) * niceStep : 0;
-    const spanVal = (topVal - bottomVal) || niceStep;
-    const ticks = Array.from({ length: steps + 1 }, (_, i) => topVal - (spanVal / steps) * i);
-    return { topVal, bottomVal, spanVal, ticks };
-  }
-
-  const { topVal: barTop, bottomVal: barBottom, ticks: yTicksBar } = buildScale(barPosMax, barMin);
-
-  const linePosSpan = Math.max(0, linePosMaxRaw);
-  const lineNegSpan = Math.abs(lineNegMaxRaw);
-  const lineHeadroom = 1.2;
-  const linePosScale = Math.max(1, linePosSpan * lineHeadroom || 1);
-  const lineNegScale = lineNegSpan > 0 ? lineNegSpan * lineHeadroom : 0;
-  const zeroY = (linePosScale / (linePosScale + lineNegScale || 1)) * 1000;
-
-  const lineAxisPosMax = linePosScale;
-  const lineAxisNegMax = lineNegScale;
-
-  const barHeadroom = 1.02;
-  const barScaleVal = barPosMax ? barPosMax * barHeadroom : 1;
-
-  const posStep = lineAxisPosMax ? niceStepSize(lineAxisPosMax / 4) : 0;
-  const negStep = lineAxisNegMax ? niceStepSize(lineAxisNegMax / 4) : 0;
-  const yTicksLine = [];
-  if (lineAxisPosMax && posStep) {
-    for (let v = lineAxisPosMax; v > 0; v -= posStep) yTicksLine.push(v);
-  }
-  yTicksLine.push(0);
-  if (lineAxisNegMax && negStep) {
-    for (let v = negStep; v <= lineAxisNegMax + 1e-6; v += negStep) yTicksLine.push(-v);
-  }
-
-  const YLine = v => {
-    const val = Number(v || 0);
-    if (val >= 0) {
-      if (!linePosScale) return zeroY;
-      return zeroY - (val / linePosScale) * zeroY;
-    }
-    if (!lineNegScale) return zeroY;
-    return zeroY + (-val / lineNegScale) * (1000 - zeroY);
-  };
-
-  const monthsCount = months.length || 0;
-  const groupWidth = 56;
-  const groupGap = 28;
-  const innerGap = 6;
-  const chartWidth = monthsCount
-    ? groupWidth * monthsCount + groupGap * Math.max(0, monthsCount - 1)
-    : groupWidth * 18 + groupGap * 17;
-  const centers = months.map((_, idx) => idx * (groupWidth + groupGap) + groupWidth / 2);
-  const X = px => {
-    const safeWidth = chartWidth || 1;
-    return (px / safeWidth) * 1000;
-  };
-  const YBar = v => {
-    const val = Number(v || 0);
-    if (!barScaleVal) return zeroY;
-    return zeroY - (val / barScaleVal) * zeroY;
-  };
-  const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
-
-  const points = netLineValues.length
-    ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${YLine(v)}`).join(" ")
-    : "";
-  const dots = netLineValues.length
-    ? netLineValues
-        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${YLine(v)}" r="6"></circle>`)
-        .join("")
-    : "";
-  const lineLabels = netLineValues.length
-    ? netLineValues
-        .map((v, i) => {
-          const x = X(centers[i] || 0);
-          const y = Math.max(16, YLine(v) - 26);
-          return `<text class="line-label" x="${x}" y="${y}">${escapeHtml(fmtBalanceLabel(v))}</text>`;
-        })
-        .join("")
-    : "";
-  const axisRows = yTicksBar.length || 6;
-  const yAxisLineHtml = yTicksLine
-    .map(val => `<div class="ytick-line" style="top:${(YLine(val) / 10).toFixed(2)}%">${fmtTick(val)}</div>`)
-    .join("");
-  const netStrip = series
-    .map((row, idx) => {
-      const monthKey = months[idx] || "";
-      const monthLabel = formatMonthShortLabel(monthKey);
-      const value = Number(row?.net?.total || 0);
-      const display = `${monthLabel} · ${fmtEUR0(value)}`;
-      const ariaLabel = `${formatMonthLabel(monthKey)} – Netto ${fmtEUR(value)}`;
-      return `<button type="button" class="net ${value >= 0 ? "pos" : "neg"}" data-month="${escapeHtml(monthKey)}" aria-label="${escapeHtml(ariaLabel)}">${escapeHtml(display)}</button>`;
-    })
-    .join("");
-
-  function valuesFor(type, row) {
-    if (type === "inflow") {
-      const total = Number(row?.inflow?.total || 0);
-      if (!total) return [];
-      return [{ key: "total", value: total }];
-    }
-    if (type === "outflow") {
-      const segments = [];
-      const stack = row?.outflowStack || computeOutflowStack(row?.entries || []);
-      if (legend.fixedCosts !== false && stack.fixedCosts) {
-        segments.push({ key: "fixedCosts", value: stack.fixedCosts });
-      }
-      if (legend.poPaid !== false && stack.poPaid) {
-        segments.push({ key: "poPaid", value: stack.poPaid });
-      }
-      if (legend.poOpen !== false && stack.poOpen) {
-        segments.push({ key: "poOpen", value: stack.poOpen });
-      }
-      if (legend.otherExpenses !== false && stack.otherExpenses) {
-        segments.push({ key: "otherExpenses", value: stack.otherExpenses });
-      }
-      if (legend.foPlanned !== false && stack.foPlanned) {
-        segments.push({ key: "foPlanned", value: stack.foPlanned });
-      }
-      return segments;
-    }
-    return [];
-  }
-
-  function stackSegments(values) {
-    const segments = [];
-    let posBase = 0;
-    let negBase = 0;
-    for (const seg of values) {
-      const val = Number(seg.value || 0);
-      if (!Number.isFinite(val) || val === 0) continue;
-      if (val >= 0) {
-        const start = posBase;
-        posBase += val;
-        segments.push({ ...seg, start, end: posBase });
-      } else {
-        const start = negBase;
-        negBase += val;
-        segments.push({ ...seg, start, end: negBase });
-      }
-    }
-    return segments;
-  }
-
-  function fmtBarValue(type, value) {
-    const numeric = Number(value || 0);
-    if (type === "outflow") return fmtEUR(-numeric);
-    return fmtEUR(numeric);
-  }
-
-  function ariaForBar(type, row, monthKey) {
-    const prettyMonth = formatMonthLabel(monthKey);
-    const target = type === "inflow" ? row.inflow : row.outflow;
-    if (!target) return prettyMonth;
-    const label = type === "inflow" ? "Inflow" : "Outflow";
-    return `${prettyMonth}: ${label} gesamt ${fmtBarValue(type, target.total)} – bezahlt ${fmtBarValue(type, target.paid)} – offen ${fmtBarValue(type, target.open)}`;
-  }
-
-  function renderSegment(type, seg) {
-    const yStart = YBar(seg.start);
-    const yEnd = YBar(seg.end);
-    const topPct = Math.min(yStart, yEnd) / 10;
-    const heightPct = Math.abs(yStart - yEnd) / 10;
-    if (heightPct <= 0.05) return "";
-    const classes = `vbar-segment segment-${type}-${seg.key}`;
-    return `<div class="${classes}" style="--seg-top:${topPct.toFixed(2)}; --seg-height:${heightPct.toFixed(2)}"></div>`;
-  }
-
-  function renderBar(type, row, monthIndex) {
-    const stacked = stackSegments(valuesFor(type, row));
-    const totalValue = type === "inflow"
-      ? Number(row.inflow?.total || 0)
-      : Number(row.outflow?.total || 0);
-    const orientation = totalValue >= 0 ? "pos" : "neg";
-    if (!stacked.length) {
-      return `<div class="vbar-wrap type-${type} ${orientation} empty" aria-hidden="true"></div>`;
-    }
-    const aria = escapeHtml(ariaForBar(type, row, months[monthIndex]));
-    const segmentsHtml = stacked.map(seg => renderSegment(type, seg)).join("");
-    return `<div class="vbar-wrap type-${type} ${orientation}"><div class="vbar ${type}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${aria}">${segmentsHtml}</div></div>`;
-  }
-
-  function monthTipHtml(monthKey, row, closingValue, openingValue) {
-    const prettyMonth = formatMonthLabel(monthKey);
-    const inflowPaid = Number(row?.inflow?.paid || 0);
-    const inflowOpen = Number(row?.inflow?.open || 0);
-    const outflowPaid = Number(row?.outflow?.paid || 0);
-    const outflowOpen = Number(row?.outflow?.open || 0);
-    const netPaid = Number(row?.net?.paid || 0);
-    const netOpen = Number(row?.net?.open || 0);
-    const outflowStack = row?.outflowStack || computeOutflowStack(row?.entries || []);
-    const formatSection = (title, paidValue, openValue, options = {}) => {
-      const totalValue = paidValue + openValue;
-      const paidLabel = escapeHtml(options.paidLabel || "bezahlt");
-      const openLabel = escapeHtml(options.openLabel || "offen");
-      const swatchPaid = options.swatchPaid ? `<span class="tip-swatch ${options.swatchPaid}" aria-hidden="true"></span>` : "";
-      const swatchOpen = options.swatchOpen ? `<span class="tip-swatch ${options.swatchOpen}" aria-hidden="true"></span>` : "";
-      return `
-        <div class="tip-section">
-          <div class="tip-subtitle">${escapeHtml(title)}</div>
-          <div class="tip-row">
-            <span>${swatchPaid}${paidLabel}</span>
-            <b>${fmtEUR(options.negative ? -paidValue : paidValue)}</b>
-          </div>
-          <div class="tip-row">
-            <span>${swatchOpen}${openLabel}</span>
-            <b>${fmtEUR(options.negative ? -openValue : openValue)}</b>
-          </div>
-          <div class="tip-row total">
-            <span>Gesamt</span>
-            <b>${fmtEUR(options.negative ? -(totalValue) : totalValue)}</b>
-          </div>
-        </div>
-      `;
-    };
-    const inflowSection = formatSection("Inflow", inflowPaid, inflowOpen, {
-      swatchPaid: "swatch-inflow",
-      swatchOpen: "swatch-inflow",
-    });
-    const poTotal = outflowStack.poPaid + outflowStack.poOpen;
-    const poPct = poTotal > 0 ? Math.round((outflowStack.poPaid / poTotal) * 100) : null;
-    const outflowSection = `
-      <div class="tip-section">
-        <div class="tip-subtitle">Ausgaben</div>
-        <div class="tip-row"><span>Fixkosten</span><b>${fmtEUR(-outflowStack.fixedCosts)}</b></div>
-        <div class="tip-row"><span>PO bezahlt${poPct != null ? ` (${poPct}%)` : ""}</span><b>${fmtEUR(-outflowStack.poPaid)}</b></div>
-        <div class="tip-row"><span>PO offen</span><b>${fmtEUR(-outflowStack.poOpen)}</b></div>
-        <div class="tip-row"><span>Weitere Ausgaben</span><b>${fmtEUR(-outflowStack.otherExpenses)}</b></div>
-        <div class="tip-row"><span>FO</span><b>${fmtEUR(-outflowStack.foPlanned)}</b></div>
-        <div class="tip-row total"><span>Gesamt</span><b>${fmtEUR(-(outflowStack.total || 0))}</b></div>
-      </div>
-    `;
-    const netSection = formatSection("Netto", netPaid, netOpen, {
-      swatchPaid: "swatch-net",
-      swatchOpen: "swatch-net",
-    });
-    const balanceSection = `
-      <div class="tip-divider"></div>
-      <div class="tip-row">
-        <span>Monatsanfang</span>
-        <b>${fmtEUR(openingValue)}</b>
-      </div>
-      <div class="tip-row">
-        <span>Kontostand Monatsende</span>
-        <b>${fmtEUR(closingValue)}</b>
-      </div>
-    `;
-    return `
-      <div class="tip-title">${prettyMonth}</div>
-      ${inflowSection}
-      ${outflowSection}
-      ${netSection}
-      ${balanceSection}
-    `;
-  }
-
-  const barGroupsHtml = series
-    .map((row, i) => {
-      const inflowBar = renderBar("inflow", row, i);
-      const outflowBar = renderBar("outflow", row, i);
-      return `<div class="vbar-group" style="width:${groupWidth}px; --inner-gap:${innerGap}px" data-month="${escapeHtml(months[i] || "")}">${inflowBar}${outflowBar}</div>`;
-    })
-    .join("");
-
-  const viewport = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
-  const maxXTicks = viewport && viewport < 900 ? 6 : 8;
-  const step = Math.max(1, Math.ceil((months.length || 1) / maxXTicks));
-  const xLabelsHtml = months
-    .map((monthKey, idx) => {
-      const label = idx % step === 0 ? formatMonthShortLabel(monthKey) : "";
-      return `<div class="xlabel" style="width:${groupWidth}px">${label ? escapeHtml(label) : "&nbsp;"}</div>`;
-    })
-    .join("");
-
-  const legendRows = [
-    { key: "fixedCosts", label: "Fixkosten", swatch: "swatch-fixcost" },
-    { key: "poPaid", label: "PO bezahlt", swatch: "swatch-po-paid" },
-    { key: "poOpen", label: "PO offen", swatch: "swatch-po-open" },
-    { key: "otherExpenses", label: "Weitere Ausgaben", swatch: "swatch-other-expenses" },
-    { key: "foPlanned", label: "FO", swatch: "swatch-fo" },
-  ];
-
-  const legendHtml = `
-    <div class="chart-legend" role="list">
-      ${legendRows
-        .map(row => `
-          <button type="button" class="legend-button ${plState.legend[row.key] === false ? "is-off" : ""}" data-legend="${row.key}" aria-pressed="${plState.legend[row.key] !== false}">
-            <span class="legend-swatch ${row.swatch}" aria-hidden="true"></span>
-            <span class="legend-label">${row.label}</span>
-          </button>
-        `)
-        .join("")}
-    </div>
-  `;
+  const actualClosingMap = new Map(actuals.map(row => [row.month, row.actualClosing]));
+  const actualClosing = months.map(month => actualClosingMap.get(month));
+  const hasActualClosing = actualClosing.some(value => Number.isFinite(value));
 
   const firstNegativeDisplay =
-    firstNegativeIndex >= 0 ? formatMonthLabel(months[firstNegativeIndex]) : "—";
+    firstNegativeIndex >= 0 ? formatMonthLabel(months[firstNegativeIndex]) : "Kein negativer Monat";
 
   root.innerHTML = `
     <section class="card">
@@ -1229,28 +911,22 @@ export async function render(root) {
           <div class="kpi-sub">${actualKpis.lastMonth ? `Letzter Monat: ${fmtDelta(actualKpis.payoutDeltaPct, { isPercent: true })}` : "—"}</div>
         </div>
       </div>
-      <div class="vchart" style="--rows:${axisRows}; --zero:${zeroPct.toFixed(2)}">
-        <div class="vchart-y">${yTicksBar.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
-        <div class="vchart-y-right">${yAxisLineHtml}</div>
-        <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
-          <div class="vchart-stage-inner">
-            <div class="vchart-grid">${yTicksBar.map(() => "<div class=\"yline\"></div>").join("")}</div>
-            <div class="vchart-zero"></div>
-            <div class="vchart-bars">
-              ${barGroupsHtml}
-            </div>
-          <div class="vchart-lines" aria-hidden="true">
-            <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
-              ${netLineValues.length ? `<polyline class="line" points="${points}"></polyline>${dots}${lineLabels}` : ""}
-            </svg>
+      <div class="chart-stack">
+        <div class="chart-block">
+          <div class="chart-header">
+            <h3>Cashflow pro Monat (Plan)</h3>
+            <p class="muted">Einzahlungen positiv, Ausgaben negativ (gestapelt).</p>
           </div>
+          <div class="chart-shell" id="cashflow-chart"></div>
         </div>
-        <div class="vchart-x">${xLabelsHtml}</div>
+        <div class="chart-block">
+          <div class="chart-header">
+            <h3>Kontostand (Plan${hasActualClosing ? "/Ist" : ""})</h3>
+            <p class="muted">Plan als Linie, Ist als gestrichelte Linie falls vorhanden.</p>
+          </div>
+          <div class="chart-shell" id="balance-chart"></div>
+        </div>
       </div>
-      </div>
-      ${legendHtml}
-      <div class="net-strip-label">Netto je Monat</div>
-      <div class="net-strip">${netStrip}</div>
     </section>
     <section class="card">
       <h3>Soll-Ist-Abgleich (Ist-Monate)</h3>
@@ -1294,112 +970,32 @@ export async function render(root) {
   `;
 
   const plRoot = root.querySelector("#pl-root");
-
-  root.querySelectorAll('.legend-button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const type = btn.getAttribute('data-legend');
-      if (!type) return;
-      const current = plState.legend[type] !== false;
-      plState.legend[type] = current ? false : true;
+  const cashflowChart = root.querySelector("#cashflow-chart");
+  renderCashflowBarChart(cashflowChart, {
+    months,
+    series,
+    legend: plState.legend,
+    onLegendToggle: key => {
+      const current = plState.legend[key] !== false;
+      plState.legend[key] = current ? false : true;
       render(root);
-    });
-  });
-
-  const tip = ensureGlobalTip();
-  const dotNodes = Array.from(root.querySelectorAll(".vchart-lines .dot"));
-
-  function showBarTip(el) {
-    if (!el) return;
-    const i = Number(el.getAttribute("data-idx"));
-    if (!Number.isFinite(i)) return;
-    const row = series[i];
-    const eom = closing[i];
-    const mos = monthOpening[i];
-    tip.innerHTML = monthTipHtml(months[i], row, eom, mos);
-    tip.hidden = false;
-    const br = el.getBoundingClientRect();
-    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-    const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-    const width = tip.offsetWidth || 220;
-    const height = tip.offsetHeight || 120;
-    let left = br.left + br.width + 12;
-    if (left + width + 8 > vw) left = Math.max(8, br.left - width - 12);
-    let topPx = br.top - 8;
-    if (topPx + height + 8 > vh) topPx = Math.max(8, vh - height - 8);
-    tip.style.left = `${left}px`;
-    tip.style.top = `${topPx}px`;
-    if (dotNodes.length) {
-      dotNodes.forEach((dot, idx) => {
-        dot.classList.toggle("is-active", idx === i);
-      });
-    }
-  }
-
-  function hideTip(force = false) {
-    if (!force) {
-      const active = document.activeElement;
-      if (active && active.classList && active.classList.contains("vbar")) {
-        return;
-      }
-    }
-    if (dotNodes.length) {
-      dotNodes.forEach(dot => dot.classList.remove("is-active"));
-    }
-    tip.hidden = true;
-  }
-
-  const barsWrap = root.querySelector(".vchart-bars");
-  if (barsWrap) {
-    barsWrap.addEventListener("pointerenter", ev => {
-      const el = ev.target.closest(".vbar");
-      if (el) showBarTip(el);
-    }, true);
-    barsWrap.addEventListener("pointermove", ev => {
-      const el = ev.target.closest(".vbar");
-      if (el) showBarTip(el);
-    }, true);
-    barsWrap.addEventListener("pointerleave", () => hideTip(), true);
-    barsWrap.addEventListener("click", ev => {
-      const el = ev.target.closest(".vbar");
-      if (!el) return;
-      const idx = Number(el.getAttribute("data-idx"));
-      if (!Number.isFinite(idx)) return;
-      const monthKey = months[idx];
-      hideTip(true);
+    },
+    onMonthSelect: monthKey => {
       focusMonthCard(monthKey);
       if (plRoot) updatePLSection(plRoot);
-    });
-  }
-
-  const barNodes = root.querySelectorAll(".vbar[data-type]");
-  barNodes.forEach(node => {
-    node.addEventListener("focus", () => showBarTip(node));
-    node.addEventListener("blur", () => hideTip(true));
-    node.addEventListener("keydown", ev => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        showBarTip(node);
-        const idx = Number(node.getAttribute("data-idx"));
-        if (Number.isFinite(idx)) {
-          hideTip(true);
-          focusMonthCard(months[idx]);
-          if (plRoot) updatePLSection(plRoot);
-        }
-        ev.preventDefault();
-      }
-    });
+    },
   });
 
-  const netStripNode = root.querySelector(".net-strip");
-  if (netStripNode) {
-    netStripNode.addEventListener("click", ev => {
-      const btn = ev.target.closest("button[data-month]");
-      if (!btn) return;
-      const monthKey = btn.getAttribute("data-month");
-      hideTip(true);
+  const balanceChart = root.querySelector("#balance-chart");
+  renderBalanceLineChart(balanceChart, {
+    months,
+    planValues: closing,
+    actualValues: actualClosing,
+    onMonthSelect: monthKey => {
       focusMonthCard(monthKey);
       if (plRoot) updatePLSection(plRoot);
-    });
-  }
+    },
+  });
 
   if (plRoot) updatePLSection(plRoot);
 
@@ -1421,25 +1017,464 @@ export async function render(root) {
   }
 }
 
-function niceStepSize(range) {
-  if (!Number.isFinite(range) || range <= 0) return 1;
-  const exponent = Math.floor(Math.log10(range));
-  const fraction = range / Math.pow(10, exponent);
-  let niceFraction;
-  if (fraction <= 1) niceFraction = 1;
-  else if (fraction <= 2) niceFraction = 2;
-  else if (fraction <= 5) niceFraction = 5;
-  else niceFraction = 10;
-  return niceFraction * Math.pow(10, exponent);
+function getChartLayout(months) {
+  const monthsCount = months.length || 0;
+  const groupWidth = 56;
+  const groupGap = 28;
+  const innerGap = 6;
+  const chartWidth = monthsCount
+    ? groupWidth * monthsCount + groupGap * Math.max(0, monthsCount - 1)
+    : groupWidth * 12 + groupGap * 11;
+  const centers = months.map((_, idx) => idx * (groupWidth + groupGap) + groupWidth / 2);
+  return { groupWidth, groupGap, innerGap, chartWidth, centers };
 }
 
-function fmtTick(v) {
-  return new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0,
-  }).format(Number(v || 0));
+function buildTickScale({ min, max, symmetric = false }) {
+  const maxAbs = Math.max(Math.abs(min), Math.abs(max));
+  const step = computeNiceTickStep(maxAbs || 1);
+  let top = 0;
+  let bottom = 0;
+  if (symmetric) {
+    top = Math.ceil(maxAbs / step) * step || step;
+    bottom = -top;
+  } else {
+    top = Math.ceil(max / step) * step;
+    bottom = Math.floor(min / step) * step;
+    if (top === bottom) {
+      top += step;
+      bottom -= step;
+    }
+  }
+  const ticks = [];
+  for (let v = top; v >= bottom - 1e-6; v -= step) ticks.push(v);
+  return { top, bottom, step, ticks };
+}
+
+function buildXAxisLabels(months, groupWidth) {
+  const viewport = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
+  const maxXTicks = viewport && viewport < 900 ? 6 : 8;
+  const step = Math.max(1, Math.ceil((months.length || 1) / maxXTicks));
+  return months
+    .map((monthKey, idx) => {
+      const label = idx % step === 0 ? formatMonthShortLabel(monthKey) : "";
+      return `<div class="xlabel" style="width:${groupWidth}px">${label ? escapeHtml(label) : "&nbsp;"}</div>`;
+    })
+    .join("");
+}
+
+function positionTip(tip, rect) {
+  const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  const width = tip.offsetWidth || 220;
+  const height = tip.offsetHeight || 120;
+  let left = rect.left + rect.width + 12;
+  if (left + width + 8 > vw) left = Math.max(8, rect.left - width - 12);
+  let topPx = rect.top - 8;
+  if (topPx + height + 8 > vh) topPx = Math.max(8, vh - height - 8);
+  tip.style.left = `${left}px`;
+  tip.style.top = `${topPx}px`;
+}
+
+function renderCashflowBarChart(container, { months, series, legend, onLegendToggle, onMonthSelect }) {
+  if (!container) return;
+  const hasFo = series.some(row => (row?.outflowStack?.foPlanned || 0) > 0);
+  const { groupWidth, groupGap, innerGap, chartWidth } = getChartLayout(months);
+  const tip = ensureGlobalTip();
+
+  function getOutflowSegments(row) {
+    const stack = row?.outflowStack || computeOutflowStack(row?.entries || []);
+    const segments = [];
+    if (legend.poPaid !== false && stack.poPaid) {
+      segments.push({ key: "poPaid", label: "PO bezahlt", value: -stack.poPaid, swatch: "swatch-po-paid" });
+    }
+    if (legend.poOpen !== false && stack.poOpen) {
+      segments.push({ key: "poOpen", label: "PO offen", value: -stack.poOpen, swatch: "swatch-po-open" });
+    }
+    if (legend.otherExpenses !== false && stack.otherExpenses) {
+      segments.push({ key: "otherExpenses", label: "Weitere Ausgaben", value: -stack.otherExpenses, swatch: "swatch-other-expenses" });
+    }
+    if (hasFo && legend.foPlanned !== false && stack.foPlanned) {
+      segments.push({ key: "foPlanned", label: "FO geplant", value: -stack.foPlanned, swatch: "swatch-fo" });
+    }
+    if (legend.fixedCosts !== false && stack.fixedCosts) {
+      segments.push({ key: "fixedCosts", label: "Fixkosten", value: -stack.fixedCosts, swatch: "swatch-fixcost" });
+    }
+    return segments;
+  }
+
+  let maxAbs = 0;
+  const monthOutflows = series.map(row => {
+    const segments = getOutflowSegments(row);
+    const outflowTotal = segments.reduce((sum, seg) => sum + Math.abs(seg.value), 0);
+    maxAbs = Math.max(maxAbs, outflowTotal);
+    return { segments, outflowTotal };
+  });
+  const inflowTotals = series.map(row => {
+    const val = legend.inflow === false ? 0 : Number(row?.inflow?.total || 0);
+    maxAbs = Math.max(maxAbs, val);
+    return val;
+  });
+
+  const { top, bottom, ticks } = buildTickScale({ min: -maxAbs, max: maxAbs, symmetric: true });
+  const span = top - bottom || 1;
+  const valueToY = value => ((top - value) / span) * 1000;
+  const zeroPct = Math.max(0, Math.min(100, valueToY(0) / 10));
+
+  function stackSegments(values) {
+    const segments = [];
+    let posBase = 0;
+    let negBase = 0;
+    values.forEach(seg => {
+      const val = Number(seg.value || 0);
+      if (!Number.isFinite(val) || val === 0) return;
+      if (val >= 0) {
+        const start = posBase;
+        posBase += val;
+        segments.push({ ...seg, start, end: posBase });
+      } else {
+        const start = negBase;
+        negBase += val;
+        segments.push({ ...seg, start, end: negBase });
+      }
+    });
+    return segments;
+  }
+
+  function renderSegment(type, seg) {
+    const yStart = valueToY(seg.start);
+    const yEnd = valueToY(seg.end);
+    const topPct = Math.min(yStart, yEnd) / 10;
+    const heightPct = Math.abs(yStart - yEnd) / 10;
+    if (heightPct <= 0.05) return "";
+    const classes = `vbar-segment segment-${type}-${seg.key}`;
+    return `<div class="${classes}" style="--seg-top:${topPct.toFixed(2)}; --seg-height:${heightPct.toFixed(2)}"></div>`;
+  }
+
+  function renderBar(type, monthIndex) {
+    if (type === "inflow") {
+      const value = inflowTotals[monthIndex];
+      if (legend.inflow === false || !value) {
+        return `<div class="vbar-wrap type-${type} empty" aria-hidden="true"></div>`;
+      }
+      const segments = stackSegments([{ key: "total", value }]);
+      const aria = `${formatMonthLabel(months[monthIndex])}: Payout ${formatSignedEUR(value)}`;
+      return `
+        <div class="vbar-wrap type-${type}">
+          <div class="vbar ${type}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${escapeHtml(aria)}">
+            ${segments.map(seg => renderSegment(type, seg)).join("")}
+          </div>
+        </div>
+      `;
+    }
+    const outflowInfo = monthOutflows[monthIndex];
+    if (!outflowInfo || !outflowInfo.segments.length) {
+      return `<div class="vbar-wrap type-${type} empty" aria-hidden="true"></div>`;
+    }
+    const aria = `${formatMonthLabel(months[monthIndex])}: Ausgaben ${formatSignedEUR(-outflowInfo.outflowTotal)}`;
+    const segments = stackSegments(outflowInfo.segments);
+    return `
+      <div class="vbar-wrap type-${type}">
+        <div class="vbar ${type}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${escapeHtml(aria)}">
+          ${segments.map(seg => renderSegment(type, seg)).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  const barGroupsHtml = months
+    .map((_, i) => {
+      const inflowBar = renderBar("inflow", i);
+      const outflowBar = renderBar("outflow", i);
+      return `<div class="vbar-group" style="width:${groupWidth}px; --inner-gap:${innerGap}px">${inflowBar}${outflowBar}</div>`;
+    })
+    .join("");
+
+  const xLabelsHtml = buildXAxisLabels(months, groupWidth);
+
+  const legendRows = [
+    { key: "inflow", label: "Payout (Plan)", swatch: "swatch-inflow" },
+    { key: "poPaid", label: "PO bezahlt", swatch: "swatch-po-paid" },
+    { key: "poOpen", label: "PO offen", swatch: "swatch-po-open" },
+    { key: "otherExpenses", label: "Weitere Ausgaben", swatch: "swatch-other-expenses" },
+    ...(hasFo ? [{ key: "foPlanned", label: "FO geplant", swatch: "swatch-fo" }] : []),
+    { key: "fixedCosts", label: "Fixkosten", swatch: "swatch-fixcost" },
+  ];
+
+  const legendHtml = `
+    <div class="chart-legend" role="list">
+      ${legendRows
+        .map(row => `
+          <button type="button" class="legend-button ${legend[row.key] === false ? "is-off" : ""}" data-legend="${row.key}" aria-pressed="${legend[row.key] !== false}">
+            <span class="legend-swatch ${row.swatch}" aria-hidden="true"></span>
+            <span class="legend-label">${row.label}</span>
+          </button>
+        `)
+        .join("")}
+    </div>
+  `;
+
+  container.innerHTML = `
+    <div class="vchart cashflow-chart" style="--rows:${ticks.length}; --zero:${zeroPct.toFixed(2)}">
+      <div class="vchart-y">${ticks.map(v => `<div class="ytick">${formatEUR(v)}</div>`).join("")}</div>
+      <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
+        <div class="vchart-stage-inner">
+          <div class="vchart-grid">${ticks.map(() => "<div class=\\"yline\\"></div>").join("")}</div>
+          <div class="vchart-zero"></div>
+          <div class="vchart-bars">${barGroupsHtml}</div>
+        </div>
+      </div>
+      <div class="vchart-x">${xLabelsHtml}</div>
+    </div>
+    ${legendHtml}
+  `;
+
+  container.querySelectorAll(".legend-button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key = btn.getAttribute("data-legend");
+      if (!key || typeof onLegendToggle !== "function") return;
+      onLegendToggle(key);
+    });
+  });
+
+  function buildTooltip(index) {
+    const monthKey = months[index];
+    const rows = [];
+    const inflowValue = inflowTotals[index] || 0;
+    if (legend.inflow !== false && inflowValue) {
+      rows.push({ label: "Payout (Plan)", value: inflowValue, swatch: "swatch-inflow" });
+    }
+    const outflowSegments = monthOutflows[index]?.segments || [];
+    outflowSegments.forEach(seg => {
+      rows.push({ label: seg.label, value: seg.value, swatch: seg.swatch });
+    });
+    const netValue = rows.reduce((sum, entry) => sum + entry.value, 0);
+    const rowsHtml = rows.length
+      ? rows
+          .map(entry => `
+            <div class="tip-row">
+              <span><span class="tip-swatch ${entry.swatch}" aria-hidden="true"></span>${escapeHtml(entry.label)}</span>
+              <b>${formatSignedEUR(entry.value)}</b>
+            </div>
+          `)
+          .join("")
+      : `<div class="tip-row"><span>Keine Daten</span><b>—</b></div>`;
+    return `
+      <div class="tip-title">${escapeHtml(formatMonthLabel(monthKey))}</div>
+      ${rowsHtml}
+      <div class="tip-divider"></div>
+      <div class="tip-row total"><span>Netto</span><b>${formatSignedEUR(netValue)}</b></div>
+    `;
+  }
+
+  function showTip(el) {
+    const index = Number(el.getAttribute("data-idx"));
+    if (!Number.isFinite(index)) return;
+    tip.innerHTML = buildTooltip(index);
+    tip.hidden = false;
+    positionTip(tip, el.getBoundingClientRect());
+  }
+
+  function hideTip(force = false) {
+    if (!force) {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains("vbar")) return;
+    }
+    tip.hidden = true;
+  }
+
+  const barsWrap = container.querySelector(".vchart-bars");
+  if (barsWrap) {
+    barsWrap.addEventListener("pointerenter", ev => {
+      const el = ev.target.closest(".vbar");
+      if (el) showTip(el);
+    }, true);
+    barsWrap.addEventListener("pointermove", ev => {
+      const el = ev.target.closest(".vbar");
+      if (el) showTip(el);
+    }, true);
+    barsWrap.addEventListener("pointerleave", () => hideTip(), true);
+    barsWrap.addEventListener("click", ev => {
+      const el = ev.target.closest(".vbar");
+      if (!el) return;
+      const idx = Number(el.getAttribute("data-idx"));
+      const monthKey = months[idx];
+      if (monthKey && typeof onMonthSelect === "function") {
+        hideTip(true);
+        onMonthSelect(monthKey);
+      }
+    });
+  }
+
+  container.querySelectorAll(".vbar").forEach(node => {
+    node.addEventListener("focus", () => showTip(node));
+    node.addEventListener("blur", () => hideTip(true));
+    node.addEventListener("keydown", ev => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const idx = Number(node.getAttribute("data-idx"));
+      const monthKey = months[idx];
+      if (monthKey && typeof onMonthSelect === "function") {
+        hideTip(true);
+        onMonthSelect(monthKey);
+      }
+      ev.preventDefault();
+    });
+  });
+}
+
+function renderBalanceLineChart(container, { months, planValues, actualValues, onMonthSelect }) {
+  if (!container) return;
+  const { groupWidth, groupGap, chartWidth, centers } = getChartLayout(months);
+  const tip = ensureGlobalTip();
+  const allValues = [];
+  planValues.forEach(val => {
+    if (Number.isFinite(val)) allValues.push(val);
+  });
+  actualValues.forEach(val => {
+    if (Number.isFinite(val)) allValues.push(val);
+  });
+  const minVal = allValues.length ? Math.min(...allValues) : 0;
+  const maxVal = allValues.length ? Math.max(...allValues) : 0;
+  const { top, bottom, ticks } = buildTickScale({ min: minVal, max: maxVal });
+  const span = top - bottom || 1;
+  const valueToY = value => ((top - value) / span) * 1000;
+  const zeroPct = Math.max(0, Math.min(100, valueToY(0) / 10));
+
+  function buildSegments(values) {
+    const segments = [];
+    let current = [];
+    values.forEach((value, idx) => {
+      if (!Number.isFinite(value)) {
+        if (current.length) segments.push(current);
+        current = [];
+        return;
+      }
+      current.push(`${(centers[idx] || 0)},${valueToY(value)}`);
+    });
+    if (current.length) segments.push(current);
+    return segments;
+  }
+
+  const planSegments = buildSegments(planValues);
+  const actualSegments = buildSegments(actualValues);
+  const xLabelsHtml = buildXAxisLabels(months, groupWidth);
+
+  const dots = months
+    .map((monthKey, idx) => {
+      const planValue = planValues[idx];
+      const actualValue = actualValues[idx];
+      const dotsHtml = [];
+      if (Number.isFinite(planValue)) {
+        dotsHtml.push(`
+          <button type="button" class="line-dot plan" data-idx="${idx}" style="left:${centers[idx]}px; top:${(valueToY(planValue) / 10).toFixed(2)}%;" aria-label="${escapeHtml(formatMonthLabel(monthKey))}">
+            <span class="sr-only">${escapeHtml(formatMonthLabel(monthKey))} Plan ${formatSignedEUR(planValue)}</span>
+          </button>
+        `);
+      }
+      if (Number.isFinite(actualValue)) {
+        dotsHtml.push(`
+          <button type="button" class="line-dot actual" data-idx="${idx}" style="left:${centers[idx]}px; top:${(valueToY(actualValue) / 10).toFixed(2)}%;" aria-label="${escapeHtml(formatMonthLabel(monthKey))}">
+            <span class="sr-only">${escapeHtml(formatMonthLabel(monthKey))} Ist ${formatSignedEUR(actualValue)}</span>
+          </button>
+        `);
+      }
+      return dotsHtml.join("");
+    })
+    .join("");
+
+  const legendHtml = `
+    <div class="line-legend">
+      <span class="legend-item"><span class="legend-swatch swatch-line-plan" aria-hidden="true"></span>Plan</span>
+      ${actualValues.some(val => Number.isFinite(val))
+        ? `<span class="legend-item"><span class="legend-swatch swatch-line-actual" aria-hidden="true"></span>Ist</span>`
+        : ""}
+    </div>
+  `;
+
+  container.innerHTML = `
+    <div class="vchart line-chart" style="--rows:${ticks.length}; --zero:${zeroPct.toFixed(2)}">
+      <div class="vchart-y">${ticks.map(v => `<div class="ytick">${formatEUR(v)}</div>`).join("")}</div>
+      <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
+        <div class="vchart-stage-inner">
+          <div class="vchart-grid">${ticks.map(() => "<div class=\\"yline\\"></div>").join("")}</div>
+          <div class="vchart-zero"></div>
+          <div class="vchart-lines">
+            <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
+              ${planSegments.map(points => `<polyline class="line line-plan" points="${points.join(" ")}"></polyline>`).join("")}
+              ${actualSegments.map(points => `<polyline class="line line-actual" points="${points.join(" ")}"></polyline>`).join("")}
+            </svg>
+          </div>
+          <div class="line-dots">${dots}</div>
+        </div>
+      </div>
+      <div class="vchart-x">${xLabelsHtml}</div>
+    </div>
+    ${legendHtml}
+  `;
+
+  function buildTooltip(index) {
+    const monthKey = months[index];
+    const rows = [];
+    if (Number.isFinite(planValues[index])) {
+      rows.push({ label: "Plan", value: planValues[index], swatch: "swatch-line-plan" });
+    }
+    if (Number.isFinite(actualValues[index])) {
+      rows.push({ label: "Ist", value: actualValues[index], swatch: "swatch-line-actual" });
+    }
+    const rowsHtml = rows
+      .map(entry => `
+        <div class="tip-row">
+          <span><span class="tip-swatch ${entry.swatch}" aria-hidden="true"></span>${escapeHtml(entry.label)}</span>
+          <b>${formatSignedEUR(entry.value)}</b>
+        </div>
+      `)
+      .join("");
+    return `
+      <div class="tip-title">${escapeHtml(formatMonthLabel(monthKey))}</div>
+      ${rowsHtml || `<div class="tip-row"><span>Keine Daten</span><b>—</b></div>`}
+    `;
+  }
+
+  function showTip(el) {
+    const index = Number(el.getAttribute("data-idx"));
+    if (!Number.isFinite(index)) return;
+    tip.innerHTML = buildTooltip(index);
+    tip.hidden = false;
+    positionTip(tip, el.getBoundingClientRect());
+  }
+
+  function hideTip(force = false) {
+    if (!force) {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains("line-dot")) return;
+    }
+    tip.hidden = true;
+  }
+
+  container.querySelectorAll(".line-dot").forEach(dot => {
+    dot.addEventListener("pointerenter", () => showTip(dot));
+    dot.addEventListener("pointermove", () => showTip(dot));
+    dot.addEventListener("pointerleave", () => hideTip(), true);
+    dot.addEventListener("focus", () => showTip(dot));
+    dot.addEventListener("blur", () => hideTip(true));
+    dot.addEventListener("click", () => {
+      const idx = Number(dot.getAttribute("data-idx"));
+      const monthKey = months[idx];
+      if (monthKey && typeof onMonthSelect === "function") {
+        hideTip(true);
+        onMonthSelect(monthKey);
+      }
+    });
+    dot.addEventListener("keydown", ev => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const idx = Number(dot.getAttribute("data-idx"));
+      const monthKey = months[idx];
+      if (monthKey && typeof onMonthSelect === "function") {
+        hideTip(true);
+        onMonthSelect(monthKey);
+      }
+      ev.preventDefault();
+    });
+  });
 }
 
 export default { render };

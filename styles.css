@@ -513,6 +513,27 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* Raster-Linien (gestrichelt) */
 
 .dashboard-intro{margin:-4px 0 12px; color:var(--muted); font-size:14px}
+.chart-stack{display:flex; flex-direction:column; gap:24px; margin-top:12px;}
+.chart-block{display:flex; flex-direction:column; gap:12px;}
+.chart-header h3{margin:0 0 4px; font-size:18px;}
+.chart-shell{display:flex; flex-direction:column; gap:10px;}
+.line-legend{display:flex; gap:16px; align-items:center; font-size:12px; color:var(--muted); padding-left:72px;}
+.line-legend .legend-item{display:inline-flex; align-items:center; gap:8px; font-weight:600;}
+.legend-swatch.swatch-line-plan{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px solid #0f172a;}
+.legend-swatch.swatch-line-actual{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px dashed #1f2937;}
+.line-dots{position:absolute; left:0; right:0; top:0; bottom:0; pointer-events:none;}
+.line-dot{position:absolute; width:10px; height:10px; border-radius:50%; border:2px solid #fff; transform:translate(-50%, -50%); pointer-events:auto; background:#0f172a;}
+.line-dot.plan{background:#0f172a;}
+.line-dot.actual{background:#1f2937; border-style:dashed;}
+.line-chart .vchart-lines .line{stroke:#0f172a;}
+.line-chart .vchart-lines .line-actual{stroke:#1f2937; stroke-dasharray:6 6;}
+.chart-tip .tip-swatch.swatch-po-paid{background:#D32F2F;}
+.chart-tip .tip-swatch.swatch-po-open{background:rgba(211, 47, 47, 0.35);}
+.chart-tip .tip-swatch.swatch-other-expenses{background:#F59E0B;}
+.chart-tip .tip-swatch.swatch-fo{background:#7C3AED;}
+.chart-tip .tip-swatch.swatch-fixcost{background:#94A3B8;}
+.chart-tip .tip-swatch.swatch-line-plan{background:#0f172a;}
+.chart-tip .tip-swatch.swatch-line-actual{background:#1f2937;}
 
 .chip{min-height:44px; padding:10px 18px; border-radius:999px; border:1px solid rgba(15,27,45,.16); background:#fff; color:var(--ink); font-weight:600; font-size:14px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; box-shadow:0 2px 4px rgba(15,27,45,0.06); transition:background-color .12s ease, color .12s ease, border-color .12s ease, transform .12s ease;}
 .chip:hover{border-color:var(--mint-500); transform:translateY(-1px);}
