@@ -108,8 +108,9 @@ function pickRenderer(mod) {
 function renderRoute(forcedHash) {
   const candidate = typeof forcedHash === 'string' ? forcedHash : location.hash;
   const hash = normalizeHash(candidate);
-  const loader = routes[hash] || routes['#dashboard'];
-  setActiveTab(hash);
+  const resolvedHash = routes[hash] ? hash : '#dashboard';
+  const loader = routes[resolvedHash];
+  setActiveTab(resolvedHash);
   if (typeof APP.__cleanup === 'function') {
     try { APP.__cleanup(); } catch {}
     APP.__cleanup = null;
