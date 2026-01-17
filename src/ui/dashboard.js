@@ -1218,7 +1218,7 @@ function renderCashflowBarChart(container, { months, series, legend, onLegendTog
       <div class="vchart-y">${ticks.map(v => `<div class="ytick">${formatEUR(v)}</div>`).join("")}</div>
       <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
         <div class="vchart-stage-inner">
-          <div class="vchart-grid">${ticks.map(() => "<div class=\\"yline\\"></div>").join("")}</div>
+          <div class="vchart-grid">${ticks.map(() => '<div class="yline"></div>').join("")}</div>
           <div class="vchart-zero"></div>
           <div class="vchart-bars">${barGroupsHtml}</div>
         </div>
@@ -1395,7 +1395,7 @@ function renderBalanceLineChart(container, { months, planValues, actualValues, o
       <div class="vchart-y">${ticks.map(v => `<div class="ytick">${formatEUR(v)}</div>`).join("")}</div>
       <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
         <div class="vchart-stage-inner">
-          <div class="vchart-grid">${ticks.map(() => "<div class=\\"yline\\"></div>").join("")}</div>
+          <div class="vchart-grid">${ticks.map(() => '<div class="yline"></div>').join("")}</div>
           <div class="vchart-zero"></div>
           <div class="vchart-lines">
             <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
