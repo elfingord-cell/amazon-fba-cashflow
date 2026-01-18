@@ -325,7 +325,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* ===== Charts (ohne Canvas) ===== */
 .vchart{
   position:relative; background:#fff; border:1px solid #e6e9ef; border-radius:12px;
-  padding:24px 32px 72px 72px; min-height:320px; overflow:visible;
+  padding:24px 32px 72px 72px; min-height:320px; height:320px; overflow:visible;
 }
 
 /* Y-Skala – exakt gleiche Reihen wie Raster (via --rows) */
@@ -516,7 +516,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .chart-stack{display:flex; flex-direction:column; gap:24px; margin-top:12px;}
 .chart-block{display:flex; flex-direction:column; gap:12px;}
 .chart-header h3{margin:0 0 4px; font-size:18px;}
-.chart-shell{display:flex; flex-direction:column; gap:10px;}
+.chart-shell{display:flex; flex-direction:column; gap:10px; min-height:320px;}
 .line-legend{display:flex; gap:16px; align-items:center; font-size:12px; color:var(--muted); padding-left:72px;}
 .line-legend .legend-item{display:inline-flex; align-items:center; gap:8px; font-weight:600;}
 .legend-swatch.swatch-line-plan{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px solid #0f172a;}

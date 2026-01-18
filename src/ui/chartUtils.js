@@ -1,10 +1,18 @@
 export function computeNiceTickStep(range) {
-  const steps = [1000, 2000, 5000, 10000, 20000, 50000];
-  if (!Number.isFinite(range) || range <= 0) return steps[0];
-  for (const step of steps) {
-    if (range / step <= 5) return step;
-  }
-  return steps[steps.length - 1];
+  if (!Number.isFinite(range) || range <= 0) return 5000;
+  return range >= 50000 ? 10000 : 5000;
+}
+
+export function getNiceTicks(min, max) {
+  const minWithZero = Math.min(min, 0);
+  const maxWithZero = Math.max(max, 0);
+  const range = maxWithZero - minWithZero || 1;
+  const step = computeNiceTickStep(range);
+  const minTick = Math.floor(minWithZero / step) * step;
+  const maxTick = Math.ceil(maxWithZero / step) * step;
+  const ticks = [];
+  for (let v = minTick; v <= maxTick + 1e-6; v += step) ticks.push(v);
+  return { ticks, minTick, maxTick, step };
 }
 
 export function formatEUR(value) {

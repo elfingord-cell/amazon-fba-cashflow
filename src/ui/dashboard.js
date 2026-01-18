@@ -1,7 +1,7 @@
 // UI: Dashboard – Monatsübersicht & detaillierte Monats-P/L-Analyse
 import { loadState, addStateListener, setEventManualPaid, setEventsManualPaid, setAutoManualCheck } from "../data/storageLocal.js";
 import { computeOutflowStack, computeSeries, fmtEUR } from "../domain/cashflow.js";
-import { computeNiceTickStep, formatEUR, formatSignedEUR } from "./chartUtils.js";
+import { computeNiceTickStep, formatEUR, formatSignedEUR, getNiceTicks } from "./chartUtils.js";
 
 const fmtEUR0 = val =>
   new Intl.NumberFormat("de-DE", {
@@ -1030,24 +1030,17 @@ function getChartLayout(months) {
 }
 
 function buildTickScale({ min, max, symmetric = false }) {
-  const maxAbs = Math.max(Math.abs(min), Math.abs(max));
-  const step = computeNiceTickStep(maxAbs || 1);
-  let top = 0;
-  let bottom = 0;
   if (symmetric) {
-    top = Math.ceil(maxAbs / step) * step || step;
-    bottom = -top;
-  } else {
-    top = Math.ceil(max / step) * step;
-    bottom = Math.floor(min / step) * step;
-    if (top === bottom) {
-      top += step;
-      bottom -= step;
-    }
+    const maxAbs = Math.max(Math.abs(min), Math.abs(max));
+    const step = computeNiceTickStep(maxAbs * 2 || 1);
+    const top = Math.ceil(maxAbs / step) * step || step;
+    const bottom = -top;
+    const ticks = [];
+    for (let v = top; v >= bottom - 1e-6; v -= step) ticks.push(v);
+    return { top, bottom, step, ticks };
   }
-  const ticks = [];
-  for (let v = top; v >= bottom - 1e-6; v -= step) ticks.push(v);
-  return { top, bottom, step, ticks };
+  const { ticks, minTick, maxTick, step } = getNiceTicks(min, max);
+  return { top: maxTick, bottom: minTick, step, ticks: ticks.slice().reverse() };
 }
 
 function buildXAxisLabels(months, groupWidth) {
