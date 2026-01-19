@@ -325,12 +325,12 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* ===== Charts (ohne Canvas) ===== */
 .vchart{
   position:relative; background:#fff; border:1px solid #e6e9ef; border-radius:12px;
-  padding:24px 32px 72px 72px; min-height:320px; height:320px; overflow:visible;
+  padding:24px 32px 88px 72px; min-height:320px; height:320px; overflow:visible;
 }
 
 /* Y-Skala – exakt gleiche Reihen wie Raster (via --rows) */
 .vchart-y{
-  position:absolute; left:16px; top:24px; bottom:32px;
+  position:absolute; left:16px; top:24px; bottom:56px;
   display:grid; grid-template-rows:repeat(var(--rows,6),1fr); align-items:end;
   width:48px; color:#6b7280; font-size:11px; text-align:right; gap:0;
 }
@@ -338,7 +338,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 /* Scrollbare Plot-Fläche */
 .vchart-stage{
-  position:absolute; left:72px; right:32px; top:24px; bottom:32px;
+  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
   display:flex; flex-direction:column; gap:16px;
   overflow-x:auto; overflow-y:hidden;
   scrollbar-width:thin;
@@ -522,7 +522,9 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .legend-swatch.swatch-line-plan{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px solid #0f172a;}
 .legend-swatch.swatch-line-actual{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px dashed #1f2937;}
 .line-dots{position:absolute; left:0; right:0; top:0; bottom:0; pointer-events:none;}
-.line-dot{position:absolute; width:10px; height:10px; border-radius:50%; border:2px solid #fff; transform:translate(-50%, -50%); pointer-events:auto; background:#0f172a;}
+.line-dot{position:absolute; width:6px; height:6px; border-radius:50%; border:2px solid #fff; transform:translate(-50%, -50%); pointer-events:auto; background:#0f172a; opacity:0;}
+.line-dot:hover,
+.line-dot:focus-visible{opacity:1;}
 .line-dot.plan{background:#0f172a;}
 .line-dot.actual{background:#1f2937; border-style:dashed;}
 .line-chart .vchart-lines .line{stroke:#0f172a;}
