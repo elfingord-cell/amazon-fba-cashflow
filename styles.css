@@ -325,12 +325,12 @@ tr.auto-ms.disabled select{opacity:0.8;}
 /* ===== Charts (ohne Canvas) ===== */
 .vchart{
   position:relative; background:#fff; border:1px solid #e6e9ef; border-radius:12px;
-  padding:24px 32px 88px 72px; min-height:320px; height:320px; overflow:visible;
+  padding:24px 32px 104px 72px; min-height:320px; height:320px; overflow:visible;
 }
 
 /* Y-Skala – exakt gleiche Reihen wie Raster (via --rows) */
 .vchart-y{
-  position:absolute; left:16px; top:24px; bottom:56px;
+  position:absolute; left:16px; top:24px; bottom:72px;
   display:grid; grid-template-rows:repeat(var(--rows,6),1fr); align-items:end;
   width:48px; color:#6b7280; font-size:11px; text-align:right; gap:0;
 }
@@ -338,7 +338,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 /* Scrollbare Plot-Fläche */
 .vchart-stage{
-  position:absolute; left:72px; right:32px; top:24px; bottom:56px;
+  position:absolute; left:72px; right:32px; top:24px; bottom:72px;
   display:flex; flex-direction:column; gap:16px;
   overflow-x:auto; overflow-y:hidden;
   scrollbar-width:thin;
@@ -408,7 +408,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vchart-x{
   display:flex; gap:var(--group-gap, 16px);
   width:var(--chart-width, 100%);
-  padding-bottom:4px;
+  padding-bottom:8px;
 }
 .vchart-x .xlabel{font-size:12px; color:#475569; text-align:center; white-space:nowrap; display:flex; justify-content:center; align-items:center; flex:0 0 auto; font-weight:600;}
 
@@ -469,16 +469,16 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .chart-tip .tip-swatch.swatch-net{background:#37474F;}
 
 /* === Dashboard Ebenen-Reihenfolge === */
-.vchart-grid  { position:absolute; left:72px; right:96px; top:24px; bottom:56px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
-.vchart-y     { position:absolute; left:16px;  top:24px; bottom:56px; width:48px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
-.vchart-y-right{ position:absolute; right:16px; top:24px; bottom:56px; width:64px; color:#6b7280; font-size:11px; text-align:left; z-index:4; pointer-events:none; }
+.vchart-grid  { position:absolute; left:72px; right:96px; top:24px; bottom:72px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); z-index:1; }
+.vchart-y     { position:absolute; left:16px;  top:24px; bottom:72px; width:48px; display:grid; grid-template-rows: repeat(var(--rows,6),1fr); align-items:end; color:#6b7280; font-size:11px; text-align:right; z-index:4; }
+.vchart-y-right{ position:absolute; right:16px; top:24px; bottom:72px; width:64px; color:#6b7280; font-size:11px; text-align:left; z-index:4; pointer-events:none; }
 .vchart-y-right .ytick-line{ position:absolute; left:0; transform:translateY(50%); white-space:nowrap; }
   .vchart-bars  {
     position:absolute;
     left:72px;
     right:96px;
     top:24px;
-    bottom:56px;
+    bottom:72px;
     display:flex;
     align-items:flex-end;
     justify-content:flex-start;
@@ -492,7 +492,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
     left:72px;
     right:96px;
     top:24px;
-    bottom:56px;
+    bottom:72px;
     pointer-events:none;
     z-index:3;
   }
@@ -500,7 +500,7 @@ tr.auto-ms.disabled select{opacity:0.8;}
     position:absolute;
     left:72px;
     right:96px;
-    bottom:12px;
+    bottom:20px;
     display:flex;
     align-items:center;
     justify-content:flex-start;
@@ -521,12 +521,18 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .line-legend .legend-item{display:inline-flex; align-items:center; gap:8px; font-weight:600;}
 .legend-swatch.swatch-line-plan{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px solid #0f172a;}
 .legend-swatch.swatch-line-actual{background:none; height:0; width:36px; border:none; box-shadow:none; margin:6px 0; border-bottom:2px dashed #1f2937;}
-.line-dots{position:absolute; left:0; right:0; top:0; bottom:0; pointer-events:none;}
-.line-dot{position:absolute; width:6px; height:6px; border-radius:50%; border:2px solid #fff; transform:translate(-50%, -50%); pointer-events:auto; background:#0f172a; opacity:0;}
-.line-dot:hover,
-.line-dot:focus-visible{opacity:1;}
-.line-dot.plan{background:#0f172a;}
-.line-dot.actual{background:#1f2937; border-style:dashed;}
+.line-dots{position:absolute; left:0; right:0; top:0; bottom:0; pointer-events:auto;}
+.line-dot{position:absolute; width:18px; height:18px; border:none; background:transparent; transform:translate(-50%, -50%); pointer-events:auto;}
+.line-dot::after{
+  content:"";
+  position:absolute; inset:0;
+  width:6px; height:6px; margin:auto;
+  border-radius:50%; border:2px solid #fff; background:#0f172a; opacity:0;
+}
+.line-dot:hover::after,
+.line-dot:focus-visible::after{opacity:1;}
+.line-dot.plan::after{background:#0f172a;}
+.line-dot.actual::after{background:#1f2937; border-style:dashed;}
 .line-chart .vchart-lines .line{stroke:#0f172a;}
 .line-chart .vchart-lines .line-actual{stroke:#1f2937; stroke-dasharray:6 6;}
 .chart-tip .tip-swatch.swatch-po-paid{background:#D32F2F;}
