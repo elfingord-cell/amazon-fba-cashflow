@@ -6,6 +6,7 @@ import {
   deleteProductBySku,
   setProductStatus,
   setPreferredProductSupplier,
+  setProductsTableColumns,
 } from "../data/storageLocal.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 
@@ -728,6 +729,7 @@ function buildHistoryTable(state, sku) {
       { key: "actions", label: "Aktionen" },
     ];
     const colCount = columns.length;
+    const columnWidths = state?.settings?.productsTableColumns?.list || [];
     const table = createEl("table", { class: "table products-list-table" });
     const thead = createEl("thead", {}, [
       createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "", title: col.label }, [col.label])))
@@ -818,7 +820,7 @@ function buildHistoryTable(state, sku) {
     });
 
     table.append(thead, tbody);
-    initColumnResizing(table);
+    initColumnResizing(table, { key: "list", widths: columnWidths });
     table.addEventListener("click", (event) => {
       const toggle = event.target.closest(".product-group-toggle");
       if (!toggle) return;
@@ -832,7 +834,7 @@ function buildHistoryTable(state, sku) {
     return createEl("div", { class: "table-wrap products-list" }, [table]);
   }
 
-  function initColumnResizing(table, colgroup = null) {
+  function initColumnResizing(table, { key, colgroup = null, widths = [] } = {}) {
     if (!table) return;
     const headerRow = table.querySelector("thead tr:last-child");
     if (!headerRow) return;
@@ -849,6 +851,12 @@ function buildHistoryTable(state, sku) {
 
     const cols = colgroup ? Array.from(colgroup.children) : null;
     headers.forEach((th, index) => {
+      const stored = widths[index];
+      if (Number.isFinite(stored)) {
+        th.style.width = `${stored}px`;
+        if (cols && cols[index]) cols[index].style.width = `${stored}px`;
+        return;
+      }
       const width = th.getBoundingClientRect().width;
       if (width) {
         th.style.width = `${width}px`;
@@ -870,6 +878,13 @@ function buildHistoryTable(state, sku) {
       if (!active) return;
       document.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("pointerup", stopResize);
+      const nextWidths = headers.map((th, index) => {
+        if (cols && cols[index]) {
+          return cols[index].getBoundingClientRect().width;
+        }
+        return th.getBoundingClientRect().width;
+      });
+      if (key) setProductsTableColumns(key, nextWidths);
       active = null;
       table.classList.remove("is-resizing");
     }
@@ -1085,10 +1100,13 @@ function buildHistoryTable(state, sku) {
     const scroll = createEl("div", { class: "products-grid-scroll" });
     const table = createEl("table", { class: "products-grid-table" });
     const colgroup = createEl("colgroup");
-    fields.forEach(field => {
-      colgroup.append(createEl("col", { style: field.width ? `width:${field.width}` : null }));
+    const gridWidths = state?.settings?.productsTableColumns?.grid || [];
+    fields.forEach((field, index) => {
+      const width = Number.isFinite(gridWidths[index]) ? `${gridWidths[index]}px` : field.width;
+      colgroup.append(createEl("col", { style: width ? `width:${width}` : null }));
     });
-    colgroup.append(createEl("col", { style: "width:180px" }));
+    const actionsWidth = Number.isFinite(gridWidths[fields.length]) ? `${gridWidths[fields.length]}px` : "180px";
+    colgroup.append(createEl("col", { style: `width:${actionsWidth}` }));
     const thead = createEl("thead", {}, [
       createEl("tr", { class: "products-grid-group-header" }, [
         createEl("th", { colspan: "5", title: "Stammdaten" }, ["Stammdaten"]),
@@ -1188,7 +1206,7 @@ function buildHistoryTable(state, sku) {
     });
 
     table.append(colgroup, thead, tbody);
-    initColumnResizing(table, colgroup);
+    initColumnResizing(table, { key: "grid", colgroup, widths: gridWidths });
     scroll.append(table);
     wrapper.append(toolbar, scroll);
     updateToolbar();

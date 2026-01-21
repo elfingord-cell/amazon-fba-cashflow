@@ -47,6 +47,10 @@ const defaults = {
     defaultBufferDays: 0,
     defaultCurrency: "EUR",
     lastUpdatedAt: null,
+    productsTableColumns: {
+      list: [],
+      grid: [],
+    },
   },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
   extras:    [ ],
@@ -167,6 +171,12 @@ function ensureGlobalSettings(state) {
   settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
+  if (!settings.productsTableColumns || typeof settings.productsTableColumns !== "object") {
+    settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
+  } else {
+    if (!Array.isArray(settings.productsTableColumns.list)) settings.productsTableColumns.list = [];
+    if (!Array.isArray(settings.productsTableColumns.grid)) settings.productsTableColumns.grid = [];
+  }
 }
 
 function ensureSuppliers(state) {
@@ -727,6 +737,17 @@ export function setEventsManualPaid(eventIds, paid){
     saveState(state);
     broadcastStateChanged();
   }
+}
+
+export function setProductsTableColumns(view, widths){
+  if (!view || !Array.isArray(widths)) return;
+  const state = loadState();
+  ensureGlobalSettings(state);
+  if (!state.settings.productsTableColumns || typeof state.settings.productsTableColumns !== "object") {
+    state.settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
+  }
+  state.settings.productsTableColumns[view] = widths.map(val => Number(val)).filter(Number.isFinite);
+  saveState(state);
 }
 
 export function getProductsSnapshot(){
