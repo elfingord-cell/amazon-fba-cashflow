@@ -54,6 +54,7 @@ function renderRoute() {
       const fn = pickRenderer(mod);
       if (typeof fn === 'function') {
         fn(APP);
+        initTableEnhancements(APP);
       } else {
         console.warn('Route-Modul ohne passenden Export. Verfügbare Keys:', Object.keys(mod || {}));
         APP.innerHTML = `<section class="panel">
@@ -76,3 +77,91 @@ window.addEventListener('storage', (e) => {
 window.addEventListener('state:changed', renderRoute);
 
 renderRoute();
+
+function initTableEnhancements(root) {
+  const tables = root.querySelectorAll("table");
+  tables.forEach((table) => {
+    addHeaderTooltips(table);
+    enableColumnResizing(table);
+  });
+}
+
+function addHeaderTooltips(table) {
+  const headers = table.querySelectorAll("thead th");
+  headers.forEach((th) => {
+    const label = th.textContent?.trim();
+    if (!label) return;
+    th.setAttribute("title", label);
+    if (!th.hasAttribute("aria-label")) th.setAttribute("aria-label", label);
+  });
+}
+
+function enableColumnResizing(table) {
+  const headerRow = table.querySelector("thead tr:last-child");
+  if (!headerRow) return;
+  const headers = Array.from(headerRow.querySelectorAll("th"));
+  if (!headers.length) return;
+  table.classList.add("table-resizable");
+  if (!table.style.tableLayout) table.style.tableLayout = "fixed";
+  headers.forEach((th, index) => {
+    if (th.colSpan && th.colSpan > 1) return;
+    if (th.querySelector(".col-resize-handle")) return;
+    const handle = document.createElement("span");
+    handle.className = "col-resize-handle";
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-label", "Spaltenbreite anpassen");
+    handle.addEventListener("pointerdown", (event) => {
+      startColumnResize(event, table, index);
+    });
+    th.appendChild(handle);
+  });
+}
+
+function startColumnResize(event, table, index) {
+  event.preventDefault();
+  event.stopPropagation();
+  const headerRow = table.querySelector("thead tr:last-child");
+  if (!headerRow) return;
+  const headerCell = headerRow.children[index];
+  if (!headerCell) return;
+
+  const startX = event.clientX;
+  const startWidth = headerCell.getBoundingClientRect().width;
+  const minWidth = 60;
+
+  const bodyRows = Array.from(table.querySelectorAll("tbody tr"));
+  const footerRows = Array.from(table.querySelectorAll("tfoot tr"));
+  const rows = bodyRows.concat(footerRows);
+
+  table.classList.add("is-resizing");
+  const previousCursor = document.body.style.cursor;
+  const previousSelect = document.body.style.userSelect;
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+
+  const setWidth = (width) => {
+    const nextWidth = `${Math.max(minWidth, width)}px`;
+    headerCell.style.width = nextWidth;
+    rows.forEach((row) => {
+      const cell = row.children[index];
+      if (cell) cell.style.width = nextWidth;
+    });
+  };
+
+  const onMove = (moveEvent) => {
+    const delta = moveEvent.clientX - startX;
+    setWidth(startWidth + delta);
+  };
+
+  const onUp = () => {
+    table.classList.remove("is-resizing");
+    document.body.style.cursor = previousCursor;
+    document.body.style.userSelect = previousSelect;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+}

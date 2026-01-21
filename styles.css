@@ -68,6 +68,32 @@ input:focus,select:focus,textarea:focus{outline:none; box-shadow:0 0 0 4px var(-
 table{width:100%; border-collapse:collapse}
 th,td{padding:10px; border-bottom:1px solid rgba(15,27,45,.08); text-align:left}
 thead th{font-size:12px; color:var(--muted); font-weight:700}
+.table-resizable{table-layout:fixed}
+.table-resizable th{position:relative}
+.table-resizable th .col-resize-handle{
+  position:absolute;
+  top:0;
+  right:-4px;
+  width:8px;
+  height:100%;
+  cursor:col-resize;
+  touch-action:none;
+}
+.table-resizable th .col-resize-handle::after{
+  content:"";
+  position:absolute;
+  top:20%;
+  left:3px;
+  width:2px;
+  height:60%;
+  background:rgba(15,27,45,.2);
+  opacity:0;
+  transition:opacity .15s ease;
+}
+.table-resizable th:hover .col-resize-handle::after,
+.table-resizable.is-resizing th .col-resize-handle::after{
+  opacity:1;
+}
 
 /* Footer */
 .footer{padding:10px 0; color:var(--muted)}
