@@ -179,7 +179,7 @@ function buildHistoryTable(state, sku) {
   return table;
 }
 
-function renderProducts(root) {
+  function renderProducts(root) {
   const state = loadState();
   const products = getProductsSnapshot();
   const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
@@ -818,6 +818,7 @@ function renderProducts(root) {
     });
 
     table.append(thead, tbody);
+    initColumnResizing(table);
     table.addEventListener("click", (event) => {
       const toggle = event.target.closest(".product-group-toggle");
       if (!toggle) return;
@@ -829,6 +830,70 @@ function renderProducts(root) {
     });
 
     return createEl("div", { class: "table-wrap products-list" }, [table]);
+  }
+
+  function initColumnResizing(table, colgroup = null) {
+    if (!table) return;
+    const headerRow = table.querySelector("thead tr:last-child");
+    if (!headerRow) return;
+    const headers = Array.from(headerRow.querySelectorAll("th"));
+    if (!headers.length) return;
+    table.style.tableLayout = "fixed";
+
+    headers.forEach((th, index) => {
+      if (th.querySelector(".col-resizer")) return;
+      const resizer = createEl("span", { class: "col-resizer", "aria-hidden": "true" });
+      th.append(resizer);
+      th.dataset.colIndex = String(index);
+    });
+
+    const cols = colgroup ? Array.from(colgroup.children) : null;
+    headers.forEach((th, index) => {
+      const width = th.getBoundingClientRect().width;
+      if (width) {
+        th.style.width = `${width}px`;
+        if (cols && cols[index]) cols[index].style.width = `${width}px`;
+      }
+    });
+
+    let active = null;
+
+    function onPointerMove(event) {
+      if (!active) return;
+      const delta = event.clientX - active.startX;
+      const next = Math.max(active.minWidth, active.startWidth + delta);
+      active.th.style.width = `${next}px`;
+      if (active.col) active.col.style.width = `${next}px`;
+    }
+
+    function stopResize() {
+      if (!active) return;
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", stopResize);
+      active = null;
+      table.classList.remove("is-resizing");
+    }
+
+    table.addEventListener("pointerdown", event => {
+      const handle = event.target.closest(".col-resizer");
+      if (!handle) return;
+      const th = handle.closest("th");
+      if (!th) return;
+      event.preventDefault();
+      const index = Number(th.dataset.colIndex);
+      const col = cols && Number.isFinite(index) ? cols[index] : null;
+      const startWidth = th.getBoundingClientRect().width;
+      active = {
+        th,
+        col,
+        startX: event.clientX,
+        startWidth,
+        minWidth: 80,
+      };
+      table.classList.add("is-resizing");
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", stopResize);
+    });
   }
 
   function renderGrid(list) {
@@ -1026,18 +1091,18 @@ function renderProducts(root) {
     colgroup.append(createEl("col", { style: "width:180px" }));
     const thead = createEl("thead", {}, [
       createEl("tr", { class: "products-grid-group-header" }, [
-        createEl("th", { colspan: "5" }, ["Stammdaten"]),
-        createEl("th", { colspan: "3" }, ["Kosten"]),
-        createEl("th", { colspan: "4" }, ["Logistik"]),
-        createEl("th", { colspan: "5" }, ["Steuern"]),
-        createEl("th", { colspan: "3" }, ["FX & Währung"]),
-        createEl("th", { colspan: "1" }, ["Sonstiges"]),
-        createEl("th", { colspan: "1" }, ["Tags"]),
-        createEl("th", { colspan: "1", class: "actions" }, ["Aktionen"]),
+        createEl("th", { colspan: "5", title: "Stammdaten" }, ["Stammdaten"]),
+        createEl("th", { colspan: "3", title: "Kosten" }, ["Kosten"]),
+        createEl("th", { colspan: "4", title: "Logistik" }, ["Logistik"]),
+        createEl("th", { colspan: "5", title: "Steuern" }, ["Steuern"]),
+        createEl("th", { colspan: "3", title: "FX & Währung" }, ["FX & Währung"]),
+        createEl("th", { colspan: "1", title: "Sonstiges" }, ["Sonstiges"]),
+        createEl("th", { colspan: "1", title: "Tags" }, ["Tags"]),
+        createEl("th", { colspan: "1", class: "actions", title: "Aktionen" }, ["Aktionen"]),
       ]),
       createEl("tr", {}, [
         ...fields.map(field => createEl("th", { class: field.className || "", title: field.label }, [field.label])),
-        createEl("th", { class: "actions" }, ["Aktionen"]),
+        createEl("th", { class: "actions", title: "Aktionen" }, ["Aktionen"]),
       ]),
     ]);
     const tbody = createEl("tbody");
@@ -1123,6 +1188,7 @@ function renderProducts(root) {
     });
 
     table.append(colgroup, thead, tbody);
+    initColumnResizing(table, colgroup);
     scroll.append(table);
     wrapper.append(toolbar, scroll);
     updateToolbar();

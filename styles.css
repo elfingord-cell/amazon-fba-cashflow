@@ -245,7 +245,33 @@ td.num, th.num{text-align:right}
 .category-controls input{min-height:40px; padding:6px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; min-width:220px;}
 .view-toggle{display:flex; gap:8px; align-items:center;}
 .view-toggle .btn.is-active{background:var(--mint-500); border-color:var(--mint-500); color:#fff;}
+.products-list-table{table-layout:fixed; width:100%;}
 .products-list-table th{position:sticky; top:0; z-index:1;}
+.products-list-table th,
+.products-grid-table th{position:relative;}
+.products-list-table.is-resizing,
+.products-grid-table.is-resizing{user-select:none;}
+.col-resizer{
+  position:absolute;
+  top:0;
+  right:-3px;
+  width:6px;
+  height:100%;
+  cursor:col-resize;
+  touch-action:none;
+}
+.col-resizer::after{
+  content:"";
+  position:absolute;
+  left:2px;
+  top:25%;
+  bottom:25%;
+  width:1px;
+  background:rgba(15,27,45,0.2);
+  opacity:0;
+  transition:opacity .12s ease;
+}
+th:hover > .col-resizer::after{opacity:1;}
 .product-group-row td{background:#f1f5f9; font-weight:600;}
 .product-group-toggle{background:none; border:none; font:inherit; cursor:pointer; padding:4px 0; display:inline-flex; align-items:center; gap:8px;}
 .product-group-toggle::before{content:"▸"; font-size:12px; transition:transform .12s ease;}
