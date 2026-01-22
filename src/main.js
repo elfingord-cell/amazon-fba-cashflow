@@ -111,6 +111,7 @@ function renderRoute(forcedHash) {
   const hash = normalizeHash(candidate);
   const resolvedHash = routes[hash] ? hash : '#dashboard';
   const loader = routes[resolvedHash];
+  APP.classList.toggle('app-wide', resolvedHash === '#po');
   setActiveTab(resolvedHash);
   if (typeof APP.__cleanup === 'function') {
     try { APP.__cleanup(); } catch {}

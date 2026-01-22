@@ -779,6 +779,7 @@ function defaultRecord(config, settings = getSettings()) {
     ],
     paymentLog: {},
     paymentTransactions: [],
+    archived: false,
   };
   ensureAutoEvents(record, settings, record.milestones);
   normaliseGoodsFields(record, settings);
@@ -1035,7 +1036,11 @@ function buildEventList(events, paymentLog = {}, transactions = []) {
   return wrapper;
 }
 
-function renderList(container, records, config, onEdit, onDelete) {
+function renderList(container, records, config, onEdit, onDelete, options = {}) {
+  if (config.slug === "po") {
+    renderPoList(container, records, config, onEdit, onDelete, options);
+    return;
+  }
   container.innerHTML = "";
   refreshProductCache();
   const settings = getSettings();
@@ -1092,6 +1097,126 @@ function renderList(container, records, config, onEdit, onDelete) {
       }
     },
   });
+  container.append(table);
+}
+
+function renderPoList(container, records, config, onEdit, onDelete, options = {}) {
+  container.innerHTML = "";
+  refreshProductCache();
+  const settings = getSettings();
+  const rows = Array.isArray(records) ? records : [];
+  rows.forEach(rec => {
+    normaliseGoodsFields(rec, settings);
+    normaliseArchiveFlag(rec);
+  });
+  const searchTerm = String(options.searchTerm || "").trim().toLowerCase();
+  const showArchived = options.showArchived === true;
+  const filtered = rows.filter(rec => {
+    if (!showArchived && rec.archived) return false;
+    if (!searchTerm) return true;
+    const items = Array.isArray(rec.items) ? rec.items : [];
+    const labels = items.map(item => {
+      const sku = item?.sku || "";
+      const match = productCache.find(prod => prod?.sku?.trim().toLowerCase() === String(sku).trim().toLowerCase());
+      return [sku, match?.alias || ""].filter(Boolean).join(" ");
+    });
+    const haystack = [
+      rec[config.numberField],
+      rec.sku,
+      rec.supplier,
+      ...labels,
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(searchTerm);
+  });
+  const listRows = filtered.map(rec => ({ rec, totals: computeGoodsTotals(rec, settings) }));
+
+  const table = el("table", { class: "table-compact" });
+  const thead = el("thead", {}, [
+    el("tr", {}, [
+      el("th", { style: "width:90px" }, ["PO-Nr."]),
+      el("th", { style: "width:200px" }, ["Produkt/Items"]),
+      el("th", { style: "width:110px" }, ["Order Date"]),
+      el("th", { style: "width:180px" }, ["Timeline"]),
+      el("th", { style: "width:80px", class: "num" }, ["Stück"]),
+      el("th", { style: "width:110px", class: "num" }, ["Summe USD"]),
+      el("th", { style: "width:110px", class: "num" }, ["Fracht (€)"]),
+      el("th", { style: "width:120px" }, ["Zahlungen"]),
+      el("th", { style: "width:120px" }, ["Transport"]),
+      el("th", { style: "width:120px" }, ["Aktionen"]),
+    ]),
+  ]);
+  const tbody = el("tbody");
+  table.append(thead, tbody);
+
+  function renderPaymentBadges(rec) {
+    const milestones = Array.isArray(rec.milestones) ? rec.milestones : [];
+    const log = rec.paymentLog || {};
+    if (!milestones.length) return el("span", { class: "muted" }, ["—"]);
+    const wrap = el("div", { class: "po-payment-badges" });
+    milestones.forEach(ms => {
+      const label = (ms.label || "Z").trim();
+      const badgeLabel = label.split(" ")[0].slice(0, 3);
+      const paid = log?.[ms.id]?.status === "paid";
+      wrap.append(el("span", {
+        class: `po-payment-badge ${paid ? "is-paid" : "is-open"}`,
+        title: label,
+      }, [badgeLabel]));
+    });
+    return wrap;
+  }
+
+  function updateArchive(rec, archived) {
+    const st = loadState();
+    const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
+    const idx = arr.findIndex(item => item?.id === rec.id || item?.[config.numberField] === rec[config.numberField]);
+    if (idx >= 0) {
+      arr[idx] = { ...arr[idx], archived };
+      st[config.entityKey] = arr;
+      saveState(st);
+      window.dispatchEvent(new Event("state:changed"));
+      if (typeof options.onUpdate === "function") options.onUpdate();
+    }
+  }
+
+  if (!listRows.length) {
+    tbody.append(el("tr", {}, [
+      el("td", { colspan: "10", class: "muted" }, ["Keine Bestellungen gefunden."]),
+    ]));
+    container.append(table);
+    return;
+  }
+
+  listRows.forEach(({ rec, totals }) => {
+    const productSummary = formatSkuSummary(rec);
+    const productTooltip = formatProductTooltip(rec);
+    const timeline = formatTimelineCompact(rec);
+    const transport = `${rec.transport || "sea"} · ${rec.transitDays || 0}d`;
+    const row = el("tr", {}, [
+      el("td", { class: "cell-ellipsis", title: rec[config.numberField] || "—" }, [rec[config.numberField] || "—"]),
+      el("td", { class: "cell-ellipsis", title: productTooltip }, [productSummary || "—"]),
+      el("td", { class: "cell-ellipsis", title: fmtDateDE(rec.orderDate) }, [fmtDateDE(rec.orderDate)]),
+      el("td", { class: "cell-ellipsis", title: timeline }, [timeline]),
+      el("td", { class: "cell-ellipsis num", title: String(totals.units || 0) }, [Number(totals.units || 0).toLocaleString("de-DE")]),
+      el("td", { class: "cell-ellipsis num", title: fmtUSD(totals.usd) }, [fmtUSD(totals.usd)]),
+      el("td", { class: "cell-ellipsis num", title: fmtEUR(resolveFreightTotal(rec, totals)) }, [fmtEUR(resolveFreightTotal(rec, totals))]),
+      el("td", { class: "cell-ellipsis", title: "Zahlungen" }, [renderPaymentBadges(rec)]),
+      el("td", { class: "cell-ellipsis", title: transport }, [transport]),
+      el("td", { class: "cell-ellipsis" }, [
+        el("div", { class: "po-table-actions" }, [
+          el("button", { class: "btn sm", type: "button", title: "Bearbeiten", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
+          el("button", {
+            class: "btn sm secondary",
+            type: "button",
+            title: rec.archived ? "Reaktivieren" : "Archivieren",
+            onclick: () => updateArchive(rec, !rec.archived),
+          }, [rec.archived ? "Aktivieren" : "Archivieren"]),
+          el("button", { class: "btn sm danger", type: "button", title: "Löschen", onclick: () => onDelete(rec) }, ["Löschen"]),
+        ]),
+      ]),
+    ]);
+    tbody.append(row);
+  });
+
   container.append(table);
 }
 
@@ -1188,6 +1313,29 @@ function formatTimelineSummary(record) {
     `Prod done/ETD ${fmtDateDE(timeline.prodDone)}`,
     `ETA ${fmtDateDE(timeline.eta)}`,
   ].join(" • ");
+}
+
+function formatTimelineCompact(record) {
+  const timeline = computeTimeline(record);
+  if (!timeline) return "—";
+  return `ETD ${fmtDateDE(timeline.prodDone)} • ETA ${fmtDateDE(timeline.eta)}`;
+}
+
+function formatProductTooltip(record) {
+  const items = Array.isArray(record?.items) ? record.items.filter(Boolean) : [];
+  if (!items.length) return record?.sku || "—";
+  const labels = items.map(item => {
+    const sku = item?.sku || "";
+    const match = productCache.find(prod => prod?.sku?.trim().toLowerCase() === String(sku).trim().toLowerCase());
+    if (!match) return sku || "—";
+    return match.alias ? `${match.alias} (${match.sku})` : match.sku;
+  });
+  return labels.filter(Boolean).join(", ");
+}
+
+function normaliseArchiveFlag(record) {
+  if (!record) return;
+  if (record.archived == null) record.archived = false;
 }
 
 function transportIcon(transport) {
@@ -1829,6 +1977,7 @@ export function renderOrderModule(root, config) {
   state[config.entityKey].forEach(rec => normaliseGoodsFields(rec, initialSettings));
 
   const quickfillEnabled = config.slug === "po";
+  const poMode = config.slug === "po";
 
   const ids = {
     list: `${config.slug}-list`,
@@ -1877,17 +2026,20 @@ export function renderOrderModule(root, config) {
       productCreate: `${config.slug}-quick-create-product`,
     });
   }
+  if (poMode) {
+    Object.assign(ids, {
+      search: `${config.slug}-search`,
+      archiveToggle: `${config.slug}-archive-toggle`,
+      newButton: `${config.slug}-new`,
+      modal: `${config.slug}-modal`,
+      modalClose: `${config.slug}-modal-close`,
+    });
+  }
   if (config.convertTo) {
     ids.convert = `${config.slug}-convert`;
   }
 
-  root.innerHTML = `
-    <section class="card">
-      <h2>${config.listTitle}</h2>
-      <div id="${ids.list}"></div>
-    </section>
-    <section class="card">
-      <h3>${config.formTitle}</h3>
+  const formBodyHtml = `
       ${quickfillEnabled ? `
       <div class="grid two po-quickfill">
         <div class="po-product-field">
@@ -2022,10 +2174,63 @@ export function renderOrderModule(root, config) {
         </div>
       </div>
       <div id="${ids.preview}" class="po-event-preview"></div>
-    </section>
   `;
 
+  const formSectionHtml = poMode
+    ? `
+      <section class="card po-form-card">
+        <div class="po-form-modal-header">
+          <h3>${config.formTitle}</h3>
+          <button class="btn ghost" type="button" id="${ids.modalClose}" aria-label="Schließen">✕</button>
+        </div>
+        ${formBodyHtml}
+      </section>
+    `
+    : `
+      <section class="card">
+        <h3>${config.formTitle}</h3>
+        ${formBodyHtml}
+      </section>
+    `;
+
+  root.innerHTML = poMode
+    ? `
+      <section class="card po-list-card">
+        <div class="po-list-toolbar">
+          <div>
+            <h2>${config.listTitle}</h2>
+          </div>
+          <div class="po-list-actions">
+            <input id="${ids.search}" placeholder="Suche PO-Nr., SKU, Alias, Supplier" />
+            <label class="po-archive-toggle">
+              <input type="checkbox" id="${ids.archiveToggle}" />
+              Archiviert
+            </label>
+            <button class="btn primary" type="button" id="${ids.newButton}">+ Neue PO</button>
+          </div>
+        </div>
+        <div id="${ids.list}" class="po-table-wrap"></div>
+      </section>
+      <div class="po-form-modal" id="${ids.modal}" aria-hidden="true">
+        <div class="po-form-modal-panel">
+          ${formSectionHtml}
+        </div>
+      </div>
+    `
+    : `
+      <section class="card">
+        <h2>${config.listTitle}</h2>
+        <div id="${ids.list}"></div>
+      </section>
+      ${formSectionHtml}
+    `;
+
   const listZone = $(`#${ids.list}`, root);
+  const poSearchInput = poMode ? $(`#${ids.search}`, root) : null;
+  const poArchiveToggle = poMode ? $(`#${ids.archiveToggle}`, root) : null;
+  const poNewButton = poMode ? $(`#${ids.newButton}`, root) : null;
+  const poModal = poMode ? $(`#${ids.modal}`, root) : null;
+  const poModalClose = poMode ? $(`#${ids.modalClose}`, root) : null;
   const skuInput = quickfillEnabled ? $(`#${ids.sku}`, root) : null;
   const skuList = quickfillEnabled ? $(`#${ids.skuList}`, root) : null;
   const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
@@ -2070,6 +2275,7 @@ export function renderOrderModule(root, config) {
 
   let editing = defaultRecord(config, getSettings());
   let lastLoaded = JSON.parse(JSON.stringify(editing));
+  const poListState = poMode ? { searchTerm: "", showArchived: false } : null;
 
   function formatProductOption(product) {
     if (!product) return "";
@@ -2164,6 +2370,20 @@ export function renderOrderModule(root, config) {
     setTimeout(() => { toast.hidden = true; }, 2000);
   }
 
+  function openFormModal() {
+    if (!poMode || !poModal) return;
+    poModal.classList.add("is-open");
+    poModal.setAttribute("aria-hidden", "false");
+    const focusTarget = poModal.querySelector("input, select, textarea, button");
+    if (focusTarget) focusTarget.focus();
+  }
+
+  function closeFormModal() {
+    if (!poMode || !poModal) return;
+    poModal.classList.remove("is-open");
+    poModal.setAttribute("aria-hidden", "true");
+  }
+
   function getCurrentState() {
     return loadState();
   }
@@ -2172,6 +2392,12 @@ export function renderOrderModule(root, config) {
     const st = getCurrentState();
     if (!Array.isArray(st[config.entityKey])) st[config.entityKey] = [];
     return st[config.entityKey];
+  }
+
+  function renderListView(recordsOverride) {
+    const records = recordsOverride || getAllRecords();
+    const options = poMode ? { ...poListState, onUpdate: () => renderListView() } : undefined;
+    renderList(listZone, records, config, onEdit, onDelete, options);
   }
 
   function normaliseHistory(records) {
@@ -2744,7 +2970,7 @@ export function renderOrderModule(root, config) {
     else arr.push(editing);
     st[config.entityKey] = arr;
     saveState(st);
-    renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
+    renderListView(st[config.entityKey]);
     if (!silent) {
       window.dispatchEvent(new CustomEvent("state:changed", { detail: { source } }));
     }
@@ -2810,6 +3036,7 @@ export function renderOrderModule(root, config) {
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     ensurePaymentLog(editing);
+    normaliseArchiveFlag(editing);
     renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
     if (quickfillEnabled) {
       refreshProductCache();
@@ -2859,6 +3086,7 @@ export function renderOrderModule(root, config) {
     }
     const settings = getSettings();
     syncEditingFromForm(settings);
+    normaliseArchiveFlag(editing);
     const st = loadState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
     const idx = arr.findIndex(item => (item.id && item.id === editing.id)
@@ -2867,13 +3095,14 @@ export function renderOrderModule(root, config) {
     else arr.push(editing);
     st[config.entityKey] = arr;
     saveState(st);
-    renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
+    renderListView(st[config.entityKey]);
     refreshQuickfillControls();
     if (quickfillEnabled && editing.sku) {
       recordRecentProduct(editing.sku);
     }
     window.dispatchEvent(new Event("state:changed"));
     showToast(`${config.entityLabel || "PO"} gespeichert`);
+    if (poMode) closeFormModal();
   }
 
   function convertRecord() {
@@ -2927,6 +3156,7 @@ export function renderOrderModule(root, config) {
 
   function onEdit(record) {
     loadForm(record);
+    if (poMode) openFormModal();
   }
 
   function onDelete(record) {
@@ -2937,9 +3167,10 @@ export function renderOrderModule(root, config) {
       return item[config.numberField] !== record[config.numberField];
     });
     saveState(st);
-    renderList(listZone, st[config.entityKey], config, onEdit, onDelete);
+    renderListView(st[config.entityKey]);
     loadForm(defaultRecord(config, getSettings()));
     window.dispatchEvent(new Event("state:changed"));
+    if (poMode) closeFormModal();
   }
 
   if (addItemBtn) {
@@ -3105,6 +3336,36 @@ export function renderOrderModule(root, config) {
   if (templateSaveBtn) {
     templateSaveBtn.addEventListener("click", openTemplateModal);
   }
+  if (poSearchInput) {
+    poSearchInput.addEventListener("input", () => {
+      if (poListState) {
+        poListState.searchTerm = poSearchInput.value;
+        renderListView();
+      }
+    });
+  }
+  if (poArchiveToggle) {
+    poArchiveToggle.addEventListener("change", () => {
+      if (poListState) {
+        poListState.showArchived = poArchiveToggle.checked;
+        renderListView();
+      }
+    });
+  }
+  if (poNewButton) {
+    poNewButton.addEventListener("click", () => {
+      loadForm(defaultRecord(config, getSettings()));
+      openFormModal();
+    });
+  }
+  if (poModalClose) {
+    poModalClose.addEventListener("click", closeFormModal);
+  }
+  if (poModal) {
+    poModal.addEventListener("click", (event) => {
+      if (event.target === poModal) closeFormModal();
+    });
+  }
   numberInput.addEventListener("input", onAnyChange);
   if (orderDateDisplay) orderDateDisplay.addEventListener("input", onAnyChange);
 
@@ -3112,6 +3373,7 @@ export function renderOrderModule(root, config) {
   if (cancelBtn) {
     cancelBtn.addEventListener("click", () => {
       loadForm(lastLoaded || editing);
+      if (poMode) closeFormModal();
     });
   }
   createBtn.addEventListener("click", () => loadForm(defaultRecord(config, getSettings())));
@@ -3126,7 +3388,7 @@ export function renderOrderModule(root, config) {
   };
   window.addEventListener("keydown", shortcutHandler);
 
-  renderList(listZone, state[config.entityKey], config, onEdit, onDelete);
+    renderListView(state[config.entityKey]);
   refreshQuickfillControls();
   loadForm(defaultRecord(config, getSettings()));
 
@@ -3136,7 +3398,7 @@ export function renderOrderModule(root, config) {
   const handleStateChanged = () => {
     const freshState = loadState();
     const settings = getSettings();
-    renderList(listZone, freshState[config.entityKey], config, onEdit, onDelete);
+    renderListView(freshState[config.entityKey]);
     if (preview) updatePreview(settings);
   };
   root._orderStateListener = handleStateChanged;
