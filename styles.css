@@ -170,7 +170,7 @@ td.num, th.num{text-align:right}
 .po-events-wrapper{display:flex; flex-direction:column; gap:6px; padding:10px 4px 0;}
 .po-events-wrapper .muted{font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:var(--muted);}
 .po-event-table{display:flex; flex-direction:column; gap:4px; border-radius:10px;}
-.po-event-head,.po-event-row{display:grid; grid-template-columns:minmax(180px,1fr) 120px 120px 120px; gap:10px; align-items:center; font-size:13px;}
+.po-event-head,.po-event-row{display:grid; grid-template-columns:minmax(180px,1fr) 120px 120px 120px 120px; gap:10px; align-items:center; font-size:13px;}
 .po-event-head{font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.4px;}
 .po-event-col.amount{text-align:right; font-variant-numeric:tabular-nums;}
 .po-event-col.status{text-align:center;}
@@ -180,6 +180,10 @@ td.num, th.num{text-align:right}
 .po-auto-indicator{font-size:12px; color:var(--muted);}
 .po-event-row{padding:6px 0; border-bottom:1px solid rgba(15,27,45,.08);}
 .po-event-row:last-of-type{border-bottom:none;}
+.po-status-pill{display:inline-flex; align-items:center; justify-content:center; padding:2px 10px; border-radius:999px; font-size:11px; font-weight:600; background:rgba(15,27,45,0.08); color:var(--ink);}
+.po-status-pill.is-paid{background:rgba(59,194,167,0.18); color:#0f766e;}
+.po-status-pill.is-open{background:rgba(248,113,113,0.16); color:#b91c1c;}
+.po-transaction-pill{display:inline-flex; align-items:center; justify-content:center; padding:2px 8px; border-radius:999px; font-size:11px; background:rgba(59,130,246,0.15); color:#1d4ed8; font-weight:600;}
 .po-event-preview{margin-top:14px; padding:14px; border:1px solid rgba(15,27,45,.08); border-radius:var(--radius-md); background:rgba(232,247,242,0.6); display:flex; flex-direction:column; gap:8px;}
 .po-event-preview h4{margin:0; font-size:12px; letter-spacing:.4px; text-transform:uppercase; color:var(--muted);}
 .po-goods-summary{margin-top:8px; font-size:13px; font-weight:600; color:var(--ink,#1b2a32);}
@@ -285,8 +289,16 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-invoice-link input{width:100%; padding:8px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; background:#fff;}
 .po-invoice-actions{display:flex; gap:8px; flex-wrap:wrap;}
 .po-invoice-warning{padding:10px 12px; border-radius:10px; background:rgba(251,146,60,0.12); color:#9a3412; font-size:12px;}
+.po-invoice-links{display:flex; flex-direction:column; gap:10px;}
 .po-payment-form{display:grid; gap:8px;}
 .po-payment-form input,.po-payment-form select,.po-payment-form textarea{padding:8px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px;}
+.po-payment-event-list{display:flex; flex-direction:column; gap:8px; border:1px solid rgba(15,27,45,0.12); border-radius:12px; padding:10px; background:#fff;}
+.po-payment-event-row{display:grid; grid-template-columns:24px minmax(200px,1fr) auto auto; gap:10px; align-items:center; font-size:13px; border-bottom:1px dashed rgba(15,27,45,0.08); padding:6px 0;}
+.po-payment-event-row:last-child{border-bottom:none;}
+.po-payment-event-row.is-disabled{opacity:.6;}
+.po-payment-event-main{display:flex; flex-direction:column; gap:2px;}
+.po-payment-event-title{font-weight:600;}
+.po-payment-summary{font-size:12px;}
 .po-filename-block{display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:12px; border:1px dashed rgba(15,27,45,0.2); background:#f8fafc;}
 .po-filename-text{font-weight:700;}
 .payments-export-filters{display:flex; gap:12px; flex-wrap:wrap; margin:12px 0;}

@@ -23,7 +23,8 @@ function fmtDate(value) {
 }
 
 function fmtEurPlain(value) {
-  const num = Number(value || 0);
+  if (value == null || value === "") return "—";
+  const num = Number(value);
   return Number.isFinite(num)
     ? `${num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR`
     : "—";
@@ -44,6 +45,8 @@ function buildPaymentExportRows(records, settings) {
   const config = { slug: "po", entityLabel: "PO", numberField: "poNo" };
   return records.flatMap(record => {
     const snapshot = JSON.parse(JSON.stringify(record));
+    const transactions = Array.isArray(record.paymentTransactions) ? record.paymentTransactions : [];
+    const txMap = new Map(transactions.map(tx => [tx.id, tx]));
     const payments = buildPaymentRows(snapshot, config, settings);
     return payments.map(payment => ({
       poNumber: record.poNo || record.id || "—",
@@ -55,8 +58,11 @@ function buildPaymentExportRows(records, settings) {
       paidDate: payment.paidDate || "",
       actualEur: payment.paidEurActual != null ? payment.paidEurActual : "",
       method: payment.method || "",
-      invoiceDriveLink: record.invoiceDriveLink || "",
-      note: payment.note || "",
+      paidBy: (payment.transactionId && txMap.get(payment.transactionId)?.paidBy) || "",
+      transactionId: payment.transactionId || "",
+      transactionTotal: (payment.transactionId && txMap.get(payment.transactionId)?.actualEurTotal) || "",
+      invoiceDriveLink: (payment.transactionId && txMap.get(payment.transactionId)?.driveInvoiceLink) || "",
+      note: (payment.transactionId && txMap.get(payment.transactionId)?.note) || payment.note || "",
     }));
   });
 }
@@ -99,6 +105,9 @@ export function render(root) {
       el("th", {}, ["Paid date"]),
       el("th", {}, ["Actual EUR"]),
       el("th", {}, ["Method"]),
+      el("th", {}, ["Paid by"]),
+      el("th", {}, ["Transaction ID"]),
+      el("th", {}, ["Transaction total"]),
       el("th", {}, ["Invoice Drive Link"]),
       el("th", {}, ["Note"]),
     ]),
@@ -116,6 +125,9 @@ export function render(root) {
     { key: "paidDate", label: "Paid date" },
     { key: "actualEur", label: "Actual EUR" },
     { key: "method", label: "Method" },
+    { key: "paidBy", label: "Paid by" },
+    { key: "transactionId", label: "Transaction ID" },
+    { key: "transactionTotal", label: "Transaction total" },
     { key: "invoiceDriveLink", label: "Invoice Drive Link" },
     { key: "note", label: "Note" },
   ];
@@ -134,7 +146,7 @@ export function render(root) {
 
     if (!filtered.length) {
       tbody.append(el("tr", {}, [
-        el("td", { colspan: "11", class: "muted" }, ["Keine Zahlungen gefunden."]),
+        el("td", { colspan: "14", class: "muted" }, ["Keine Zahlungen gefunden."]),
       ]));
       return;
     }
@@ -150,6 +162,9 @@ export function render(root) {
         el("td", {}, [fmtDate(row.paidDate)]),
         el("td", {}, [fmtEurPlain(row.actualEur)]),
         el("td", {}, [row.method || "—"]),
+        el("td", {}, [row.paidBy || "—"]),
+        el("td", {}, [row.transactionId || "—"]),
+        el("td", {}, [fmtEurPlain(row.transactionTotal)]),
         el("td", {}, [row.invoiceDriveLink || "—"]),
         el("td", {}, [row.note || "—"]),
       ]));

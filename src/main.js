@@ -144,7 +144,12 @@ window.addEventListener('hashchange', renderRoute);
 window.addEventListener('storage', (e) => {
   if (!e || e.key === STATE_KEY) renderRoute();
 });
-window.addEventListener('state:changed', renderRoute);
+window.addEventListener('state:changed', (event) => {
+  const source = event?.detail?.source;
+  const hash = normalizeHash(location.hash);
+  if (source === 'payment-update' && (hash === '#po' || hash === '#fo')) return;
+  renderRoute();
+});
 
 initSidebarToggle();
 renderRoute();
