@@ -17,6 +17,7 @@ const routes = {
   '#produkte': () => import('./ui/products.js'),
   '#suppliers': () => import('./ui/suppliers.js'),
   '#settings': () => import('./ui/settings.js'),
+  '#payments-export': () => import('./ui/paymentsExport.js'),
   '#export': () => import('./ui/export.js'),
   '#plan': () =>
     import('./ui/plan.js').catch(() => ({

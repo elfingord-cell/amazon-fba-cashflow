@@ -75,6 +75,13 @@ function fmtEUR(value) {
   return Number(value || 0).toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 }
 
+function fmtEURPlain(value) {
+  const num = Number(value || 0);
+  return Number.isFinite(num)
+    ? num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : "0,00";
+}
+
 function fmtCurrencyInput(value) {
   const raw = value == null ? "" : String(value);
   const parsed = parseDE(raw);
@@ -586,6 +593,63 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
   return record.autoEvents;
 }
 
+function ensurePaymentLog(record) {
+  if (!record) return {};
+  if (!record.paymentLog || typeof record.paymentLog !== "object") record.paymentLog = {};
+  if (typeof record.invoiceDriveLink !== "string") record.invoiceDriveLink = record.invoiceDriveLink || "";
+  return record.paymentLog;
+}
+
+function safeSupplierShortName(value) {
+  const base = String(value || "").trim().replace(/[\\/]/g, "");
+  if (!base) return "Supplier";
+  return base.replace(/\s+/g, "-");
+}
+
+function suggestedInvoiceFilename(record, paidDate) {
+  const month = paidDate ? paidDate.slice(0, 7) : new Date().toISOString().slice(0, 7);
+  const number = record?.poNo || record?.id || "PO";
+  const supplier = safeSupplierShortName(record?.supplier || record?.supplierName || record?.supplierId);
+  return `${month}_PO-${number}_${supplier}_Invoice.pdf`;
+}
+
+function mapPaymentType(evt, milestone) {
+  if (evt.type === "freight") return "Shipping";
+  if (evt.type === "eust") return "EUSt";
+  if (evt.type === "duty") return "Other";
+  if (evt.type === "fx_fee") return "Other";
+  const label = String(milestone?.label || evt.label || "").toLowerCase();
+  if (label.includes("deposit") || label.includes("anzahlung")) return "Deposit";
+  if (label.includes("balance") || label.includes("rest")) return "Balance";
+  if (label.includes("shipping") || label.includes("fracht")) return "Shipping";
+  return "Other";
+}
+
+function buildPaymentRows(record, config, settings) {
+  ensurePaymentLog(record);
+  const milestones = Array.isArray(record.milestones) ? record.milestones : [];
+  const msMap = new Map(milestones.map(item => [item.id, item]));
+  const events = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
+  return events
+    .filter(evt => evt && Number(evt.amount || 0) < 0)
+    .map(evt => {
+      const log = record.paymentLog?.[evt.id] || {};
+      const planned = Math.abs(Number(evt.amount || 0));
+      return {
+        id: evt.id,
+        typeLabel: mapPaymentType(evt, msMap.get(evt.id)),
+        label: evt.label,
+        dueDate: evt.date || null,
+        plannedEur: planned,
+        status: log.status === "paid" ? "paid" : "open",
+        paidDate: log.paidDate || null,
+        paidEurActual: Number.isFinite(Number(log.paidEurActual)) ? Number(log.paidEurActual) : null,
+        method: log.method || null,
+        note: log.note || "",
+      };
+    });
+}
+
 function highestNumberInfo(records, field) {
   let best = null;
   const regex = /(\d+)(?!.*\d)/;
@@ -666,6 +730,8 @@ function defaultRecord(config, settings = getSettings()) {
       { id: Math.random().toString(36).slice(2, 9), label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
       { id: Math.random().toString(36).slice(2, 9), label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
     ],
+    invoiceDriveLink: "",
+    paymentLog: {},
   };
   ensureAutoEvents(record, settings, record.milestones);
   normaliseGoodsFields(record, settings);
@@ -880,6 +946,8 @@ function orderEvents(record, config, settings) {
     .filter(evt => evt && Number.isFinite(evt.amount))
     .sort((a, b) => (a.date === b.date ? (a.label || "").localeCompare(b.label || "") : a.date.localeCompare(b.date)));
 }
+
+export { buildPaymentRows, getSettings };
 
 function buildEventList(events, onStatusChange) {
   const wrapper = el("div", { class: "po-event-table" });
@@ -1414,6 +1482,181 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     style: `margin-top:8px;font-weight:600;${warn ? "color:#c23636" : "color:#0f9960"}`,
   }, [warn ? `Summe: ${sum}% — Bitte auf 100% anpassen.` : "Summe: 100% ✓"]);
   container.append(note);
+
+  const payments = buildPaymentRows(record, config, settings);
+  ensurePaymentLog(record);
+
+  const paymentSection = el("div", { class: "po-payments-section" }, [
+    el("h4", {}, ["Zahlungen"]),
+    el("p", { class: "muted" }, ["Markiere Zahlungen als bezahlt und ergänze Ist-Daten für die Buchhaltung."]),
+  ]);
+
+  if (record.invoiceDriveLink) {
+    const linkInput = el("input", { type: "text", value: record.invoiceDriveLink, readonly: "readonly" });
+    const openBtn = el("button", { class: "btn secondary", type: "button" }, ["Öffnen"]);
+    openBtn.addEventListener("click", () => {
+      window.open(record.invoiceDriveLink, "_blank", "noopener");
+    });
+    const copyBtn = el("button", { class: "btn tertiary", type: "button" }, ["Link kopieren"]);
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard?.writeText(record.invoiceDriveLink);
+    });
+    paymentSection.append(
+      el("div", { class: "po-invoice-link" }, [
+        el("label", {}, ["Invoice Drive Link"]),
+        linkInput,
+        el("div", { class: "po-invoice-actions" }, [openBtn, copyBtn]),
+      ]),
+    );
+  } else {
+    paymentSection.append(
+      el("div", { class: "po-invoice-warning" }, [
+        "Hinweis: Bitte hinterlege den Invoice Drive Link, sobald die erste Zahlung als bezahlt markiert wird.",
+      ]),
+    );
+  }
+
+  const paymentTable = el("table", { class: "po-payments-table" }, [
+    el("thead", {}, [
+      el("tr", {}, [
+        el("th", {}, ["Typ"]),
+        el("th", {}, ["Fällig am"]),
+        el("th", {}, ["Geplant (EUR)"]),
+        el("th", {}, ["Status"]),
+        el("th", {}, ["Bezahlt am"]),
+        el("th", {}, ["Ist (EUR)"]),
+        el("th", {}, ["Methode"]),
+        el("th", {}, ["Aktion"]),
+      ]),
+    ]),
+  ]);
+  const paymentBody = el("tbody");
+  paymentTable.append(paymentBody);
+
+  function openPaymentModal(payment) {
+    const log = record.paymentLog?.[payment.id] || {};
+    const paidDate = log.paidDate || new Date().toISOString().slice(0, 10);
+    const actualValue = Number.isFinite(Number(log.paidEurActual))
+      ? fmtCurrencyInput(log.paidEurActual)
+      : fmtCurrencyInput(payment.plannedEur);
+    const methodValue = log.method || "";
+    const noteValue = log.note || "";
+
+    const paidDateInput = el("input", { type: "date", value: paidDate });
+    const methodSelect = el("select", {}, [
+      el("option", { value: "" }, ["—"]),
+      el("option", { value: "Alibaba Trade Assurance" }, ["Alibaba Trade Assurance"]),
+      el("option", { value: "Wise/Transferwise" }, ["Wise/Transferwise"]),
+      el("option", { value: "PayPal" }, ["PayPal"]),
+      el("option", { value: "Bank Transfer" }, ["Bank Transfer"]),
+      el("option", { value: "Credit Card" }, ["Credit Card"]),
+      el("option", { value: "Other" }, ["Other"]),
+    ]);
+    methodSelect.value = methodValue;
+    const actualInput = el("input", { type: "text", inputmode: "decimal", value: actualValue, placeholder: "0,00" });
+    const noteInput = el("textarea", { rows: "2", placeholder: "Notiz (optional)" }, [noteValue]);
+
+    const fileNameText = el("span", { class: "po-filename-text" }, [suggestedInvoiceFilename(record, paidDateInput.value)]);
+    const copyFilenameBtn = el("button", { class: "btn tertiary", type: "button" }, ["Copy filename"]);
+    copyFilenameBtn.addEventListener("click", () => {
+      const text = fileNameText.textContent || "";
+      navigator.clipboard?.writeText(text);
+    });
+    paidDateInput.addEventListener("input", () => {
+      fileNameText.textContent = suggestedInvoiceFilename(record, paidDateInput.value);
+    });
+
+    let invoiceInput = null;
+    let invoiceWarning = null;
+    if (!record.invoiceDriveLink) {
+      invoiceWarning = el("div", { class: "po-invoice-warning" }, [
+        "Bitte füge den Invoice Drive Link hinzu. (Optional, aber empfohlen)",
+      ]);
+      invoiceInput = el("input", { type: "url", placeholder: "https://drive.google.com/…" });
+    }
+
+    const form = el("div", { class: "po-payment-form" }, [
+      el("label", {}, ["Bezahlt am"]),
+      paidDateInput,
+      el("label", {}, ["Methode"]),
+      methodSelect,
+      el("label", {}, ["Ist bezahlt (EUR)"]),
+      actualInput,
+      el("label", {}, ["Notiz"]),
+      noteInput,
+      invoiceWarning,
+      invoiceInput,
+      el("div", { class: "po-filename-block" }, [
+        el("div", { class: "muted" }, ["Suggested invoice filename"]),
+        fileNameText,
+        copyFilenameBtn,
+      ]),
+    ]);
+
+    const modal = buildModal({
+      title: payment.status === "paid" ? "Zahlung bearbeiten" : "Zahlung als bezahlt markieren",
+      content: form,
+      actions: [
+        el("button", { class: "btn secondary", type: "button", onclick: () => closeModal(modal) }, ["Abbrechen"]),
+        el("button", {
+          class: "btn",
+          type: "button",
+          onclick: () => {
+            const parsed = parseDE(actualInput.value);
+            const actual = Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null;
+            const updated = {
+              status: "paid",
+              paidDate: paidDateInput.value || null,
+              paidEurActual: actual,
+              method: methodSelect.value || null,
+              note: noteInput.value.trim(),
+            };
+            record.paymentLog[payment.id] = updated;
+            if (!record.invoiceDriveLink && invoiceInput && invoiceInput.value.trim()) {
+              record.invoiceDriveLink = invoiceInput.value.trim();
+            }
+            onChange();
+            closeModal(modal);
+          },
+        }, ["Speichern"]),
+      ],
+    });
+  }
+
+  payments.forEach(payment => {
+    const planned = `${fmtEURPlain(payment.plannedEur)} EUR`;
+    const statusLabel = payment.status === "paid" ? "Bezahlt" : "Offen";
+    const paidActual = payment.paidEurActual != null ? `${fmtEURPlain(payment.paidEurActual)} EUR` : "—";
+    const delta = payment.paidEurActual != null
+      ? `Δ ${fmtEURPlain(payment.paidEurActual - payment.plannedEur)} EUR`
+      : null;
+    const row = el("tr", {}, [
+      el("td", {}, [payment.typeLabel]),
+      el("td", {}, [fmtDateDE(payment.dueDate)]),
+      el("td", {}, [planned]),
+      el("td", {}, [statusLabel]),
+      el("td", {}, [payment.paidDate ? fmtDateDE(payment.paidDate) : "—"]),
+      el("td", {}, [paidActual, delta ? el("div", { class: "muted" }, [delta]) : null]),
+      el("td", {}, [payment.method || "—"]),
+      el("td", {}, [
+        el("button", {
+          class: "btn secondary",
+          type: "button",
+          onclick: () => openPaymentModal(payment),
+        }, [payment.status === "paid" ? "Edit payment" : "Mark as paid"]),
+      ]),
+    ]);
+    paymentBody.append(row);
+  });
+
+  if (!payments.length) {
+    paymentBody.append(el("tr", {}, [
+      el("td", { colspan: "8", class: "muted" }, ["Keine Zahlungen verfügbar."]),
+    ]));
+  }
+
+  paymentSection.append(paymentTable);
+  container.append(paymentSection);
 
   if (focusInfo && focusInfo.id && focusInfo.field) {
     const target = container.querySelector(`[data-ms-id="${focusInfo.id}"] [data-field="${focusInfo.field}"]`);
@@ -2360,6 +2603,7 @@ export function renderOrderModule(root, config) {
     }
     syncEditingFromForm(settings);
     ensureAutoEvents(editing, settings, editing.milestones);
+    ensurePaymentLog(editing);
     renderTimeline(timelineZone, timelineSummary, editing);
     renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
     updatePreview(settings);
@@ -2394,6 +2638,7 @@ export function renderOrderModule(root, config) {
     editing = JSON.parse(JSON.stringify(record));
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
+    ensurePaymentLog(editing);
     renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
     if (quickfillEnabled) {
       refreshProductCache();
