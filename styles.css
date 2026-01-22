@@ -332,12 +332,13 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-payment-form{display:grid; gap:8px;}
 .po-payment-form input,.po-payment-form select,.po-payment-form textarea{padding:8px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px;}
 .po-payment-event-list{display:flex; flex-direction:column; gap:8px; border:1px solid rgba(15,27,45,0.12); border-radius:12px; padding:10px; background:#fff;}
-.po-payment-event-row{display:grid; grid-template-columns:24px minmax(200px,1fr) auto auto; gap:10px; align-items:center; font-size:13px; border-bottom:1px dashed rgba(15,27,45,0.08); padding:6px 0;}
+.po-payment-event-row{display:grid; grid-template-columns:24px minmax(200px,1fr) auto auto; gap:10px; align-items:center; font-size:13px; border-bottom:1px dashed rgba(15,27,45,0.08); padding:6px 0; cursor:pointer;}
 .po-payment-event-row:last-child{border-bottom:none;}
-.po-payment-event-row.is-disabled{opacity:.6;}
+.po-payment-event-row.is-disabled{opacity:.6; cursor:not-allowed;}
 .po-payment-event-main{display:flex; flex-direction:column; gap:2px;}
 .po-payment-event-title{font-weight:600;}
 .po-payment-summary{font-size:12px;}
+.po-payment-debug{font-size:12px;}
 .po-filename-block{display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:12px; border:1px dashed rgba(15,27,45,0.2); background:#f8fafc;}
 .po-filename-copy{justify-content:flex-start; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;}
 .payments-export-filters{display:flex; gap:12px; flex-wrap:wrap; margin:12px 0;}

@@ -1906,35 +1906,59 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
     const eventList = el("div", { class: "po-payment-event-list" });
     const selectableEvents = allPayments.filter(evt => evt.status === "open" || (editingTransaction && evt.transactionId === editingTransaction.id));
+    const toggleSelection = (evtId, force) => {
+      if (force === true) selectedIds.add(evtId);
+      else if (force === false) selectedIds.delete(evtId);
+      else if (selectedIds.has(evtId)) selectedIds.delete(evtId);
+      else selectedIds.add(evtId);
+      updateSummary();
+    };
     selectableEvents.forEach(evt => {
       const isPaid = evt.status === "paid";
       const sameTransaction = editingTransaction && evt.transactionId === editingTransaction.id;
       const disabled = isPaid && !sameTransaction;
       const checkbox = el("input", { type: "checkbox", checked: selectedIds.has(evt.id), disabled });
       checkbox.addEventListener("change", () => {
-        if (checkbox.checked) selectedIds.add(evt.id);
-        else selectedIds.delete(evt.id);
-        updateSummary();
+        if (disabled) return;
+        toggleSelection(evt.id, checkbox.checked);
       });
       const statusLabel = evt.status === "paid" ? "Bezahlt" : "Offen";
       const txLabel = evt.transactionId ? formatTransactionLabel(evt.transactionId) : "—";
-      eventList.append(
-        el("label", { class: `po-payment-event-row ${disabled ? "is-disabled" : ""}` }, [
-          checkbox,
-          el("span", { class: "po-payment-event-main" }, [
-            el("span", { class: "po-payment-event-title" }, [evt.label]),
-            el("span", { class: "muted" }, [`${fmtDateDE(evt.dueDate)} · ${fmtEURPlain(evt.plannedEur)} EUR`]),
-          ]),
-          el("span", { class: `po-status-pill ${evt.status === "paid" ? "is-paid" : "is-open"}` }, [statusLabel]),
-          el("span", { class: "po-transaction-pill" }, [txLabel]),
+      const row = el("div", {
+        class: `po-payment-event-row ${disabled ? "is-disabled" : ""}`,
+        role: "button",
+        tabindex: disabled ? "-1" : "0",
+      }, [
+        checkbox,
+        el("span", { class: "po-payment-event-main" }, [
+          el("span", { class: "po-payment-event-title" }, [evt.label]),
+          el("span", { class: "muted" }, [`${fmtDateDE(evt.dueDate)} · ${fmtEURPlain(evt.plannedEur)} EUR`]),
         ]),
-      );
+        el("span", { class: `po-status-pill ${evt.status === "paid" ? "is-paid" : "is-open"}` }, [statusLabel]),
+        el("span", { class: "po-transaction-pill" }, [txLabel]),
+      ]);
+      row.addEventListener("click", (event) => {
+        if (disabled) return;
+        if (event.target instanceof HTMLInputElement) return;
+        toggleSelection(evt.id);
+        checkbox.checked = selectedIds.has(evt.id);
+      });
+      row.addEventListener("keydown", (event) => {
+        if (disabled) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggleSelection(evt.id);
+          checkbox.checked = selectedIds.has(evt.id);
+        }
+      });
+      eventList.append(row);
     });
 
     paidDateInput.addEventListener("input", updateFileName);
     updateSummary();
 
     const form = el("div", { class: "po-payment-form" }, [
+      el("div", { class: "po-payment-debug muted" }, ["Status: bereit"]),
       el("label", {}, ["Events (mehrere möglich)"]),
       eventList,
       selectedSummary,
