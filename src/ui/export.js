@@ -112,7 +112,7 @@ export async function render(root){
       <h2>Export / Import</h2>
 
       <div class="row" style="gap:8px; flex-wrap:wrap">
-        <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}">
+        <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}" ${canDownload ? '' : 'disabled aria-disabled="true"'}>
           JSON herunterladen
         </button>
         <label class="btn" for="file-imp" style="cursor:pointer">JSON importieren</label>
