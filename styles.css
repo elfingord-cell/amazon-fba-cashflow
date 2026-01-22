@@ -124,9 +124,20 @@ td.num, th.num{text-align:right}
 .po-payment-badge.is-open{background:rgba(248,113,113,0.16); color:#b91c1c;}
 .po-form-modal{position:fixed; inset:0; display:none; align-items:flex-start; justify-content:center; padding:24px; background:rgba(15,27,45,0.45); z-index:80; overflow:auto;}
 .po-form-modal.is-open{display:flex;}
-.po-form-modal-panel{width:min(1200px, 96vw);}
+.po-form-modal-panel{width:min(1400px, 90vw);}
 .po-form-modal-panel .card{margin-bottom:0;}
 .po-form-modal-header{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+.po-form-modal-meta{font-size:12px; color:var(--muted);}
+.po-form-modal .card input,
+.po-form-modal .card select,
+.po-form-modal .card textarea{height:34px; font-size:13px;}
+.po-form-modal .card h3{font-size:16px; margin-bottom:6px;}
+.po-form-modal .card h4{font-size:13px; letter-spacing:.2px;}
+.po-form-section{border:1px solid rgba(15,27,45,0.08); border-radius:12px; padding:12px; margin-bottom:12px; background:#f8fafc;}
+.po-form-section-header{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px;}
+.po-form-section-meta{font-size:12px; color:var(--muted);}
+.po-sort-btn{background:none; border:none; padding:0; font:inherit; color:inherit; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+.po-sort-btn:focus{outline:none; box-shadow:0 0 0 3px var(--ring); border-radius:6px;}
 .table-wrap{overflow-x:scroll; scrollbar-gutter:stable both-edges}
 .table-wrap::-webkit-scrollbar{height:10px}
 .table-wrap::-webkit-scrollbar-track{background:rgba(15,27,45,0.06); border-radius:999px}
@@ -328,7 +339,7 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-payment-event-title{font-weight:600;}
 .po-payment-summary{font-size:12px;}
 .po-filename-block{display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:12px; border:1px dashed rgba(15,27,45,0.2); background:#f8fafc;}
-.po-filename-text{font-weight:700;}
+.po-filename-copy{justify-content:flex-start; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;}
 .payments-export-filters{display:flex; gap:12px; flex-wrap:wrap; margin:12px 0;}
 .payments-export-filters label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);}
 .payments-export-filters select{min-width:160px; padding:6px 8px; border-radius:8px; border:1px solid rgba(15,27,45,0.2);}

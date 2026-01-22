@@ -610,15 +610,35 @@ function safeFilenameChunk(value) {
   return base.replace(/\s+/g, "-");
 }
 
+function normalizeTransactionId(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/^(tx-?)+/i, "");
+  return `tx-${normalized}`;
+}
+
+function formatTransactionLabel(value) {
+  const normalized = normalizeTransactionId(value);
+  return normalized ? `TX-${normalized.slice(3)}` : "—";
+}
+
+function resolvePrimaryAlias(record) {
+  const items = Array.isArray(record?.items) ? record.items.filter(Boolean) : [];
+  if (items.length > 1) return "Multi";
+  const sku = items.length ? items[0]?.sku : record?.sku;
+  if (!sku) return "Multi";
+  const match = productCache.find(prod => prod?.sku?.trim().toLowerCase() === String(sku).trim().toLowerCase());
+  return match?.alias || sku;
+}
+
 function suggestedInvoiceFilename(record, paidDate) {
   const date = paidDate || new Date().toISOString().slice(0, 10);
   const number = record?.poNo || record?.id || "PO";
   const supplier = safeSupplierShortName(record?.supplier || record?.supplierName || record?.supplierId);
-  const sku = Array.isArray(record?.items) && record.items.length === 1
-    ? safeFilenameChunk(record.items[0]?.sku || "")
-    : safeFilenameChunk(record?.sku || "");
-  const skuChunk = sku ? `__${sku}` : "";
-  return `${date}__PO-${number}__${supplier}${skuChunk}__INV.pdf`;
+  const alias = safeFilenameChunk(resolvePrimaryAlias(record));
+  const aliasChunk = alias ? `_${alias}` : "";
+  return `${date}_PO-${number}_${supplier}${aliasChunk}`;
 }
 
 function mapPaymentType(evt, milestone) {
@@ -636,6 +656,13 @@ function mapPaymentType(evt, milestone) {
 function getPaymentTransactions(record) {
   if (!record) return [];
   if (!Array.isArray(record.paymentTransactions)) record.paymentTransactions = [];
+  record.paymentTransactions = record.paymentTransactions.map(tx => {
+    if (!tx) return tx;
+    return {
+      ...tx,
+      id: normalizeTransactionId(tx.id) || tx.id,
+    };
+  });
   return record.paymentTransactions;
 }
 
@@ -652,10 +679,14 @@ function buildInvoiceKeyEvents(selectedEvents) {
   const hasDeposit = lowered.some(label => label.includes("deposit"));
   const hasBalance = lowered.some(label => label.includes("balance"));
   const hasFx = lowered.some(label => label.includes("fx"));
+  const hasShipping = lowered.some(label => label.includes("shipping") || label.includes("fracht"));
+  const hasEust = lowered.some(label => label.includes("eust"));
   if (hasDeposit && hasBalance) return `Deposit+Balance${hasFx ? "+FX" : ""}`;
   if (hasDeposit && hasFx) return "Deposit+FX";
   if (hasDeposit) return "Deposit";
   if (hasBalance) return hasFx ? "Balance+FX" : "Balance";
+  if (hasShipping) return "Shipping";
+  if (hasEust) return "EUSt";
   if (hasFx && lowered.length === 1) return "FX";
   if (labels.length <= 1) return labels[0] || "Payment";
   const unique = Array.from(new Set(labels));
@@ -675,7 +706,8 @@ function buildPaymentRows(record, config, settings) {
     .map(evt => {
       const log = record.paymentLog?.[evt.id] || {};
       const planned = Math.abs(Number(evt.amount || 0));
-      const transaction = log.transactionId ? txMap.get(log.transactionId) : null;
+      const normalizedTxId = normalizeTransactionId(log.transactionId);
+      const transaction = normalizedTxId ? txMap.get(normalizedTxId) : null;
       const status = log.status === "paid" || transaction ? "paid" : "open";
       const paidDate = log.paidDate || transaction?.datePaid || null;
       return {
@@ -689,7 +721,7 @@ function buildPaymentRows(record, config, settings) {
         paidEurActual: Number.isFinite(Number(log.paidEurActual)) ? Number(log.paidEurActual) : null,
         method: transaction?.method || log.method || null,
         paidBy: transaction?.paidBy || log.paidBy || null,
-        transactionId: transaction?.id || log.transactionId || null,
+        transactionId: transaction?.id || normalizedTxId || null,
         transactionTotal: transaction?.actualEurTotal ?? null,
         note: log.note || "",
         eventType: evt.type || null,
@@ -1018,7 +1050,7 @@ function buildEventList(events, paymentLog = {}, transactions = []) {
     const tx = log.transactionId ? txMap.get(log.transactionId) : null;
     const status = log.status === "paid" || tx ? "paid" : "open";
     const statusLabel = status === "paid" ? "Bezahlt" : "Offen";
-    const txLabel = tx ? `TX-${tx.id.slice(0, 6)}` : "—";
+    const txLabel = tx ? formatTransactionLabel(tx.id) : "—";
     wrapper.append(
       el("div", { class: "po-event-row" }, [
         el("span", { class: "po-event-col" }, [evt.label]),
@@ -1129,19 +1161,98 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
     return haystack.includes(searchTerm);
   });
   const listRows = filtered.map(rec => ({ rec, totals: computeGoodsTotals(rec, settings) }));
+  const sortKey = options.sortKey;
+  const sortDir = options.sortDir;
+  if (sortKey && sortDir) {
+    const dir = sortDir === "desc" ? -1 : 1;
+    listRows.sort((a, b) => {
+      const recA = a.rec;
+      const recB = b.rec;
+      const val = (key) => {
+        switch (key) {
+          case "number":
+            return String(recA[config.numberField] || "");
+          case "order":
+            return recA.orderDate || "";
+          case "supplier":
+            return String(recA.supplier || "");
+          case "usd":
+            return Number(a.totals.usd || 0);
+          case "freight":
+            return Number(resolveFreightTotal(recA, a.totals) || 0);
+          case "payments":
+            return (recA.milestones || []).length;
+          case "transport":
+            return String(recA.transport || "");
+          default:
+            return "";
+        }
+      };
+      const valB = (key) => {
+        switch (key) {
+          case "number":
+            return String(recB[config.numberField] || "");
+          case "order":
+            return recB.orderDate || "";
+          case "supplier":
+            return String(recB.supplier || "");
+          case "usd":
+            return Number(b.totals.usd || 0);
+          case "freight":
+            return Number(resolveFreightTotal(recB, b.totals) || 0);
+          case "payments":
+            return (recB.milestones || []).length;
+          case "transport":
+            return String(recB.transport || "");
+          default:
+            return "";
+        }
+      };
+      const aVal = val(sortKey);
+      const bVal = valB(sortKey);
+      if (typeof aVal === "number" && typeof bVal === "number") {
+        return (aVal - bVal) * dir;
+      }
+      return String(aVal).localeCompare(String(bVal)) * dir;
+    });
+  }
 
   const table = el("table", { class: "table-compact" });
+  const sortToggle = (key) => {
+    if (!options.onUpdate) return;
+    const nextDir = sortKey !== key ? "asc" : (sortDir === "asc" ? "desc" : (sortDir === "desc" ? null : "asc"));
+    options.onUpdate({ sortKey: nextDir ? key : null, sortDir: nextDir });
+  };
+  const sortIcon = (key) => {
+    if (sortKey !== key) return "↕";
+    return sortDir === "asc" ? "↑" : "↓";
+  };
   const thead = el("thead", {}, [
     el("tr", {}, [
-      el("th", { style: "width:90px" }, ["PO-Nr."]),
+      el("th", { style: "width:90px" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("number") }, ["PO-Nr. ", sortIcon("number")]),
+      ]),
+      el("th", { style: "width:160px" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("supplier") }, ["Lieferant ", sortIcon("supplier")]),
+      ]),
       el("th", { style: "width:200px" }, ["Produkt/Items"]),
-      el("th", { style: "width:110px" }, ["Order Date"]),
+      el("th", { style: "width:110px" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("order") }, ["Bestelldatum ", sortIcon("order")]),
+      ]),
       el("th", { style: "width:180px" }, ["Timeline"]),
       el("th", { style: "width:80px", class: "num" }, ["Stück"]),
-      el("th", { style: "width:110px", class: "num" }, ["Summe USD"]),
-      el("th", { style: "width:110px", class: "num" }, ["Fracht (€)"]),
-      el("th", { style: "width:120px" }, ["Zahlungen"]),
-      el("th", { style: "width:120px" }, ["Transport"]),
+      el("th", { style: "width:110px", class: "num" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("usd") }, ["Summe USD ", sortIcon("usd")]),
+      ]),
+      el("th", { style: "width:110px", class: "num" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("freight") }, ["Fracht (€) ", sortIcon("freight")]),
+      ]),
+      el("th", { style: "width:120px" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("payments") }, ["Zahlungen ", sortIcon("payments")]),
+      ]),
+      el("th", { style: "width:120px" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("transport") }, ["Transport ", sortIcon("transport")]),
+      ]),
       el("th", { style: "width:120px" }, ["Aktionen"]),
     ]),
   ]);
@@ -1180,7 +1291,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
 
   if (!listRows.length) {
     tbody.append(el("tr", {}, [
-      el("td", { colspan: "10", class: "muted" }, ["Keine Bestellungen gefunden."]),
+      el("td", { colspan: "11", class: "muted" }, ["Keine Bestellungen gefunden."]),
     ]));
     container.append(table);
     return;
@@ -1193,6 +1304,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
     const transport = `${rec.transport || "sea"} · ${rec.transitDays || 0}d`;
     const row = el("tr", {}, [
       el("td", { class: "cell-ellipsis", title: rec[config.numberField] || "—" }, [rec[config.numberField] || "—"]),
+      el("td", { class: "cell-ellipsis", title: rec.supplier || "—" }, [rec.supplier || "—"]),
       el("td", { class: "cell-ellipsis", title: productTooltip }, [productSummary || "—"]),
       el("td", { class: "cell-ellipsis", title: fmtDateDE(rec.orderDate) }, [fmtDateDE(rec.orderDate)]),
       el("td", { class: "cell-ellipsis", title: timeline }, [timeline]),
@@ -1243,7 +1355,10 @@ function renderItemsTable(container, record, onChange, dataListId) {
 
   record.items.forEach(item => {
     const row = el("tr", { dataset: { itemId: item.id } });
-    const skuInput = el("input", { list: dataListId, value: item.sku || "", placeholder: "SKU" });
+    const skuAttrs = item.type === "misc"
+      ? { value: item.sku || "", placeholder: "Freie Position" }
+      : { list: dataListId, value: item.sku || "", placeholder: "SKU" };
+    const skuInput = el("input", skuAttrs);
     skuInput.addEventListener("input", () => { item.sku = skuInput.value.trim(); onChange(); });
 
     const unitsInput = el("input", { type: "number", min: "0", step: "1", value: item.units || "0" });
@@ -1652,24 +1767,32 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     el("p", { class: "muted" }, ["Markiere Zahlungen als bezahlt und ergänze Ist-Daten für die Buchhaltung."]),
   ]);
 
-  const invoiceLinks = transactions.filter(tx => tx?.driveInvoiceLink);
+  const invoiceLinks = transactions.filter(tx => tx?.driveInvoiceLink || tx?.driveInvoiceFolderLink);
   if (invoiceLinks.length) {
     const list = el("div", { class: "po-invoice-links" });
     invoiceLinks.forEach(tx => {
-      const linkInput = el("input", { type: "text", value: tx.driveInvoiceLink, readonly: "readonly" });
+      const linkInput = el("input", { type: "text", value: tx.driveInvoiceLink || "", readonly: "readonly" });
       const openBtn = el("button", { class: "btn secondary", type: "button" }, ["Öffnen"]);
       openBtn.addEventListener("click", () => {
-        window.open(tx.driveInvoiceLink, "_blank", "noopener");
+        if (tx.driveInvoiceLink) window.open(tx.driveInvoiceLink, "_blank", "noopener");
       });
+      openBtn.disabled = !tx.driveInvoiceLink;
+      openBtn.title = tx.driveInvoiceLink ? "" : "Invoice Link nicht hinterlegt";
+      const folderBtn = el("button", { class: "btn secondary", type: "button" }, ["Ordner öffnen"]);
+      folderBtn.addEventListener("click", () => {
+        if (tx.driveInvoiceFolderLink) window.open(tx.driveInvoiceFolderLink, "_blank", "noopener");
+      });
+      folderBtn.disabled = !tx.driveInvoiceFolderLink;
+      folderBtn.title = tx.driveInvoiceFolderLink ? "" : "Ordner-Link nicht hinterlegt";
       const copyBtn = el("button", { class: "btn tertiary", type: "button" }, ["Link kopieren"]);
       copyBtn.addEventListener("click", () => {
-        navigator.clipboard?.writeText(tx.driveInvoiceLink);
+        navigator.clipboard?.writeText(tx.driveInvoiceLink || "");
       });
       list.append(
         el("div", { class: "po-invoice-link" }, [
-          el("label", {}, [`Invoice Link · ${fmtDateDE(tx.datePaid || "")} · TX-${tx.id.slice(0, 6)}`]),
+          el("label", {}, [`Invoice Link · ${fmtDateDE(tx.datePaid || "")} · ${formatTransactionLabel(tx.id)}`]),
           linkInput,
-          el("div", { class: "po-invoice-actions" }, [openBtn, copyBtn]),
+          el("div", { class: "po-invoice-actions" }, [openBtn, folderBtn, copyBtn]),
         ]),
       );
     });
@@ -1713,6 +1836,10 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       const fxCandidate = allPayments.find(evt => evt.eventType === "fx_fee" && evt.dueDate === payment.dueDate && evt.status === "open");
       if (fxCandidate) selectedIds.add(fxCandidate.id);
     }
+    if (!editingTransaction) {
+      const deposit = allPayments.find(evt => evt.status === "open" && evt.typeLabel.toLowerCase().includes("deposit"));
+      if (deposit) selectedIds.add(deposit.id);
+    }
 
     const paidDate = editingTransaction?.datePaid || existingLog.paidDate || new Date().toISOString().slice(0, 10);
     const actualValue = Number.isFinite(Number(editingTransaction?.actualEurTotal))
@@ -1722,6 +1849,9 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     const paidByValue = editingTransaction?.paidBy || existingLog.paidBy || "";
     const noteValue = editingTransaction?.note || existingLog.note || "";
     const invoiceValue = editingTransaction?.driveInvoiceLink || "";
+    const folderValue = editingTransaction?.driveInvoiceFolderLink || "";
+    const transferValue = normalizeTransactionId(editingTransaction?.id)
+      || normalizeTransactionId(`tx-${Math.random().toString(36).slice(2, 7)}`);
 
     const paidDateInput = el("input", { type: "date", value: paidDate });
     const methodSelect = el("select", {}, [
@@ -1745,20 +1875,24 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     const actualInput = el("input", { type: "text", inputmode: "decimal", value: actualValue, placeholder: "0,00" });
     const noteInput = el("textarea", { rows: "2", placeholder: "Notiz (optional)" }, [noteValue]);
     const invoiceInput = el("input", { type: "url", placeholder: "https://drive.google.com/…", value: invoiceValue });
+    const folderInput = el("input", { type: "url", placeholder: "https://drive.google.com/…", value: folderValue });
+    const transferInput = el("input", { type: "text", value: transferValue || "" });
 
     const selectedSummary = el("div", { class: "po-payment-summary muted" });
-    const fileNameText = el("span", { class: "po-filename-text" }, [""]);
-    const copyFilenameBtn = el("button", { class: "btn tertiary", type: "button" }, ["Copy filename"]);
+    const copyFilenameBtn = el("button", { class: "btn tertiary po-filename-copy", type: "button" }, [""]);
     copyFilenameBtn.addEventListener("click", () => {
-      const text = fileNameText.textContent || "";
+      const text = copyFilenameBtn.dataset.filename || "";
       navigator.clipboard?.writeText(text);
     });
 
     function updateFileName() {
       const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
       const keyEvents = buildInvoiceKeyEvents(selectedEvents);
-      const base = suggestedInvoiceFilename(record, paidDateInput.value).replace(/__INV\.pdf$/, "");
-      fileNameText.textContent = `${base}__${keyEvents}__INV.pdf`;
+      const base = suggestedInvoiceFilename(record, paidDateInput.value);
+      const filename = `${base}_${keyEvents}.pdf`;
+      copyFilenameBtn.dataset.filename = filename;
+      copyFilenameBtn.textContent = filename;
+      copyFilenameBtn.title = "Suggested filename kopieren";
     }
 
     function updateSummary() {
@@ -1771,7 +1905,8 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     }
 
     const eventList = el("div", { class: "po-payment-event-list" });
-    allPayments.forEach(evt => {
+    const selectableEvents = allPayments.filter(evt => evt.status === "open" || (editingTransaction && evt.transactionId === editingTransaction.id));
+    selectableEvents.forEach(evt => {
       const isPaid = evt.status === "paid";
       const sameTransaction = editingTransaction && evt.transactionId === editingTransaction.id;
       const disabled = isPaid && !sameTransaction;
@@ -1782,7 +1917,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         updateSummary();
       });
       const statusLabel = evt.status === "paid" ? "Bezahlt" : "Offen";
-      const txLabel = evt.transactionId ? `TX-${evt.transactionId.slice(0, 6)}` : "—";
+      const txLabel = evt.transactionId ? formatTransactionLabel(evt.transactionId) : "—";
       eventList.append(
         el("label", { class: `po-payment-event-row ${disabled ? "is-disabled" : ""}` }, [
           checkbox,
@@ -1811,13 +1946,15 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       paidBySelect,
       el("label", {}, ["Ist bezahlt (EUR)"]),
       actualInput,
-      el("label", {}, ["Invoice Drive Link (optional)"]),
+      el("label", {}, ["Transfer-ID"]),
+      transferInput,
+      el("label", {}, ["Invoice Drive Link"]),
       invoiceInput,
+      el("label", {}, ["Invoice Ordner Link (optional)"]),
+      folderInput,
       el("label", {}, ["Notiz"]),
       noteInput,
       el("div", { class: "po-filename-block" }, [
-        el("div", { class: "muted" }, ["Suggested invoice filename"]),
-        fileNameText,
         copyFilenameBtn,
       ]),
     ]);
@@ -1870,8 +2007,18 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               alert("Bitte einen gültigen Ist-Betrag eingeben.");
               return;
             }
+            const transferId = normalizeTransactionId(transferInput.value);
+            if (!transferId) {
+              alert("Bitte eine gültige Transfer-ID eingeben.");
+              return;
+            }
+            const hasPaidEvents = Object.values(record.paymentLog || {}).some(log => log?.status === "paid");
+            if (!hasPaidEvents && !invoiceInput.value.trim()) {
+              alert("Bitte den Invoice Drive Link beim ersten bezahlten Event hinterlegen.");
+              return;
+            }
             const actual = Math.round(parsed * 100) / 100;
-            const transactionId = editingTransaction?.id || `tx-${Math.random().toString(36).slice(2, 9)}`;
+            const transactionId = editingTransaction?.id || transferId;
             const tx = {
               id: transactionId,
               datePaid: paidDateInput.value || null,
@@ -1879,6 +2026,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               paidBy: paidBySelect.value,
               actualEurTotal: actual,
               driveInvoiceLink: invoiceInput.value.trim() || null,
+              driveInvoiceFolderLink: folderInput.value.trim() || null,
               note: noteInput.value.trim() || null,
               eventIds: Array.from(selectedIds),
             };
@@ -1905,11 +2053,16 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
             selectedIds.forEach(eventId => {
               const log = record.paymentLog?.[eventId] || {};
+              const plannedEur = allPayments.find(evt => evt.id === eventId)?.plannedEur || 0;
+              const actualValue = Number.isFinite(Number(log.paidEurActual))
+                ? Number(log.paidEurActual)
+                : plannedEur;
               record.paymentLog[eventId] = {
                 ...log,
                 status: "paid",
                 paidDate: tx.datePaid,
                 transactionId,
+                paidEurActual: actualValue,
               };
             });
 
@@ -1928,7 +2081,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     const delta = payment.paidEurActual != null
       ? `Δ ${fmtEURPlain(payment.paidEurActual - payment.plannedEur)} EUR`
       : null;
-    const transactionLabel = payment.transactionId ? `TX-${payment.transactionId.slice(0, 6)}` : "—";
+    const transactionLabel = payment.transactionId ? formatTransactionLabel(payment.transactionId) : "—";
     const row = el("tr", {}, [
       el("td", {}, [payment.typeLabel]),
       el("td", {}, [fmtDateDE(payment.dueDate)]),
@@ -1941,7 +2094,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("td", {}, [payment.transactionId ? el("span", { class: "po-transaction-pill" }, [transactionLabel]) : "—"]),
       el("td", {}, [
         el("button", {
-          class: "btn secondary",
+          class: "btn secondary sm",
           type: "button",
           onclick: () => openPaymentModal(payment),
         }, [payment.status === "paid" ? "Edit transfer" : "Mark as paid"]),
@@ -2033,6 +2186,10 @@ export function renderOrderModule(root, config) {
       newButton: `${config.slug}-new`,
       modal: `${config.slug}-modal`,
       modalClose: `${config.slug}-modal-close`,
+      status: `${config.slug}-status`,
+      addMiscItem: `${config.slug}-add-misc-item`,
+      meta: `${config.slug}-meta`,
+      saveHeader: `${config.slug}-save-header`,
     });
   }
   if (config.convertTo) {
@@ -2040,8 +2197,13 @@ export function renderOrderModule(root, config) {
   }
 
   const formBodyHtml = `
-      ${quickfillEnabled ? `
-      <div class="grid two po-quickfill">
+      <div class="po-form-section">
+        <div class="po-form-section-header">
+          <h4>Header</h4>
+          <span class="po-form-section-meta" id="${ids.status}"></span>
+        </div>
+        ${quickfillEnabled ? `
+        <div class="grid two po-quickfill">
         <div class="po-product-field">
           <label>Produkt (Alias/SKU)</label>
           <input id="${ids.sku}" list="${ids.skuList}" placeholder="Tippe Alias oder SKU …" autocomplete="off" />
@@ -2058,9 +2220,9 @@ export function renderOrderModule(root, config) {
           </div>
           <p class="po-quickfill-status" id="${ids.quickStatus}" aria-live="polite"></p>
         </div>
-      </div>
-      ` : ``}
-      <div class="grid ${quickfillEnabled ? "three" : "two"}">
+        </div>
+        ` : ``}
+        <div class="grid ${quickfillEnabled ? "three" : "two"}">
         <div>
           <label>${config.numberLabel}</label>
           <input id="${ids.number}" placeholder="${config.numberPlaceholder}" />
@@ -2085,22 +2247,35 @@ export function renderOrderModule(root, config) {
           <input id="${ids.supplier}" placeholder="z. B. Ningbo Trading" />
         </div>
         ` : ``}
-      </div>
-      <div class="po-items-card">
-        <div class="po-items-card-header">
-          <h4>Positionen</h4>
-          <button class="btn" type="button" id="${ids.addItem}">Position hinzufügen</button>
         </div>
-        <div id="${ids.items}"></div>
       </div>
-      <div class="po-goods-summary" id="${ids.goodsSummary}">Summe Warenwert: 0,00 € (0,00 USD)</div>
-      <div class="grid two" style="margin-top:12px">
+      <div class="po-form-section">
+        <div class="po-form-section-header">
+          <h4>Positionen</h4>
+        </div>
+        <div class="po-items-card">
+          <div class="po-items-card-header">
+            <h4>Artikel</h4>
+            <div class="po-table-actions">
+              <button class="btn sm" type="button" id="${ids.addItem}">+ SKU Position</button>
+              ${poMode ? `<button class="btn sm secondary" type="button" id="${ids.addMiscItem}">+ Freie Position</button>` : ""}
+            </div>
+          </div>
+          <div id="${ids.items}"></div>
+        </div>
+        <div class="po-goods-summary" id="${ids.goodsSummary}">Summe Warenwert: 0,00 € (0,00 USD)</div>
+      </div>
+      <div class="po-form-section">
+        <div class="po-form-section-header">
+          <h4>Timeline / Termine</h4>
+        </div>
+        <div class="grid two" style="margin-top:12px">
         <div>
           <label>FX-Kurs (USD → EUR)</label>
           <input id="${ids.fxRate}" placeholder="z. B. 1,08" inputmode="decimal" />
         </div>
-      </div>
-      <div class="grid two" style="margin-top:12px">
+        </div>
+        <div class="grid two" style="margin-top:12px">
         <div>
           <label>Fracht (Eingabeart)</label>
           <select id="${ids.freightMode}">
@@ -2155,33 +2330,50 @@ export function renderOrderModule(root, config) {
         <div class="checkbox-line">
           <label><input type="checkbox" id="${ids.ddp}" /> DDP (Importkosten enthalten)</label>
         </div>
-      </div>
-      <div class="po-timeline-card">
-        <div class="po-timeline-card-header">
-          <h4>PO Timeline</h4>
-          <div id="${ids.timelineSummary}" class="po-timeline-summary"></div>
         </div>
-        <div id="${ids.timeline}" class="po-timeline-track-wrapper"></div>
+        <div class="po-timeline-card">
+          <div class="po-timeline-card-header">
+            <h4>PO Timeline</h4>
+            <div id="${ids.timelineSummary}" class="po-timeline-summary"></div>
+          </div>
+          <div id="${ids.timeline}" class="po-timeline-track-wrapper"></div>
+        </div>
       </div>
-      <div id="${ids.msZone}" style="margin-top:10px"></div>
+      <div class="po-form-section">
+        <div class="po-form-section-header">
+          <h4>Zahlungsplan & Importkosten</h4>
+        </div>
+        <div id="${ids.msZone}" style="margin-top:10px"></div>
+      </div>
       <div class="po-sticky-footer">
         <div class="po-sticky-actions">
-          <button class="btn primary" id="${ids.save}">Speichern</button>
-          <button class="btn" id="${ids.cancel}">Abbrechen</button>
-          <button class="btn" id="${ids.create}">${config.newButtonLabel}</button>
-          ${config.convertTo ? `<button class="btn secondary" id="${ids.convert}">${config.convertTo.buttonLabel || "In PO umwandeln"}</button>` : ""}
-          <button class="btn danger" id="${ids.remove}">Löschen</button>
+          <button class="btn primary sm" id="${ids.save}">Speichern</button>
+          <button class="btn sm" id="${ids.cancel}">Schließen</button>
+          <button class="btn sm" id="${ids.create}">${config.newButtonLabel}</button>
+          ${config.convertTo ? `<button class="btn secondary sm" id="${ids.convert}">${config.convertTo.buttonLabel || "In PO umwandeln"}</button>` : ""}
+          <button class="btn danger sm" id="${ids.remove}">Löschen</button>
         </div>
       </div>
-      <div id="${ids.preview}" class="po-event-preview"></div>
+      <div class="po-form-section">
+        <div class="po-form-section-header">
+          <h4>Ereignisse / Ledger</h4>
+        </div>
+        <div id="${ids.preview}" class="po-event-preview"></div>
+      </div>
   `;
 
   const formSectionHtml = poMode
     ? `
       <section class="card po-form-card">
         <div class="po-form-modal-header">
-          <h3>${config.formTitle}</h3>
-          <button class="btn ghost" type="button" id="${ids.modalClose}" aria-label="Schließen">✕</button>
+          <div>
+            <h3>${config.formTitle}</h3>
+            <div class="po-form-modal-meta" id="${ids.meta}"></div>
+          </div>
+          <div class="po-table-actions">
+            <button class="btn primary sm" type="button" id="${ids.saveHeader}">Speichern</button>
+            <button class="btn ghost" type="button" id="${ids.modalClose}" aria-label="Schließen">✕</button>
+          </div>
         </div>
         ${formBodyHtml}
       </section>
@@ -2231,6 +2423,9 @@ export function renderOrderModule(root, config) {
   const poNewButton = poMode ? $(`#${ids.newButton}`, root) : null;
   const poModal = poMode ? $(`#${ids.modal}`, root) : null;
   const poModalClose = poMode ? $(`#${ids.modalClose}`, root) : null;
+  const poStatus = poMode ? $(`#${ids.status}`, root) : null;
+  const poMeta = poMode ? $(`#${ids.meta}`, root) : null;
+  const poSaveHeader = poMode ? $(`#${ids.saveHeader}`, root) : null;
   const skuInput = quickfillEnabled ? $(`#${ids.sku}`, root) : null;
   const skuList = quickfillEnabled ? $(`#${ids.skuList}`, root) : null;
   const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
@@ -2247,6 +2442,7 @@ export function renderOrderModule(root, config) {
   const orderDatePickerBtn = $(`#${ids.orderDate}-picker-btn`, root);
   const itemsZone = $(`#${ids.items}`, root);
   const addItemBtn = $(`#${ids.addItem}`, root);
+  const addMiscItemBtn = poMode ? $(`#${ids.addMiscItem}`, root) : null;
   const itemsDataListId = `${ids.items}-dl`;
   const goodsSummary = $(`#${ids.goodsSummary}`, root);
   const fxRateInput = $(`#${ids.fxRate}`, root);
@@ -2275,7 +2471,7 @@ export function renderOrderModule(root, config) {
 
   let editing = defaultRecord(config, getSettings());
   let lastLoaded = JSON.parse(JSON.stringify(editing));
-  const poListState = poMode ? { searchTerm: "", showArchived: false } : null;
+  const poListState = poMode ? { searchTerm: "", showArchived: false, sortKey: null, sortDir: null } : null;
 
   function formatProductOption(product) {
     if (!product) return "";
@@ -2394,9 +2590,13 @@ export function renderOrderModule(root, config) {
     return st[config.entityKey];
   }
 
-  function renderListView(recordsOverride) {
+  function renderListView(recordsOverride, update = null) {
     const records = recordsOverride || getAllRecords();
-    const options = poMode ? { ...poListState, onUpdate: () => renderListView() } : undefined;
+    if (poMode && update) {
+      if (Object.prototype.hasOwnProperty.call(update, "sortKey")) poListState.sortKey = update.sortKey;
+      if (Object.prototype.hasOwnProperty.call(update, "sortDir")) poListState.sortDir = update.sortDir;
+    }
+    const options = poMode ? { ...poListState, onUpdate: (next) => renderListView(null, next) } : undefined;
     renderList(listZone, records, config, onEdit, onDelete, options);
   }
 
@@ -3037,6 +3237,14 @@ export function renderOrderModule(root, config) {
     ensureAutoEvents(editing, settings, editing.milestones);
     ensurePaymentLog(editing);
     normaliseArchiveFlag(editing);
+    if (poStatus) {
+      poStatus.textContent = editing.archived ? "Status: Archiviert" : "Status: Aktiv";
+    }
+    if (poMeta) {
+      const number = editing[config.numberField] || "—";
+      const supplier = editing.supplier || "—";
+      poMeta.textContent = `${number} • ${supplier}`;
+    }
     renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
     if (quickfillEnabled) {
       refreshProductCache();
@@ -3183,6 +3391,22 @@ export function renderOrderModule(root, config) {
         unitCostUsd: "0,00",
         unitExtraUsd: "0,00",
         extraFlatUsd: "0,00",
+      });
+      renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
+      onAnyChange();
+    });
+  }
+  if (addMiscItemBtn) {
+    addMiscItemBtn.addEventListener("click", () => {
+      ensureItems(editing);
+      editing.items.push({
+        id: `item-${Math.random().toString(36).slice(2, 9)}`,
+        sku: "",
+        units: "0",
+        unitCostUsd: "0,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+        type: "misc",
       });
       renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
       onAnyChange();
@@ -3360,6 +3584,9 @@ export function renderOrderModule(root, config) {
   }
   if (poModalClose) {
     poModalClose.addEventListener("click", closeFormModal);
+  }
+  if (poSaveHeader) {
+    poSaveHeader.addEventListener("click", saveRecord);
   }
   if (poModal) {
     poModal.addEventListener("click", (event) => {
