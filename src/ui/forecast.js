@@ -1,77 +1,7 @@
 import { loadState, saveState, addStateListener } from '../data/storageLocal.js';
+import { parseVentoryCsv } from "./forecastCsv.js";
 
-function parseNumberDE(value) {
-  if (value == null) return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const cleaned = String(value)
-    .trim()
-    .replace(/€/g, '')
-    .replace(/\s+/g, '')
-    .replace(/[^0-9,.-]/g, '');
-  if (!cleaned) return null;
-  const lastComma = cleaned.lastIndexOf(',');
-  const lastDot = cleaned.lastIndexOf('.');
-  const decimalIndex = Math.max(lastComma, lastDot);
-  let normalised = cleaned;
-  if (decimalIndex >= 0) {
-    const integer = cleaned.slice(0, decimalIndex).replace(/[.,]/g, '');
-    const fraction = cleaned.slice(decimalIndex + 1).replace(/[.,]/g, '');
-    normalised = `${integer}.${fraction}`;
-  } else {
-    normalised = cleaned.replace(/[.,]/g, '');
-  }
-  const n = Number(normalised);
-  return Number.isFinite(n) ? n : null;
-}
-
-function formatNumberDE(value) {
-  const num = Number(value) || 0;
-  return num.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
-
-function parseCsv(text) {
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return [];
-  const delimiter = lines[0].includes(';') ? ';' : ',';
-  const header = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
-  const monthPattern = /^\d{4}-\d{2}$/;
-  const hasMonthCols = header.some(h => monthPattern.test(h));
-  const records = [];
-  if (hasMonthCols) {
-    const monthCols = header.map((h, idx) => (monthPattern.test(h) ? { month: h, idx } : null)).filter(Boolean);
-    const skuIdx = header.findIndex(h => h === 'sku');
-    const aliasIdx = header.findIndex(h => h === 'alias' || h === 'produkt');
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(delimiter);
-      const sku = cols[skuIdx >= 0 ? skuIdx : 0]?.trim();
-      if (!sku) continue;
-      const alias = aliasIdx >= 0 ? cols[aliasIdx]?.trim() : '';
-      monthCols.forEach(col => {
-        const raw = cols[col.idx] || '';
-        const qty = parseInt(String(raw).replace(/\D/g, ''), 10);
-        if (Number.isNaN(qty)) return;
-        records.push({ sku, alias, month: col.month, units: qty });
-      });
-    }
-  } else {
-    const skuIdx = header.findIndex(h => h === 'sku');
-    const monthIdx = header.findIndex(h => h === 'monat' || h === 'month');
-    const qtyIdx = header.findIndex(h => h === 'menge' || h === 'qty' || h === 'quantity');
-    const priceIdx = header.findIndex(h => h === 'preis' || h === 'price' || h === 'priceeur');
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(delimiter);
-      const sku = cols[skuIdx >= 0 ? skuIdx : 0]?.trim();
-      const monthRaw = cols[monthIdx >= 0 ? monthIdx : 1]?.trim();
-      const qty = parseInt(cols[qtyIdx >= 0 ? qtyIdx : 2] || '0', 10);
-      if (!sku || !monthRaw || Number.isNaN(qty)) continue;
-      const price = priceIdx >= 0 ? parseNumberDE(cols[priceIdx]) : null;
-      const ymMatch = monthRaw.match(/^(\d{4})[-/.](\d{2})/);
-      const month = ymMatch ? `${ymMatch[1]}-${ymMatch[2]}` : monthRaw;
-      records.push({ sku, month, units: qty, revenueEur: price });
-    }
-  }
-  return records;
-}
+const CSV_IMPORT_LABEL = "VentoryOne Forecast importieren (CSV)";
 
 function arrayBufferToBinaryString(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -313,6 +243,7 @@ function render(el) {
       </div>
       <div class="forecast-actions">
         <button class="btn secondary" type="button" data-ventory-import>VentoryOne Import</button>
+        <button class="btn secondary" type="button" data-ventory-csv>${CSV_IMPORT_LABEL}</button>
         <label class="toggle">
           <input type="checkbox" ${state.forecast.settings.useForecast ? 'checked' : ''} data-forecast-toggle />
           <span>Umsatz aus Prognose übernehmen</span>
@@ -335,6 +266,9 @@ function render(el) {
 
   wrap.querySelector('[data-ventory-import]').addEventListener('click', () => {
     openVentoryImportModal(el);
+  });
+  wrap.querySelector('[data-ventory-csv]').addEventListener('click', () => {
+    openVentoryCsvImportModal(el);
   });
 }
 
@@ -539,6 +473,157 @@ function openVentoryImportModal(host) {
     saveState(st);
     showToast(`Import erfolgreich: ${updates.size} Werte (${skippedUnknown.size} unbekannte SKUs übersprungen).`);
     closeModal();
+    render(host);
+  });
+}
+
+function openVentoryCsvImportModal(host) {
+  const overlay = document.createElement("div");
+  overlay.className = "po-modal-backdrop";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const modal = document.createElement("div");
+  modal.className = "po-modal";
+  modal.innerHTML = `
+    <header class="po-modal-header">
+      <h3>${CSV_IMPORT_LABEL}</h3>
+      <button class="btn ghost" type="button" data-close aria-label="Schließen">✕</button>
+    </header>
+    <div class="po-modal-body">
+      <div class="form-grid">
+        <label class="field">
+          <span>Datei (.csv)</span>
+          <input type="file" accept=".csv" data-file />
+        </label>
+        <label class="toggle">
+          <input type="checkbox" data-overwrite checked />
+          <span>Overwrite existing forecast values</span>
+        </label>
+      </div>
+      <div class="panel preview-panel" data-summary hidden></div>
+    </div>
+    <footer class="po-modal-actions">
+      <button class="btn" type="button" data-cancel>Abbrechen</button>
+      <button class="btn primary" type="button" data-import disabled>Importieren</button>
+    </footer>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const closeModal = () => overlay.remove();
+  overlay.addEventListener("click", ev => {
+    if (ev.target === overlay) closeModal();
+  });
+  modal.querySelector("[data-close]").addEventListener("click", closeModal);
+  modal.querySelector("[data-cancel]").addEventListener("click", closeModal);
+
+  const fileInput = modal.querySelector("[data-file]");
+  const overwriteToggle = modal.querySelector("[data-overwrite]");
+  const importBtn = modal.querySelector("[data-import]");
+  const summaryPanel = modal.querySelector("[data-summary]");
+
+  let parsed = null;
+
+  function renderSummary(summary) {
+    summaryPanel.hidden = false;
+    summaryPanel.innerHTML = `
+      <h4>Import Summary</h4>
+      <p>SKUs: <strong>${summary.skuCount}</strong></p>
+      <p>Monate: <strong>${summary.monthCount}</strong></p>
+      <p>Datensätze: <strong>${summary.recordCount}</strong></p>
+      <p>Ignorierte Zeilen (Gesamt): <strong>${summary.ignoredTotal}</strong></p>
+      ${summary.unknownSkus.length
+        ? `<p class="text-muted">Unbekannte SKUs:</p><ul>${summary.unknownSkus.map(sku => `<li>${sku}</li>`).join("")}</ul>`
+        : ""}
+      ${summary.warnings.length
+        ? `<p class="text-muted">Hinweise:</p><ul>${summary.warnings.map(msg => `<li>${msg}</li>`).join("")}</ul>`
+        : ""}
+    `;
+  }
+
+  fileInput.addEventListener("change", async ev => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    parsed = null;
+    importBtn.disabled = true;
+    summaryPanel.hidden = true;
+    try {
+      const text = await file.text();
+      const result = parseVentoryCsv(text);
+      if (result.error) {
+        alert(result.error);
+        return;
+      }
+      parsed = result;
+      importBtn.disabled = !result.records.length;
+    } catch (err) {
+      console.error(err);
+      alert("Datei konnte nicht gelesen werden. Bitte erneut versuchen.");
+    }
+  });
+
+  importBtn.addEventListener("click", () => {
+    if (!parsed?.records?.length) return;
+    const st = loadState();
+    ensureForecastContainers(st);
+    const products = Array.isArray(st.products) ? st.products : [];
+    const skuSet = new Set(products.map(prod => String(prod.sku || "").trim()));
+    const now = new Date().toISOString();
+    const overwriting = overwriteToggle.checked;
+    const updates = new Map();
+    const unknownSkus = new Set();
+
+    parsed.records.forEach(rec => {
+      if (!skuSet.has(rec.sku)) {
+        unknownSkus.add(rec.sku);
+        return;
+      }
+      const key = `${rec.sku}__${rec.month}`;
+      const product = products.find(prod => String(prod.sku || "").trim() === rec.sku);
+      updates.set(key, {
+        sku: rec.sku,
+        alias: product?.alias || "",
+        month: rec.month,
+        units: rec.units,
+        qty: rec.units,
+        revenueEur: rec.revenueEur,
+        profitEur: rec.profitEur,
+        source: "ventoryone",
+        importedAt: now,
+        updatedAt: now,
+      });
+    });
+
+    let nextItems = [];
+    if (overwriting) {
+      st.forecast.items.forEach(item => {
+        const key = `${item.sku}__${item.month}`;
+        if (!updates.has(key)) nextItems.push(item);
+      });
+      updates.forEach(value => nextItems.push(value));
+    } else {
+      const existingMap = new Map(st.forecast.items.map(item => [`${item.sku}__${item.month}`, { ...item }]));
+      updates.forEach((value, key) => {
+        if (existingMap.has(key)) return;
+        existingMap.set(key, value);
+      });
+      nextItems = Array.from(existingMap.values());
+    }
+
+    st.forecast.items = nextItems;
+    saveState(st);
+
+    const summary = {
+      skuCount: new Set(parsed.records.map(rec => rec.sku)).size,
+      monthCount: new Set(parsed.records.map(rec => rec.month)).size,
+      recordCount: parsed.records.length,
+      ignoredTotal: parsed.ignoredTotal || 0,
+      unknownSkus: Array.from(unknownSkus),
+      warnings: parsed.warnings || [],
+    };
+    renderSummary(summary);
+    showToast(`Import erfolgreich: ${updates.size} Datensätze.`);
     render(host);
   });
 }
