@@ -68,7 +68,7 @@ function validateState(s){
 
 // ---- JSON aufbereiten (Clean) ---------------------------------------------
 function buildCleanJson(s){
-  const { _computed, ...clean } = s || {};
+  const { _computed, ...clean } = structuredClone(s || {});
 
   // Migration: falls ein altes Backup nur settings.openingBalance hatte
   if (!clean.openingEur && clean?.settings?.openingBalance) {
