@@ -333,7 +333,12 @@ function computePlannedPayoutByMonth(state, months) {
   if (forecastEnabled && Array.isArray(state?.forecast?.items)) {
     state.forecast.items.forEach(item => {
       if (!item?.month) return;
-      const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
+      const revenue = parseEuro(item.revenueEur ?? item.revenue ?? null);
+      if (Number.isFinite(revenue) && revenue !== 0) {
+        revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + revenue);
+        return;
+      }
+      const qty = Number(item.qty ?? item.units ?? item.quantity ?? 0) || 0;
       const price = parseEuro(item.priceEur ?? item.price ?? 0);
       revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + qty * price);
     });
