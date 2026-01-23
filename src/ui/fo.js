@@ -935,7 +935,7 @@ export default function render(root) {
     });
   }
 
-  function openFoModal(existing) {
+  function openFoModal(existing, prefill = {}) {
     const products = getProductsSnapshot();
     const productOptions = listProductsForSelect(products);
     const isExisting = Boolean(existing);
@@ -965,6 +965,21 @@ export default function render(root) {
           status: "DRAFT",
           createdAt: new Date().toISOString(),
         };
+    if (!isExisting && prefill) {
+      const prefillSku = String(prefill.sku || "").trim();
+      const prefillAlias = String(prefill.alias || "").trim();
+      const matchingProduct = getProductBySku(products, prefillSku)
+        || getProductByAlias(products, prefillAlias)
+        || getProductByAlias(products, prefillSku);
+      if (matchingProduct?.sku) {
+        baseForm.sku = matchingProduct.sku;
+      } else if (prefillSku) {
+        baseForm.sku = prefillSku;
+      }
+      if (prefill.targetDeliveryDate) {
+        baseForm.targetDeliveryDate = prefill.targetDeliveryDate;
+      }
+    }
     if (!baseForm.freightCurrency) baseForm.freightCurrency = "EUR";
     if (baseForm.freight == null) baseForm.freight = "";
     if (baseForm.dutyRatePct == null) baseForm.dutyRatePct = state.settings?.dutyRatePct ?? 0;
@@ -2090,6 +2105,16 @@ export default function render(root) {
 
   function focusFromRoute() {
     const query = window.__routeQuery || {};
+    const isCreate = query.create === "1" || query.mode === "create";
+    if (isCreate) {
+      openFoModal(null, {
+        sku: query.sku || "",
+        alias: query.alias || "",
+        targetDeliveryDate: query.target || "",
+      });
+      window.__routeQuery = {};
+      return;
+    }
     if (!query.open) return;
     const needle = String(query.open || "").trim().toLowerCase();
     if (!needle) return;

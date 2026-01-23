@@ -3,35 +3,17 @@ import { parseEuro, fmtEUR, expandFixcostInstances } from "../domain/cashflow.js
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
-const MATURITY_STORAGE_KEY = "dashboard_maturity_v1";
-
-const storedMaturity = (() => {
-  try {
-    return JSON.parse(localStorage.getItem(MATURITY_STORAGE_KEY) || "{}");
-  } catch {
-    return {};
-  }
-})();
-
 const dashboardState = {
   expanded: new Set(["inflows", "outflows", "po-payments", "fo-payments"]),
+  coverageCollapsed: new Set(),
   range: "next12",
   hideEmptyMonths: true,
   limitBalanceToGreen: false,
-  maturityHorizon: Number(storedMaturity.horizonMonths ?? 6) || 6,
-  expectPoFo: storedMaturity.expectPoFo !== false,
 };
 
 const PO_CONFIG = {
   entityLabel: "PO",
   numberField: "poNo",
-};
-
-const COVERAGE_LABELS = {
-  green: "Reifegrad hoch: Einzahlungen + Ausgaben vorhanden.",
-  yellow: "Reifegrad mittel: Einzahlungen + Fixkosten, aber noch keine PO/FO geplant.",
-  red: "Reifegrad niedrig: Einzahlungen vorhanden, aber noch keine Ausgaben erfasst → Kontostand wahrscheinlich zu optimistisch.",
-  gray: "Noch keine Daten für diesen Monat.",
 };
 
 const MAX_DETAIL_ROWS = 50;
@@ -130,6 +112,41 @@ function toMonthKey(dateInput) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function parseISODate(value) {
+  if (!value) return null;
+  const [y, m, d] = String(value).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function addDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function getMonthEnd(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return null;
+  const [y, m] = monthKey.split("-").map(Number);
+  if (!y || !m) return null;
+  return new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
+}
+
+function formatDate(value) {
+  const date = value instanceof Date ? value : parseISODate(value);
+  if (!date) return "—";
+  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function formatMonthLabel(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return String(monthKey || "");
+  const [y, m] = monthKey.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, 1));
+  return date.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" });
+}
+
 function sumUnits(record) {
   if (!record) return 0;
   if (Array.isArray(record.items) && record.items.length) {
@@ -145,6 +162,163 @@ function convertToEur(amount, currency, fxRate) {
   const fx = Number(fxRate || 0);
   if (!Number.isFinite(fx) || fx <= 0) return value;
   return value / fx;
+}
+
+function isProductActive(product) {
+  if (!product) return false;
+  if (typeof product.active === "boolean") return product.active;
+  const status = String(product.status || "").trim().toLowerCase();
+  if (!status) return true;
+  return status === "active" || status === "aktiv";
+}
+
+function getActiveSkus(state) {
+  const products = Array.isArray(state?.products) ? state.products : [];
+  const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
+  const categoryById = new Map(categories.map(category => [String(category.id), category]));
+  return products
+    .filter(isProductActive)
+    .map(product => {
+      const categoryId = product.categoryId ? String(product.categoryId) : "";
+      const category = categoryById.get(categoryId);
+      return {
+        sku: String(product.sku || "").trim(),
+        alias: String(product.alias || product.sku || "").trim(),
+        categoryId,
+        categoryName: category?.name || "Ohne Kategorie",
+        categorySort: category?.sortOrder ?? 0,
+      };
+    })
+    .filter(item => item.sku);
+}
+
+function buildCategoryGroups(items, categories = []) {
+  const sortedCategories = categories
+    .slice()
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
+  const groups = sortedCategories.map(category => ({
+    id: String(category.id),
+    name: category.name || "Ohne Kategorie",
+    items: items.filter(item => item.categoryId === String(category.id)),
+  }));
+  const uncategorized = items.filter(item => !item.categoryId);
+  if (uncategorized.length) {
+    groups.push({ id: "uncategorized", name: "Ohne Kategorie", items: uncategorized });
+  }
+  return groups.filter(group => group.items.length);
+}
+
+function computePoEta(po) {
+  if (!po) return null;
+  if (po.etaDate) return parseISODate(po.etaDate);
+  if (po.eta) return parseISODate(po.eta);
+  const orderDate = parseISODate(po.orderDate);
+  if (!orderDate) return null;
+  const prodDays = Number(po.prodDays || 0);
+  const transitDays = Number(po.transitDays || 0);
+  return addDays(orderDate, prodDays + transitDays);
+}
+
+function computeFoEta(fo) {
+  if (!fo) return null;
+  if (fo.etaDate) return parseISODate(fo.etaDate);
+  if (fo.eta) return parseISODate(fo.eta);
+  const target = parseISODate(fo.targetDeliveryDate);
+  if (!target) return null;
+  const bufferDays = Number(fo.bufferDays || 0);
+  return addDays(target, -bufferDays);
+}
+
+function buildSkuPlanningIndex(state, activeSkus) {
+  const plannedBySku = new Map(activeSkus.map(item => [item.sku, []]));
+  const pos = Array.isArray(state?.pos) ? state.pos : [];
+  pos.forEach(po => {
+    if (!po || po.archived) return;
+    if (String(po.status || "").toUpperCase() === "CANCELLED") return;
+    const etaDate = computePoEta(po);
+    if (!etaDate) return;
+    const sourceLabel = po.poNo || po.number || po.id || "PO";
+    const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
+    items.forEach(item => {
+      const sku = String(item?.sku || "").trim();
+      if (!sku || !plannedBySku.has(sku)) return;
+      plannedBySku.get(sku).push({
+        sourceType: "PO",
+        sourceLabel,
+        etaDate,
+      });
+    });
+  });
+
+  const fos = Array.isArray(state?.fos) ? state.fos : [];
+  fos.forEach(fo => {
+    if (!fo) return;
+    const status = String(fo.status || "").toUpperCase();
+    if (status === "CONVERTED" || status === "CANCELLED") return;
+    const etaDate = computeFoEta(fo);
+    if (!etaDate) return;
+    const sourceLabel = fo.foNo || fo.number || fo.id || "FO";
+    const sku = String(fo.sku || "").trim();
+    if (!sku || !plannedBySku.has(sku)) return;
+    plannedBySku.get(sku).push({
+      sourceType: "FO",
+      sourceLabel,
+      etaDate,
+    });
+  });
+
+  plannedBySku.forEach(list => list.sort((a, b) => a.etaDate - b.etaDate));
+  return plannedBySku;
+}
+
+function computeSkuCoverage(state, months) {
+  const activeSkus = getActiveSkus(state);
+  const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
+  const plannedIndex = buildSkuPlanningIndex(state, activeSkus);
+  const coverage = new Map();
+  const details = new Map();
+  const plannedByMonth = new Map();
+  const totalCount = activeSkus.length;
+
+  months.forEach(month => {
+    const monthEnd = getMonthEnd(month);
+    const plannedMap = new Map();
+    if (monthEnd) {
+      activeSkus.forEach(item => {
+        const records = plannedIndex.get(item.sku) || [];
+        const match = records.find(record => record.etaDate && record.etaDate <= monthEnd);
+        if (match) plannedMap.set(item.sku, match);
+      });
+    }
+    plannedByMonth.set(month, plannedMap);
+    const plannedCount = plannedMap.size;
+    let status = "gray";
+    if (totalCount > 0) {
+      const pct = plannedCount / totalCount;
+      if (pct >= 1) status = "green";
+      else if (pct >= 0.7) status = "yellow";
+      else status = "red";
+    }
+    const missingAliases = totalCount
+      ? activeSkus.filter(item => !plannedMap.has(item.sku)).map(item => item.alias || item.sku)
+      : [];
+    coverage.set(month, status);
+    details.set(month, {
+      status,
+      plannedCount,
+      totalCount,
+      missingAliases,
+      monthEnd,
+    });
+  });
+
+  return {
+    coverage,
+    details,
+    plannedByMonth,
+    activeSkus,
+    groups: buildCategoryGroups(activeSkus, categories),
+  };
 }
 
 function computePlannedPayoutByMonth(state, months) {
@@ -366,87 +540,6 @@ function buildRow({
   };
 }
 
-function buildPresenceMap(events, { requireInvoice = false } = {}) {
-  const map = new Map();
-  events.forEach(evt => {
-    if (!evt?.month) return;
-    const planned = Number(evt.plannedEur || 0);
-    const actual = Number(evt.actualEur || 0);
-    const paid = evt.paid === true;
-    const hasInvoice = requireInvoice ? evt.hasInvoiceLink !== false : true;
-    const actualValid = paid && actual > 0 && hasInvoice;
-    const entry = map.get(evt.month) || { plan: false, actual: false };
-    if (planned > 0) entry.plan = true;
-    if (actualValid) entry.actual = true;
-    map.set(evt.month, entry);
-  });
-  return map;
-}
-
-function pickPresence(entry) {
-  if (!entry) return false;
-  return entry.actual ? true : entry.plan;
-}
-
-function computeCoverage(months, { cashInEvents, fixcostEvents, poEvents, foEvents, cashInExplicitMonths, horizonMonths, expectPoFo, currentMonth }) {
-  const cashInMap = buildPresenceMap(cashInEvents, { requireInvoice: false });
-  const fixcostMap = buildPresenceMap(fixcostEvents, { requireInvoice: false });
-  const poMap = buildPresenceMap(poEvents, { requireInvoice: true });
-  const foMap = buildPresenceMap(foEvents, { requireInvoice: false });
-  const warningMap = new Map();
-  poEvents.forEach(evt => {
-    if (!evt?.month) return;
-    if (evt.paid && !evt.hasInvoiceLink) {
-      const list = warningMap.get(evt.month) || [];
-      const txLabel = evt.transactionId ? `Transfer ${evt.transactionId}` : "Transfer —";
-      list.push(`${evt.label || "Zahlung"} · ${txLabel} · Invoice-Link fehlt`);
-      warningMap.set(evt.month, list);
-    }
-  });
-  const coverage = new Map();
-  const details = new Map();
-  const currentIndex = monthIndex(currentMonth);
-  months.forEach(month => {
-    const monthOffset = currentIndex != null ? (monthIndex(month) - currentIndex) : 0;
-    if (Number.isFinite(monthOffset) && monthOffset > horizonMonths) {
-      coverage.set(month, "gray");
-      details.set(month, { status: "gray", reason: "Zukunftsmonat außerhalb des Reifegrad-Horizonts.", warnings: [] });
-      return;
-    }
-    const cashInPresent = pickPresence(cashInMap.get(month));
-    const cashInExplicit = cashInExplicitMonths?.has(month);
-    const fixedCostsPresent = pickPresence(fixcostMap.get(month));
-    const poOutPresent = pickPresence(poMap.get(month));
-    const foOutPresent = pickPresence(foMap.get(month));
-    const anyOutPresent = fixedCostsPresent || poOutPresent || foOutPresent;
-    const warnings = warningMap.get(month) || [];
-    const missing = [];
-    if (!cashInPresent && !cashInExplicit) missing.push("Keine Amazon-Auszahlungen");
-    if (!fixedCostsPresent) missing.push("Keine Fixkosten");
-    if (expectPoFo && !poOutPresent && !foOutPresent) missing.push("Keine PO/FO-Zahlungen geplant");
-    let status = "gray";
-    let reason = "Noch keine Daten für diesen Monat.";
-
-    if (warnings.length) {
-      status = "red";
-      reason = "Bezahlte Zahlungen ohne Invoice-Link.";
-    } else if (anyOutPresent && !cashInPresent && !cashInExplicit) {
-      status = "red";
-      reason = "Auszahlungen vorhanden, aber keine Amazon-Auszahlungen erfasst.";
-    } else if (!missing.length && (cashInPresent || cashInExplicit) && anyOutPresent) {
-      status = "green";
-      reason = "Einzahlungen und Ausgaben vorhanden.";
-    } else if (cashInPresent || cashInExplicit) {
-      status = "yellow";
-      reason = missing.length ? missing.join(" · ") : "Unvollständige Planung.";
-    }
-
-    coverage.set(month, status);
-    details.set(month, { status, reason, warnings });
-  });
-  return { coverage, details };
-}
-
 function collectMonthEvents(row, month) {
   if (!row) return false;
   if (row.events && row.events.some(evt => evt.month === month && (Number(evt.plannedEur || 0) !== 0 || Number(evt.actualEur || 0) !== 0))) {
@@ -539,9 +632,7 @@ function buildDashboardRows(state, months, options = {}) {
     if (!row?.month) return;
     actualPayoutMap.set(row.month, parseEuro(row.payoutEur));
   });
-  const cashInExplicitMonths = new Set(
-    (state?.incomings || []).map(row => row?.month).filter(Boolean),
-  );
+  const coverage = options.coverage instanceof Map ? options.coverage : new Map();
 
   const amazonEvents = months.map(month => ({
     id: `amazon-${month}`,
@@ -606,18 +697,6 @@ function buildDashboardRows(state, months, options = {}) {
 
   const poData = buildPoData(state);
   const foData = buildFoData(state);
-  const poEvents = poData.flatMap(po => po.events);
-  const foEvents = foData.flatMap(fo => fo.events);
-  const { coverage, details: coverageDetails } = computeCoverage(months, {
-    cashInEvents: amazonEvents,
-    fixcostEvents,
-    poEvents,
-    foEvents,
-    cashInExplicitMonths,
-    horizonMonths: options.maturityHorizon,
-    expectPoFo: options.expectPoFo,
-    currentMonth: options.currentMonth,
-  });
 
   const amazonRow = buildRow({
     id: "amazon-payout",
@@ -901,7 +980,7 @@ function buildDashboardRows(state, months, options = {}) {
   const summaryRows = [netRow];
   if (balanceRow) summaryRows.push(balanceRow);
 
-  return { inflowRow, outflowRow, summaryRows, coverage, coverageDetails };
+  return { inflowRow, outflowRow, summaryRows };
 }
 
 function buildDashboardHTML(state) {
@@ -918,12 +997,12 @@ function buildDashboardHTML(state) {
   const baseMonths = rangeOptions.length
     ? applyRange(months, dashboardState.range)
     : months.slice();
+  const skuCoverage = computeSkuCoverage(state, baseMonths);
 
   const rowsBoth = buildDashboardRows(state, baseMonths, {
     limitBalanceToGreen: dashboardState.limitBalanceToGreen,
-    maturityHorizon: dashboardState.maturityHorizon,
-    expectPoFo: dashboardState.expectPoFo,
     currentMonth,
+    coverage: skuCoverage.coverage,
   });
   const filteredInflow = filterRows(rowsBoth.inflowRow, baseMonths);
   const filteredOutflow = filterRows(rowsBoth.outflowRow, baseMonths);
@@ -932,17 +1011,18 @@ function buildDashboardHTML(state) {
     ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
     : baseMonths.slice();
 
-  const { inflowRow, outflowRow, summaryRows, coverage, coverageDetails } = buildDashboardRows(state, nonEmptyMonths, {
+  const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, nonEmptyMonths, {
     limitBalanceToGreen: dashboardState.limitBalanceToGreen,
-    maturityHorizon: dashboardState.maturityHorizon,
-    expectPoFo: dashboardState.expectPoFo,
     currentMonth,
+    coverage: skuCoverage.coverage,
   });
   const filteredVisibleInflow = filterRows(inflowRow, nonEmptyMonths);
   const filteredVisibleOutflow = filterRows(outflowRow, nonEmptyMonths);
 
   const topRows = [filteredVisibleInflow, filteredVisibleOutflow, ...summaryRows].filter(Boolean);
   const flatRows = flattenRows(topRows, dashboardState.expanded);
+  const coverageNoticeNeeded = skuCoverage.activeSkus.length > 0
+    && nonEmptyMonths.some(month => skuCoverage.coverage.get(month) !== "green");
 
   const rangeSelect = rangeOptions.length
     ? `
@@ -957,14 +1037,20 @@ function buildDashboardHTML(state) {
 
   const headerCells = nonEmptyMonths
     .map(month => {
-      const status = coverage.get(month) || "gray";
-      const detail = coverageDetails.get(month);
+      const status = skuCoverage.coverage.get(month) || "gray";
+      const detail = skuCoverage.details.get(month);
+      const plannedCount = detail?.plannedCount ?? 0;
+      const totalCount = detail?.totalCount ?? 0;
+      const missing = detail?.missingAliases || [];
+      const missingPreview = missing.slice(0, 5);
+      const missingRest = missing.length > 5 ? ` +${missing.length - 5} weitere` : "";
+      const missingLine = missingPreview.length
+        ? `Fehlend: ${missingPreview.join(", ")}${missingRest}`
+        : (totalCount ? "Fehlend: —" : "Keine aktiven SKUs");
       const tooltip = [
-        detail?.reason || COVERAGE_LABELS[status] || COVERAGE_LABELS.gray,
-        ...(detail?.warnings || []),
-      ]
-        .filter(Boolean)
-        .join(" · ");
+        `Coverage: ${plannedCount}/${totalCount} SKUs`,
+        missingLine,
+      ].join(" · ");
       return `
         <th scope="col">
           <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
@@ -1006,9 +1092,9 @@ function buildDashboardHTML(state) {
           const warnIcon = warnings.length
             ? `<span class="cell-warning" title="${escapeHtml(warnings.join(" · "))}">⚠</span>`
             : "";
-          const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(coverage.get(month));
+          const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(skuCoverage.coverage.get(month));
           const balanceWarning = showBalanceWarning
-            ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da PO/FO fehlen.">⚠︎</span>`
+            ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da Planung fehlt.">⚠︎</span>`
             : "";
           const formatted = formatCellValue(cell.value);
           const paidThisMonth = month === currentMonth && (cell.paidThisMonthCount || 0) > 0;
@@ -1040,6 +1126,86 @@ function buildDashboardHTML(state) {
     })
     .join("");
 
+  const coverageGroups = skuCoverage.groups;
+  const coverageRows = coverageGroups.length
+    ? coverageGroups
+      .map(group => {
+        const isCollapsed = dashboardState.coverageCollapsed.has(group.id);
+        const groupToggle = `
+          <button type="button" class="tree-toggle coverage-toggle" data-coverage-group="${escapeHtml(group.id)}" aria-expanded="${!isCollapsed}">
+            ${isCollapsed ? "▶" : "▼"}
+          </button>
+        `;
+        const groupRow = `
+          <tr class="coverage-group-row" data-coverage-group="${escapeHtml(group.id)}">
+            <th scope="row" class="coverage-label">
+              ${groupToggle}
+              <span class="tree-label">${escapeHtml(group.name)}</span>
+              <span class="coverage-count muted">${group.items.length}</span>
+            </th>
+            ${nonEmptyMonths.map(() => `<td class="coverage-cell muted">—</td>`).join("")}
+          </tr>
+        `;
+        const skuRows = isCollapsed
+          ? ""
+          : group.items.map(item => {
+            const skuLabel = item.alias || item.sku;
+            const skuMeta = item.alias && item.sku && item.alias !== item.sku
+              ? `<span class="muted coverage-sku">(${escapeHtml(item.sku)})</span>`
+              : "";
+            const cells = nonEmptyMonths.map(month => {
+              const match = skuCoverage.plannedByMonth.get(month)?.get(item.sku) || null;
+              if (match) {
+                const detail = skuCoverage.details.get(month);
+                const monthEnd = detail?.monthEnd;
+                const tooltip = [
+                  `Geplant bis: ${formatDate(monthEnd)}`,
+                  `Quelle: ${match.sourceType} ${match.sourceLabel}`,
+                  `ETA: ${formatDate(match.etaDate)}`,
+                ].join(" · ");
+                return `
+                  <td class="coverage-cell coverage-planned" title="${escapeHtml(tooltip)}">
+                    <span class="coverage-chip planned" aria-hidden="true">✅</span>
+                  </td>
+                `;
+              }
+              const monthEnd = getMonthEnd(month);
+              const tooltip = `Keine FO/PO bis einschließlich ${formatMonthLabel(month)}`;
+              const targetDate = monthEnd ? monthEnd.toISOString().slice(0, 10) : "";
+              return `
+                <td class="coverage-cell coverage-missing" data-create-fo="true" data-sku="${escapeHtml(item.sku)}" data-target-date="${escapeHtml(targetDate)}" title="${escapeHtml(tooltip)}" role="button" tabindex="0">
+                  <span class="coverage-chip missing" aria-hidden="true">⛔</span>
+                </td>
+              `;
+            }).join("");
+            return `
+              <tr class="coverage-sku-row" data-coverage-sku="${escapeHtml(item.sku)}">
+                <td class="coverage-label">
+                  <span class="tree-spacer" aria-hidden="true"></span>
+                  <span>${escapeHtml(skuLabel)}</span>
+                  ${skuMeta}
+                </td>
+                ${cells}
+              </tr>
+            `;
+          }).join("");
+        return `${groupRow}${skuRows}`;
+      }).join("")
+    : `
+      <tr>
+        <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine aktiven SKUs vorhanden.</td>
+      </tr>
+    `;
+
+  const coverageNotice = coverageNoticeNeeded
+    ? `
+      <div class="dashboard-coverage-notice">
+        <span>Planungsstand unvollständig – Ausgaben können fehlen.</span>
+        <button type="button" class="btn ghost" id="dashboard-coverage-link">Details anzeigen</button>
+      </div>
+    `
+    : "";
+
   return `
     <section class="dashboard">
       <div class="dashboard-header">
@@ -1061,18 +1227,13 @@ function buildDashboardHTML(state) {
           <input type="checkbox" id="dashboard-limit-balance" ${dashboardState.limitBalanceToGreen ? "checked" : ""} />
           <span>Kontostand nur bis letztem grünen Monat</span>
         </label>
-        <label class="dashboard-toggle dashboard-checkbox">
-          <span>Reifegrad-Horizont (Monate)</span>
-          <input type="number" min="1" max="24" id="dashboard-maturity-horizon" value="${dashboardState.maturityHorizon}" />
-        </label>
-        <label class="dashboard-toggle dashboard-checkbox">
-          <input type="checkbox" id="dashboard-expect-pofo" ${dashboardState.expectPoFo ? "checked" : ""} />
-          <span>PO/FO im Horizont erwarten</span>
-        </label>
         ${rangeSelect}
       </div>
+      ${coverageNotice}
       <div class="dashboard-legend muted">
-        <span class="coverage-indicator coverage-green"></span> Reifegrad
+        <span class="coverage-indicator coverage-green"></span> Reifegrad (SKU-Abdeckung)
+        <span class="coverage-indicator coverage-yellow"></span> Teilweise geplant
+        <span class="coverage-indicator coverage-red"></span> Planung fehlt
         <span class="legend-item">⚠ Warnung</span>
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
@@ -1092,6 +1253,25 @@ function buildDashboardHTML(state) {
             `}
           </tbody>
         </table>
+      </div>
+      <div class="dashboard-coverage" id="dashboard-coverage-panel">
+        <div class="dashboard-coverage-header">
+          <h3>SKU Coverage (Planungsstand)</h3>
+          <p class="muted">Grün = geplant (FO/PO mit ETA bis Monatsende), Rot = fehlt Planung.</p>
+        </div>
+        <div class="dashboard-coverage-wrap">
+          <table class="table-compact dashboard-coverage-table" role="table">
+            <thead>
+              <tr>
+                <th scope="col" class="coverage-header">Kategorie / SKU</th>
+                ${nonEmptyMonths.map(month => `<th scope="col">${escapeHtml(month)}</th>`).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${coverageRows}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   `;
@@ -1115,11 +1295,11 @@ function attachDashboardHandlers(root, state) {
       const currentMonth = currentMonthKey();
       const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
       const baseMonths = applyRange(months, dashboardState.range);
+      const skuCoverage = computeSkuCoverage(state, baseMonths);
       const rowsBoth = buildDashboardRows(state, baseMonths, {
         limitBalanceToGreen: dashboardState.limitBalanceToGreen,
-        maturityHorizon: dashboardState.maturityHorizon,
-        expectPoFo: dashboardState.expectPoFo,
         currentMonth,
+        coverage: skuCoverage.coverage,
       });
       const topRowsAll = [
         filterRows(rowsBoth.inflowRow, baseMonths),
@@ -1131,9 +1311,8 @@ function attachDashboardHandlers(root, state) {
         : baseMonths;
       const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, {
         limitBalanceToGreen: dashboardState.limitBalanceToGreen,
-        maturityHorizon: dashboardState.maturityHorizon,
-        expectPoFo: dashboardState.expectPoFo,
         currentMonth,
+        coverage: skuCoverage.coverage,
       });
       const topRows = [filterRows(inflowRow, visibleMonths), filterRows(outflowRow, visibleMonths), ...summaryRows].filter(Boolean);
       const expandableIds = collectExpandableIds(topRows);
@@ -1180,31 +1359,6 @@ function attachDashboardHandlers(root, state) {
     });
   }
 
-  const maturityInput = root.querySelector("#dashboard-maturity-horizon");
-  if (maturityInput) {
-    maturityInput.addEventListener("change", () => {
-      const next = Math.max(1, Number(maturityInput.value) || 1);
-      dashboardState.maturityHorizon = next;
-      localStorage.setItem(MATURITY_STORAGE_KEY, JSON.stringify({
-        horizonMonths: dashboardState.maturityHorizon,
-        expectPoFo: dashboardState.expectPoFo,
-      }));
-      render(root);
-    });
-  }
-
-  const expectPoFoToggle = root.querySelector("#dashboard-expect-pofo");
-  if (expectPoFoToggle) {
-    expectPoFoToggle.addEventListener("change", () => {
-      dashboardState.expectPoFo = expectPoFoToggle.checked;
-      localStorage.setItem(MATURITY_STORAGE_KEY, JSON.stringify({
-        horizonMonths: dashboardState.maturityHorizon,
-        expectPoFo: dashboardState.expectPoFo,
-      }));
-      render(root);
-    });
-  }
-
   const table = root.querySelector(".dashboard-tree-table");
   if (table) {
     const navigate = (payload) => {
@@ -1239,6 +1393,63 @@ function attachDashboardHandlers(root, state) {
         const payload = JSON.parse(decodeURIComponent(raw));
         navigate(payload);
       } catch {}
+    });
+  }
+
+  const coverageWrap = root.querySelector(".dashboard-coverage-wrap");
+  const tableWrap = root.querySelector(".dashboard-table-wrap");
+  if (coverageWrap && tableWrap) {
+    let syncing = false;
+    const syncScroll = (source, target) => {
+      if (syncing) return;
+      syncing = true;
+      target.scrollLeft = source.scrollLeft;
+      requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    tableWrap.addEventListener("scroll", () => syncScroll(tableWrap, coverageWrap));
+    coverageWrap.addEventListener("scroll", () => syncScroll(coverageWrap, tableWrap));
+  }
+
+  root.querySelectorAll(".coverage-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const groupId = btn.getAttribute("data-coverage-group");
+      if (!groupId) return;
+      if (dashboardState.coverageCollapsed.has(groupId)) {
+        dashboardState.coverageCollapsed.delete(groupId);
+      } else {
+        dashboardState.coverageCollapsed.add(groupId);
+      }
+      render(root);
+    });
+  });
+
+  root.querySelectorAll(".coverage-cell[data-create-fo]").forEach(cell => {
+    const handler = () => {
+      const sku = cell.getAttribute("data-sku") || "";
+      const targetDate = cell.getAttribute("data-target-date") || "";
+      const params = new URLSearchParams();
+      params.set("create", "1");
+      if (sku) params.set("sku", sku);
+      if (targetDate) params.set("target", targetDate);
+      location.hash = `#fo?${params.toString()}`;
+    };
+    cell.addEventListener("click", handler);
+    cell.addEventListener("keydown", ev => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        handler();
+      }
+    });
+  });
+
+  const coverageLink = root.querySelector("#dashboard-coverage-link");
+  if (coverageLink) {
+    coverageLink.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const panel = root.querySelector("#dashboard-coverage-panel");
+      if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
 }
