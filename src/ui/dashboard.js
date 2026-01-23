@@ -6,7 +6,9 @@ import { computeVatPreview } from "../domain/vatPreview.js";
 const dashboardState = {
   mode: "ist",
   expanded: new Set(["inflows", "outflows", "po-payments", "fo-payments"]),
-  range: "18",
+  range: "next12",
+  hideEmptyMonths: true,
+  limitBalanceToGreen: false,
 };
 
 const PO_CONFIG = {
@@ -20,6 +22,13 @@ const MODE_OPTIONS = [
   { key: "both", label: "Ist+Plan" },
 ];
 
+const COVERAGE_LABELS = {
+  green: "Reifegrad hoch: Einzahlungen + Ausgaben vorhanden.",
+  yellow: "Reifegrad mittel: Einzahlungen + Fixkosten, aber noch keine PO/FO geplant.",
+  red: "Reifegrad niedrig: Einzahlungen vorhanden, aber noch keine Ausgaben erfasst → Kontostand wahrscheinlich zu optimistisch.",
+  gray: "Noch keine Daten für diesen Monat.",
+};
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -29,20 +38,31 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function fmtEURCell(value) {
+function formatCellValue(value) {
   const num = Number(value || 0);
-  return new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number.isFinite(num) ? num : 0);
+  if (!Number.isFinite(num) || Math.abs(num) < 0.0001) {
+    return { text: "—", isEmpty: true };
+  }
+  return {
+    text: new Intl.NumberFormat("de-DE", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(num),
+    isEmpty: false,
+  };
 }
 
 function monthIndex(ym) {
   if (!/^\d{4}-\d{2}$/.test(ym || "")) return null;
   const [y, m] = ym.split("-").map(Number);
   return y * 12 + (m - 1);
+}
+
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function addMonths(ym, delta) {
@@ -71,7 +91,7 @@ function getRangeOptions(months) {
   const length = months.length;
   const candidates = [12, 18, 24];
   candidates.forEach(count => {
-    if (length >= count) options.push({ value: String(count), label: `Letzte ${count}` });
+    if (length >= count) options.push({ value: `next${count}`, label: `Nächste ${count}` });
   });
   if (length > 0) options.push({ value: "all", label: "Alle" });
   return options;
@@ -80,9 +100,9 @@ function getRangeOptions(months) {
 function applyRange(months, range) {
   if (!months.length) return [];
   if (range === "all") return months.slice();
-  const count = Number(range || 0);
+  const count = Number(String(range).replace("next", "")) || 0;
   if (!Number.isFinite(count) || count <= 0) return months.slice();
-  return months.slice(-count);
+  return months.slice(0, count);
 }
 
 function toMonthKey(dateInput) {
@@ -240,7 +260,7 @@ function sumPaymentEvents(events, month, mode) {
       return;
     }
     if (mode === "plan") {
-      if (!paid || missingInvoice) total += planned;
+      total += planned;
       return;
     }
     if (actualValid) total += actual;
@@ -283,6 +303,69 @@ function buildRow({ id, label, level, children = [], events = [], tooltip = "", 
     sumMode,
     values: {},
   };
+}
+
+function buildPresenceMap(events, { requireInvoice = false } = {}) {
+  const map = new Map();
+  events.forEach(evt => {
+    if (!evt?.month) return;
+    const planned = Number(evt.plannedEur || 0);
+    const actual = Number(evt.actualEur || 0);
+    const paid = evt.paid === true;
+    const hasInvoice = requireInvoice ? evt.hasInvoiceLink !== false : true;
+    const actualValid = paid && actual > 0 && hasInvoice;
+    const entry = map.get(evt.month) || { plan: false, actual: false };
+    if (planned > 0) entry.plan = true;
+    if (actualValid) entry.actual = true;
+    map.set(evt.month, entry);
+  });
+  return map;
+}
+
+function pickPresence(entry) {
+  if (!entry) return false;
+  return entry.actual ? true : entry.plan;
+}
+
+function computeCoverage(months, { cashInEvents, fixcostEvents, poEvents, foEvents }) {
+  const cashInMap = buildPresenceMap(cashInEvents, { requireInvoice: false });
+  const fixcostMap = buildPresenceMap(fixcostEvents, { requireInvoice: false });
+  const poMap = buildPresenceMap(poEvents, { requireInvoice: true });
+  const foMap = buildPresenceMap(foEvents, { requireInvoice: false });
+  const coverage = new Map();
+  months.forEach(month => {
+    const cashInPresent = pickPresence(cashInMap.get(month));
+    const fixedCostsPresent = pickPresence(fixcostMap.get(month));
+    const poOutPresent = pickPresence(poMap.get(month));
+    const foOutPresent = pickPresence(foMap.get(month));
+    const anyOutPresent = fixedCostsPresent || poOutPresent || foOutPresent;
+    let status = "gray";
+    if (cashInPresent && (poOutPresent || foOutPresent || fixedCostsPresent)) {
+      status = "green";
+    } else if (cashInPresent && fixedCostsPresent && !poOutPresent && !foOutPresent) {
+      status = "yellow";
+    } else if (cashInPresent && !anyOutPresent) {
+      status = "red";
+    }
+    coverage.set(month, status);
+  });
+  return coverage;
+}
+
+function collectMonthEvents(row, month) {
+  if (!row) return false;
+  if (row.events && row.events.some(evt => evt.month === month && (Number(evt.plannedEur || 0) !== 0 || Number(evt.actualEur || 0) !== 0))) {
+    return true;
+  }
+  return row.children.some(child => collectMonthEvents(child, month));
+}
+
+function monthHasValues(rows, month) {
+  return rows.some(row => {
+    const value = row.values?.[month]?.value || 0;
+    if (Math.abs(value) > 0.0001) return true;
+    return collectMonthEvents(row, month);
+  });
 }
 
 function applyRowValues(row, months, mode) {
@@ -331,7 +414,7 @@ function flattenRows(rows, expandedSet) {
   return result;
 }
 
-function buildDashboardRows(state, months, mode) {
+function buildDashboardRows(state, months, mode, options = {}) {
   const plannedPayoutMap = computePlannedPayoutByMonth(state, months);
   const actualPayoutMap = new Map();
   (state?.actuals || []).forEach(row => {
@@ -400,6 +483,14 @@ function buildDashboardRows(state, months, mode) {
 
   const poData = buildPoData(state);
   const foData = buildFoData(state);
+  const poEvents = poData.flatMap(po => po.events);
+  const foEvents = foData.flatMap(fo => fo.events);
+  const coverage = computeCoverage(months, {
+    cashInEvents: amazonEvents,
+    fixcostEvents,
+    poEvents,
+    foEvents,
+  });
 
   const amazonRow = buildRow({
     id: "amazon-payout",
@@ -585,7 +676,14 @@ function buildDashboardRows(state, months, mode) {
       isSummary: true,
       alwaysVisible: true,
     });
-    months.forEach(month => {
+    const lastGreenIndex = options.limitBalanceToGreen
+      ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
+      : months.length - 1;
+    months.forEach((month, idx) => {
+      if (options.limitBalanceToGreen && idx > lastGreenIndex) {
+        balanceRow.values[month] = { value: null, warnings: [] };
+        return;
+      }
       running += netRow.values[month]?.value || 0;
       balanceRow.values[month] = { value: running, warnings: [] };
     });
@@ -594,27 +692,39 @@ function buildDashboardRows(state, months, mode) {
   const summaryRows = [netRow];
   if (balanceRow) summaryRows.push(balanceRow);
 
-  return { inflowRow, outflowRow, summaryRows };
+  return { inflowRow, outflowRow, summaryRows, coverage };
 }
 
 function buildDashboardHTML(state) {
   const startMonth = state?.settings?.startMonth || "2025-01";
   const horizon = Number(state?.settings?.horizonMonths || 12) || 12;
   const endMonth = addMonths(startMonth, horizon - 1);
-  const months = getMonthlyBuckets(startMonth, endMonth);
+  const allMonths = getMonthlyBuckets(startMonth, endMonth);
+  const currentMonth = currentMonthKey();
+  const months = allMonths.filter(month => month >= currentMonth);
   const rangeOptions = getRangeOptions(months);
   if (rangeOptions.length && !rangeOptions.some(option => option.value === dashboardState.range)) {
     dashboardState.range = rangeOptions[0].value;
   }
-  const visibleMonths = rangeOptions.length
+  const baseMonths = rangeOptions.length
     ? applyRange(months, dashboardState.range)
     : months.slice();
 
-  const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, dashboardState.mode);
-  const filteredInflow = filterRows(inflowRow, visibleMonths);
-  const filteredOutflow = filterRows(outflowRow, visibleMonths);
+  const rowsBoth = buildDashboardRows(state, baseMonths, "both", { limitBalanceToGreen: dashboardState.limitBalanceToGreen });
+  const filteredInflow = filterRows(rowsBoth.inflowRow, baseMonths);
+  const filteredOutflow = filterRows(rowsBoth.outflowRow, baseMonths);
+  const topRowsAll = [filteredInflow, filteredOutflow, ...rowsBoth.summaryRows].filter(Boolean);
+  const nonEmptyMonths = dashboardState.hideEmptyMonths
+    ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
+    : baseMonths.slice();
 
-  const topRows = [filteredInflow, filteredOutflow, ...summaryRows].filter(Boolean);
+  const { inflowRow, outflowRow, summaryRows, coverage } = buildDashboardRows(state, nonEmptyMonths, dashboardState.mode, {
+    limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+  });
+  const filteredVisibleInflow = filterRows(inflowRow, nonEmptyMonths);
+  const filteredVisibleOutflow = filterRows(outflowRow, nonEmptyMonths);
+
+  const topRows = [filteredVisibleInflow, filteredVisibleOutflow, ...summaryRows].filter(Boolean);
   const flatRows = flattenRows(topRows, dashboardState.expanded);
 
   const rangeSelect = rangeOptions.length
@@ -628,8 +738,17 @@ function buildDashboardHTML(state) {
     `
     : "";
 
-  const headerCells = visibleMonths
-    .map(month => `<th scope="col">${escapeHtml(month)}</th>`)
+  const headerCells = nonEmptyMonths
+    .map(month => {
+      const status = coverage.get(month) || "gray";
+      const tooltip = COVERAGE_LABELS[status] || COVERAGE_LABELS.gray;
+      return `
+        <th scope="col">
+          <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
+          <span>${escapeHtml(month)}</span>
+        </th>
+      `;
+    })
     .join("");
 
   const bodyRows = flatRows
@@ -648,17 +767,23 @@ function buildDashboardHTML(state) {
         </td>
       `;
 
-      const valueCells = visibleMonths
+      const valueCells = nonEmptyMonths
         .map(month => {
           const cell = row.values[month] || { value: 0, warnings: [] };
           const warnings = cell.warnings || [];
           const warnIcon = warnings.length
             ? `<span class="cell-warning" title="${escapeHtml(warnings.join(" · "))}">⚠</span>`
             : "";
+          const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(coverage.get(month));
+          const balanceWarning = showBalanceWarning
+            ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da PO/FO fehlen.">⚠︎</span>`
+            : "";
+          const formatted = formatCellValue(cell.value);
           return `
             <td class="num ${row.isSummary ? "tree-summary" : ""}">
               ${warnIcon}
-              <span>${fmtEURCell(cell.value)}</span>
+              ${balanceWarning}
+              <span class="${formatted.isEmpty ? "cell-empty" : ""}">${formatted.text}</span>
             </td>
           `;
         })
@@ -688,6 +813,14 @@ function buildDashboardHTML(state) {
           <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
           <button type="button" class="btn secondary" data-expand="expand">Alles auf</button>
         </div>
+        <label class="dashboard-toggle dashboard-checkbox">
+          <input type="checkbox" id="dashboard-hide-empty" ${dashboardState.hideEmptyMonths ? "checked" : ""} />
+          <span>Leere Monate ausblenden</span>
+        </label>
+        <label class="dashboard-toggle dashboard-checkbox">
+          <input type="checkbox" id="dashboard-limit-balance" ${dashboardState.limitBalanceToGreen ? "checked" : ""} />
+          <span>Kontostand nur bis letztem grünen Monat</span>
+        </label>
         ${rangeSelect}
       </div>
       <div class="dashboard-table-wrap">
@@ -701,7 +834,7 @@ function buildDashboardHTML(state) {
           <tbody>
             ${bodyRows || `
               <tr>
-                <td colspan="${visibleMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+                <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
               </tr>
             `}
           </tbody>
@@ -733,9 +866,21 @@ function attachDashboardHandlers(root, state) {
       const startMonth = state?.settings?.startMonth || "2025-01";
       const horizon = Number(state?.settings?.horizonMonths || 12) || 12;
       const endMonth = addMonths(startMonth, horizon - 1);
-      const months = getMonthlyBuckets(startMonth, endMonth);
-      const visibleMonths = applyRange(months, dashboardState.range);
-      const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, dashboardState.mode);
+      const currentMonth = currentMonthKey();
+      const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
+      const baseMonths = applyRange(months, dashboardState.range);
+      const rowsBoth = buildDashboardRows(state, baseMonths, "both", { limitBalanceToGreen: dashboardState.limitBalanceToGreen });
+      const topRowsAll = [
+        filterRows(rowsBoth.inflowRow, baseMonths),
+        filterRows(rowsBoth.outflowRow, baseMonths),
+        ...rowsBoth.summaryRows,
+      ].filter(Boolean);
+      const visibleMonths = dashboardState.hideEmptyMonths
+        ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
+        : baseMonths;
+      const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, dashboardState.mode, {
+        limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+      });
       const topRows = [filterRows(inflowRow, visibleMonths), filterRows(outflowRow, visibleMonths), ...summaryRows].filter(Boolean);
       const expandableIds = collectExpandableIds(topRows);
       if (action === "collapse") {
@@ -761,6 +906,22 @@ function attachDashboardHandlers(root, state) {
   if (rangeSelect) {
     rangeSelect.addEventListener("change", () => {
       dashboardState.range = rangeSelect.value;
+      render(root);
+    });
+  }
+
+  const hideEmptyToggle = root.querySelector("#dashboard-hide-empty");
+  if (hideEmptyToggle) {
+    hideEmptyToggle.addEventListener("change", () => {
+      dashboardState.hideEmptyMonths = hideEmptyToggle.checked;
+      render(root);
+    });
+  }
+
+  const limitBalanceToggle = root.querySelector("#dashboard-limit-balance");
+  if (limitBalanceToggle) {
+    limitBalanceToggle.addEventListener("change", () => {
+      dashboardState.limitBalanceToGreen = limitBalanceToggle.checked;
       render(root);
     });
   }
