@@ -162,6 +162,32 @@ td.num, th.num{text-align:right}
 .table-card-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:12px}
 .pos{color:#15803d;}
 .neg{color:#b91c1c;}
+.dashboard{width:100%;}
+.dashboard-header{margin-bottom:10px;}
+.dashboard-controls{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px;}
+.dashboard-controls .dashboard-toggle{display:flex; gap:8px; flex-wrap:wrap;}
+.dashboard-range{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);}
+.dashboard-range select{height:34px; font-size:13px; min-width:160px;}
+.dashboard-table-wrap{border:1px solid var(--table-border); border-radius:12px; overflow-x:auto; background:#fff;}
+.dashboard-tree-table{min-width:960px; font-size:var(--table-font-size); border-collapse:collapse;}
+.dashboard-tree-table th,.dashboard-tree-table td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bottom:1px solid var(--table-border); white-space:nowrap;}
+.dashboard-tree-table thead th{background:var(--table-header-bg); font-size:12px; color:var(--muted); font-weight:600; position:sticky; top:0; z-index:4;}
+.dashboard-tree-table th.tree-header{left:0; z-index:6;}
+.dashboard-tree-table td{background:#fff;}
+.dashboard-tree-table td.tree-cell{position:sticky; left:0; z-index:3; background:#fff;}
+.dashboard-tree-table td.tree-cell.tree-summary{font-weight:700;}
+.dashboard-tree-table td.tree-summary{font-weight:700;}
+.dashboard-tree-table tbody tr:hover td{background:rgba(15,27,45,0.03);}
+.tree-cell{display:flex; align-items:center; gap:6px;}
+.tree-toggle{border:none; background:none; cursor:pointer; font-size:12px; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center;}
+.tree-toggle:focus{outline:none; box-shadow:0 0 0 3px var(--ring); border-radius:6px;}
+.tree-spacer{width:20px; height:20px; display:inline-block;}
+.tree-level-0{padding-left:4px;}
+.tree-level-1{padding-left:18px;}
+.tree-level-2{padding-left:32px;}
+.tree-level-3{padding-left:46px;}
+.tree-label{font-weight:600;}
+.cell-warning{margin-right:4px; color:var(--warn); font-size:12px;}
 .fo-modal .suggested-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; font-size:11px;}
 .fo-modal-frame{width:min(1200px, 96vw);}
 .fo-modal .card{width:100%;}
