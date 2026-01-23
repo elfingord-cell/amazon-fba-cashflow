@@ -80,6 +80,10 @@ const defaults = {
     settings: {
       useForecast: false,
     },
+    forecastImport: {},
+    forecastManual: {},
+    lastImportAt: null,
+    importSource: null,
   },
   status: {
     autoManualCheck: false,
@@ -258,6 +262,37 @@ function ensureForecast(state) {
     state.forecast.settings = { useForecast: false };
   } else {
     state.forecast.settings.useForecast = Boolean(state.forecast.settings.useForecast);
+  }
+  if (!state.forecast.forecastImport || typeof state.forecast.forecastImport !== "object") {
+    state.forecast.forecastImport = {};
+  }
+  if (!state.forecast.forecastManual || typeof state.forecast.forecastManual !== "object") {
+    state.forecast.forecastManual = {};
+  }
+  if (!state.forecast.lastImportAt) state.forecast.lastImportAt = null;
+  if (!state.forecast.importSource) state.forecast.importSource = null;
+  if (!Object.keys(state.forecast.forecastImport).length && state.forecast.items.length) {
+    state.forecast.items.forEach(item => {
+      if (!item?.sku || !item?.month) return;
+      const skuKey = String(item.sku || "").trim();
+      if (!skuKey) return;
+      const monthKey = String(item.month || "").trim();
+      const isManual = String(item.source || "").toLowerCase() === "manual";
+      if (isManual) {
+        if (!state.forecast.forecastManual[skuKey]) state.forecast.forecastManual[skuKey] = {};
+        const units = Number(item.units ?? item.qty ?? item.quantity ?? NaN);
+        if (Number.isFinite(units)) {
+          state.forecast.forecastManual[skuKey][monthKey] = units;
+        }
+      } else {
+        if (!state.forecast.forecastImport[skuKey]) state.forecast.forecastImport[skuKey] = {};
+        state.forecast.forecastImport[skuKey][monthKey] = {
+          units: item.units ?? item.qty ?? item.quantity ?? null,
+          revenueEur: item.revenueEur ?? item.priceEur ?? item.price ?? null,
+          profitEur: item.profitEur ?? null,
+        };
+      }
+    });
   }
 }
 

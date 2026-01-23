@@ -2,6 +2,38 @@ import { loadState, saveState, addStateListener } from '../data/storageLocal.js'
 import { parseVentoryCsv } from "./forecastCsv.js";
 
 const CSV_IMPORT_LABEL = "VentoryOne Forecast importieren (CSV)";
+const FORECAST_VIEW_KEY = "forecast_view_v1";
+
+const defaultView = {
+  search: "",
+  range: "next12",
+  onlyActive: true,
+  onlyWithForecast: false,
+  collapsed: {},
+};
+
+const forecastView = (() => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FORECAST_VIEW_KEY) || "{}");
+    return {
+      ...defaultView,
+      ...raw,
+      collapsed: raw?.collapsed || {},
+    };
+  } catch {
+    return { ...defaultView };
+  }
+})();
+
+function persistView() {
+  localStorage.setItem(FORECAST_VIEW_KEY, JSON.stringify({
+    search: forecastView.search,
+    range: forecastView.range,
+    onlyActive: forecastView.onlyActive,
+    onlyWithForecast: forecastView.onlyWithForecast,
+    collapsed: forecastView.collapsed,
+  }));
+}
 
 function arrayBufferToBinaryString(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -56,6 +88,110 @@ function normalizeHeader(value) {
     .trim();
 }
 
+function parseNumberDE(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const cleaned = String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^0-9,.-]/g, "");
+  if (!cleaned) return null;
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  const decimalIndex = Math.max(lastComma, lastDot);
+  let normalised = cleaned;
+  if (decimalIndex >= 0) {
+    const integer = cleaned.slice(0, decimalIndex).replace(/[.,]/g, "");
+    const fraction = cleaned.slice(decimalIndex + 1).replace(/[.,]/g, "");
+    normalised = `${integer}.${fraction}`;
+  } else {
+    normalised = cleaned.replace(/[.,]/g, "");
+  }
+  const num = Number(normalised);
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatForecastValue(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return Number(value).toLocaleString("de-DE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function isProductActive(product) {
+  if (!product) return false;
+  if (typeof product.active === "boolean") return product.active;
+  const status = String(product.status || "").trim().toLowerCase();
+  if (!status) return true;
+  return status === "active" || status === "aktiv";
+}
+
+function buildCategoryGroups(products, categories = []) {
+  const categoryMap = new Map();
+  products.forEach(product => {
+    const key = product.categoryId ? String(product.categoryId) : "";
+    if (!categoryMap.has(key)) categoryMap.set(key, []);
+    categoryMap.get(key).push(product);
+  });
+  const sortedCategories = categories
+    .slice()
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
+  const groups = sortedCategories.map(category => ({
+    id: String(category.id),
+    name: category.name || "Ohne Kategorie",
+    items: categoryMap.get(String(category.id)) || [],
+  }));
+  const uncategorized = categoryMap.get("") || [];
+  if (uncategorized.length) {
+    groups.push({ id: "uncategorized", name: "Ohne Kategorie", items: uncategorized });
+  }
+  return groups.filter(group => group.items.length);
+}
+
+function getMonthBuckets(start, horizon) {
+  const months = [];
+  const [y0, m0] = String(start || "2025-01").split("-").map(Number);
+  for (let i = 0; i < horizon; i += 1) {
+    const y = y0 + Math.floor((m0 - 1 + i) / 12);
+    const m = ((m0 - 1 + i) % 12) + 1;
+    months.push(`${y}-${String(m).padStart(2, "0")}`);
+  }
+  return months;
+}
+
+function applyRange(months, range) {
+  if (range === "all") return months;
+  const count = Number(String(range).replace("next", "")) || months.length;
+  return months.slice(0, count);
+}
+
+function getRangeOptions(months) {
+  const options = [];
+  [12, 18, 24].forEach(count => {
+    if (months.length >= count) {
+      options.push({ value: `next${count}`, label: `Nächste ${count}` });
+    }
+  });
+  options.push({ value: "all", label: "Alle" });
+  return options;
+}
+
+function getImportValue(state, sku, month) {
+  return state.forecast?.forecastImport?.[sku]?.[month] || null;
+}
+
+function getManualValue(state, sku, month) {
+  return state.forecast?.forecastManual?.[sku]?.[month] ?? null;
+}
+
+function getEffectiveValue(state, sku, month) {
+  const manual = getManualValue(state, sku, month);
+  if (manual != null) return manual;
+  const imported = getImportValue(state, sku, month);
+  return imported?.units ?? null;
+}
+
 function parseVentoryMonth(raw) {
   if (!raw) return null;
   const text = String(raw).replace(/\s+/g, ' ').trim();
@@ -65,6 +201,7 @@ function parseVentoryMonth(raw) {
   const year = match[2];
   const monthMap = {
     jan: '01',
+    januar: '01',
     februar: '02',
     feb: '02',
     märz: '03',
@@ -72,17 +209,23 @@ function parseVentoryMonth(raw) {
     mrz: '03',
     marz: '03',
     apr: '04',
+    april: '04',
     mai: '05',
     jun: '06',
     juni: '06',
     jul: '07',
     juli: '07',
     aug: '08',
+    august: '08',
     sep: '09',
     sept: '09',
+    september: '09',
     okt: '10',
+    oktober: '10',
     nov: '11',
+    november: '11',
     dez: '12',
+    dezember: '12',
   };
   const monthKey = monthMap[monthRaw];
   if (!monthKey) return null;
@@ -139,7 +282,7 @@ function parseVentoryRows(rows) {
         alias,
         status,
         month: block.monthKey,
-        units: unitsVal == null ? null : Math.round(unitsVal),
+        units: unitsVal,
         revenueEur: revenueVal,
         profitEur: profitVal,
       });
@@ -161,77 +304,203 @@ function showToast(message) {
   setTimeout(() => { toast.hidden = true; }, 2200);
 }
 
-function renderTable(el, state) {
-  const months = [];
-  const horizon = Number(state.settings?.horizonMonths || 18);
-  const start = state.settings?.startMonth || '2025-01';
-  const [y0, m0] = start.split('-').map(Number);
-  for (let i = 0; i < horizon; i++) {
-    const y = y0 + Math.floor((m0 - 1 + i) / 12);
-    const m = ((m0 - 1 + i) % 12) + 1;
-    months.push(`${y}-${String(m).padStart(2, '0')}`);
+function renderTable(el, state, months, groups) {
+  const table = document.createElement("table");
+  table.className = "forecast-tree-table";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headRow.innerHTML = `
+    <th class="forecast-sticky">Kategorie / Produkt</th>
+    ${months.map(month => `<th>${month}</th>`).join("")}
+  `;
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+
+  groups.forEach(group => {
+    const isCollapsed = Boolean(forecastView.collapsed[group.id]);
+    const categoryRow = document.createElement("tr");
+    categoryRow.className = "forecast-category-row";
+    categoryRow.innerHTML = `
+      <th class="forecast-sticky">
+        <button type="button" class="tree-toggle" data-category="${group.id}">
+          ${isCollapsed ? "▶" : "▼"}
+        </button>
+        <span class="tree-label">${group.name}</span>
+        <span class="forecast-count muted">${group.items.length}</span>
+      </th>
+      ${months.map(() => `<td class="forecast-cell muted">—</td>`).join("")}
+    `;
+    tbody.appendChild(categoryRow);
+
+    if (!isCollapsed) {
+      group.items.forEach(product => {
+        const sku = String(product.sku || "").trim();
+        const alias = product.alias || sku;
+        const row = document.createElement("tr");
+        row.className = "forecast-product-row";
+        row.innerHTML = `
+          <td class="forecast-sticky forecast-product-cell">
+            <div class="forecast-alias">${alias}</div>
+            <div class="forecast-sku muted">${sku}</div>
+          </td>
+          ${months.map(month => {
+            const manual = getManualValue(state, sku, month);
+            const imported = getImportValue(state, sku, month);
+            const effective = getEffectiveValue(state, sku, month);
+            const value = formatForecastValue(effective);
+            const manualFlag = manual != null ? "forecast-manual" : "";
+            const hint = manual != null ? "Manuell" : (imported ? "Import" : "");
+            return `
+              <td class="forecast-cell ${manualFlag}" data-sku="${sku}" data-month="${month}" title="${hint}">
+                <span class="forecast-value">${value}</span>
+                ${manual != null ? `<span class="forecast-manual-dot" aria-hidden="true"></span>` : ""}
+              </td>
+            `;
+          }).join("")}
+        `;
+        tbody.appendChild(row);
+      });
+    }
+  });
+
+  table.appendChild(tbody);
+
+  let activeInput = null;
+
+  function closeEditor({ commit }) {
+    if (!activeInput) return;
+    const cell = activeInput.closest("td");
+    const sku = cell?.dataset?.sku;
+    const month = cell?.dataset?.month;
+    const raw = activeInput.value;
+    activeInput.removeEventListener("keydown", onKeydown);
+    activeInput.removeEventListener("blur", onBlur);
+    activeInput = null;
+    if (commit && sku && month) {
+      const value = parseNumberDE(raw);
+      const st = loadState();
+      ensureForecastContainers(st);
+      if (!st.forecast.forecastManual[sku]) st.forecast.forecastManual[sku] = {};
+      if (raw.trim() === "" || value == null) {
+        if (st.forecast.forecastManual[sku]) {
+          delete st.forecast.forecastManual[sku][month];
+          if (!Object.keys(st.forecast.forecastManual[sku]).length) delete st.forecast.forecastManual[sku];
+        }
+      } else {
+        st.forecast.forecastManual[sku][month] = value;
+      }
+      saveState(st);
+      render(el);
+      return;
+    }
+    render(el);
   }
-  const grouped = new Map();
-  (state.forecast?.items || []).forEach(item => {
-    const key = (item.sku || '').trim();
-    if (!key) return;
-    const row = grouped.get(key) || { sku: item.sku, alias: item.alias || '', values: {} };
-    const units = item.units ?? item.qty ?? 0;
-    row.values[item.month] = units;
-    grouped.set(key, row);
+
+  function onKeydown(ev) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      closeEditor({ commit: true });
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeEditor({ commit: false });
+    }
+  }
+
+  function onBlur() {
+    closeEditor({ commit: true });
+  }
+
+  tbody.addEventListener("click", ev => {
+    const cell = ev.target.closest("td[data-sku]");
+    if (!cell || activeInput) return;
+    const sku = cell.dataset.sku;
+    const month = cell.dataset.month;
+    if (!sku || !month) return;
+    const current = getEffectiveValue(state, sku, month);
+    cell.innerHTML = `<input class="forecast-input" type="text" inputmode="decimal" value="${current ?? ""}" />`;
+    activeInput = cell.querySelector("input");
+    activeInput.addEventListener("keydown", onKeydown);
+    activeInput.addEventListener("blur", onBlur);
+    activeInput.focus();
+    activeInput.select();
   });
-  const table = document.createElement('div');
-  table.className = 'table forecast-table';
-  const header = document.createElement('div');
-  header.className = 'table-row head';
-  header.innerHTML = `<div class="cell sku">SKU</div><div class="cell alias">Alias</div>${months
-    .map(m => `<div class="cell month">${m}</div>`)
-    .join('')}`;
-  table.appendChild(header);
-  grouped.forEach(row => {
-    const tr = document.createElement('div');
-    tr.className = 'table-row';
-    tr.innerHTML = `<div class="cell sku">${row.sku}</div><div class="cell alias">${row.alias || ''}</div>`;
-    months.forEach(m => {
-      const val = row.values[m] ?? '';
-      const cell = document.createElement('div');
-      cell.className = 'cell month';
-      cell.innerHTML = `<input type="number" min="0" data-sku="${row.sku}" data-month="${m}" value="${val}">`;
-      tr.appendChild(cell);
-    });
-    table.appendChild(tr);
-  });
-  table.addEventListener('change', ev => {
-    const input = ev.target.closest('input[data-sku]');
-    if (!input) return;
-    const sku = input.getAttribute('data-sku');
-    const month = input.getAttribute('data-month');
-    const qty = Number(input.value || 0) || 0;
-    const st = loadState();
-    ensureForecastContainers(st);
-    const items = st.forecast.items.filter(it => !(it.sku === sku && it.month === month));
-    items.push({ sku, month, units: qty, qty, source: 'manual', updatedAt: new Date().toISOString() });
-    st.forecast.items = items;
-    saveState(st);
+
+  tbody.addEventListener("click", ev => {
+    const toggle = ev.target.closest("[data-category]");
+    if (!toggle) return;
+    const categoryId = toggle.getAttribute("data-category");
+    if (!categoryId) return;
+    forecastView.collapsed[categoryId] = !forecastView.collapsed[categoryId];
+    persistView();
     render(el);
   });
+
   return table;
 }
 
 function ensureForecastContainers(state) {
   if (!state.forecast || typeof state.forecast !== 'object') {
-    state.forecast = { items: [], settings: { useForecast: false } };
+    state.forecast = {
+      items: [],
+      settings: { useForecast: false },
+      forecastImport: {},
+      forecastManual: {},
+      lastImportAt: null,
+      importSource: null,
+    };
   }
   if (!Array.isArray(state.forecast.items)) state.forecast.items = [];
   if (!state.forecast.settings || typeof state.forecast.settings !== 'object') {
     state.forecast.settings = { useForecast: false };
   }
+  if (!state.forecast.forecastImport || typeof state.forecast.forecastImport !== 'object') {
+    state.forecast.forecastImport = {};
+  }
+  if (!state.forecast.forecastManual || typeof state.forecast.forecastManual !== 'object') {
+    state.forecast.forecastManual = {};
+  }
+  if (state.forecast.lastImportAt === undefined) state.forecast.lastImportAt = null;
+  if (state.forecast.importSource === undefined) state.forecast.importSource = null;
 }
 
 function render(el) {
   const state = loadState();
   ensureForecastContainers(state);
   el.innerHTML = '';
+  const products = Array.isArray(state.products) ? state.products : [];
+  const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
+  const monthsAll = getMonthBuckets(state.settings?.startMonth || "2025-01", Number(state.settings?.horizonMonths || 18));
+  const rangeOptions = getRangeOptions(monthsAll);
+  if (!rangeOptions.some(option => option.value === forecastView.range)) {
+    forecastView.range = rangeOptions[0]?.value || "all";
+  }
+  const months = applyRange(monthsAll, forecastView.range);
+  const searchTerm = forecastView.search.trim().toLowerCase();
+  const filteredProducts = products.filter(product => {
+    if (forecastView.onlyActive && !isProductActive(product)) return false;
+    if (searchTerm) {
+      const category = categories.find(cat => String(cat.id) === String(product.categoryId));
+      const values = [
+        product.alias,
+        product.sku,
+        ...(product.tags || []),
+        category?.name,
+      ]
+        .filter(Boolean)
+        .map(val => String(val).toLowerCase());
+      if (!values.some(val => val.includes(searchTerm))) return false;
+    }
+    if (forecastView.onlyWithForecast) {
+      const sku = String(product.sku || "").trim();
+      const hasForecast = months.some(month => getEffectiveValue(state, sku, month) != null);
+      if (!hasForecast) return false;
+    }
+    return true;
+  });
+  const groups = buildCategoryGroups(filteredProducts, categories);
   const wrap = document.createElement('section');
   wrap.className = 'panel';
   wrap.innerHTML = `
@@ -242,18 +511,52 @@ function render(el) {
         <p class="text-muted">VentoryOne-Import, Vorschau und Übergabe an Umsätze/Payout.</p>
       </div>
       <div class="forecast-actions">
-        <button class="btn secondary" type="button" data-ventory-import>VentoryOne Import</button>
         <button class="btn secondary" type="button" data-ventory-csv>${CSV_IMPORT_LABEL}</button>
+        <button class="btn" type="button" data-forecast-save>Änderungen speichern</button>
+      </div>
+    </header>
+    <div class="forecast-toolbar">
+      <div class="forecast-toolbar-row">
+        <label class="field">
+          <span>Suche</span>
+          <input type="search" data-forecast-search value="${forecastView.search}" placeholder="SKU, Alias, Tag, Kategorie" />
+        </label>
+        <label class="field">
+          <span>Monatsbereich</span>
+          <select data-forecast-range>
+            ${rangeOptions.map(option => `<option value="${option.value}" ${option.value === forecastView.range ? "selected" : ""}>${option.label}</option>`).join("")}
+          </select>
+        </label>
         <label class="toggle">
-          <input type="checkbox" ${state.forecast.settings.useForecast ? 'checked' : ''} data-forecast-toggle />
+          <input type="checkbox" ${forecastView.onlyActive ? "checked" : ""} data-only-active />
+          <span>Nur aktive Produkte</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" ${forecastView.onlyWithForecast ? "checked" : ""} data-only-forecast />
+          <span>Nur Produkte mit Forecast</span>
+        </label>
+      </div>
+      <div class="forecast-toolbar-row">
+        <button class="btn secondary" type="button" data-expand="expand">Alle auf</button>
+        <button class="btn secondary" type="button" data-expand="collapse">Alle zu</button>
+        <label class="toggle">
+          <input type="checkbox" ${state.forecast.settings.useForecast ? "checked" : ""} data-forecast-toggle />
           <span>Umsatz aus Prognose übernehmen</span>
         </label>
       </div>
-    </header>
+    </div>
   `;
   const tableHost = document.createElement('div');
   tableHost.className = 'forecast-table-wrap';
-  tableHost.appendChild(renderTable(el, state));
+  if (!groups.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.style.padding = "12px";
+    empty.textContent = "Keine Produkte gefunden.";
+    tableHost.appendChild(empty);
+  } else {
+    tableHost.appendChild(renderTable(el, state, months, groups));
+  }
   wrap.appendChild(tableHost);
   el.appendChild(wrap);
 
@@ -264,11 +567,53 @@ function render(el) {
     saveState(st);
   });
 
-  wrap.querySelector('[data-ventory-import]').addEventListener('click', () => {
-    openVentoryImportModal(el);
-  });
   wrap.querySelector('[data-ventory-csv]').addEventListener('click', () => {
     openVentoryCsvImportModal(el);
+  });
+
+  wrap.querySelector('[data-forecast-save]').addEventListener('click', () => {
+    const st = loadState();
+    saveState(st);
+    showToast("Änderungen gespeichert.");
+  });
+
+  wrap.querySelector('[data-forecast-search]').addEventListener('input', ev => {
+    forecastView.search = ev.target.value;
+    persistView();
+    render(el);
+  });
+
+  wrap.querySelector('[data-forecast-range]').addEventListener('change', ev => {
+    forecastView.range = ev.target.value;
+    persistView();
+    render(el);
+  });
+
+  wrap.querySelector('[data-only-active]').addEventListener('change', ev => {
+    forecastView.onlyActive = ev.target.checked;
+    persistView();
+    render(el);
+  });
+
+  wrap.querySelector('[data-only-forecast]').addEventListener('change', ev => {
+    forecastView.onlyWithForecast = ev.target.checked;
+    persistView();
+    render(el);
+  });
+
+  wrap.querySelectorAll('[data-expand]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.getAttribute('data-expand');
+      if (action === "collapse") {
+        const next = {};
+        groups.forEach(group => { next[group.id] = true; });
+        forecastView.collapsed = next;
+      } else {
+        forecastView.collapsed = {};
+      }
+      persistView();
+      render(el);
+    });
   });
 }
 
@@ -418,60 +763,43 @@ function openVentoryImportModal(host) {
     const products = Array.isArray(st.products) ? st.products : [];
     const skuSet = new Set(products.map(prod => String(prod.sku || '').trim()));
     const now = new Date().toISOString();
-    const updates = new Map();
     const skippedUnknown = new Set();
+    const updates = [];
 
     parsed.records.forEach(rec => {
       if (!skuSet.has(rec.sku)) {
         skippedUnknown.add(rec.sku);
         return;
       }
-      const key = `${rec.sku}__${rec.month}`;
-      const product = products.find(prod => String(prod.sku || '').trim() === rec.sku);
-      updates.set(key, {
-        sku: rec.sku,
-        alias: product?.alias || rec.alias || '',
-        month: rec.month,
-        units: rec.units,
-        qty: rec.units,
-        revenueEur: rec.revenueEur,
-        profitEur: rec.profitEur,
-        source: 'ventoryone',
-        importedAt: now,
-        updatedAt: now,
-      });
+      updates.push(rec);
     });
 
-    const nextItems = [];
-    if (mode === 'overwrite') {
-      st.forecast.items.forEach(item => {
-        const key = `${item.sku}__${item.month}`;
-        if (!updates.has(key)) nextItems.push(item);
-      });
-      updates.forEach(value => nextItems.push(value));
-    } else {
-      const itemMap = new Map(st.forecast.items.map(item => [`${item.sku}__${item.month}`, { ...item }]));
-      updates.forEach((value, key) => {
-        const existing = itemMap.get(key) || { sku: value.sku, month: value.month };
-        const merged = {
-          ...existing,
-          alias: value.alias || existing.alias,
-          units: value.units ?? existing.units,
-          qty: value.units ?? existing.qty,
-          revenueEur: value.revenueEur ?? existing.revenueEur,
-          profitEur: value.profitEur ?? existing.profitEur,
-          source: 'ventoryone',
-          importedAt: value.importedAt,
-          updatedAt: now,
+    if (mode === "overwrite") {
+      updates.forEach(rec => {
+        if (!st.forecast.forecastImport[rec.sku]) st.forecast.forecastImport[rec.sku] = {};
+        st.forecast.forecastImport[rec.sku][rec.month] = {
+          units: rec.units,
+          revenueEur: rec.revenueEur,
+          profitEur: rec.profitEur,
         };
-        itemMap.set(key, merged);
       });
-      itemMap.forEach(item => nextItems.push(item));
+    } else {
+      updates.forEach(rec => {
+        if (!st.forecast.forecastImport[rec.sku]) st.forecast.forecastImport[rec.sku] = {};
+        if (!st.forecast.forecastImport[rec.sku][rec.month]) {
+          st.forecast.forecastImport[rec.sku][rec.month] = {
+            units: rec.units,
+            revenueEur: rec.revenueEur,
+            profitEur: rec.profitEur,
+          };
+        }
+      });
     }
 
-    st.forecast.items = nextItems;
+    st.forecast.lastImportAt = now;
+    st.forecast.importSource = "ventoryone";
     saveState(st);
-    showToast(`Import erfolgreich: ${updates.size} Werte (${skippedUnknown.size} unbekannte SKUs übersprungen).`);
+    showToast(`Import erfolgreich: ${updates.length} Werte (${skippedUnknown.size} unbekannte SKUs übersprungen).`);
     closeModal();
     render(host);
   });
@@ -571,47 +899,41 @@ function openVentoryCsvImportModal(host) {
     const skuSet = new Set(products.map(prod => String(prod.sku || "").trim()));
     const now = new Date().toISOString();
     const overwriting = overwriteToggle.checked;
-    const updates = new Map();
     const unknownSkus = new Set();
+    const updates = [];
 
     parsed.records.forEach(rec => {
       if (!skuSet.has(rec.sku)) {
         unknownSkus.add(rec.sku);
         return;
       }
-      const key = `${rec.sku}__${rec.month}`;
-      const product = products.find(prod => String(prod.sku || "").trim() === rec.sku);
-      updates.set(key, {
-        sku: rec.sku,
-        alias: product?.alias || "",
-        month: rec.month,
-        units: rec.units,
-        qty: rec.units,
-        revenueEur: rec.revenueEur,
-        profitEur: rec.profitEur,
-        source: "ventoryone",
-        importedAt: now,
-        updatedAt: now,
-      });
+      updates.push(rec);
     });
 
-    let nextItems = [];
     if (overwriting) {
-      st.forecast.items.forEach(item => {
-        const key = `${item.sku}__${item.month}`;
-        if (!updates.has(key)) nextItems.push(item);
+      updates.forEach(rec => {
+        if (!st.forecast.forecastImport[rec.sku]) st.forecast.forecastImport[rec.sku] = {};
+        st.forecast.forecastImport[rec.sku][rec.month] = {
+          units: rec.units,
+          revenueEur: rec.revenueEur,
+          profitEur: rec.profitEur,
+        };
       });
-      updates.forEach(value => nextItems.push(value));
     } else {
-      const existingMap = new Map(st.forecast.items.map(item => [`${item.sku}__${item.month}`, { ...item }]));
-      updates.forEach((value, key) => {
-        if (existingMap.has(key)) return;
-        existingMap.set(key, value);
+      updates.forEach(rec => {
+        if (!st.forecast.forecastImport[rec.sku]) st.forecast.forecastImport[rec.sku] = {};
+        if (!st.forecast.forecastImport[rec.sku][rec.month]) {
+          st.forecast.forecastImport[rec.sku][rec.month] = {
+            units: rec.units,
+            revenueEur: rec.revenueEur,
+            profitEur: rec.profitEur,
+          };
+        }
       });
-      nextItems = Array.from(existingMap.values());
     }
 
-    st.forecast.items = nextItems;
+    st.forecast.lastImportAt = now;
+    st.forecast.importSource = "ventoryone";
     saveState(st);
 
     const summary = {
@@ -623,7 +945,7 @@ function openVentoryCsvImportModal(host) {
       warnings: parsed.warnings || [],
     };
     renderSummary(summary);
-    showToast(`Import erfolgreich: ${updates.size} Datensätze.`);
+    showToast(`Import erfolgreich: ${updates.length} Datensätze.`);
     render(host);
   });
 }

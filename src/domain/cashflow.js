@@ -787,16 +787,27 @@ export function computeSeries(state) {
 
   const forecastEnabled = Boolean(s?.forecast?.settings?.useForecast);
   const forecastMap = {};
-  if (forecastEnabled && Array.isArray(s?.forecast?.items)) {
-    s.forecast.items.forEach(item => {
-      if (!item || !item.month || !item.sku) return;
-      const month = item.month;
-      if (!bucket[month]) return;
-      const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
-      const price = parseEuro(item.priceEur ?? item.price ?? 0);
-      const revenue = qty * price;
-      forecastMap[month] = (forecastMap[month] || 0) + revenue;
-    });
+  if (forecastEnabled) {
+    if (s?.forecast?.forecastImport && typeof s.forecast.forecastImport === "object") {
+      Object.values(s.forecast.forecastImport).forEach(monthMap => {
+        Object.entries(monthMap || {}).forEach(([month, entry]) => {
+          if (!month || !bucket[month]) return;
+          const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
+          if (!Number.isFinite(revenue)) return;
+          forecastMap[month] = (forecastMap[month] || 0) + revenue;
+        });
+      });
+    } else if (Array.isArray(s?.forecast?.items)) {
+      s.forecast.items.forEach(item => {
+        if (!item || !item.month || !item.sku) return;
+        const month = item.month;
+        if (!bucket[month]) return;
+        const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
+        const price = parseEuro(item.priceEur ?? item.price ?? 0);
+        const revenue = qty * price;
+        forecastMap[month] = (forecastMap[month] || 0) + revenue;
+      });
+    }
   }
 
   const payoutPctMap = {};

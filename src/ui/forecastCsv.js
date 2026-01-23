@@ -210,7 +210,7 @@ export function parseVentoryCsv(text) {
       records.push({
         sku,
         month: group.month,
-        units: units == null ? null : Math.round(units),
+        units,
         revenueEur,
         profitEur,
       });

@@ -958,12 +958,27 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .vat-row .mono {font-variant-numeric:tabular-nums;}
 
 /* === Forecast Upload === */
-.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:8px; overflow-x:scroll; scrollbar-gutter:stable both-edges;}
+.forecast-toolbar{display:flex; flex-direction:column; gap:10px; margin-top:10px;}
+.forecast-toolbar-row{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;}
+.forecast-toolbar .field{display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted);}
+.forecast-toolbar input[type="search"]{min-width:220px; height:36px;}
+.forecast-toolbar select{height:36px; min-width:160px;}
+.forecast-table-wrap {margin-top:12px; border:1px solid #e0e6ed; border-radius:10px; overflow-x:auto; background:#fff;}
 .forecast-table-wrap::-webkit-scrollbar{height:10px}
 .forecast-table-wrap::-webkit-scrollbar-track{background:rgba(15,27,45,0.06); border-radius:999px}
 .forecast-table-wrap::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.25); border-radius:999px}
 .forecast-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(15,27,45,0.35)}
-.forecast-table {min-width:100%;}
-.forecast-table .table-row {display:grid; grid-template-columns:140px 180px repeat(auto-fit, minmax(80px, 1fr)); gap:4px; align-items:center;}
-.forecast-table .cell {padding:6px 8px; font-size:13px; white-space:nowrap;}
-.forecast-table .cell input {width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;}
+.forecast-tree-table{min-width:960px; width:100%; border-collapse:collapse; font-size:12px;}
+.forecast-tree-table th,.forecast-tree-table td{padding:8px 10px; border-bottom:1px solid rgba(15,27,45,0.08); white-space:nowrap;}
+.forecast-tree-table thead th{background:#f8fafc; color:var(--muted); font-weight:600; position:sticky; top:0; z-index:4;}
+.forecast-tree-table tbody tr:hover td{background:rgba(15,27,45,0.03);}
+.forecast-sticky{position:sticky; left:0; background:#fff; z-index:3;}
+.forecast-category-row th{background:rgba(15,27,45,0.04); font-weight:600;}
+.forecast-category-row td{background:rgba(15,27,45,0.03);}
+.forecast-product-cell{display:flex; flex-direction:column; gap:2px;}
+.forecast-alias{font-weight:600;}
+.forecast-sku{font-size:11px;}
+.forecast-cell{text-align:center; position:relative;}
+.forecast-cell.forecast-manual{border-bottom:1px solid rgba(47,143,107,0.4);}
+.forecast-manual-dot{position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:999px; background:rgba(47,143,107,0.7);}
+.forecast-input{width:100%; min-width:70px; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12px; text-align:right;}

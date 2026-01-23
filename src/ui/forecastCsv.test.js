@@ -14,6 +14,7 @@ test("parseVentoryCsv reads month groups and skips Gesamt rows", () => {
   assert.equal(result.error, undefined);
   assert.equal(result.records.length, 2);
   assert.equal(result.ignoredTotal, 1);
+  assert.equal(result.records[0].units, 218.67);
   const months = new Set(result.records.map(rec => rec.month));
   assert.deepEqual(Array.from(months).sort(), ["2026-01", "2026-03"]);
 });

@@ -331,17 +331,28 @@ function computePlannedPayoutByMonth(state, months) {
 
   const revenueByMonth = new Map();
   if (forecastEnabled && Array.isArray(state?.forecast?.items)) {
-    state.forecast.items.forEach(item => {
-      if (!item?.month) return;
-      const revenue = parseEuro(item.revenueEur ?? item.revenue ?? null);
-      if (Number.isFinite(revenue) && revenue !== 0) {
-        revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + revenue);
-        return;
-      }
-      const qty = Number(item.qty ?? item.units ?? item.quantity ?? 0) || 0;
-      const price = parseEuro(item.priceEur ?? item.price ?? 0);
-      revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + qty * price);
-    });
+    if (state?.forecast?.forecastImport && typeof state.forecast.forecastImport === "object") {
+      Object.values(state.forecast.forecastImport).forEach(monthMap => {
+        Object.entries(monthMap || {}).forEach(([month, entry]) => {
+          if (!month || !months.includes(month)) return;
+          const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
+          if (!Number.isFinite(revenue)) return;
+          revenueByMonth.set(month, (revenueByMonth.get(month) || 0) + revenue);
+        });
+      });
+    } else {
+      state.forecast.items.forEach(item => {
+        if (!item?.month) return;
+        const revenue = parseEuro(item.revenueEur ?? item.revenue ?? null);
+        if (Number.isFinite(revenue) && revenue !== 0) {
+          revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + revenue);
+          return;
+        }
+        const qty = Number(item.qty ?? item.units ?? item.quantity ?? 0) || 0;
+        const price = parseEuro(item.priceEur ?? item.price ?? 0);
+        revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + qty * price);
+      });
+    }
   } else {
     (state?.incomings || []).forEach(row => {
       if (!row?.month) return;
