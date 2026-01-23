@@ -2106,7 +2106,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       ? `Δ ${fmtEURPlain(payment.paidEurActual - payment.plannedEur)} EUR`
       : null;
     const transactionLabel = payment.transactionId ? formatTransactionLabel(payment.transactionId) : "—";
-    const row = el("tr", {}, [
+    const row = el("tr", { dataset: { paymentId: payment.id, paymentType: payment.typeLabel, paymentEventType: payment.eventType || "" } }, [
       el("td", {}, [payment.typeLabel]),
       el("td", {}, [fmtDateDE(payment.dueDate)]),
       el("td", {}, [planned]),
@@ -3639,9 +3639,50 @@ export function renderOrderModule(root, config) {
   };
   window.addEventListener("keydown", shortcutHandler);
 
-    renderListView(state[config.entityKey]);
+  renderListView(state[config.entityKey]);
   refreshQuickfillControls();
   loadForm(defaultRecord(config, getSettings()));
+
+  function focusPaymentRow(focus) {
+    if (!focus || !poMode) return;
+    const targetKey = String(focus).split(":")[1] || "";
+    if (!targetKey) return;
+    const table = root.querySelector(".po-payments-table");
+    if (!table) return;
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+    rows.forEach(row => row.classList.remove("is-focus"));
+    const needle = targetKey.toLowerCase();
+    const match = rows.find(row => {
+      const type = String(row.dataset.paymentType || "").toLowerCase();
+      const eventType = String(row.dataset.paymentEventType || "").toLowerCase();
+      return type.includes(needle) || eventType.includes(needle);
+    });
+    if (match) {
+      match.classList.add("is-focus");
+      match.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }
+
+  function openFromRoute() {
+    const query = window.__routeQuery || {};
+    if (!query.open) return;
+    const openValue = String(query.open || "").trim().toLowerCase();
+    if (!openValue) return;
+    const record = getAllRecords().find(item => {
+      if (!item) return false;
+      const idMatch = String(item.id || "").trim().toLowerCase() === openValue;
+      const numberMatch = String(item[config.numberField] || "").trim().toLowerCase() === openValue;
+      return idMatch || numberMatch;
+    });
+    if (!record) return;
+    onEdit(record);
+    if (query.focus) {
+      setTimeout(() => focusPaymentRow(query.focus), 150);
+    }
+    window.__routeQuery = {};
+  }
+
+  openFromRoute();
 
   if (root._orderStateListener) {
     window.removeEventListener("state:changed", root._orderStateListener);

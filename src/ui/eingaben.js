@@ -148,7 +148,7 @@ export async function render(root) {
     }
     incomeRows.innerHTML = state.incomings
       .map((row, idx) => `
-        <tr data-idx="${idx}">
+        <tr data-idx="${idx}" data-month="${row.month || ""}">
           <td><input type="month" data-field="month" value="${row.month || ""}"></td>
           <td><input type="text" data-field="revenueEur" inputmode="decimal" value="${fmtCurrency(row.revenueEur)}"></td>
           <td><input type="text" data-field="payoutPct" inputmode="decimal" value="${fmtPercent(row.payoutPct)}"></td>
@@ -250,6 +250,19 @@ export async function render(root) {
   renderFixSummary();
   renderDividends();
   renderActuals();
+
+  function focusFromRoute() {
+    const query = window.__routeQuery || {};
+    if (!query.month) return;
+    const month = query.month;
+    const row = incomeRows.querySelector(`tr[data-month="${month}"]`);
+    if (!row) return;
+    row.classList.add("row-focus");
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.__routeQuery = {};
+  }
+
+  focusFromRoute();
 
   $("#opening", root)?.addEventListener("blur", (ev) => {
     const val = fmtCurrency(ev.target.value);

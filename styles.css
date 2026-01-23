@@ -168,8 +168,12 @@ td.num, th.num{text-align:right}
 .dashboard-controls .dashboard-toggle{display:flex; gap:8px; flex-wrap:wrap;}
 .dashboard-controls .dashboard-checkbox{align-items:center; gap:6px; font-size:12px; color:var(--muted);}
 .dashboard-controls .dashboard-checkbox input{width:16px; height:16px;}
+.dashboard-controls .dashboard-checkbox input[type="number"]{width:72px; height:32px; font-size:12px;}
 .dashboard-range{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);}
 .dashboard-range select{height:34px; font-size:13px; min-width:160px;}
+.dashboard-legend{display:flex; align-items:center; gap:12px; font-size:12px; margin-bottom:8px;}
+.dashboard-legend .legend-item{display:inline-flex; align-items:center; gap:4px;}
+.dashboard-legend .legend-paid{display:inline-block; width:12px; height:8px; border-radius:6px; background:rgba(47,143,107,0.18); border:1px solid rgba(47,143,107,0.35);}
 .dashboard-table-wrap{border:1px solid var(--table-border); border-radius:12px; overflow-x:auto; background:#fff;}
 .dashboard-tree-table{min-width:960px; font-size:var(--table-font-size); border-collapse:collapse;}
 .dashboard-tree-table th,.dashboard-tree-table td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bottom:1px solid var(--table-border); white-space:nowrap;}
@@ -180,6 +184,14 @@ td.num, th.num{text-align:right}
 .dashboard-tree-table td.tree-cell.tree-summary{font-weight:700;}
 .dashboard-tree-table td.tree-summary{font-weight:700;}
 .dashboard-tree-table tbody tr:hover td{background:rgba(15,27,45,0.03);}
+.dashboard-tree-table tr.row-section td{background:rgba(15,27,45,0.04); font-weight:700; border-top:1px solid rgba(15,27,45,0.1);}
+.dashboard-tree-table tr.row-subtotal td{font-weight:600;}
+.dashboard-tree-table tr.row-summary td{font-weight:700;}
+.dashboard-tree-table tr.row-detail td{color:var(--muted);}
+.dashboard-tree-table tr.row-detail:nth-of-type(even) td{background:rgba(15,27,45,0.015);}
+.dashboard-tree-table tr.section-inflows td.tree-cell{border-left:3px solid rgba(47,143,107,0.35);}
+.dashboard-tree-table tr.section-outflows td.tree-cell{border-left:3px solid rgba(15,27,45,0.2);}
+.dashboard-tree-table tr.section-summary td.tree-cell{border-left:3px solid rgba(47,143,107,0.15);}
 .tree-cell{display:flex; align-items:center; gap:6px;}
 .tree-toggle{border:none; background:none; cursor:pointer; font-size:12px; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center;}
 .tree-toggle:focus{outline:none; box-shadow:0 0 0 3px var(--ring); border-radius:6px;}
@@ -192,6 +204,11 @@ td.num, th.num{text-align:right}
 .cell-warning{margin-right:4px; color:var(--warn); font-size:12px;}
 .cell-empty{color:var(--muted);}
 .cell-balance-warning{margin-right:4px; color:rgba(196,140,0,0.75); font-size:12px;}
+.cell-paid-current{background:rgba(47,143,107,0.12);}
+.cell-link{cursor:pointer; position:relative;}
+.cell-link .cell-link-icon{opacity:0; margin-left:4px; font-size:11px; color:var(--muted);}
+.cell-link:hover .cell-link-icon{opacity:1;}
+.cell-link:focus-within .cell-link-icon{opacity:1;}
 .coverage-indicator{display:inline-block; width:8px; height:8px; border-radius:999px; margin-right:6px; background:rgba(120,120,120,0.4); vertical-align:middle;}
 .coverage-green{background:rgba(47,143,107,0.65);}
 .coverage-yellow{background:rgba(196,140,0,0.6);}
@@ -359,6 +376,9 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-payments-table th{font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); text-align:left; padding:8px 6px;}
 .po-payments-table td{padding:10px 6px; border-bottom:1px solid rgba(15,27,45,0.08); vertical-align:top;}
 .po-payments-table td .muted{font-size:11px;}
+.po-payments-table tr.is-focus td{background:rgba(59,194,167,0.12);}
+.row-focus{background:rgba(59,194,167,0.08);}
+.row-focus td{background:rgba(59,194,167,0.12);}
 .po-invoice-link{display:flex; flex-direction:column; gap:6px; padding:10px 12px; border:1px solid rgba(15,27,45,0.1); border-radius:12px; background:#f8fafc;}
 .po-invoice-link input{width:100%; padding:8px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; background:#fff;}
 .po-invoice-actions{display:flex; gap:8px; flex-wrap:wrap;}

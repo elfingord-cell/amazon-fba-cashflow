@@ -3,12 +3,23 @@ import { parseEuro, fmtEUR, expandFixcostInstances } from "../domain/cashflow.js
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
+const MATURITY_STORAGE_KEY = "dashboard_maturity_v1";
+
+const storedMaturity = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(MATURITY_STORAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+})();
+
 const dashboardState = {
-  mode: "ist",
   expanded: new Set(["inflows", "outflows", "po-payments", "fo-payments"]),
   range: "next12",
   hideEmptyMonths: true,
   limitBalanceToGreen: false,
+  maturityHorizon: Number(storedMaturity.horizonMonths ?? 6) || 6,
+  expectPoFo: storedMaturity.expectPoFo !== false,
 };
 
 const PO_CONFIG = {
@@ -16,18 +27,14 @@ const PO_CONFIG = {
   numberField: "poNo",
 };
 
-const MODE_OPTIONS = [
-  { key: "ist", label: "Ist" },
-  { key: "plan", label: "Plan" },
-  { key: "both", label: "Ist+Plan" },
-];
-
 const COVERAGE_LABELS = {
   green: "Reifegrad hoch: Einzahlungen + Ausgaben vorhanden.",
   yellow: "Reifegrad mittel: Einzahlungen + Fixkosten, aber noch keine PO/FO geplant.",
   red: "Reifegrad niedrig: Einzahlungen vorhanden, aber noch keine Ausgaben erfasst → Kontostand wahrscheinlich zu optimistisch.",
   gray: "Noch keine Daten für diesen Monat.",
 };
+
+const MAX_DETAIL_ROWS = 50;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -52,6 +59,11 @@ function formatCellValue(value) {
     }).format(num),
     isEmpty: false,
   };
+}
+
+function formatValueOnly(value) {
+  const formatted = formatCellValue(value);
+  return formatted.text;
 }
 
 function monthIndex(ym) {
@@ -103,6 +115,12 @@ function applyRange(months, range) {
   const count = Number(String(range).replace("next", "")) || 0;
   if (!Number.isFinite(count) || count <= 0) return months.slice();
   return months.slice(0, count);
+}
+
+function getDisplayLabel(plannedTotal, actualTotal) {
+  if (actualTotal > 0 && plannedTotal > actualTotal) return "Ist+Plan gemischt";
+  if (actualTotal > 0) return "Ist (bezahlt)";
+  return "Plan";
 }
 
 function toMonthKey(dateInput) {
@@ -186,6 +204,8 @@ function buildPoData(state) {
           plannedEur: Number(row.plannedEur || 0),
           actualEur,
           paid: row.status === "paid",
+          paidDate: row.paidDate || null,
+          transactionId: row.transactionId || null,
           hasInvoiceLink: Boolean(tx?.driveInvoiceLink),
           invoiceLink: tx?.driveInvoiceLink || null,
           paidBy: row.paidBy || null,
@@ -239,8 +259,11 @@ function buildFoData(state) {
     });
 }
 
-function sumPaymentEvents(events, month, mode) {
-  let total = 0;
+function sumPaymentEvents(events, month, currentMonth) {
+  let displayTotal = 0;
+  let plannedTotal = 0;
+  let actualTotal = 0;
+  let paidThisMonthCount = 0;
   const warnings = [];
   events.forEach(evt => {
     if (evt.month !== month) return;
@@ -252,44 +275,78 @@ function sumPaymentEvents(events, month, mode) {
     const missingInvoice = paid && (!hasInvoice || actual <= 0);
 
     if (missingInvoice) {
-      warnings.push("Paid but missing invoice link");
+      const txLabel = evt.transactionId ? `Transfer ${evt.transactionId}` : "Transfer —";
+      warnings.push(`${evt.label || "Zahlung"} · ${txLabel} · Invoice-Link fehlt`);
     }
 
-    if (mode === "ist") {
-      if (actualValid) total += actual;
-      return;
+    plannedTotal += planned;
+    if (actualValid) {
+      actualTotal += actual;
+      displayTotal += actual;
+      if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
+        paidThisMonthCount += 1;
+      }
+    } else {
+      displayTotal += planned;
     }
-    if (mode === "plan") {
-      total += planned;
-      return;
-    }
-    if (actualValid) total += actual;
-    else total += planned;
   });
-  return { value: total, warnings };
+  return {
+    value: displayTotal,
+    plannedTotal,
+    actualTotal,
+    displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+    warnings,
+    paidThisMonthCount,
+  };
 }
 
-function sumGenericEvents(events, month, mode) {
-  let total = 0;
+function sumGenericEvents(events, month, currentMonth) {
+  let displayTotal = 0;
+  let plannedTotal = 0;
+  let actualTotal = 0;
+  let paidThisMonthCount = 0;
   events.forEach(evt => {
     if (evt.month !== month) return;
     const planned = Number(evt.plannedEur || 0);
     const actual = Number(evt.actualEur || 0);
     const paid = evt.paid === true;
-    if (mode === "ist") {
-      if (paid) total += actual;
-      return;
+    plannedTotal += planned;
+    if (paid && actual > 0) {
+      actualTotal += actual;
+      displayTotal += actual;
+      if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
+        paidThisMonthCount += 1;
+      }
+    } else {
+      displayTotal += planned;
     }
-    if (mode === "plan") {
-      total += planned;
-      return;
-    }
-    total += paid ? actual : planned;
   });
-  return { value: total, warnings: [] };
+  return {
+    value: displayTotal,
+    plannedTotal,
+    actualTotal,
+    displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+    warnings: [],
+    paidThisMonthCount,
+  };
 }
 
-function buildRow({ id, label, level, children = [], events = [], tooltip = "", emptyHint = "", isSummary = false, alwaysVisible = false, sumMode = "payments" }) {
+function buildRow({
+  id,
+  label,
+  level,
+  children = [],
+  events = [],
+  tooltip = "",
+  emptyHint = "",
+  isSummary = false,
+  alwaysVisible = false,
+  sumMode = "payments",
+  rowType = "detail",
+  section = null,
+  sourceLabel = null,
+  nav = null,
+}) {
   return {
     id,
     label,
@@ -301,6 +358,10 @@ function buildRow({ id, label, level, children = [], events = [], tooltip = "", 
     isSummary,
     alwaysVisible,
     sumMode,
+    rowType,
+    section,
+    sourceLabel,
+    nav,
     values: {},
   };
 }
@@ -327,29 +388,63 @@ function pickPresence(entry) {
   return entry.actual ? true : entry.plan;
 }
 
-function computeCoverage(months, { cashInEvents, fixcostEvents, poEvents, foEvents }) {
+function computeCoverage(months, { cashInEvents, fixcostEvents, poEvents, foEvents, cashInExplicitMonths, horizonMonths, expectPoFo, currentMonth }) {
   const cashInMap = buildPresenceMap(cashInEvents, { requireInvoice: false });
   const fixcostMap = buildPresenceMap(fixcostEvents, { requireInvoice: false });
   const poMap = buildPresenceMap(poEvents, { requireInvoice: true });
   const foMap = buildPresenceMap(foEvents, { requireInvoice: false });
+  const warningMap = new Map();
+  poEvents.forEach(evt => {
+    if (!evt?.month) return;
+    if (evt.paid && !evt.hasInvoiceLink) {
+      const list = warningMap.get(evt.month) || [];
+      const txLabel = evt.transactionId ? `Transfer ${evt.transactionId}` : "Transfer —";
+      list.push(`${evt.label || "Zahlung"} · ${txLabel} · Invoice-Link fehlt`);
+      warningMap.set(evt.month, list);
+    }
+  });
   const coverage = new Map();
+  const details = new Map();
+  const currentIndex = monthIndex(currentMonth);
   months.forEach(month => {
+    const monthOffset = currentIndex != null ? (monthIndex(month) - currentIndex) : 0;
+    if (Number.isFinite(monthOffset) && monthOffset > horizonMonths) {
+      coverage.set(month, "gray");
+      details.set(month, { status: "gray", reason: "Zukunftsmonat außerhalb des Reifegrad-Horizonts.", warnings: [] });
+      return;
+    }
     const cashInPresent = pickPresence(cashInMap.get(month));
+    const cashInExplicit = cashInExplicitMonths?.has(month);
     const fixedCostsPresent = pickPresence(fixcostMap.get(month));
     const poOutPresent = pickPresence(poMap.get(month));
     const foOutPresent = pickPresence(foMap.get(month));
     const anyOutPresent = fixedCostsPresent || poOutPresent || foOutPresent;
+    const warnings = warningMap.get(month) || [];
+    const missing = [];
+    if (!cashInPresent && !cashInExplicit) missing.push("Keine Amazon-Auszahlungen");
+    if (!fixedCostsPresent) missing.push("Keine Fixkosten");
+    if (expectPoFo && !poOutPresent && !foOutPresent) missing.push("Keine PO/FO-Zahlungen geplant");
     let status = "gray";
-    if (cashInPresent && (poOutPresent || foOutPresent || fixedCostsPresent)) {
-      status = "green";
-    } else if (cashInPresent && fixedCostsPresent && !poOutPresent && !foOutPresent) {
-      status = "yellow";
-    } else if (cashInPresent && !anyOutPresent) {
+    let reason = "Noch keine Daten für diesen Monat.";
+
+    if (warnings.length) {
       status = "red";
+      reason = "Bezahlte Zahlungen ohne Invoice-Link.";
+    } else if (anyOutPresent && !cashInPresent && !cashInExplicit) {
+      status = "red";
+      reason = "Auszahlungen vorhanden, aber keine Amazon-Auszahlungen erfasst.";
+    } else if (!missing.length && (cashInPresent || cashInExplicit) && anyOutPresent) {
+      status = "green";
+      reason = "Einzahlungen und Ausgaben vorhanden.";
+    } else if (cashInPresent || cashInExplicit) {
+      status = "yellow";
+      reason = missing.length ? missing.join(" · ") : "Unvollständige Planung.";
     }
+
     coverage.set(month, status);
+    details.set(month, { status, reason, warnings });
   });
-  return coverage;
+  return { coverage, details };
 }
 
 function collectMonthEvents(row, month) {
@@ -368,20 +463,30 @@ function monthHasValues(rows, month) {
   });
 }
 
-function applyRowValues(row, months, mode) {
+function applyRowValues(row, months, currentMonth) {
   if (row.events.length) {
     months.forEach(month => {
       const result = row.sumMode === "generic"
-        ? sumGenericEvents(row.events, month, mode)
-        : sumPaymentEvents(row.events, month, mode);
+        ? sumGenericEvents(row.events, month, currentMonth)
+        : sumPaymentEvents(row.events, month, currentMonth);
       row.values[month] = result;
     });
   } else if (row.children.length) {
-    row.children.forEach(child => applyRowValues(child, months, mode));
+    row.children.forEach(child => applyRowValues(child, months, currentMonth));
     months.forEach(month => {
       const sum = row.children.reduce((acc, child) => acc + (child.values[month]?.value || 0), 0);
+      const plannedTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.plannedTotal || 0), 0);
+      const actualTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.actualTotal || 0), 0);
       const warnings = row.children.flatMap(child => child.values[month]?.warnings || []);
-      row.values[month] = { value: sum, warnings };
+      const paidThisMonthCount = row.children.reduce((acc, child) => acc + (child.values[month]?.paidThisMonthCount || 0), 0);
+      row.values[month] = {
+        value: sum,
+        plannedTotal,
+        actualTotal,
+        displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+        warnings,
+        paidThisMonthCount,
+      };
     });
   }
 }
@@ -408,19 +513,35 @@ function flattenRows(rows, expandedSet) {
     result.push(row);
     if (!row.children.length) return;
     if (!expandedSet.has(row.id)) return;
+    if (row.children.length > MAX_DETAIL_ROWS && row.level >= 2) {
+      row.children.slice(0, MAX_DETAIL_ROWS).forEach(child => traverse(child));
+      const remaining = row.children.length - MAX_DETAIL_ROWS;
+      result.push(buildRow({
+        id: `${row.id}-more`,
+        label: `+ ${remaining} weitere …`,
+        level: row.level + 1,
+        rowType: "detail",
+        section: row.section,
+        sourceLabel: row.sourceLabel,
+      }));
+      return;
+    }
     row.children.forEach(child => traverse(child));
   }
   rows.forEach(traverse);
   return result;
 }
 
-function buildDashboardRows(state, months, mode, options = {}) {
+function buildDashboardRows(state, months, options = {}) {
   const plannedPayoutMap = computePlannedPayoutByMonth(state, months);
   const actualPayoutMap = new Map();
   (state?.actuals || []).forEach(row => {
     if (!row?.month) return;
     actualPayoutMap.set(row.month, parseEuro(row.payoutEur));
   });
+  const cashInExplicitMonths = new Set(
+    (state?.incomings || []).map(row => row?.month).filter(Boolean),
+  );
 
   const amazonEvents = months.map(month => ({
     id: `amazon-${month}`,
@@ -470,6 +591,8 @@ function buildDashboardRows(state, months, mode, options = {}) {
     plannedEur: inst.amount,
     actualEur: inst.amount,
     paid: inst.paid === true,
+    fixedCostId: inst.fixedCostId,
+    paidDate: inst.paid ? inst.dueDateIso : null,
   }));
 
   const vatPreview = computeVatPreview(state || {});
@@ -485,11 +608,15 @@ function buildDashboardRows(state, months, mode, options = {}) {
   const foData = buildFoData(state);
   const poEvents = poData.flatMap(po => po.events);
   const foEvents = foData.flatMap(fo => fo.events);
-  const coverage = computeCoverage(months, {
+  const { coverage, details: coverageDetails } = computeCoverage(months, {
     cashInEvents: amazonEvents,
     fixcostEvents,
     poEvents,
     foEvents,
+    cashInExplicitMonths,
+    horizonMonths: options.maturityHorizon,
+    expectPoFo: options.expectPoFo,
+    currentMonth: options.currentMonth,
   });
 
   const amazonRow = buildRow({
@@ -498,6 +625,10 @@ function buildDashboardRows(state, months, mode, options = {}) {
     level: 1,
     events: amazonEvents,
     sumMode: "generic",
+    rowType: "subtotal",
+    section: "inflows",
+    sourceLabel: "Eingaben",
+    nav: { route: "#eingaben" },
   });
   const extraInRow = buildRow({
     id: "other-in",
@@ -505,6 +636,9 @@ function buildDashboardRows(state, months, mode, options = {}) {
     level: 1,
     events: extraInEvents,
     sumMode: "generic",
+    rowType: "detail",
+    section: "inflows",
+    sourceLabel: "Eingaben",
   });
 
   const inflowRow = buildRow({
@@ -512,6 +646,9 @@ function buildDashboardRows(state, months, mode, options = {}) {
     label: "Einzahlungen",
     level: 0,
     children: [amazonRow, extraInRow],
+    rowType: "section",
+    section: "inflows",
+    sourceLabel: "Einzahlungen",
   });
 
   const poChildren = poData.map(po => {
@@ -544,8 +681,16 @@ function buildDashboardRows(state, months, mode, options = {}) {
         level: 3,
         events: [evt],
         tooltip: eventTooltip,
-      });
+        rowType: "detail",
+        section: "outflows",
+        sourceLabel: "PO Zahlung",
+      nav: {
+        route: "#po",
+        open: po.record?.id || po.record?.poNo || "",
+        focus: evt.typeLabel ? `payment:${evt.typeLabel}` : null,
+      },
     });
+  });
 
     return buildRow({
       id: `po-${po.record?.id || poLabel}`,
@@ -554,6 +699,10 @@ function buildDashboardRows(state, months, mode, options = {}) {
       children: paymentRows,
       events: [],
       tooltip: tooltipParts.join(" · "),
+      rowType: "detail",
+      section: "outflows",
+      sourceLabel: "PO",
+      nav: { route: "#po", open: po.record?.id || po.record?.poNo || "" },
     });
   });
 
@@ -563,10 +712,20 @@ function buildDashboardRows(state, months, mode, options = {}) {
     level: 1,
     children: poChildren,
     alwaysVisible: true,
+    rowType: "subtotal",
+    section: "outflows",
+    sourceLabel: "PO Zahlungen",
   });
 
   const foChildren = foData.map(fo => {
     const label = fo.record?.foNo ? `FO ${fo.record.foNo}` : "FO";
+    const foTooltip = [
+      `FO: ${fo.record?.foNo || fo.record?.id || "—"}`,
+      `SKU: ${fo.record?.sku || "—"}`,
+      `Units: ${fo.record?.units || 0}`,
+      `ETA: ${fo.record?.etaDate || fo.record?.targetDeliveryDate || "—"}`,
+      `Status: ${fo.record?.status || "—"}`,
+    ].join(" · ");
     const events = fo.events.map(evt => {
       const tooltip = [
         `Typ: ${evt.typeLabel || "Payment"}`,
@@ -582,6 +741,10 @@ function buildDashboardRows(state, months, mode, options = {}) {
         level: 3,
         events: [evt],
         tooltip,
+        rowType: "detail",
+        section: "outflows",
+        sourceLabel: "FO Zahlung",
+        nav: { route: "#fo", open: fo.record?.id || fo.record?.foNo || "" },
       });
     });
     return buildRow({
@@ -590,6 +753,11 @@ function buildDashboardRows(state, months, mode, options = {}) {
       level: 2,
       children: events,
       events: [],
+      tooltip: foTooltip,
+      rowType: "detail",
+      section: "outflows",
+      sourceLabel: "FO",
+      nav: { route: "#fo", open: fo.record?.id || fo.record?.foNo || "" },
     });
   });
 
@@ -599,6 +767,9 @@ function buildDashboardRows(state, months, mode, options = {}) {
     level: 1,
     children: foChildren,
     alwaysVisible: true,
+    rowType: "subtotal",
+    section: "outflows",
+    sourceLabel: "FO Zahlungen",
   });
 
   const fixcostRow = buildRow({
@@ -609,6 +780,10 @@ function buildDashboardRows(state, months, mode, options = {}) {
     sumMode: "generic",
     alwaysVisible: true,
     emptyHint: "Keine Fixkosten vorhanden.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Fixkosten",
+    nav: { route: "#fixkosten" },
   });
 
   const taxRow = buildRow({
@@ -619,6 +794,9 @@ function buildDashboardRows(state, months, mode, options = {}) {
     sumMode: "generic",
     alwaysVisible: true,
     emptyHint: "Keine Steuerdaten hinterlegt.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Steuern",
   });
 
   const dividendRow = buildRow({
@@ -629,6 +807,9 @@ function buildDashboardRows(state, months, mode, options = {}) {
     sumMode: "generic",
     alwaysVisible: true,
     emptyHint: "Keine Dividenden erfasst.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Dividende",
   });
 
   const otherOutRow = buildRow({
@@ -639,6 +820,9 @@ function buildDashboardRows(state, months, mode, options = {}) {
     sumMode: "generic",
     alwaysVisible: true,
     emptyHint: "Keine weiteren Auszahlungen vorhanden.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Auszahlungen",
   });
 
   const outflowRow = buildRow({
@@ -646,10 +830,13 @@ function buildDashboardRows(state, months, mode, options = {}) {
     label: "Auszahlungen",
     level: 0,
     children: [poRow, foRow, fixcostRow, taxRow, dividendRow, otherOutRow],
+    rowType: "section",
+    section: "outflows",
+    sourceLabel: "Auszahlungen",
   });
 
-  applyRowValues(inflowRow, months, mode);
-  applyRowValues(outflowRow, months, mode);
+  applyRowValues(inflowRow, months, options.currentMonth);
+  applyRowValues(outflowRow, months, options.currentMonth);
 
   const netRow = buildRow({
     id: "net-cashflow",
@@ -657,11 +844,23 @@ function buildDashboardRows(state, months, mode, options = {}) {
     level: 0,
     isSummary: true,
     alwaysVisible: true,
+    rowType: "summary",
+    section: "summary",
+    sourceLabel: "Netto Cashflow",
   });
   months.forEach(month => {
     const inflow = inflowRow.values[month]?.value || 0;
     const outflow = outflowRow.values[month]?.value || 0;
-    netRow.values[month] = { value: inflow - outflow, warnings: [] };
+    const plannedTotal = (inflowRow.values[month]?.plannedTotal || 0) - (outflowRow.values[month]?.plannedTotal || 0);
+    const actualTotal = (inflowRow.values[month]?.actualTotal || 0) - (outflowRow.values[month]?.actualTotal || 0);
+    netRow.values[month] = {
+      value: inflow - outflow,
+      plannedTotal,
+      actualTotal,
+      displayLabel: getDisplayLabel(Math.abs(plannedTotal), Math.abs(actualTotal)),
+      warnings: [],
+      paidThisMonthCount: 0,
+    };
   });
 
   const openingRaw = state?.openingEur ?? state?.settings?.openingBalance ?? null;
@@ -675,24 +874,34 @@ function buildDashboardRows(state, months, mode, options = {}) {
       level: 0,
       isSummary: true,
       alwaysVisible: true,
+      rowType: "summary",
+      section: "summary",
+      sourceLabel: "Kontostand",
     });
     const lastGreenIndex = options.limitBalanceToGreen
       ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
       : months.length - 1;
     months.forEach((month, idx) => {
       if (options.limitBalanceToGreen && idx > lastGreenIndex) {
-        balanceRow.values[month] = { value: null, warnings: [] };
+        balanceRow.values[month] = { value: null, plannedTotal: 0, actualTotal: 0, displayLabel: "Plan", warnings: [], paidThisMonthCount: 0 };
         return;
       }
       running += netRow.values[month]?.value || 0;
-      balanceRow.values[month] = { value: running, warnings: [] };
+      balanceRow.values[month] = {
+        value: running,
+        plannedTotal: running,
+        actualTotal: running,
+        displayLabel: "Ist/Plan",
+        warnings: [],
+        paidThisMonthCount: 0,
+      };
     });
   }
 
   const summaryRows = [netRow];
   if (balanceRow) summaryRows.push(balanceRow);
 
-  return { inflowRow, outflowRow, summaryRows, coverage };
+  return { inflowRow, outflowRow, summaryRows, coverage, coverageDetails };
 }
 
 function buildDashboardHTML(state) {
@@ -710,7 +919,12 @@ function buildDashboardHTML(state) {
     ? applyRange(months, dashboardState.range)
     : months.slice();
 
-  const rowsBoth = buildDashboardRows(state, baseMonths, "both", { limitBalanceToGreen: dashboardState.limitBalanceToGreen });
+  const rowsBoth = buildDashboardRows(state, baseMonths, {
+    limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+    maturityHorizon: dashboardState.maturityHorizon,
+    expectPoFo: dashboardState.expectPoFo,
+    currentMonth,
+  });
   const filteredInflow = filterRows(rowsBoth.inflowRow, baseMonths);
   const filteredOutflow = filterRows(rowsBoth.outflowRow, baseMonths);
   const topRowsAll = [filteredInflow, filteredOutflow, ...rowsBoth.summaryRows].filter(Boolean);
@@ -718,8 +932,11 @@ function buildDashboardHTML(state) {
     ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
     : baseMonths.slice();
 
-  const { inflowRow, outflowRow, summaryRows, coverage } = buildDashboardRows(state, nonEmptyMonths, dashboardState.mode, {
+  const { inflowRow, outflowRow, summaryRows, coverage, coverageDetails } = buildDashboardRows(state, nonEmptyMonths, {
     limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+    maturityHorizon: dashboardState.maturityHorizon,
+    expectPoFo: dashboardState.expectPoFo,
+    currentMonth,
   });
   const filteredVisibleInflow = filterRows(inflowRow, nonEmptyMonths);
   const filteredVisibleOutflow = filterRows(outflowRow, nonEmptyMonths);
@@ -741,7 +958,13 @@ function buildDashboardHTML(state) {
   const headerCells = nonEmptyMonths
     .map(month => {
       const status = coverage.get(month) || "gray";
-      const tooltip = COVERAGE_LABELS[status] || COVERAGE_LABELS.gray;
+      const detail = coverageDetails.get(month);
+      const tooltip = [
+        detail?.reason || COVERAGE_LABELS[status] || COVERAGE_LABELS.gray,
+        ...(detail?.warnings || []),
+      ]
+        .filter(Boolean)
+        .join(" · ");
       return `
         <th scope="col">
           <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
@@ -760,6 +983,15 @@ function buildDashboardHTML(state) {
         ? `<button type="button" class="tree-toggle" data-row-id="${escapeHtml(row.id)}" aria-expanded="${isExpanded}">${isExpanded ? "▼" : "▶"}</button>`
         : `<span class="tree-spacer" aria-hidden="true"></span>`;
       const labelTitle = row.tooltip || row.emptyHint || "";
+      const rowClasses = [
+        row.rowType === "section" ? "row-section" : "",
+        row.rowType === "subtotal" ? "row-subtotal" : "",
+        row.rowType === "summary" ? "row-summary" : "",
+        row.rowType === "detail" ? "row-detail" : "",
+        row.section ? `section-${row.section}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       const labelCell = `
         <td class="tree-cell ${indentClass} ${row.isSummary ? "tree-summary" : ""}" title="${escapeHtml(labelTitle)}">
           ${toggle}
@@ -779,17 +1011,32 @@ function buildDashboardHTML(state) {
             ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da PO/FO fehlen.">⚠︎</span>`
             : "";
           const formatted = formatCellValue(cell.value);
+          const paidThisMonth = month === currentMonth && (cell.paidThisMonthCount || 0) > 0;
+          const paidHint = paidThisMonth ? `Zahlungen diesen Monat bezahlt: ${cell.paidThisMonthCount}` : null;
+          const tooltip = [
+            `Geplant: ${formatValueOnly(cell.plannedTotal)}`,
+            `Ist: ${formatValueOnly(cell.actualTotal)}`,
+            `Status: ${cell.displayLabel || "Plan"}`,
+            `Quelle: ${row.sourceLabel || row.label}`,
+            `Anzeige: ${cell.displayLabel || "Plan"}`,
+            paidHint,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          const isClickable = row.nav && !formatted.isEmpty;
+          const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
           return `
-            <td class="num ${row.isSummary ? "tree-summary" : ""}">
+            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
               ${warnIcon}
               ${balanceWarning}
               <span class="${formatted.isEmpty ? "cell-empty" : ""}">${formatted.text}</span>
+              ${isClickable ? `<span class="cell-link-icon" aria-hidden="true">↗</span>` : ""}
             </td>
           `;
         })
         .join("");
 
-      return `<tr data-row-id="${escapeHtml(row.id)}">${labelCell}${valueCells}</tr>`;
+      return `<tr data-row-id="${escapeHtml(row.id)}" class="${rowClasses}">${labelCell}${valueCells}</tr>`;
     })
     .join("");
 
@@ -798,17 +1045,10 @@ function buildDashboardHTML(state) {
       <div class="dashboard-header">
         <div>
           <h2>Dashboard</h2>
-          <p class="muted">Ist-/Plan-Ansicht auf Monatsbasis mit Drilldowns für PO- und FO-Zahlungen.</p>
+          <p class="muted">Planwerte werden durch Ist ersetzt, sobald Zahlungen verbucht sind. Drilldowns zeigen PO/FO-Events.</p>
         </div>
       </div>
       <div class="dashboard-controls">
-        <div class="dashboard-toggle" role="group" aria-label="Ansicht">
-          ${MODE_OPTIONS.map(option => `
-            <button type="button" class="btn ${dashboardState.mode === option.key ? "primary" : "secondary"}" data-mode="${option.key}">
-              ${option.label}
-            </button>
-          `).join("")}
-        </div>
         <div class="dashboard-toggle" role="group" aria-label="Expand">
           <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
           <button type="button" class="btn secondary" data-expand="expand">Alles auf</button>
@@ -821,7 +1061,20 @@ function buildDashboardHTML(state) {
           <input type="checkbox" id="dashboard-limit-balance" ${dashboardState.limitBalanceToGreen ? "checked" : ""} />
           <span>Kontostand nur bis letztem grünen Monat</span>
         </label>
+        <label class="dashboard-toggle dashboard-checkbox">
+          <span>Reifegrad-Horizont (Monate)</span>
+          <input type="number" min="1" max="24" id="dashboard-maturity-horizon" value="${dashboardState.maturityHorizon}" />
+        </label>
+        <label class="dashboard-toggle dashboard-checkbox">
+          <input type="checkbox" id="dashboard-expect-pofo" ${dashboardState.expectPoFo ? "checked" : ""} />
+          <span>PO/FO im Horizont erwarten</span>
+        </label>
         ${rangeSelect}
+      </div>
+      <div class="dashboard-legend muted">
+        <span class="coverage-indicator coverage-green"></span> Reifegrad
+        <span class="legend-item">⚠ Warnung</span>
+        <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">
         <table class="table-compact dashboard-tree-table" role="table">
@@ -853,13 +1106,6 @@ function collectExpandableIds(rows, ids = new Set()) {
 }
 
 function attachDashboardHandlers(root, state) {
-  root.querySelectorAll("[data-mode]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      dashboardState.mode = btn.getAttribute("data-mode") || "ist";
-      render(root);
-    });
-  });
-
   root.querySelectorAll("[data-expand]").forEach(btn => {
     btn.addEventListener("click", () => {
       const action = btn.getAttribute("data-expand");
@@ -869,7 +1115,12 @@ function attachDashboardHandlers(root, state) {
       const currentMonth = currentMonthKey();
       const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
       const baseMonths = applyRange(months, dashboardState.range);
-      const rowsBoth = buildDashboardRows(state, baseMonths, "both", { limitBalanceToGreen: dashboardState.limitBalanceToGreen });
+      const rowsBoth = buildDashboardRows(state, baseMonths, {
+        limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+        maturityHorizon: dashboardState.maturityHorizon,
+        expectPoFo: dashboardState.expectPoFo,
+        currentMonth,
+      });
       const topRowsAll = [
         filterRows(rowsBoth.inflowRow, baseMonths),
         filterRows(rowsBoth.outflowRow, baseMonths),
@@ -878,8 +1129,11 @@ function attachDashboardHandlers(root, state) {
       const visibleMonths = dashboardState.hideEmptyMonths
         ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
         : baseMonths;
-      const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, dashboardState.mode, {
+      const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, {
         limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+        maturityHorizon: dashboardState.maturityHorizon,
+        expectPoFo: dashboardState.expectPoFo,
+        currentMonth,
       });
       const topRows = [filterRows(inflowRow, visibleMonths), filterRows(outflowRow, visibleMonths), ...summaryRows].filter(Boolean);
       const expandableIds = collectExpandableIds(topRows);
@@ -923,6 +1177,68 @@ function attachDashboardHandlers(root, state) {
     limitBalanceToggle.addEventListener("change", () => {
       dashboardState.limitBalanceToGreen = limitBalanceToggle.checked;
       render(root);
+    });
+  }
+
+  const maturityInput = root.querySelector("#dashboard-maturity-horizon");
+  if (maturityInput) {
+    maturityInput.addEventListener("change", () => {
+      const next = Math.max(1, Number(maturityInput.value) || 1);
+      dashboardState.maturityHorizon = next;
+      localStorage.setItem(MATURITY_STORAGE_KEY, JSON.stringify({
+        horizonMonths: dashboardState.maturityHorizon,
+        expectPoFo: dashboardState.expectPoFo,
+      }));
+      render(root);
+    });
+  }
+
+  const expectPoFoToggle = root.querySelector("#dashboard-expect-pofo");
+  if (expectPoFoToggle) {
+    expectPoFoToggle.addEventListener("change", () => {
+      dashboardState.expectPoFo = expectPoFoToggle.checked;
+      localStorage.setItem(MATURITY_STORAGE_KEY, JSON.stringify({
+        horizonMonths: dashboardState.maturityHorizon,
+        expectPoFo: dashboardState.expectPoFo,
+      }));
+      render(root);
+    });
+  }
+
+  const table = root.querySelector(".dashboard-tree-table");
+  if (table) {
+    const navigate = (payload) => {
+      if (!payload?.route) return;
+      const params = new URLSearchParams();
+      if (payload.open) params.set("open", payload.open);
+      if (payload.focus) params.set("focus", payload.focus);
+      if (payload.month) params.set("month", payload.month);
+      const query = params.toString();
+      location.hash = query ? `${payload.route}?${query}` : payload.route;
+    };
+
+    table.addEventListener("dblclick", (event) => {
+      const cell = event.target.closest("td[data-nav]");
+      if (!cell) return;
+      const raw = cell.getAttribute("data-nav");
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(decodeURIComponent(raw));
+        navigate(payload);
+      } catch {}
+    });
+
+    table.addEventListener("click", (event) => {
+      const icon = event.target.closest(".cell-link-icon");
+      if (!icon) return;
+      const cell = icon.closest("td[data-nav]");
+      if (!cell) return;
+      const raw = cell.getAttribute("data-nav");
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(decodeURIComponent(raw));
+        navigate(payload);
+      } catch {}
     });
   }
 }

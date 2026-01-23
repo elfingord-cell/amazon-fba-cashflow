@@ -47,6 +47,17 @@ function normalizeHash(hash) {
   return hash.startsWith('#') ? hash : `#${hash}`;
 }
 
+function parseHash(hash) {
+  const normalised = normalizeHash(hash || '#dashboard');
+  const [base, query] = normalised.split('?');
+  const params = new URLSearchParams(query || '');
+  const queryObj = {};
+  params.forEach((value, key) => {
+    queryObj[key] = value;
+  });
+  return { base, query: queryObj };
+}
+
 function initSidebarToggle() {
   const toggle = document.querySelector('.sidebar-toggle');
   const sidebar = document.querySelector('.sidebar');
@@ -108,8 +119,9 @@ function pickRenderer(mod) {
 
 function renderRoute(forcedHash) {
   const candidate = typeof forcedHash === 'string' ? forcedHash : location.hash;
-  const hash = normalizeHash(candidate);
-  const resolvedHash = routes[hash] ? hash : '#dashboard';
+  const { base, query } = parseHash(candidate);
+  const resolvedHash = routes[base] ? base : '#dashboard';
+  window.__routeQuery = query;
   const loader = routes[resolvedHash];
   APP.classList.toggle('app-wide', resolvedHash === '#po');
   setActiveTab(resolvedHash);

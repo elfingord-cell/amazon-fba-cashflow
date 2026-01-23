@@ -2087,4 +2087,23 @@ export default function render(root) {
   });
 
   renderRows();
+
+  function focusFromRoute() {
+    const query = window.__routeQuery || {};
+    if (!query.open) return;
+    const needle = String(query.open || "").trim().toLowerCase();
+    if (!needle) return;
+    const match = state.fos.find(fo => {
+      if (!fo) return false;
+      const idMatch = String(fo.id || "").toLowerCase() === needle;
+      const numberMatch = String(fo.foNo || "").toLowerCase() === needle;
+      return idMatch || numberMatch;
+    });
+    if (match) {
+      openFoModal(match);
+      window.__routeQuery = {};
+    }
+  }
+
+  focusFromRoute();
 }
