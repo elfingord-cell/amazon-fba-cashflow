@@ -73,13 +73,15 @@ function parseCsv(text) {
   return records;
 }
 
-function readAsBinaryString(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => resolve(reader.result);
-    reader.readAsBinaryString(file);
-  });
+function arrayBufferToBinaryString(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return binary;
 }
 
 async function parseExcelFile(file) {
@@ -88,21 +90,21 @@ async function parseExcelFile(file) {
   ]);
 
   // Versuche zuerst den Array-Pfad (schnell, modern), dann eine binäre
-  // Repräsentation für ältere XLS-Dateien oder Browser, die arrayBuffer
-  // nicht sauber an XLSX liefern.
+  // Repräsentation für ältere XLS-Dateien.
   let workbook;
   let primaryError;
   try {
     const buffer = await file.arrayBuffer();
-    workbook = XLSX.read(buffer, { type: 'array' });
+    workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
   } catch (err) {
     primaryError = err;
   }
 
   if (!workbook) {
     try {
-      const binary = await readAsBinaryString(file);
-      workbook = XLSX.read(binary, { type: 'binary' });
+      const buffer = await file.arrayBuffer();
+      const binary = arrayBufferToBinaryString(buffer);
+      workbook = XLSX.read(binary, { type: 'binary', cellDates: true });
     } catch (fallbackErr) {
       console.error('Excel-Import fehlgeschlagen', primaryError, fallbackErr);
       throw fallbackErr;
