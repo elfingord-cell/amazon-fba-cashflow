@@ -17,11 +17,38 @@ function parseDE(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function parseNumberDE(value) {
+  if (value == null) return null;
+  const cleaned = String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[^0-9,.-]/g, "");
+  if (!cleaned) return null;
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  const decimalIndex = Math.max(lastComma, lastDot);
+  let normalized = cleaned;
+  if (decimalIndex >= 0) {
+    const integer = cleaned.slice(0, decimalIndex).replace(/[.,]/g, "");
+    const fraction = cleaned.slice(decimalIndex + 1).replace(/[.,]/g, "");
+    normalized = `${integer}.${fraction}`;
+  } else {
+    normalized = cleaned.replace(/[.,]/g, "");
+  }
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
 function fmtCurrency(value) {
   return Number(parseDE(value) || 0).toLocaleString("de-DE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function fmtNumber0(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  return Math.round(Number(value)).toLocaleString("de-DE", { maximumFractionDigits: 0 });
 }
 
 function fmtPercent(value) {
@@ -53,6 +80,53 @@ function incMonth(ym) {
   const nm = String(d.getMonth() + 1).padStart(2, "0");
   return `${ny}-${nm}`;
 }
+
+function addMonths(ym, delta) {
+  if (!/^\d{4}-\d{2}$/.test(ym || "")) return ym;
+  const [y, m] = ym.split("-").map(Number);
+  const date = new Date(y, (m - 1) + delta, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getMonthlyBuckets(startMonth, endMonth) {
+  if (!startMonth || !endMonth) return [];
+  if (!/^\d{4}-\d{2}$/.test(startMonth) || !/^\d{4}-\d{2}$/.test(endMonth)) return [];
+  const [startY, startM] = startMonth.split("-").map(Number);
+  const [endY, endM] = endMonth.split("-").map(Number);
+  const startIndex = startY * 12 + (startM - 1);
+  const endIndex = endY * 12 + (endM - 1);
+  if (endIndex < startIndex) return [];
+  const months = [];
+  for (let idx = startIndex; idx <= endIndex; idx += 1) {
+    const y = Math.floor(idx / 12);
+    const m = (idx % 12) + 1;
+    months.push(`${y}-${String(m).padStart(2, "0")}`);
+  }
+  return months;
+}
+
+function getRangeOptions(months) {
+  const options = [];
+  [12, 18, 24].forEach(count => {
+    if (months.length >= count) {
+      options.push({ value: `next${count}`, label: `Nächste ${count}` });
+    }
+  });
+  if (months.length) options.push({ value: "all", label: "Alle" });
+  return options;
+}
+
+function applyRange(months, range) {
+  if (!months.length) return [];
+  if (range === "all") return months.slice();
+  const count = Number(String(range).replace("next", "")) || 0;
+  if (!Number.isFinite(count) || count <= 0) return months.slice();
+  return months.slice(0, count);
+}
+
+const monthlyActualsView = {
+  range: "next12",
+};
 
 function ensureMonthFromDate(dateIso) {
   if (!dateIso) return "";
