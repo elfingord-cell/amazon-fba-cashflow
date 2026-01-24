@@ -141,7 +141,6 @@ export async function render(root) {
   state.extras = ensureArray(state.extras);
   state.dividends = ensureArray(state.dividends);
   state.actuals = ensureArray(state.actuals);
-  state.monthlyActuals = state.monthlyActuals && typeof state.monthlyActuals === "object" ? state.monthlyActuals : {};
   state.settings = state.settings || {};
 
   root.innerHTML = `
@@ -200,34 +199,13 @@ export async function render(root) {
     </section>
 
     <section class="card">
-      <div class="monthly-actuals-header">
-        <div>
-          <h3>Monats-Realdaten</h3>
-          <p class="muted">Erfasse Ist-Umsätze, Auszahlungsquote und Kontostand je Monat. Werte werden im Dashboard für die Planung genutzt.</p>
-        </div>
-        <div class="monthly-actuals-controls">
-          <label class="dashboard-range">
-            <span>Monatsbereich</span>
-            <select id="monthly-actuals-range"></select>
-          </label>
-          <div class="monthly-actuals-actions">
-            <span class="muted" id="monthly-actuals-changes">Keine Änderungen</span>
-            <button class="btn secondary" type="button" id="monthly-actuals-discard" disabled>Änderungen verwerfen</button>
-            <button class="btn" type="button" id="monthly-actuals-save" disabled>Änderungen speichern</button>
-          </div>
-        </div>
-      </div>
+      <h3>Soll-Ist (abgeschlossene Monate)</h3>
+      <p class="muted">Trage Ist-Werte für abgeschlossene Monate ein, um sie im Dashboard mit der Planung zu vergleichen.</p>
       <table class="table">
-        <thead>
-          <tr>
-            <th>Monat</th>
-            <th>Realer Umsatz (€)</th>
-            <th>Reale Auszahlungsquote (%)</th>
-            <th>Realer Kontostand Monatsende (€)</th>
-          </tr>
-        </thead>
-        <tbody id="monthly-actuals-rows"></tbody>
+        <thead><tr><th>Monat</th><th>Umsatz (Ist €)</th><th>Amazon Auszahlung (Ist €)</th><th>Kontostand Monatsende (Ist €)</th><th></th></tr></thead>
+        <tbody id="actual-rows"></tbody>
       </table>
+      <button class="btn" id="actual-add">+ Ist-Wert hinzufügen</button>
     </section>
   `;
 
@@ -235,11 +213,7 @@ export async function render(root) {
   const extrasRows = $("#extras-rows", root);
   const fixSummaryRows = $("#fix-summary-rows", root);
   const dividendRows = $("#dividend-rows", root);
-  const monthlyActualsRows = $("#monthly-actuals-rows", root);
-  const monthlyActualsRange = $("#monthly-actuals-range", root);
-  const monthlyActualsChanges = $("#monthly-actuals-changes", root);
-  const monthlyActualsDiscard = $("#monthly-actuals-discard", root);
-  const monthlyActualsSave = $("#monthly-actuals-save", root);
+  const actualRows = $("#actual-rows", root);
 
   function renderIncomes() {
     if (!state.incomings.length) {
@@ -327,50 +301,21 @@ export async function render(root) {
       .join("");
   }
 
-  let actualsOriginal = structuredClone(state.monthlyActuals || {});
-  let actualsDraft = structuredClone(actualsOriginal);
-  const changeKeys = new Set();
-
-  function updateChangesView() {
-    const count = changeKeys.size;
-    if (monthlyActualsChanges) {
-      monthlyActualsChanges.textContent = count ? `${count} Änderungen` : "Keine Änderungen";
-    }
-    if (monthlyActualsDiscard) monthlyActualsDiscard.disabled = !count;
-    if (monthlyActualsSave) monthlyActualsSave.disabled = !count;
-  }
-
-  function renderMonthlyActuals() {
-    const startMonth = state.settings.startMonth || "2025-01";
-    const horizon = Number(state.settings.horizonMonths || 12) || 12;
-    const endMonth = addMonths(startMonth, horizon - 1);
-    const allMonths = getMonthlyBuckets(startMonth, endMonth);
-    const rangeOptions = getRangeOptions(allMonths);
-    if (rangeOptions.length && !rangeOptions.some(option => option.value === monthlyActualsView.range)) {
-      monthlyActualsView.range = rangeOptions[0].value;
-    }
-    if (monthlyActualsRange) {
-      monthlyActualsRange.innerHTML = rangeOptions
-        .map(option => `<option value="${option.value}" ${option.value === monthlyActualsView.range ? "selected" : ""}>${option.label}</option>`)
-        .join("");
-    }
-    const visibleMonths = rangeOptions.length ? applyRange(allMonths, monthlyActualsView.range) : allMonths;
-    if (!visibleMonths.length) {
-      monthlyActualsRows.innerHTML = `<tr><td colspan="4" class="muted">Keine Monate verfügbar.</td></tr>`;
+  function renderActuals() {
+    if (!state.actuals.length) {
+      actualRows.innerHTML = `<tr><td colspan="5" class="muted">Keine Ist-Werte hinterlegt.</td></tr>`;
       return;
     }
-    monthlyActualsRows.innerHTML = visibleMonths
-      .map(month => {
-        const entry = actualsDraft[month] || {};
-        return `
-          <tr data-month="${month}">
-            <td>${month}</td>
-            <td><input type="text" inputmode="decimal" data-field="realRevenueEUR" value="${fmtNumber0(entry.realRevenueEUR)}"></td>
-            <td><input type="text" inputmode="decimal" data-field="realPayoutRatePct" value="${fmtNumber0(entry.realPayoutRatePct)}"></td>
-            <td><input type="text" inputmode="decimal" data-field="realClosingBalanceEUR" value="${fmtNumber0(entry.realClosingBalanceEUR)}"></td>
-          </tr>
-        `;
-      })
+    actualRows.innerHTML = state.actuals
+      .map((row, idx) => `
+        <tr data-idx="${idx}">
+          <td><input type="month" data-field="month" value="${row.month || ""}"></td>
+          <td><input type="text" data-field="revenueEur" inputmode="decimal" value="${fmtCurrency(row.revenueEur)}"></td>
+          <td><input type="text" data-field="payoutEur" inputmode="decimal" value="${fmtCurrency(row.payoutEur)}"></td>
+          <td><input type="text" data-field="closingBalanceEur" inputmode="decimal" value="${fmtCurrency(row.closingBalanceEur)}"></td>
+          <td><button class="btn danger" data-remove="${idx}">Entfernen</button></td>
+        </tr>
+      `)
       .join("");
   }
 
@@ -378,7 +323,7 @@ export async function render(root) {
   renderExtras();
   renderFixSummary();
   renderDividends();
-  renderMonthlyActuals();
+  renderActuals();
 
   function focusFromRoute() {
     const query = window.__routeQuery || {};
@@ -425,9 +370,13 @@ export async function render(root) {
     renderDividends();
   });
 
-  monthlyActualsRange?.addEventListener("change", () => {
-    monthlyActualsView.range = monthlyActualsRange.value;
-    renderMonthlyActuals();
+  $("#actual-add", root)?.addEventListener("click", () => {
+    const nextMonth = state.actuals.length
+      ? incMonth(state.actuals[state.actuals.length - 1].month || state.settings.startMonth || "")
+      : (state.settings.startMonth || "");
+    state.actuals.push({ month: nextMonth, revenueEur: "0,00", payoutEur: "0,00", closingBalanceEur: "0,00" });
+    saveState(state);
+    renderActuals();
   });
 
   incomeRows?.addEventListener("input", (ev) => {
@@ -556,57 +505,42 @@ export async function render(root) {
     renderDividends();
   });
 
-  monthlyActualsRows?.addEventListener("input", (ev) => {
-    const input = ev.target.closest("input[data-field]");
+  actualRows?.addEventListener("input", (ev) => {
+    const tr = ev.target.closest("tr");
+    if (!tr) return;
+    const idx = Number(tr.dataset.idx);
+    const field = ev.target.dataset.field;
+    if (!(field && state.actuals[idx])) return;
+    state.actuals[idx][field] = ev.target.value;
+  });
+
+  actualRows?.addEventListener("focusout", (ev) => {
+    const input = ev.target.closest("input");
     if (!input) return;
-    const row = input.closest("tr[data-month]");
-    if (!row) return;
-    const month = row.dataset.month;
+    const tr = input.closest("tr");
+    if (!tr) return;
+    const idx = Number(tr.dataset.idx);
     const field = input.dataset.field;
-    const parsed = parseNumberDE(input.value);
-    const normalized = parsed == null ? null : Math.round(parsed);
-    if (!actualsDraft[month]) actualsDraft[month] = {};
-    if (normalized == null) {
-      delete actualsDraft[month][field];
-      if (!Object.keys(actualsDraft[month]).length) delete actualsDraft[month];
+    if (!(field && state.actuals[idx])) return;
+    if (field === "month") {
+      state.actuals[idx][field] = input.value;
     } else {
-      actualsDraft[month][field] = normalized;
+      const formatted = fmtCurrency(input.value);
+      state.actuals[idx][field] = formatted;
+      input.value = formatted;
     }
-    const originalValue = Number(actualsOriginal?.[month]?.[field]);
-    const originalNormalized = Number.isFinite(originalValue) ? originalValue : null;
-    const isChanged = normalized !== originalNormalized;
-    const key = `${month}:${field}`;
-    if (isChanged) changeKeys.add(key);
-    else changeKeys.delete(key);
-    updateChangesView();
   });
 
-  monthlyActualsRows?.addEventListener("focusout", (ev) => {
-    const input = ev.target.closest("input[data-field]");
-    if (!input) return;
-    const row = input.closest("tr[data-month]");
-    if (!row) return;
-    const month = row.dataset.month;
-    const field = input.dataset.field;
-    const value = actualsDraft?.[month]?.[field];
-    input.value = fmtNumber0(value);
-  });
-
-  monthlyActualsDiscard?.addEventListener("click", () => {
-    actualsDraft = structuredClone(actualsOriginal);
-    changeKeys.clear();
-    renderMonthlyActuals();
-    updateChangesView();
-  });
-
-  monthlyActualsSave?.addEventListener("click", () => {
-    state.monthlyActuals = structuredClone(actualsDraft);
+  actualRows?.addEventListener("change", () => {
     saveState(state);
-    actualsOriginal = structuredClone(actualsDraft);
-    changeKeys.clear();
-    renderMonthlyActuals();
-    updateChangesView();
   });
 
-  updateChangesView();
+  actualRows?.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-remove]");
+    if (!btn) return;
+    const idx = Number(btn.dataset.remove);
+    state.actuals.splice(idx, 1);
+    saveState(state);
+    renderActuals();
+  });
 }

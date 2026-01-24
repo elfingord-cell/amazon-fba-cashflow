@@ -1041,35 +1041,17 @@ export function computeSeries(state) {
     };
   });
 
+  const actuals = Array.isArray(s.actuals) ? s.actuals : [];
   const actualMap = new Map();
-  const monthlyActuals = s?.monthlyActuals && typeof s.monthlyActuals === "object" ? s.monthlyActuals : {};
-  const monthlyActualsEntries = Object.entries(monthlyActuals);
-  if (monthlyActualsEntries.length) {
-    monthlyActualsEntries.forEach(([month, entry]) => {
-      if (!month) return;
-      const revenue = Number(entry?.realRevenueEUR);
-      const payoutRate = Number(entry?.realPayoutRatePct);
-      const closing = Number(entry?.realClosingBalanceEUR);
-      const actual = {};
-      if (Number.isFinite(revenue)) actual.revenue = revenue;
-      if (Number.isFinite(revenue) && Number.isFinite(payoutRate)) {
-        actual.payout = revenue * (payoutRate / 100);
-      }
-      if (Number.isFinite(closing)) actual.closing = closing;
-      if (Object.keys(actual).length) actualMap.set(month, actual);
+  actuals.forEach(entry => {
+    if (!entry || !entry.month) return;
+    const month = entry.month;
+    actualMap.set(month, {
+      revenue: parseEuro(entry.revenueEur),
+      payout: parseEuro(entry.payoutEur),
+      closing: parseEuro(entry.closingBalanceEur),
     });
-  } else {
-    const actuals = Array.isArray(s.actuals) ? s.actuals : [];
-    actuals.forEach(entry => {
-      if (!entry || !entry.month) return;
-      const month = entry.month;
-      actualMap.set(month, {
-        revenue: parseEuro(entry.revenueEur),
-        payout: parseEuro(entry.payoutEur),
-        closing: parseEuro(entry.closingBalanceEur),
-      });
-    });
-  }
+  });
 
   const actualComparisons = [];
   actualMap.forEach((values, month) => {

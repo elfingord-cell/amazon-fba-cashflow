@@ -1,5 +1,5 @@
 import { loadState, addStateListener } from "../data/storageLocal.js";
-import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
+import { parseEuro, fmtEUR, expandFixcostInstances } from "../domain/cashflow.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
@@ -27,28 +27,18 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function formatEur0(value) {
-  if (value == null) return "—";
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "—";
-  const rounded = Math.round(num);
-  return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 }).format(rounded)} €`;
-}
-
 function formatCellValue(value) {
-  if (value == null) {
-    return { text: "—", isEmpty: true };
-  }
-  const num = Number(value);
-  if (!Number.isFinite(num)) {
-    return { text: "—", isEmpty: true };
-  }
-  const rounded = Math.round(num);
-  if (rounded === 0) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || Math.abs(num) < 0.0001) {
     return { text: "—", isEmpty: true };
   }
   return {
-    text: formatEur0(rounded),
+    text: new Intl.NumberFormat("de-DE", {
+      style: "currency",
+      currency: "EUR",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(num),
     isEmpty: false,
   };
 }
@@ -155,10 +145,6 @@ function formatMonthLabel(monthKey) {
   const [y, m] = monthKey.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, 1));
   return date.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" });
-}
-
-function monthColumnClass(index) {
-  return `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
 }
 
 function sumUnits(record) {
@@ -468,19 +454,25 @@ function sumPaymentEvents(events, month, currentMonth) {
   let plannedTotal = 0;
   let actualTotal = 0;
   let paidThisMonthCount = 0;
-  let hasPaidValue = false;
+  const warnings = [];
   events.forEach(evt => {
     if (evt.month !== month) return;
     const planned = Number(evt.plannedEur || 0);
     const actual = Number(evt.actualEur || 0);
     const paid = evt.paid === true;
-    const actualValid = paid && actual > 0;
+    const hasInvoice = evt.hasInvoiceLink !== false;
+    const actualValid = paid && actual > 0 && hasInvoice;
+    const missingInvoice = paid && (!hasInvoice || actual <= 0);
+
+    if (missingInvoice) {
+      const txLabel = evt.transactionId ? `Transfer ${evt.transactionId}` : "Transfer —";
+      warnings.push(`${evt.label || "Zahlung"} · ${txLabel} · Invoice-Link fehlt`);
+    }
 
     plannedTotal += planned;
     if (actualValid) {
       actualTotal += actual;
       displayTotal += actual;
-      hasPaidValue = true;
       if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
         paidThisMonthCount += 1;
       }
@@ -493,9 +485,8 @@ function sumPaymentEvents(events, month, currentMonth) {
     plannedTotal,
     actualTotal,
     displayLabel: getDisplayLabel(plannedTotal, actualTotal),
-    warnings: [],
+    warnings,
     paidThisMonthCount,
-    hasPaidValue,
   };
 }
 
@@ -504,7 +495,6 @@ function sumGenericEvents(events, month, currentMonth) {
   let plannedTotal = 0;
   let actualTotal = 0;
   let paidThisMonthCount = 0;
-  let hasPaidValue = false;
   events.forEach(evt => {
     if (evt.month !== month) return;
     const planned = Number(evt.plannedEur || 0);
@@ -514,7 +504,6 @@ function sumGenericEvents(events, month, currentMonth) {
     if (paid && actual > 0) {
       actualTotal += actual;
       displayTotal += actual;
-      hasPaidValue = true;
       if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
         paidThisMonthCount += 1;
       }
@@ -529,7 +518,6 @@ function sumGenericEvents(events, month, currentMonth) {
     displayLabel: getDisplayLabel(plannedTotal, actualTotal),
     warnings: [],
     paidThisMonthCount,
-    hasPaidValue,
   };
 }
 
@@ -600,7 +588,6 @@ function applyRowValues(row, months, currentMonth) {
       const actualTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.actualTotal || 0), 0);
       const warnings = row.children.flatMap(child => child.values[month]?.warnings || []);
       const paidThisMonthCount = row.children.reduce((acc, child) => acc + (child.values[month]?.paidThisMonthCount || 0), 0);
-      const hasPaidValue = row.children.some(child => child.values[month]?.hasPaidValue);
       row.values[month] = {
         value: sum,
         plannedTotal,
@@ -608,7 +595,6 @@ function applyRowValues(row, months, currentMonth) {
         displayLabel: getDisplayLabel(plannedTotal, actualTotal),
         warnings,
         paidThisMonthCount,
-        hasPaidValue,
       };
     });
   }
@@ -658,15 +644,9 @@ function flattenRows(rows, expandedSet) {
 function buildDashboardRows(state, months, options = {}) {
   const plannedPayoutMap = computePlannedPayoutByMonth(state, months);
   const actualPayoutMap = new Map();
-  const monthlyActuals = state?.monthlyActuals && typeof state.monthlyActuals === "object"
-    ? state.monthlyActuals
-    : {};
-  Object.entries(monthlyActuals).forEach(([month, entry]) => {
-    if (!months.includes(month)) return;
-    const revenue = Number(entry?.realRevenueEUR);
-    const payoutRate = Number(entry?.realPayoutRatePct);
-    if (!Number.isFinite(revenue) || !Number.isFinite(payoutRate)) return;
-    actualPayoutMap.set(month, revenue * (payoutRate / 100));
+  (state?.actuals || []).forEach(row => {
+    if (!row?.month) return;
+    actualPayoutMap.set(row.month, parseEuro(row.payoutEur));
   });
   const coverage = options.coverage instanceof Map ? options.coverage : new Map();
 
@@ -770,20 +750,23 @@ function buildDashboardRows(state, months, options = {}) {
     const poLabel = po.record?.poNo ? `PO ${po.record.poNo}` : "PO";
     const depositPaid = po.events.some(evt => /deposit/i.test(evt.typeLabel || "") && evt.paid);
     const balancePaid = po.events.some(evt => /balance/i.test(evt.typeLabel || "") && evt.paid);
+    const missingInvoice = po.events.some(evt => evt.paid && !evt.hasInvoiceLink);
     const tooltipParts = [
       `PO: ${po.record?.poNo || "—"}`,
       `Supplier: ${po.supplier || "—"}`,
       `Units: ${po.units || 0}`,
       `Deposit: ${depositPaid ? "bezahlt" : "offen"}`,
       `Balance: ${balancePaid ? "bezahlt" : "offen"}`,
+      `Invoice-Link: ${missingInvoice ? "fehlt" : "ok"}`,
     ];
     const paymentRows = po.events.map(evt => {
       const eventTooltip = [
         `Typ: ${evt.typeLabel || "Zahlung"}`,
         `Datum: ${evt.dueDate || "—"}`,
-        `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
+        `Ist EUR: ${fmtEUR(evt.actualEur || 0)}`,
         evt.currency ? `Währung: ${evt.currency}` : null,
         evt.paidBy ? `Paid by: ${evt.paidBy}` : null,
+        evt.paid && !evt.hasInvoiceLink ? "Paid but missing invoice link" : null,
       ]
         .filter(Boolean)
         .join(" · ");
@@ -842,7 +825,7 @@ function buildDashboardRows(state, months, options = {}) {
       const tooltip = [
         `Typ: ${evt.typeLabel || "Payment"}`,
         `Datum: ${evt.dueDate || "—"}`,
-        `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
+        `Ist EUR: ${fmtEUR(evt.actualEur || 0)}`,
         evt.currency ? `Währung: ${evt.currency}` : null,
       ]
         .filter(Boolean)
@@ -977,48 +960,41 @@ function buildDashboardRows(state, months, options = {}) {
 
   const openingRaw = state?.openingEur ?? state?.settings?.openingBalance ?? null;
   const openingBalance = parseEuro(openingRaw || 0);
-  const monthlyActualsMap = state?.monthlyActuals && typeof state.monthlyActuals === "object"
-    ? state.monthlyActuals
-    : {};
-  const balanceRow = buildRow({
-    id: "balance",
-    label: "Kontostand Monatsende",
-    level: 0,
-    isSummary: true,
-    alwaysVisible: true,
-    rowType: "summary",
-    section: "summary",
-    sourceLabel: "Kontostand",
-  });
-  if (months.length) {
-    let baseBalance = openingBalance;
+  let running = openingBalance;
+  let balanceRow = null;
+  if (openingBalance !== 0) {
+    balanceRow = buildRow({
+      id: "balance",
+      label: "Kontostand (kumuliert)",
+      level: 0,
+      isSummary: true,
+      alwaysVisible: true,
+      rowType: "summary",
+      section: "summary",
+      sourceLabel: "Kontostand",
+    });
     const lastGreenIndex = options.limitBalanceToGreen
       ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
       : months.length - 1;
     months.forEach((month, idx) => {
-      const actualClosing = Number(monthlyActualsMap?.[month]?.realClosingBalanceEUR);
-      const hasActual = Number.isFinite(actualClosing);
-      const net = netRow.values[month]?.value || 0;
-      const plannedClosing = (Number.isFinite(baseBalance) ? baseBalance : 0) + net;
       if (options.limitBalanceToGreen && idx > lastGreenIndex) {
         balanceRow.values[month] = { value: null, plannedTotal: 0, actualTotal: 0, displayLabel: "Plan", warnings: [], paidThisMonthCount: 0 };
         return;
       }
-      const displayValue = hasActual ? actualClosing : plannedClosing;
+      running += netRow.values[month]?.value || 0;
       balanceRow.values[month] = {
-        value: displayValue,
-        plannedTotal: plannedClosing,
-        actualTotal: hasActual ? actualClosing : plannedClosing,
-        displayLabel: hasActual ? "Ist" : "Plan",
+        value: running,
+        plannedTotal: running,
+        actualTotal: running,
+        displayLabel: "Ist/Plan",
         warnings: [],
         paidThisMonthCount: 0,
-        isActual: hasActual,
       };
-      baseBalance = hasActual ? actualClosing : plannedClosing;
     });
   }
 
-  const summaryRows = [netRow, balanceRow];
+  const summaryRows = [netRow];
+  if (balanceRow) summaryRows.push(balanceRow);
 
   return { inflowRow, outflowRow, summaryRows };
 }
@@ -1076,8 +1052,7 @@ function buildDashboardHTML(state) {
     : "";
 
   const headerCells = nonEmptyMonths
-    .map((month, idx) => {
-      const columnClass = monthColumnClass(idx);
+    .map(month => {
       const status = skuCoverage.coverage.get(month) || "gray";
       const detail = skuCoverage.details.get(month);
       const plannedCount = detail?.plannedCount ?? 0;
@@ -1093,7 +1068,7 @@ function buildDashboardHTML(state) {
         missingLine,
       ].join(" · ");
       return `
-        <th scope="col" class="${columnClass}">
+        <th scope="col">
           <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
           <span>${escapeHtml(month)}</span>
         </th>
@@ -1127,9 +1102,12 @@ function buildDashboardHTML(state) {
       `;
 
       const valueCells = nonEmptyMonths
-        .map((month, idx) => {
-          const columnClass = monthColumnClass(idx);
+        .map(month => {
           const cell = row.values[month] || { value: 0, warnings: [] };
+          const warnings = cell.warnings || [];
+          const warnIcon = warnings.length
+            ? `<span class="cell-warning" title="${escapeHtml(warnings.join(" · "))}">⚠</span>`
+            : "";
           const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(skuCoverage.coverage.get(month));
           const balanceWarning = showBalanceWarning
             ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da Planung fehlt.">⚠︎</span>`
@@ -1137,8 +1115,6 @@ function buildDashboardHTML(state) {
           const formatted = formatCellValue(cell.value);
           const paidThisMonth = month === currentMonth && (cell.paidThisMonthCount || 0) > 0;
           const paidHint = paidThisMonth ? `Zahlungen diesen Monat bezahlt: ${cell.paidThisMonthCount}` : null;
-          const isPaidValue = cell.hasPaidValue && String(row.sourceLabel || "").toLowerCase().includes("po");
-          const actualMarker = cell.isActual ? `<span class="cell-actual-tag" title="Realer Wert">Ist</span>` : "";
           const tooltip = [
             `Geplant: ${formatValueOnly(cell.plannedTotal)}`,
             `Ist: ${formatValueOnly(cell.actualTotal)}`,
@@ -1152,10 +1128,10 @@ function buildDashboardHTML(state) {
           const isClickable = row.nav && !formatted.isEmpty;
           const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
           return `
-            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
+            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
+              ${warnIcon}
               ${balanceWarning}
-              <span class="${formatted.isEmpty ? "cell-empty" : ""} ${isPaidValue ? "cell-paid-value" : ""}">${formatted.text}</span>
-              ${actualMarker}
+              <span class="${formatted.isEmpty ? "cell-empty" : ""}">${formatted.text}</span>
               ${isClickable ? `<span class="cell-link-icon" aria-hidden="true">↗</span>` : ""}
             </td>
           `;
@@ -1274,6 +1250,7 @@ function buildDashboardHTML(state) {
         <span class="coverage-indicator coverage-green"></span> Reifegrad (SKU-Abdeckung)
         <span class="coverage-indicator coverage-yellow"></span> Teilweise geplant
         <span class="coverage-indicator coverage-red"></span> Planung fehlt
+        <span class="legend-item">⚠ Warnung</span>
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">

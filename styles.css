@@ -191,10 +191,6 @@ td.num, th.num{text-align:right}
 .dashboard-tree-table tr.row-summary td{font-weight:700;}
 .dashboard-tree-table tr.row-detail td{color:var(--muted);}
 .dashboard-tree-table tr.row-detail:nth-of-type(even) td{background:rgba(15,27,45,0.015);}
-.dashboard-tree-table th.month-col,.dashboard-tree-table td.month-col{border-left:1px solid rgba(15,27,45,0.08);}
-.dashboard-tree-table th.month-col-alt,.dashboard-tree-table td.month-col-alt{background:rgba(15,27,45,0.02);}
-.dashboard-tree-table td .cell-paid-value{color:rgba(47,143,107,0.9);}
-.dashboard-tree-table td .cell-actual-tag{margin-left:6px; font-size:10px; font-weight:600; color:rgba(47,143,107,0.75); text-transform:uppercase; letter-spacing:0.04em;}
 .dashboard-tree-table tr.section-inflows td.tree-cell{border-left:3px solid rgba(47,143,107,0.35);}
 .dashboard-tree-table tr.section-outflows td.tree-cell{border-left:3px solid rgba(15,27,45,0.2);}
 .dashboard-tree-table tr.section-summary td.tree-cell{border-left:3px solid rgba(47,143,107,0.15);}
@@ -209,9 +205,6 @@ td.num, th.num{text-align:right}
 .dashboard-coverage-table tbody tr:hover td{background:rgba(15,27,45,0.03);}
 .dashboard-coverage-table tr.coverage-group-row td{background:rgba(15,27,45,0.03);}
 .dashboard-coverage-table tr.coverage-group-row th{background:rgba(15,27,45,0.03); font-weight:600;}
-.monthly-actuals-header{display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:10px;}
-.monthly-actuals-controls{display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap;}
-.monthly-actuals-actions{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
 .coverage-count{margin-left:6px; font-size:11px;}
 .coverage-sku{margin-left:6px; font-size:11px;}
 .coverage-cell{text-align:center;}

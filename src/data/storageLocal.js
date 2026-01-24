@@ -90,7 +90,6 @@ const defaults = {
     events: {},
   },
   actuals: [],
-  monthlyActuals: {},
   suppliers: [],
   productSuppliers: [],
 };
@@ -300,47 +299,6 @@ function ensureForecast(state) {
 function ensureActuals(state) {
   if (!state) return;
   if (!Array.isArray(state.actuals)) state.actuals = [];
-}
-
-function ensureMonthlyActuals(state) {
-  if (!state) return;
-  if (!state.monthlyActuals || typeof state.monthlyActuals !== "object") {
-    state.monthlyActuals = {};
-  }
-  const cleaned = {};
-  Object.entries(state.monthlyActuals).forEach(([month, values]) => {
-    if (!/^\d{4}-\d{2}$/.test(month)) return;
-    const entry = values && typeof values === "object" ? values : {};
-    const revenue = Number(entry.realRevenueEUR);
-    const payoutRate = Number(entry.realPayoutRatePct);
-    const closing = Number(entry.realClosingBalanceEUR);
-    const normalized = {};
-    if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
-    if (Number.isFinite(payoutRate)) normalized.realPayoutRatePct = payoutRate;
-    if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
-    if (Object.keys(normalized).length) cleaned[month] = normalized;
-  });
-  state.monthlyActuals = cleaned;
-
-  if (!Object.keys(state.monthlyActuals).length && Array.isArray(state.actuals) && state.actuals.length) {
-    state.actuals.forEach(entry => {
-      if (!entry?.month) return;
-      const month = String(entry.month || "").trim();
-      if (!/^\d{4}-\d{2}$/.test(month)) return;
-      const revenue = parseEuro(entry.revenueEur);
-      const payout = parseEuro(entry.payoutEur);
-      const closing = parseEuro(entry.closingBalanceEur);
-      const normalized = {};
-      if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
-      if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
-      if (Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payout)) {
-        normalized.realPayoutRatePct = (payout / revenue) * 100;
-      }
-      if (Object.keys(normalized).length) {
-        state.monthlyActuals[month] = normalized;
-      }
-    });
-  }
 }
 
 function monthIndex(ym) {
@@ -652,7 +610,6 @@ export function createEmptyState(){
   ensureVatData(clone);
   ensureForecast(clone);
   ensureActuals(clone);
-  ensureMonthlyActuals(clone);
   ensureGlobalSettings(clone);
   ensureSuppliers(clone);
   ensureProductSuppliers(clone);
@@ -676,7 +633,6 @@ export function loadState(){
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
-  ensureMonthlyActuals(_state);
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
   ensureProductSuppliers(_state);
@@ -696,7 +652,6 @@ export function saveState(s){
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
-  ensureMonthlyActuals(_state);
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
   ensureProductSuppliers(_state);
@@ -740,7 +695,6 @@ export function importStateFile(file, cb){
       ensureVatData(json);
       ensureForecast(json);
       ensureActuals(json);
-      ensureMonthlyActuals(json);
       ensureGlobalSettings(json);
       ensureSuppliers(json);
       ensureProductSuppliers(json);
