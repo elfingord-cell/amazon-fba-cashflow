@@ -19,12 +19,25 @@ const PO_CONFIG = {
 const MAX_DETAIL_ROWS = 50;
 
 function escapeHtml(value) {
-  return String(value ?? "")
+  return String(value == null ? "" : value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function safeGet(obj, path) {
+  let cur = obj;
+  for (let i = 0; i < path.length; i += 1) {
+    if (!cur || typeof cur !== "object") return undefined;
+    cur = cur[path[i]];
+  }
+  return cur;
+}
+
+function safeValue(value, fallback) {
+  return value == null ? fallback : value;
 }
 
 function formatEur0(value) {
@@ -187,8 +200,8 @@ function isProductActive(product) {
 }
 
 function getActiveSkus(state) {
-  const products = Array.isArray(state?.products) ? state.products : [];
-  const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
+  const products = state && Array.isArray(state.products) ? state.products : [];
+  const categories = state && Array.isArray(state.productCategories) ? state.productCategories : [];
   const categoryById = new Map(categories.map(category => [String(category.id), category]));
   return products
     .filter(isProductActive)
@@ -199,8 +212,8 @@ function getActiveSkus(state) {
         sku: String(product.sku || "").trim(),
         alias: String(product.alias || product.sku || "").trim(),
         categoryId,
-        categoryName: category?.name || "Ohne Kategorie",
-        categorySort: category?.sortOrder ?? 0,
+        categoryName: category && category.name ? category.name : "Ohne Kategorie",
+        categorySort: category && Number.isFinite(category.sortOrder) ? category.sortOrder : 0,
       };
     })
     .filter(item => item.sku);
@@ -209,7 +222,11 @@ function getActiveSkus(state) {
 function buildCategoryGroups(items, categories = []) {
   const sortedCategories = categories
     .slice()
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
+    .sort((a, b) => {
+      const aSort = Number.isFinite(a.sortOrder) ? a.sortOrder : 0;
+      const bSort = Number.isFinite(b.sortOrder) ? b.sortOrder : 0;
+      return aSort - bSort || String(a.name || "").localeCompare(String(b.name || ""));
+    });
   const groups = sortedCategories.map(category => ({
     id: String(category.id),
     name: category.name || "Ohne Kategorie",
@@ -243,99 +260,148 @@ function computeFoEta(fo) {
   return addDays(target, -bufferDays);
 }
 
-function buildSkuPlanningIndex(state, activeSkus) {
-  const plannedBySku = new Map(activeSkus.map(item => [item.sku, []]));
-  const pos = Array.isArray(state?.pos) ? state.pos : [];
+function getForecastUnits(state, sku, month) {
+  const manual = safeGet(state, ["forecast", "forecastManual", sku, month]);
+  if (manual != null) return Number(manual);
+  const imported = safeGet(state, ["forecast", "forecastImport", sku, month, "units"]);
+  if (imported != null) return Number(imported);
+  return null;
+}
+
+function buildSkuSignalMap(state, activeSkus, months) {
+  const monthSet = new Set(months);
+  const signals = new Map();
+  const hasForecast = new Map();
+
+  activeSkus.forEach(item => {
+    const sku = item.sku;
+    signals.set(sku, new Map(months.map(month => [month, { payment: false, inbound: false, forecast: false }])));
+    hasForecast.set(sku, false);
+  });
+
+  const settings = getSettings();
+  const pos = state && Array.isArray(state.pos) ? state.pos : [];
   pos.forEach(po => {
     if (!po || po.archived) return;
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
     const etaDate = computePoEta(po);
-    if (!etaDate) return;
-    const sourceLabel = po.poNo || po.number || po.id || "PO";
+    const etaMonth = etaDate ? toMonthKey(etaDate) : null;
     const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
+    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings);
     items.forEach(item => {
-      const sku = String(item?.sku || "").trim();
-      if (!sku || !plannedBySku.has(sku)) return;
-      plannedBySku.get(sku).push({
-        sourceType: "PO",
-        sourceLabel,
-        etaDate,
+      const sku = String(item && item.sku ? item.sku : "").trim();
+      if (!sku || !signals.has(sku)) return;
+      if (etaMonth) {
+        if (monthSet.has(etaMonth)) {
+          signals.get(sku).get(etaMonth).inbound = true;
+        }
+      }
+      paymentRows.forEach(row => {
+        const dueMonth = toMonthKey(row.dueDate);
+        if (!dueMonth || !monthSet.has(dueMonth)) return;
+        signals.get(sku).get(dueMonth).payment = true;
       });
     });
   });
 
-  const fos = Array.isArray(state?.fos) ? state.fos : [];
+  const fos = state && Array.isArray(state.fos) ? state.fos : [];
   fos.forEach(fo => {
     if (!fo) return;
     const status = String(fo.status || "").toUpperCase();
     if (status === "CONVERTED" || status === "CANCELLED") return;
+    const sku = String(fo && fo.sku ? fo.sku : "").trim();
+    if (!sku || !signals.has(sku)) return;
     const etaDate = computeFoEta(fo);
-    if (!etaDate) return;
-    const sourceLabel = fo.foNo || fo.number || fo.id || "FO";
-    const sku = String(fo.sku || "").trim();
-    if (!sku || !plannedBySku.has(sku)) return;
-    plannedBySku.get(sku).push({
-      sourceType: "FO",
-      sourceLabel,
-      etaDate,
+    const etaMonth = etaDate ? toMonthKey(etaDate) : null;
+    if (etaMonth) {
+      if (monthSet.has(etaMonth)) {
+        signals.get(sku).get(etaMonth).inbound = true;
+      }
+    }
+    const payments = Array.isArray(fo && fo.payments) ? fo.payments : [];
+    payments.forEach(payment => {
+      const dueMonth = toMonthKey(payment.dueDate);
+      if (!dueMonth || !monthSet.has(dueMonth)) return;
+      signals.get(sku).get(dueMonth).payment = true;
     });
   });
 
-  plannedBySku.forEach(list => list.sort((a, b) => a.etaDate - b.etaDate));
-  return plannedBySku;
+  activeSkus.forEach(item => {
+    const sku = item.sku;
+    months.forEach(month => {
+      const units = getForecastUnits(state, sku, month);
+      if (units != null && units > 0) {
+        signals.get(sku).get(month).forecast = true;
+        hasForecast.set(sku, true);
+      }
+    });
+  });
+
+  return { signals, hasForecast };
+}
+
+function isMonthCovered(signalRow, allowForecast) {
+  return Boolean(signalRow.payment || signalRow.inbound || (allowForecast && signalRow.forecast));
 }
 
 function computeSkuCoverage(state, months) {
   const activeSkus = getActiveSkus(state);
-  const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
-  const plannedIndex = buildSkuPlanningIndex(state, activeSkus);
+  const categories = state && Array.isArray(state.productCategories) ? state.productCategories : [];
   const coverage = new Map();
   const details = new Map();
-  const plannedByMonth = new Map();
+  const perSkuCoverage = new Map();
   const totalCount = activeSkus.length;
+  const { signals, hasForecast } = buildSkuSignalMap(state, activeSkus, months);
+
+  activeSkus.forEach(item => {
+    perSkuCoverage.set(item.sku, new Map());
+  });
 
   months.forEach(month => {
-    const monthEnd = getMonthEnd(month);
-    const plannedMap = new Map();
-    if (monthEnd) {
-      activeSkus.forEach(item => {
-        const records = plannedIndex.get(item.sku) || [];
-        const match = records.find(record => record.etaDate && record.etaDate <= monthEnd);
-        if (match) plannedMap.set(item.sku, match);
-      });
-    }
-    plannedByMonth.set(month, plannedMap);
-    const plannedCount = plannedMap.size;
+    const coveredSkus = new Set();
+    activeSkus.forEach(item => {
+      const sku = item.sku;
+      const signalRow = signals.has(sku) ? signals.get(sku).get(month) : null;
+      const signalRow = signals.get(sku)?.get(month);
+      const allowForecast = hasForecast.get(sku);
+      const isCovered = Boolean(signalRow && isMonthCovered(signalRow, allowForecast));
+      perSkuCoverage.get(sku).set(month, isCovered);
+      if (isCovered) coveredSkus.add(sku);
+    });
+    const coveredCount = coveredSkus.size;
+    const ratio = totalCount ? coveredCount / totalCount : 0;
     let status = "gray";
-    if (totalCount > 0) {
-      const pct = plannedCount / totalCount;
-      if (pct >= 1) status = "green";
-      else if (pct >= 0.7) status = "yellow";
-      else status = "red";
-    }
+    if (ratio >= 1) status = "green";
+    else if (ratio >= 0.6) status = "amber";
     const missingAliases = totalCount
-      ? activeSkus.filter(item => !plannedMap.has(item.sku)).map(item => item.alias || item.sku)
+      ? activeSkus.filter(item => !coveredSkus.has(item.sku)).map(item => item.alias || item.sku)
       : [];
     coverage.set(month, status);
     details.set(month, {
       status,
-      plannedCount,
+      coveredCount,
       totalCount,
+      ratio,
       missingAliases,
-      monthEnd,
     });
   });
+  return result;
+}
 
   return {
     coverage,
     details,
-    plannedByMonth,
     activeSkus,
+    perSkuCoverage,
     groups: buildCategoryGroups(activeSkus, categories),
   };
 }
 
 function computePlannedPayoutByMonth(state, months) {
+  const forecastEnabled = Boolean(safeGet(state, ["forecast", "settings", "useForecast"]));
+  const payoutPctByMonth = new Map();
+  (state && Array.isArray(state.incomings) ? state.incomings : []).forEach(row => {
+    if (!row || !row.month) return;
   const forecastEnabled = Boolean(state?.forecast?.settings?.useForecast);
   const payoutPctByMonth = new Map();
   (state?.incomings || []).forEach(row => {
@@ -344,6 +410,12 @@ function computePlannedPayoutByMonth(state, months) {
   });
 
   const revenueByMonth = new Map();
+  if (forecastEnabled && state && state.forecast && Array.isArray(state.forecast.items)) {
+    if (state.forecast.forecastImport && typeof state.forecast.forecastImport === "object") {
+      Object.values(state.forecast.forecastImport).forEach(monthMap => {
+        Object.entries(monthMap || {}).forEach(([month, entry]) => {
+          if (!month || !months.includes(month)) return;
+          const revenue = parseEuro(entry && entry.revenueEur != null ? entry.revenueEur : (entry ? entry.revenue : null));
   if (forecastEnabled && Array.isArray(state?.forecast?.items)) {
     if (state?.forecast?.forecastImport && typeof state.forecast.forecastImport === "object") {
       Object.values(state.forecast.forecastImport).forEach(monthMap => {
@@ -356,20 +428,20 @@ function computePlannedPayoutByMonth(state, months) {
       });
     } else {
       state.forecast.items.forEach(item => {
-        if (!item?.month) return;
-        const revenue = parseEuro(item.revenueEur ?? item.revenue ?? null);
+        if (!item || !item.month) return;
+        const revenue = parseEuro(item.revenueEur != null ? item.revenueEur : item.revenue);
         if (Number.isFinite(revenue) && revenue !== 0) {
           revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + revenue);
           return;
         }
-        const qty = Number(item.qty ?? item.units ?? item.quantity ?? 0) || 0;
-        const price = parseEuro(item.priceEur ?? item.price ?? 0);
+        const qty = Number(item.qty != null ? item.qty : (item.units != null ? item.units : (item.quantity != null ? item.quantity : 0))) || 0;
+        const price = parseEuro(item.priceEur != null ? item.priceEur : (item.price != null ? item.price : 0));
         revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + qty * price);
       });
     }
   } else {
-    (state?.incomings || []).forEach(row => {
-      if (!row?.month) return;
+    (state && Array.isArray(state.incomings) ? state.incomings : []).forEach(row => {
+      if (!row || !row.month) return;
       revenueByMonth.set(row.month, parseEuro(row.revenueEur));
     });
   }
@@ -387,11 +459,11 @@ function computePlannedPayoutByMonth(state, months) {
 
 function buildPoData(state) {
   const settings = getSettings();
-  const pos = Array.isArray(state?.pos) ? state.pos : [];
+  const pos = state && Array.isArray(state.pos) ? state.pos : [];
   return pos.map(po => {
     const paymentRows = buildPaymentRows(po, PO_CONFIG, settings);
-    const transactions = Array.isArray(po.paymentTransactions) ? po.paymentTransactions : [];
-    const txMap = new Map(transactions.map(tx => [tx?.id, tx]));
+    const transactions = Array.isArray(po && po.paymentTransactions) ? po.paymentTransactions : [];
+    const txMap = new Map(transactions.map(tx => [tx && tx.id, tx]));
     const events = paymentRows
       .map(row => {
         const month = toMonthKey(row.dueDate);
@@ -410,15 +482,13 @@ function buildPoData(state) {
           paid: row.status === "paid",
           paidDate: row.paidDate || null,
           transactionId: row.transactionId || null,
-          hasInvoiceLink: Boolean(tx?.driveInvoiceLink),
-          invoiceLink: tx?.driveInvoiceLink || null,
           paidBy: row.paidBy || null,
           currency: "EUR",
         };
       })
       .filter(Boolean);
 
-    const supplier = po?.supplier || po?.supplierName || "";
+    const supplier = (po && po.supplier) || (po && po.supplierName) || "";
     const units = sumUnits(po);
     return {
       record: po,
@@ -431,14 +501,14 @@ function buildPoData(state) {
 }
 
 function buildFoData(state) {
-  const fos = Array.isArray(state?.fos) ? state.fos : [];
+  const fos = state && Array.isArray(state.fos) ? state.fos : [];
   return fos
-    .filter(fo => String(fo?.status || "").toUpperCase() !== "CONVERTED")
+    .filter(fo => String(fo && fo.status ? fo.status : "").toUpperCase() !== "CONVERTED")
     .map(fo => {
-      const fxRate = fo.fxRate || state?.settings?.fxRate || 0;
+      const fxRate = (fo && fo.fxRate) || (state && state.settings && state.settings.fxRate) || 0;
       const events = (fo.payments || [])
         .map(payment => {
-          if (!payment?.dueDate) return null;
+          if (!payment || !payment.dueDate) return null;
           const month = toMonthKey(payment.dueDate);
           if (!month) return null;
           const currency = payment.currency || "EUR";
@@ -452,8 +522,6 @@ function buildFoData(state) {
             plannedEur,
             actualEur: 0,
             paid: false,
-            hasInvoiceLink: true,
-            invoiceLink: null,
             paidBy: null,
             currency,
           };
@@ -578,7 +646,7 @@ function collectMonthEvents(row, month) {
 
 function monthHasValues(rows, month) {
   return rows.some(row => {
-    const value = row.values?.[month]?.value || 0;
+    const value = row.values && row.values[month] ? row.values[month].value || 0 : 0;
     if (Math.abs(value) > 0.0001) return true;
     return collectMonthEvents(row, month);
   });
@@ -595,12 +663,12 @@ function applyRowValues(row, months, currentMonth) {
   } else if (row.children.length) {
     row.children.forEach(child => applyRowValues(child, months, currentMonth));
     months.forEach(month => {
-      const sum = row.children.reduce((acc, child) => acc + (child.values[month]?.value || 0), 0);
-      const plannedTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.plannedTotal || 0), 0);
-      const actualTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.actualTotal || 0), 0);
-      const warnings = row.children.flatMap(child => child.values[month]?.warnings || []);
-      const paidThisMonthCount = row.children.reduce((acc, child) => acc + (child.values[month]?.paidThisMonthCount || 0), 0);
-      const hasPaidValue = row.children.some(child => child.values[month]?.hasPaidValue);
+      const sum = row.children.reduce((acc, child) => acc + (child.values[month] ? (child.values[month].value || 0) : 0), 0);
+      const plannedTotal = row.children.reduce((acc, child) => acc + (child.values[month] ? (child.values[month].plannedTotal || 0) : 0), 0);
+      const actualTotal = row.children.reduce((acc, child) => acc + (child.values[month] ? (child.values[month].actualTotal || 0) : 0), 0);
+      const warnings = row.children.flatMap(child => (child.values[month] ? (child.values[month].warnings || []) : []));
+      const paidThisMonthCount = row.children.reduce((acc, child) => acc + (child.values[month] ? (child.values[month].paidThisMonthCount || 0) : 0), 0);
+      const hasPaidValue = row.children.some(child => child.values[month] && child.values[month].hasPaidValue);
       row.values[month] = {
         value: sum,
         plannedTotal,
@@ -615,7 +683,7 @@ function applyRowValues(row, months, currentMonth) {
 }
 
 function rowHasValues(row, months) {
-  return months.some(month => Math.abs(row.values[month]?.value || 0) > 0.0001);
+  return months.some(month => Math.abs(row.values[month] ? (row.values[month].value || 0) : 0) > 0.0001);
 }
 
 function filterRows(row, months) {
@@ -658,13 +726,13 @@ function flattenRows(rows, expandedSet) {
 function buildDashboardRows(state, months, options = {}) {
   const plannedPayoutMap = computePlannedPayoutByMonth(state, months);
   const actualPayoutMap = new Map();
-  const monthlyActuals = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+  const monthlyActuals = state && state.monthlyActuals && typeof state.monthlyActuals === "object"
     ? state.monthlyActuals
     : {};
   Object.entries(monthlyActuals).forEach(([month, entry]) => {
     if (!months.includes(month)) return;
-    const revenue = Number(entry?.realRevenueEUR);
-    const payoutRate = Number(entry?.realPayoutRatePct);
+    const revenue = Number(entry && entry.realRevenueEUR);
+    const payoutRate = Number(entry && entry.realPayoutRatePct);
     if (!Number.isFinite(revenue) || !Number.isFinite(payoutRate)) return;
     actualPayoutMap.set(month, revenue * (payoutRate / 100));
   });
@@ -678,9 +746,9 @@ function buildDashboardRows(state, months, options = {}) {
     paid: actualPayoutMap.has(month),
   }));
 
-  const extraRows = Array.isArray(state?.extras) ? state.extras : [];
+  const extraRows = state && Array.isArray(state.extras) ? state.extras : [];
   const extraInEvents = extraRows
-    .filter(row => parseEuro(row?.amountEur) >= 0)
+    .filter(row => parseEuro(row && row.amountEur) >= 0)
     .map(row => ({
       id: row.id || row.label || row.month,
       month: row.month || toMonthKey(row.date),
@@ -691,7 +759,7 @@ function buildDashboardRows(state, months, options = {}) {
     .filter(evt => evt.month);
 
   const extraOutEvents = extraRows
-    .filter(row => parseEuro(row?.amountEur) < 0)
+    .filter(row => parseEuro(row && row.amountEur) < 0)
     .map(row => ({
       id: row.id || row.label || row.month,
       month: row.month || toMonthKey(row.date),
@@ -701,7 +769,7 @@ function buildDashboardRows(state, months, options = {}) {
     }))
     .filter(evt => evt.month);
 
-  const dividendEvents = (state?.dividends || [])
+  const dividendEvents = (state && Array.isArray(state.dividends) ? state.dividends : [])
     .map(row => ({
       id: row.id || row.label || row.month,
       month: row.month || toMonthKey(row.date),
@@ -767,11 +835,12 @@ function buildDashboardRows(state, months, options = {}) {
   });
 
   const poChildren = poData.map(po => {
-    const poLabel = po.record?.poNo ? `PO ${po.record.poNo}` : "PO";
+    const poNo = po.record && po.record.poNo ? po.record.poNo : "";
+    const poLabel = poNo ? `PO ${poNo}` : "PO";
     const depositPaid = po.events.some(evt => /deposit/i.test(evt.typeLabel || "") && evt.paid);
     const balancePaid = po.events.some(evt => /balance/i.test(evt.typeLabel || "") && evt.paid);
     const tooltipParts = [
-      `PO: ${po.record?.poNo || "—"}`,
+      `PO: ${poNo || "—"}`,
       `Supplier: ${po.supplier || "—"}`,
       `Units: ${po.units || 0}`,
       `Deposit: ${depositPaid ? "bezahlt" : "offen"}`,
@@ -788,7 +857,7 @@ function buildDashboardRows(state, months, options = {}) {
         .filter(Boolean)
         .join(" · ");
       return buildRow({
-        id: `po-${po.record?.id || poLabel}-${evt.id}`,
+        id: `po-${(po.record && po.record.id) || poLabel}-${evt.id}`,
         label: evt.typeLabel || evt.label || "Zahlung",
         level: 3,
         events: [evt],
@@ -796,16 +865,16 @@ function buildDashboardRows(state, months, options = {}) {
         rowType: "detail",
         section: "outflows",
         sourceLabel: "PO Zahlung",
-      nav: {
-        route: "#po",
-        open: po.record?.id || po.record?.poNo || "",
-        focus: evt.typeLabel ? `payment:${evt.typeLabel}` : null,
-      },
+        nav: {
+          route: "#po",
+          open: (po.record && (po.record.id || po.record.poNo)) || "",
+          focus: evt.typeLabel ? `payment:${evt.typeLabel}` : null,
+        },
+      });
     });
-  });
 
     return buildRow({
-      id: `po-${po.record?.id || poLabel}`,
+      id: `po-${(po.record && po.record.id) || poLabel}`,
       label: poLabel,
       level: 2,
       children: paymentRows,
@@ -814,7 +883,7 @@ function buildDashboardRows(state, months, options = {}) {
       rowType: "detail",
       section: "outflows",
       sourceLabel: "PO",
-      nav: { route: "#po", open: po.record?.id || po.record?.poNo || "" },
+      nav: { route: "#po", open: (po.record && (po.record.id || po.record.poNo)) || "" },
     });
   });
 
@@ -830,13 +899,14 @@ function buildDashboardRows(state, months, options = {}) {
   });
 
   const foChildren = foData.map(fo => {
-    const label = fo.record?.foNo ? `FO ${fo.record.foNo}` : "FO";
+    const foNo = fo.record && fo.record.foNo ? fo.record.foNo : "";
+    const label = foNo ? `FO ${foNo}` : "FO";
     const foTooltip = [
-      `FO: ${fo.record?.foNo || fo.record?.id || "—"}`,
-      `SKU: ${fo.record?.sku || "—"}`,
-      `Units: ${fo.record?.units || 0}`,
-      `ETA: ${fo.record?.etaDate || fo.record?.targetDeliveryDate || "—"}`,
-      `Status: ${fo.record?.status || "—"}`,
+      `FO: ${foNo || (fo.record && fo.record.id) || "—"}`,
+      `SKU: ${(fo.record && fo.record.sku) || "—"}`,
+      `Units: ${(fo.record && fo.record.units) || 0}`,
+      `ETA: ${(fo.record && (fo.record.etaDate || fo.record.targetDeliveryDate)) || "—"}`,
+      `Status: ${(fo.record && fo.record.status) || "—"}`,
     ].join(" · ");
     const events = fo.events.map(evt => {
       const tooltip = [
@@ -848,7 +918,7 @@ function buildDashboardRows(state, months, options = {}) {
         .filter(Boolean)
         .join(" · ");
       return buildRow({
-        id: `fo-${fo.record?.id || label}-${evt.id}`,
+        id: `fo-${(fo.record && fo.record.id) || label}-${evt.id}`,
         label: evt.typeLabel || evt.label || "Payment",
         level: 3,
         events: [evt],
@@ -856,11 +926,11 @@ function buildDashboardRows(state, months, options = {}) {
         rowType: "detail",
         section: "outflows",
         sourceLabel: "FO Zahlung",
-        nav: { route: "#fo", open: fo.record?.id || fo.record?.foNo || "" },
+        nav: { route: "#fo", open: (fo.record && (fo.record.id || fo.record.foNo)) || "" },
       });
     });
     return buildRow({
-      id: `fo-${fo.record?.id || label}`,
+      id: `fo-${(fo.record && fo.record.id) || label}`,
       label,
       level: 2,
       children: events,
@@ -869,7 +939,7 @@ function buildDashboardRows(state, months, options = {}) {
       rowType: "detail",
       section: "outflows",
       sourceLabel: "FO",
-      nav: { route: "#fo", open: fo.record?.id || fo.record?.foNo || "" },
+      nav: { route: "#fo", open: (fo.record && (fo.record.id || fo.record.foNo)) || "" },
     });
   });
 
@@ -961,10 +1031,12 @@ function buildDashboardRows(state, months, options = {}) {
     sourceLabel: "Netto Cashflow",
   });
   months.forEach(month => {
-    const inflow = inflowRow.values[month]?.value || 0;
-    const outflow = outflowRow.values[month]?.value || 0;
-    const plannedTotal = (inflowRow.values[month]?.plannedTotal || 0) - (outflowRow.values[month]?.plannedTotal || 0);
-    const actualTotal = (inflowRow.values[month]?.actualTotal || 0) - (outflowRow.values[month]?.actualTotal || 0);
+    const inflow = inflowRow.values[month] ? (inflowRow.values[month].value || 0) : 0;
+    const outflow = outflowRow.values[month] ? (outflowRow.values[month].value || 0) : 0;
+    const plannedTotal = (inflowRow.values[month] ? (inflowRow.values[month].plannedTotal || 0) : 0)
+      - (outflowRow.values[month] ? (outflowRow.values[month].plannedTotal || 0) : 0);
+    const actualTotal = (inflowRow.values[month] ? (inflowRow.values[month].actualTotal || 0) : 0)
+      - (outflowRow.values[month] ? (outflowRow.values[month].actualTotal || 0) : 0);
     netRow.values[month] = {
       value: inflow - outflow,
       plannedTotal,
@@ -975,9 +1047,9 @@ function buildDashboardRows(state, months, options = {}) {
     };
   });
 
-  const openingRaw = state?.openingEur ?? state?.settings?.openingBalance ?? null;
+  const openingRaw = safeValue(state && state.openingEur, safeValue(state && state.settings && state.settings.openingBalance, null));
   const openingBalance = parseEuro(openingRaw || 0);
-  const monthlyActualsMap = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+  const monthlyActualsMap = state && state.monthlyActuals && typeof state.monthlyActuals === "object"
     ? state.monthlyActuals
     : {};
   const balanceRow = buildRow({
@@ -996,9 +1068,9 @@ function buildDashboardRows(state, months, options = {}) {
       ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
       : months.length - 1;
     months.forEach((month, idx) => {
-      const actualClosing = Number(monthlyActualsMap?.[month]?.realClosingBalanceEUR);
+      const actualClosing = Number(monthlyActualsMap[month] && monthlyActualsMap[month].realClosingBalanceEUR);
       const hasActual = Number.isFinite(actualClosing);
-      const net = netRow.values[month]?.value || 0;
+      const net = netRow.values[month] ? (netRow.values[month].value || 0) : 0;
       const plannedClosing = (Number.isFinite(baseBalance) ? baseBalance : 0) + net;
       if (options.limitBalanceToGreen && idx > lastGreenIndex) {
         balanceRow.values[month] = { value: null, plannedTotal: 0, actualTotal: 0, displayLabel: "Plan", warnings: [], paidThisMonthCount: 0 };
@@ -1024,8 +1096,8 @@ function buildDashboardRows(state, months, options = {}) {
 }
 
 function buildDashboardHTML(state) {
-  const startMonth = state?.settings?.startMonth || "2025-01";
-  const horizon = Number(state?.settings?.horizonMonths || 12) || 12;
+  const startMonth = (state && state.settings && state.settings.startMonth) || "2025-01";
+  const horizon = Number((state && state.settings && state.settings.horizonMonths) || 12) || 12;
   const endMonth = addMonths(startMonth, horizon - 1);
   const allMonths = getMonthlyBuckets(startMonth, endMonth);
   const currentMonth = currentMonthKey();
@@ -1080,16 +1152,17 @@ function buildDashboardHTML(state) {
       const columnClass = monthColumnClass(idx);
       const status = skuCoverage.coverage.get(month) || "gray";
       const detail = skuCoverage.details.get(month);
-      const plannedCount = detail?.plannedCount ?? 0;
-      const totalCount = detail?.totalCount ?? 0;
-      const missing = detail?.missingAliases || [];
+      const plannedCount = detail && typeof detail.coveredCount !== "undefined" ? detail.coveredCount : 0;
+      const totalCount = detail && typeof detail.totalCount !== "undefined" ? detail.totalCount : 0;
+      const ratio = detail && typeof detail.ratio !== "undefined" ? detail.ratio : 0;
+      const missing = detail && detail.missingAliases ? detail.missingAliases : [];
       const missingPreview = missing.slice(0, 5);
       const missingRest = missing.length > 5 ? ` +${missing.length - 5} weitere` : "";
       const missingLine = missingPreview.length
         ? `Fehlend: ${missingPreview.join(", ")}${missingRest}`
         : (totalCount ? "Fehlend: —" : "Keine aktiven SKUs");
       const tooltip = [
-        `Coverage: ${plannedCount}/${totalCount} SKUs`,
+        `Reifegrad: ${plannedCount}/${totalCount} SKUs geplant (${Math.round(ratio * 100)}%)`,
         missingLine,
       ].join(" · ");
       return `
@@ -1130,7 +1203,7 @@ function buildDashboardHTML(state) {
         .map((month, idx) => {
           const columnClass = monthColumnClass(idx);
           const cell = row.values[month] || { value: 0, warnings: [] };
-          const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(skuCoverage.coverage.get(month));
+          const showBalanceWarning = row.id === "balance" && ["gray", "amber"].includes(skuCoverage.coverage.get(month));
           const balanceWarning = showBalanceWarning
             ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da Planung fehlt.">⚠︎</span>`
             : "";
@@ -1194,27 +1267,21 @@ function buildDashboardHTML(state) {
               ? `<span class="muted coverage-sku">(${escapeHtml(item.sku)})</span>`
               : "";
             const cells = nonEmptyMonths.map(month => {
-              const match = skuCoverage.plannedByMonth.get(month)?.get(item.sku) || null;
-              if (match) {
-                const detail = skuCoverage.details.get(month);
-                const monthEnd = detail?.monthEnd;
-                const tooltip = [
-                  `Geplant bis: ${formatDate(monthEnd)}`,
-                  `Quelle: ${match.sourceType} ${match.sourceLabel}`,
-                  `ETA: ${formatDate(match.etaDate)}`,
-                ].join(" · ");
+              const perSkuMap = skuCoverage.perSkuCoverage.get(item.sku);
+              const isCovered = perSkuMap ? perSkuMap.get(month) : false;
+              if (isCovered) {
                 return `
-                  <td class="coverage-cell coverage-planned" title="${escapeHtml(tooltip)}">
-                    <span class="coverage-chip planned" aria-hidden="true">✅</span>
+                  <td class="coverage-cell coverage-planned">
+                    <span class="coverage-chip planned" aria-hidden="true">✓</span>
                   </td>
                 `;
               }
-              const monthEnd = getMonthEnd(month);
-              const tooltip = `Keine FO/PO bis einschließlich ${formatMonthLabel(month)}`;
-              const targetDate = monthEnd ? monthEnd.toISOString().slice(0, 10) : "";
+              const targetDate = `${month}-15`;
+              const tooltip = `Nicht geplant für ${formatMonthLabel(month)}`;
               return `
-                <td class="coverage-cell coverage-missing" data-create-fo="true" data-sku="${escapeHtml(item.sku)}" data-target-date="${escapeHtml(targetDate)}" title="${escapeHtml(tooltip)}" role="button" tabindex="0">
-                  <span class="coverage-chip missing" aria-hidden="true">⛔</span>
+                <td class="coverage-cell coverage-missing" title="${escapeHtml(tooltip)}">
+                  <span class="coverage-chip missing" aria-hidden="true">—</span>
+                  <button type="button" class="coverage-plan-btn" data-plan-sku="${escapeHtml(item.sku)}" data-plan-month="${escapeHtml(month)}" data-plan-target="${escapeHtml(targetDate)}">Planen</button>
                 </td>
               `;
             }).join("");
@@ -1222,8 +1289,10 @@ function buildDashboardHTML(state) {
               <tr class="coverage-sku-row" data-coverage-sku="${escapeHtml(item.sku)}">
                 <td class="coverage-label">
                   <span class="tree-spacer" aria-hidden="true"></span>
-                  <span>${escapeHtml(skuLabel)}</span>
-                  ${skuMeta}
+                  <div class="coverage-sku-block">
+                    <span>${escapeHtml(skuLabel)}</span>
+                    ${skuMeta}
+                  </div>
                 </td>
                 ${cells}
               </tr>
@@ -1271,9 +1340,9 @@ function buildDashboardHTML(state) {
       </div>
       ${coverageNotice}
       <div class="dashboard-legend muted">
-        <span class="coverage-indicator coverage-green"></span> Reifegrad (SKU-Abdeckung)
-        <span class="coverage-indicator coverage-yellow"></span> Teilweise geplant
-        <span class="coverage-indicator coverage-red"></span> Planung fehlt
+        <span class="coverage-indicator coverage-green"></span> Reifegrad (vollständig geplant)
+        <span class="coverage-indicator coverage-amber"></span> Teilweise geplant
+        <span class="coverage-indicator coverage-gray"></span> Planung fehlt
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">
@@ -1295,15 +1364,15 @@ function buildDashboardHTML(state) {
       </div>
       <div class="dashboard-coverage" id="dashboard-coverage-panel">
         <div class="dashboard-coverage-header">
-          <h3>SKU Coverage (Planungsstand)</h3>
-          <p class="muted">Grün = geplant (FO/PO mit ETA bis Monatsende), Rot = fehlt Planung.</p>
+          <h3>SKU-Planungsübersicht</h3>
+          <p class="muted">✓ = Planung vorhanden, — = keine Planung für den Monat.</p>
         </div>
         <div class="dashboard-coverage-wrap">
           <table class="table-compact dashboard-coverage-table" role="table">
             <thead>
               <tr>
                 <th scope="col" class="coverage-header">Kategorie / SKU</th>
-                ${nonEmptyMonths.map(month => `<th scope="col">${escapeHtml(month)}</th>`).join("")}
+                ${nonEmptyMonths.map((month, idx) => `<th scope="col" class="${monthColumnClass(idx)}">${escapeHtml(month)}</th>`).join("")}
               </tr>
             </thead>
             <tbody>
@@ -1328,8 +1397,8 @@ function attachDashboardHandlers(root, state) {
   root.querySelectorAll("[data-expand]").forEach(btn => {
     btn.addEventListener("click", () => {
       const action = btn.getAttribute("data-expand");
-      const startMonth = state?.settings?.startMonth || "2025-01";
-      const horizon = Number(state?.settings?.horizonMonths || 12) || 12;
+      const startMonth = (state && state.settings && state.settings.startMonth) || "2025-01";
+      const horizon = Number((state && state.settings && state.settings.horizonMonths) || 12) || 12;
       const endMonth = addMonths(startMonth, horizon - 1);
       const currentMonth = currentMonthKey();
       const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
@@ -1355,10 +1424,13 @@ function attachDashboardHandlers(root, state) {
       });
       const topRows = [filterRows(inflowRow, visibleMonths), filterRows(outflowRow, visibleMonths), ...summaryRows].filter(Boolean);
       const expandableIds = collectExpandableIds(topRows);
+      const coverageGroups = skuCoverage.groups || [];
       if (action === "collapse") {
         dashboardState.expanded = new Set();
+        dashboardState.coverageCollapsed = new Set(coverageGroups.map(group => group.id));
       } else {
         dashboardState.expanded = new Set(expandableIds);
+        dashboardState.coverageCollapsed = new Set();
       }
       render(root);
     });
@@ -1401,7 +1473,7 @@ function attachDashboardHandlers(root, state) {
   const table = root.querySelector(".dashboard-tree-table");
   if (table) {
     const navigate = (payload) => {
-      if (!payload?.route) return;
+      if (!payload || !payload.route) return;
       const params = new URLSearchParams();
       if (payload.open) params.set("open", payload.open);
       if (payload.focus) params.set("focus", payload.focus);
@@ -1464,22 +1536,15 @@ function attachDashboardHandlers(root, state) {
     });
   });
 
-  root.querySelectorAll(".coverage-cell[data-create-fo]").forEach(cell => {
-    const handler = () => {
-      const sku = cell.getAttribute("data-sku") || "";
-      const targetDate = cell.getAttribute("data-target-date") || "";
+  root.querySelectorAll(".coverage-plan-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sku = btn.getAttribute("data-plan-sku") || "";
+      const targetDate = btn.getAttribute("data-plan-target") || "";
       const params = new URLSearchParams();
       params.set("create", "1");
       if (sku) params.set("sku", sku);
       if (targetDate) params.set("target", targetDate);
       location.hash = `#fo?${params.toString()}`;
-    };
-    cell.addEventListener("click", handler);
-    cell.addEventListener("keydown", ev => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        handler();
-      }
     });
   });
 

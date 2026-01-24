@@ -114,6 +114,12 @@ function buildForecastExport(state) {
         sku,
         alias: product.alias || "",
         categoryId: product.categoryId || "",
+        avgSellingPriceGrossEUR: Number.isFinite(Number(product.avgSellingPriceGrossEUR))
+          ? Number(product.avgSellingPriceGrossEUR)
+          : null,
+        sellerboardMarginPct: Number.isFinite(Number(product.sellerboardMarginPct))
+          ? Number(product.sellerboardMarginPct)
+          : null,
         values,
         meta: {
           manualOverridesMonths: manualMonths,
@@ -124,6 +130,7 @@ function buildForecastExport(state) {
     generatedAt: new Date().toISOString(),
     sourcePriority: ["manual", "ventoryOne"],
     lastImportAt: state?.forecast?.lastImportAt || null,
+    forecastLastImportedAt: state?.forecast?.lastImportAt || null,
     months,
     items,
   };
