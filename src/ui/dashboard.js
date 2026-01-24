@@ -367,6 +367,8 @@ function computeSkuCoverage(state, months) {
       missingAliases,
     });
   });
+  return result;
+}
 
   return {
     coverage,
