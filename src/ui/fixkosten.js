@@ -393,6 +393,18 @@ function render(root) {
   renderMasters();
   renderMonthInstances();
 
+  function focusFromRoute() {
+    const query = window.__routeQuery || {};
+    if (!query.month) return;
+    const target = root.querySelector(`.fix-month-card[data-month="${query.month}"]`);
+    if (!target) return;
+    target.classList.add("row-focus");
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.__routeQuery = {};
+  }
+
+  focusFromRoute();
+
   addBtn?.addEventListener("click", () => {
     state.fixcosts.push(createDefaultFixcost(state));
     saveState(state);
