@@ -50,10 +50,18 @@ function monthEndFromKey(yyyymm) {
 }
 function anchorsFor(row) {
   const od = row.orderDate ? new Date(row.orderDate) : new Date();
-  const prodDone = addDays(od, Number(row.prodDays || 0));
+  const prodDays = Number(row.productionLeadTimeDays ?? row.prodDays ?? 0);
+  const transitDays = Number(row.logisticsLeadTimeDays ?? row.transitDays ?? 0);
+  const prodDone = addDays(od, prodDays);
   const etd = prodDone; // einfache Konvention
-  const eta = addDays(etd, Number(row.transitDays || 0));
-  return { ORDER_DATE: od, PROD_DONE: prodDone, ETD: etd, ETA: eta };
+  const eta = addDays(etd, transitDays);
+  return {
+    ORDER_DATE: od,
+    PROD_DONE: prodDone,
+    PRODUCTION_END: prodDone,
+    ETD: etd,
+    ETA: eta,
+  };
 }
 function addMonthsDate(date, months) {
   const d = new Date(date.getTime());
@@ -74,6 +82,7 @@ function monthIndex(ym) {
 function computeGoodsTotals(row, settings) {
   const items = Array.isArray(row?.items) ? row.items : [];
   let totalUsd = 0;
+  let totalUnits = 0;
   if (items.length) {
     items.forEach(item => {
       const units = parseEuro(item?.units ?? 0);
@@ -83,6 +92,7 @@ function computeGoodsTotals(row, settings) {
       const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
       const subtotal = Math.max(0, Math.round(rawUsd * 100) / 100);
       if (Number.isFinite(subtotal)) totalUsd += subtotal;
+      if (Number.isFinite(units)) totalUnits += units;
     });
   } else {
     const units = parseEuro(row?.units ?? 0);
@@ -91,18 +101,67 @@ function computeGoodsTotals(row, settings) {
     const extraFlatUsd = parseEuro(row?.extraFlatUsd ?? 0);
     const rawUsd = (unitCostUsd + unitExtraUsd) * units + extraFlatUsd;
     totalUsd = Math.max(0, Math.round(rawUsd * 100) / 100);
+    if (Number.isFinite(units)) totalUnits = units;
   }
-  let fxRate = parseEuro(settings?.fxRate ?? 0) || 0;
-  if (row && row.fxOverride != null && row.fxOverride !== "") {
-    const override = parseEuro(row.fxOverride);
-    if (Number.isFinite(override) && override > 0) fxRate = override;
-  }
+  const override = parseEuro(row?.fxOverride ?? 0);
+  const fxRate = (Number.isFinite(override) && override > 0)
+    ? override
+    : (parseEuro(settings?.fxRate ?? 0) || 0);
   const derivedEur = fxRate > 0 ? Math.round((totalUsd / fxRate) * 100) / 100 : 0;
   const fallbackEur = parseEuro(row?.goodsEur ?? 0);
   return {
     usd: totalUsd,
     eur: derivedEur > 0 ? derivedEur : fallbackEur,
+    units: totalUnits,
   };
+}
+
+function computeFreightTotal(row, totals) {
+  const mode = row?.freightMode === 'per_unit' ? 'per_unit' : 'total';
+  if (mode === 'per_unit') {
+    const perUnit = parseEuro(row?.freightPerUnitEur ?? 0);
+    const units = Number(totals?.units ?? 0) || 0;
+    const total = perUnit * units;
+    return Math.round(total * 100) / 100;
+  }
+  return parseEuro(row?.freightEur ?? 0);
+}
+
+export function computeOutflowStack(entries = []) {
+  const stack = {
+    fixedCosts: 0,
+    poPaid: 0,
+    poOpen: 0,
+    otherExpenses: 0,
+    foPlanned: 0,
+    total: 0,
+  };
+  for (const entry of entries || []) {
+    if (!entry || entry.direction !== 'out') continue;
+    const amount = Math.abs(Number(entry.amount || 0));
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    if (entry.group === 'Fixkosten') {
+      stack.fixedCosts += amount;
+      continue;
+    }
+    if (entry.source === 'po' && entry.kind === 'po') {
+      if (entry.paid) stack.poPaid += amount;
+      else stack.poOpen += amount;
+      continue;
+    }
+    if (entry.source === 'fo' && entry.kind === 'fo') {
+      stack.foPlanned += amount;
+      continue;
+    }
+    stack.otherExpenses += amount;
+  }
+  stack.total =
+    stack.fixedCosts
+    + stack.poPaid
+    + stack.poOpen
+    + stack.otherExpenses
+    + stack.foPlanned;
+  return stack;
 }
 
 function clampDay(year, monthIndexValue, day) {
@@ -414,21 +473,52 @@ function normaliseAutoEvents(row, settings, manual) {
 
 function expandOrderEvents(row, settings, entityLabel, numberField) {
   if (!row) return [];
-  const totals = computeGoodsTotals(row, settings);
-  const goods = totals.eur;
-  const freight = parseEuro(row.freightEur);
-  const anchors = anchorsFor(row);
-  const manual = Array.isArray(row.milestones) ? row.milestones : [];
-  const autoEvents = normaliseAutoEvents(row, settings, manual);
   const prefixBase = entityLabel || 'PO';
   const ref = row[numberField];
   const prefix = ref ? `${prefixBase} ${ref}` : prefixBase;
+  if (Array.isArray(row.payments) && row.payments.length) {
+    const anchors = anchorsFor(row);
+    return row.payments
+      .filter(Boolean)
+      .map((payment, idx) => {
+        const trigger = payment.triggerEvent || 'ORDER_DATE';
+        const anchorKey = trigger === 'PROD_DONE' ? 'PROD_DONE' : trigger;
+        const baseDate = anchors[anchorKey] || anchors.ORDER_DATE;
+        const due = payment.dueDate ? new Date(payment.dueDate) : addDays(baseDate, Number(payment.offsetDays || 0));
+        const amountRaw = Number(payment.amount || 0);
+        const direction = amountRaw >= 0 ? 'out' : 'in';
+        const amount = Math.abs(amountRaw);
+        return {
+          label: `${prefix}${payment.label ? ` – ${payment.label}` : ''}`,
+          amount,
+          due,
+          month: toMonthKey(due),
+          direction,
+          type: 'manual',
+          anchor: anchorKey,
+          lagDays: Number(payment.offsetDays || 0) || 0,
+          percent: Number(payment.percent || 0),
+          sourceType: prefixBase,
+          sourceNumber: ref,
+          sourceId: row.id,
+          id: payment.id || `${row.id || prefixBase}-pay-${idx}`,
+          tooltip: `Fälligkeit: ${anchorKey} + ${Number(payment.offsetDays || 0)} Tage`,
+        };
+      });
+  }
+  const totals = computeGoodsTotals(row, settings);
+  const goods = totals.eur;
+  const freight = computeFreightTotal(row, totals);
+  const anchors = anchorsFor(row);
+  const manual = Array.isArray(row.milestones) ? row.milestones : [];
+  const autoEvents = normaliseAutoEvents(row, settings, manual);
   const events = [];
 
   for (const [idx, ms] of manual.entries()) {
     const pct = parsePct(ms.percent);
     const baseDate = anchors[ms.anchor || 'ORDER_DATE'] || anchors.ORDER_DATE;
     const due = addDays(baseDate, Number(ms.lagDays || 0));
+    const manualId = ms.id || `${row.id || prefixBase}-${idx}-${ms.id || 'manual'}`;
     events.push({
       label: `${prefix}${ms.label ? ` – ${ms.label}` : ''}`,
       amount: goods * (pct / 100),
@@ -442,7 +532,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       sourceType: prefixBase,
       sourceNumber: ref,
       sourceId: row.id,
-      id: `${row.id || prefixBase}-${idx}-${ms.id || 'manual'}`,
+      id: manualId,
       tooltip: `Fälligkeit: ${ms.anchor || 'ORDER_DATE'} + ${Number(ms.lagDays || 0)} Tage`,
     });
   }
@@ -462,8 +552,9 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
 
     if (auto.type === 'freight') {
-      const amount = parseEuro(row.freightEur);
+      const amount = computeFreightTotal(row, totals);
       if (!amount) continue;
+      const freightId = auto.id || `${row.id || prefixBase}-auto-freight`;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       events.push({
         label: `${prefix} – ${auto.label || 'Fracht'}`,
@@ -477,7 +568,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-freight`,
+        id: freightId,
         tooltip: 'Frachtkosten laut Eingabe',
       });
       continue;
@@ -488,6 +579,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       const baseValue = goods + (dutyIncludeFreight ? freight : 0);
       const amount = baseValue * (percent / 100);
+      const dutyId = auto.id || `${row.id || prefixBase}-auto-duty`;
       autoResults.duty = { amount, due };
       events.push({
         label: `${prefix} – ${auto.label || 'Zoll'}`,
@@ -502,7 +594,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-duty`,
+        id: dutyId,
         tooltip: `Zoll = ${percent}% × (Warenwert${dutyIncludeFreight ? ' + Fracht' : ''})`,
       });
       continue;
@@ -514,6 +606,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const baseValue = goods + freight + dutyAbs;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       const amount = baseValue * (percent / 100);
+      const eustId = auto.id || `${row.id || prefixBase}-auto-eust`;
       autoResults.eust = { amount, due };
       events.push({
         label: `${prefix} – ${auto.label || 'EUSt'}`,
@@ -528,7 +621,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-eust`,
+        id: eustId,
         tooltip: `EUSt = ${percent}% × (Warenwert + Fracht + Zoll)`,
       });
       continue;
@@ -542,6 +635,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       const baseDay = addDays(eust.due || baseDate, Number(auto.lagDays || 0));
       const due = monthEndDate(addMonthsDate(baseDay, months));
       const amount = Math.abs(eust.amount) * (percent / 100);
+      const vatId = auto.id || `${row.id || prefixBase}-auto-vat`;
       events.push({
         label: `${prefix} – ${auto.label || 'EUSt-Erstattung'}`,
         amount,
@@ -555,7 +649,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-vat`,
+        id: vatId,
         tooltip: `Erstattung am Monatsende nach ${months} Monaten`,
       });
       continue;
@@ -566,6 +660,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
       if (!percent) continue;
       const due = addDays(baseDate, Number(auto.lagDays || 0));
       const amount = goods * (percent / 100);
+      const fxId = auto.id || `${row.id || prefixBase}-auto-fx`;
       events.push({
         label: `${prefix} – ${auto.label || 'FX-Gebühr'}`,
         amount,
@@ -579,7 +674,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         sourceType: prefixBase,
         sourceNumber: ref,
         sourceId: row.id,
-        id: `${row.id || prefixBase}-auto-fx`,
+        id: fxId,
         tooltip: `FX-Gebühr = ${percent}% × Warenwert`,
       });
     }
@@ -692,16 +787,27 @@ export function computeSeries(state) {
 
   const forecastEnabled = Boolean(s?.forecast?.settings?.useForecast);
   const forecastMap = {};
-  if (forecastEnabled && Array.isArray(s?.forecast?.items)) {
-    s.forecast.items.forEach(item => {
-      if (!item || !item.month || !item.sku) return;
-      const month = item.month;
-      if (!bucket[month]) return;
-      const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
-      const price = parseEuro(item.priceEur ?? item.price ?? 0);
-      const revenue = qty * price;
-      forecastMap[month] = (forecastMap[month] || 0) + revenue;
-    });
+  if (forecastEnabled) {
+    if (s?.forecast?.forecastImport && typeof s.forecast.forecastImport === "object") {
+      Object.values(s.forecast.forecastImport).forEach(monthMap => {
+        Object.entries(monthMap || {}).forEach(([month, entry]) => {
+          if (!month || !bucket[month]) return;
+          const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
+          if (!Number.isFinite(revenue)) return;
+          forecastMap[month] = (forecastMap[month] || 0) + revenue;
+        });
+      });
+    } else if (Array.isArray(s?.forecast?.items)) {
+      s.forecast.items.forEach(item => {
+        if (!item || !item.month || !item.sku) return;
+        const month = item.month;
+        if (!bucket[month]) return;
+        const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
+        const price = parseEuro(item.priceEur ?? item.price ?? 0);
+        const revenue = qty * price;
+        forecastMap[month] = (forecastMap[month] || 0) + revenue;
+      });
+    }
   }
 
   const payoutPctMap = {};
@@ -812,6 +918,7 @@ export function computeSeries(state) {
 
   // FO-Events (Milestones & Importkosten)
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
+    if (String(fo?.status || "").toUpperCase() === "CONVERTED") return;
     expandOrderEvents(fo, settingsNorm, 'FO', 'foNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
       const kind = ev.type === 'manual' ? 'fo' : (ev.type === 'vat_refund' ? 'fo-refund' : 'fo-import');
@@ -900,12 +1007,22 @@ export function computeSeries(state) {
   const salesIn = series.map(x => x.itemsIn.filter(i => i.kind === 'sales-payout').reduce((a, b) => a + b.amount, 0));
   const avgSalesPayout = salesIn.length ? (salesIn.reduce((a, b) => a + b, 0) / (salesIn.filter(v => v > 0).length || 1)) : 0;
 
+  const plannedRevenueByMonth = {};
+  const plannedPayoutByMonth = {};
+  Object.keys(bucket).forEach(m => {
+    const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
+    const payoutPct = parsePct(payoutPctMap[m] || 0);
+    plannedRevenueByMonth[m] = revenue;
+    plannedPayoutByMonth[m] = revenue * (payoutPct / 100);
+  });
+
   const kpis = {
     opening,
     openingToday: opening,
     salesPayoutAvg: avgSalesPayout,
     avgSalesPayout,
     firstNegativeMonth: firstNeg,
+    actuals: {},
   };
 
   let running = opening;
@@ -924,7 +1041,87 @@ export function computeSeries(state) {
     };
   });
 
-  return { startMonth, horizon, months, series, kpis, breakdown };
+  const actualMap = new Map();
+  const monthlyActuals = s?.monthlyActuals && typeof s.monthlyActuals === "object" ? s.monthlyActuals : {};
+  const monthlyActualsEntries = Object.entries(monthlyActuals);
+  if (monthlyActualsEntries.length) {
+    monthlyActualsEntries.forEach(([month, entry]) => {
+      if (!month) return;
+      const revenue = Number(entry?.realRevenueEUR);
+      const payoutRate = Number(entry?.realPayoutRatePct);
+      const closing = Number(entry?.realClosingBalanceEUR);
+      const actual = {};
+      if (Number.isFinite(revenue)) actual.revenue = revenue;
+      if (Number.isFinite(revenue) && Number.isFinite(payoutRate)) {
+        actual.payout = revenue * (payoutRate / 100);
+      }
+      if (Number.isFinite(closing)) actual.closing = closing;
+      if (Object.keys(actual).length) actualMap.set(month, actual);
+    });
+  } else {
+    const actuals = Array.isArray(s.actuals) ? s.actuals : [];
+    actuals.forEach(entry => {
+      if (!entry || !entry.month) return;
+      const month = entry.month;
+      actualMap.set(month, {
+        revenue: parseEuro(entry.revenueEur),
+        payout: parseEuro(entry.payoutEur),
+        closing: parseEuro(entry.closingBalanceEur),
+      });
+    });
+  }
+
+  const actualComparisons = [];
+  actualMap.forEach((values, month) => {
+    const idx = months.indexOf(month);
+    if (idx === -1) return;
+    const plannedBreakdown = idx >= 0 && idx < breakdown.length ? breakdown[idx] : null;
+    const plannedClosingBalance = plannedBreakdown ? plannedBreakdown.closing : null;
+    const plannedRevenue = plannedRevenueByMonth[month] ?? null;
+    const plannedPayout = plannedPayoutByMonth[month] ?? null;
+    actualComparisons.push({
+      month,
+      plannedRevenue,
+      actualRevenue: values.revenue,
+      revenueDelta: (values.revenue ?? 0) - (plannedRevenue ?? 0),
+      revenueDeltaPct: plannedRevenue ? (((values.revenue ?? 0) - plannedRevenue) / plannedRevenue) * 100 : null,
+      plannedPayout,
+      actualPayout: values.payout,
+      payoutDelta: (values.payout ?? 0) - (plannedPayout ?? 0),
+      payoutDeltaPct: plannedPayout ? (((values.payout ?? 0) - plannedPayout) / plannedPayout) * 100 : null,
+      plannedClosing: plannedClosingBalance,
+      actualClosing: values.closing,
+      closingDelta: (values.closing ?? 0) - (plannedClosingBalance ?? 0),
+    });
+  });
+  actualComparisons.sort((a, b) => (a.month || '').localeCompare(b.month || ''));
+
+  const lastActual = actualComparisons[actualComparisons.length - 1] || null;
+  const revenueDeltaList = actualComparisons
+    .map(entry => entry.revenueDeltaPct)
+    .filter(v => Number.isFinite(v));
+  const payoutDeltaList = actualComparisons
+    .map(entry => entry.payoutDeltaPct)
+    .filter(v => Number.isFinite(v));
+  const avgRevenueDeltaPct = revenueDeltaList.length
+    ? revenueDeltaList.reduce((a, b) => a + b, 0) / revenueDeltaList.length
+    : null;
+  const avgPayoutDeltaPct = payoutDeltaList.length
+    ? payoutDeltaList.reduce((a, b) => a + b, 0) / payoutDeltaList.length
+    : null;
+
+  kpis.actuals = {
+    count: actualComparisons.length,
+    lastMonth: lastActual ? lastActual.month : null,
+    lastClosing: lastActual ? lastActual.actualClosing : null,
+    closingDelta: lastActual ? lastActual.closingDelta : null,
+    revenueDeltaPct: lastActual ? lastActual.revenueDeltaPct : null,
+    payoutDeltaPct: lastActual ? lastActual.payoutDeltaPct : null,
+    avgRevenueDeltaPct,
+    avgPayoutDeltaPct,
+  };
+
+  return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons };
 }
 
 // ---------- State ----------

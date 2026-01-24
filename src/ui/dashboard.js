@@ -1,87 +1,25 @@
-// UI: Dashboard – Monatsübersicht & detaillierte Monats-P/L-Analyse
-import { loadState, addStateListener, setEventManualPaid, setEventsManualPaid, setAutoManualCheck } from "../data/storageLocal.js";
-import { computeSeries, fmtEUR } from "../domain/cashflow.js";
+import { loadState, addStateListener } from "../data/storageLocal.js";
+import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
+import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
+import { computeVatPreview } from "../domain/vatPreview.js";
 
-const fmtEUR0 = val =>
-  new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0,
-  }).format(Number(val || 0));
-
-const fmtEUR2 = val =>
-  new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(val || 0));
-
-const monthFormatter = new Intl.DateTimeFormat("de-DE", {
-  month: "long",
-  year: "numeric",
-});
-const monthShortFormatter = new Intl.DateTimeFormat("de-DE", {
-  month: "short",
-  year: "numeric",
-});
-const dateFormatter = new Intl.DateTimeFormat("de-DE", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-});
-
-const CATEGORY_ORDER = [
-  "Sales × Payout",
-  "Extras (In)",
-  "Extras (Out)",
-  "PO/FO-Zahlungen",
-  "Importkosten",
-  "Fixkosten",
-  "Dividende & KapESt",
-];
-
-const MODE_OPTIONS = [
-  { key: "planned", label: "Geplant" },
-  { key: "paid", label: "Bezahlt" },
-  { key: "all", label: "Geplant + Bezahlt" },
-];
-
-const CONTROL_PRESETS = [
-  { key: "all", label: "Alle" },
-  { key: "none", label: "Keine" },
-  { key: "next3", label: "Nächste 3" },
-  { key: "next6", label: "Nächste 6" },
-  { key: "next12", label: "Nächste 12" },
-];
-
-const plState = {
-  selectedMonths: null,
-  allowEmptySelection: false,
-  mode: "planned",
-  showScenario: false,
-  search: "",
-  categories: new Set(),
-  collapsedMonths: new Set(),
-  autoManualCheck: false,
-  defaultCollapseApplied: false,
-  showAdvancedFilters: false,
-  legend: {
-    inflow: true,
-    outflow: true,
-    netLine: true,
-  },
+const dashboardState = {
+  expanded: new Set(["inflows", "outflows", "po-payments", "fo-payments"]),
+  coverageCollapsed: new Set(),
+  range: "next12",
+  hideEmptyMonths: true,
+  limitBalanceToGreen: false,
 };
 
-let plData = null;
-let plEntryLookup = new Map();
-let plExportRows = [];
-let dashboardRoot = null;
-let stateListenerOff = null;
+const PO_CONFIG = {
+  entityLabel: "PO",
+  numberField: "poNo",
+};
 
-function escapeHtml(str) {
-  return String(str ?? "")
+const MAX_DETAIL_ROWS = 50;
+
+function escapeHtml(value) {
+  return String(value ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -89,1232 +27,1486 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
-function formatMonthLabel(yyyymm) {
-  if (!yyyymm) return "";
-  const [y, m] = yyyymm.split("-").map(Number);
-  const date = new Date(y, (m || 1) - 1, 1);
-  return monthFormatter.format(date);
+function formatEur0(value) {
+  if (value == null) return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  const rounded = Math.round(num);
+  return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 }).format(rounded)} €`;
 }
 
-function formatMonthShortLabel(yyyymm) {
-  if (!yyyymm) return "";
-  const [y, m] = yyyymm.split("-").map(Number);
-  const date = new Date(y, (m || 1) - 1, 1);
-  return monthShortFormatter.format(date);
-}
-
-function formatDateLabel(iso) {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return dateFormatter.format(date);
-}
-
-function ensureSelection(months) {
-  const available = Array.isArray(months) ? months : [];
-  pruneCollapsed(available);
-  if (plState.allowEmptySelection && (!plState.selectedMonths || plState.selectedMonths.length === 0)) {
-    plState.selectedMonths = [];
-    return;
+function formatCellValue(value) {
+  if (value == null) {
+    return { text: "—", isEmpty: true };
   }
-  const previous = Array.isArray(plState.selectedMonths)
-    ? plState.selectedMonths.filter(m => available.includes(m))
-    : [];
-  if (previous.length || plState.allowEmptySelection) {
-    plState.selectedMonths = previous;
-    return;
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return { text: "—", isEmpty: true };
   }
-  plState.allowEmptySelection = false;
-  plState.selectedMonths = available.slice();
-}
-
-function fmtSigned(value) {
-  const num = Number(value || 0);
-  return fmtEUR2(num);
-}
-
-function iconForDirection(direction) {
-  return direction === "out" ? "↓" : "↑";
-}
-
-function ensureGlobalTip() {
-  let el = document.getElementById("global-chart-tip");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "global-chart-tip";
-    el.className = "chart-tip";
-    el.hidden = true;
-    document.body.appendChild(el);
+  const rounded = Math.round(num);
+  if (rounded === 0) {
+    return { text: "—", isEmpty: true };
   }
-  return el;
+  return {
+    text: formatEur0(rounded),
+    isEmpty: false,
+  };
+}
+
+function formatValueOnly(value) {
+  const formatted = formatCellValue(value);
+  return formatted.text;
+}
+
+function monthIndex(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym || "")) return null;
+  const [y, m] = ym.split("-").map(Number);
+  return y * 12 + (m - 1);
 }
 
 function currentMonthKey() {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth() + 1;
-  return `${y}-${String(m).padStart(2, "0")}`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function sliceUpcomingMonths(months, count) {
-  if (!Array.isArray(months) || !months.length) return [];
-  const todayKey = currentMonthKey();
-  const startIdx = months.findIndex(month => month >= todayKey);
-  if (startIdx === -1) {
-    const fallback = months.slice(-count);
-    return fallback.length ? fallback : months.slice();
+function addMonths(ym, delta) {
+  const [y, m] = ym.split("-").map(Number);
+  const date = new Date(y, (m - 1) + delta, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function getMonthlyBuckets(startMonth, endMonth) {
+  if (!startMonth || !endMonth) return [];
+  const startIndex = monthIndex(startMonth);
+  const endIndex = monthIndex(endMonth);
+  if (startIndex == null || endIndex == null) return [];
+  if (endIndex < startIndex) return [];
+  const months = [];
+  for (let idx = startIndex; idx <= endIndex; idx += 1) {
+    const y = Math.floor(idx / 12);
+    const m = (idx % 12) + 1;
+    months.push(`${y}-${String(m).padStart(2, "0")}`);
   }
-  const upcoming = months.slice(startIdx, startIdx + count);
-  if (upcoming.length === count) return upcoming;
-  const missing = count - upcoming.length;
-  const prior = months.slice(Math.max(0, startIdx - missing), startIdx);
-  const combined = prior.concat(upcoming).slice(-count);
-  if (combined.length) return combined;
-  return months.slice();
+  return months;
 }
 
-function applyControlSelection(control, months) {
-  if (!Array.isArray(months)) months = [];
-  switch (control) {
-    case "all":
-      plState.allowEmptySelection = false;
-      return months.slice();
-    case "none":
-      plState.allowEmptySelection = true;
-      return [];
-    case "next3":
-      plState.allowEmptySelection = false;
-      return sliceUpcomingMonths(months, 3);
-    case "next6":
-      plState.allowEmptySelection = false;
-      return sliceUpcomingMonths(months, 6);
-    case "next12":
-      plState.allowEmptySelection = false;
-      return sliceUpcomingMonths(months, 12);
-    default:
-      return plState.selectedMonths || [];
+function getRangeOptions(months) {
+  const options = [];
+  const length = months.length;
+  const candidates = [12, 18, 24];
+  candidates.forEach(count => {
+    if (length >= count) options.push({ value: `next${count}`, label: `Nächste ${count}` });
+  });
+  if (length > 0) options.push({ value: "all", label: "Alle" });
+  return options;
+}
+
+function applyRange(months, range) {
+  if (!months.length) return [];
+  if (range === "all") return months.slice();
+  const count = Number(String(range).replace("next", "")) || 0;
+  if (!Number.isFinite(count) || count <= 0) return months.slice();
+  return months.slice(0, count);
+}
+
+function getDisplayLabel(plannedTotal, actualTotal) {
+  if (actualTotal > 0 && plannedTotal > actualTotal) return "Ist+Plan gemischt";
+  if (actualTotal > 0) return "Ist (bezahlt)";
+  return "Plan";
+}
+
+function toMonthKey(dateInput) {
+  if (!dateInput) return null;
+  const date = new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseISODate(value) {
+  if (!value) return null;
+  const [y, m, d] = String(value).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function addDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function getMonthEnd(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return null;
+  const [y, m] = monthKey.split("-").map(Number);
+  if (!y || !m) return null;
+  return new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
+}
+
+function formatDate(value) {
+  const date = value instanceof Date ? value : parseISODate(value);
+  if (!date) return "—";
+  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function formatMonthLabel(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return String(monthKey || "");
+  const [y, m] = monthKey.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, 1));
+  return date.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" });
+}
+
+function monthColumnClass(index) {
+  return `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
+}
+
+function sumUnits(record) {
+  if (!record) return 0;
+  if (Array.isArray(record.items) && record.items.length) {
+    return record.items.reduce((sum, item) => sum + (Number(item.units) || 0), 0);
   }
+  return Number(record.units) || 0;
 }
 
-function getCollapsedSet() {
-  if (!plState.collapsedMonths) plState.collapsedMonths = new Set();
-  return plState.collapsedMonths;
+function convertToEur(amount, currency, fxRate) {
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value)) return 0;
+  if (!currency || currency === "EUR") return value;
+  const fx = Number(fxRate || 0);
+  if (!Number.isFinite(fx) || fx <= 0) return value;
+  return value / fx;
 }
 
-function pruneCollapsed(months) {
-  const set = getCollapsedSet();
-  if (!Array.isArray(months) || !months.length) {
-    set.clear();
-    return;
+function isProductActive(product) {
+  if (!product) return false;
+  if (typeof product.active === "boolean") return product.active;
+  const status = String(product.status || "").trim().toLowerCase();
+  if (!status) return true;
+  return status === "active" || status === "aktiv";
+}
+
+function getActiveSkus(state) {
+  const products = Array.isArray(state?.products) ? state.products : [];
+  const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
+  const categoryById = new Map(categories.map(category => [String(category.id), category]));
+  return products
+    .filter(isProductActive)
+    .map(product => {
+      const categoryId = product.categoryId ? String(product.categoryId) : "";
+      const category = categoryById.get(categoryId);
+      return {
+        sku: String(product.sku || "").trim(),
+        alias: String(product.alias || product.sku || "").trim(),
+        categoryId,
+        categoryName: category?.name || "Ohne Kategorie",
+        categorySort: category?.sortOrder ?? 0,
+      };
+    })
+    .filter(item => item.sku);
+}
+
+function buildCategoryGroups(items, categories = []) {
+  const sortedCategories = categories
+    .slice()
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
+  const groups = sortedCategories.map(category => ({
+    id: String(category.id),
+    name: category.name || "Ohne Kategorie",
+    items: items.filter(item => item.categoryId === String(category.id)),
+  }));
+  const uncategorized = items.filter(item => !item.categoryId);
+  if (uncategorized.length) {
+    groups.push({ id: "uncategorized", name: "Ohne Kategorie", items: uncategorized });
   }
-  const allowed = new Set(months);
-  for (const value of Array.from(set)) {
-    if (!allowed.has(value)) set.delete(value);
+  return groups.filter(group => group.items.length);
+}
+
+function computePoEta(po) {
+  if (!po) return null;
+  if (po.etaDate) return parseISODate(po.etaDate);
+  if (po.eta) return parseISODate(po.eta);
+  const orderDate = parseISODate(po.orderDate);
+  if (!orderDate) return null;
+  const prodDays = Number(po.prodDays || 0);
+  const transitDays = Number(po.transitDays || 0);
+  return addDays(orderDate, prodDays + transitDays);
+}
+
+function computeFoEta(fo) {
+  if (!fo) return null;
+  if (fo.etaDate) return parseISODate(fo.etaDate);
+  if (fo.eta) return parseISODate(fo.eta);
+  const target = parseISODate(fo.targetDeliveryDate);
+  if (!target) return null;
+  const bufferDays = Number(fo.bufferDays || 0);
+  return addDays(target, -bufferDays);
+}
+
+function buildSkuPlanningIndex(state, activeSkus) {
+  const plannedBySku = new Map(activeSkus.map(item => [item.sku, []]));
+  const pos = Array.isArray(state?.pos) ? state.pos : [];
+  pos.forEach(po => {
+    if (!po || po.archived) return;
+    if (String(po.status || "").toUpperCase() === "CANCELLED") return;
+    const etaDate = computePoEta(po);
+    if (!etaDate) return;
+    const sourceLabel = po.poNo || po.number || po.id || "PO";
+    const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
+    items.forEach(item => {
+      const sku = String(item?.sku || "").trim();
+      if (!sku || !plannedBySku.has(sku)) return;
+      plannedBySku.get(sku).push({
+        sourceType: "PO",
+        sourceLabel,
+        etaDate,
+      });
+    });
+  });
+
+  const fos = Array.isArray(state?.fos) ? state.fos : [];
+  fos.forEach(fo => {
+    if (!fo) return;
+    const status = String(fo.status || "").toUpperCase();
+    if (status === "CONVERTED" || status === "CANCELLED") return;
+    const etaDate = computeFoEta(fo);
+    if (!etaDate) return;
+    const sourceLabel = fo.foNo || fo.number || fo.id || "FO";
+    const sku = String(fo.sku || "").trim();
+    if (!sku || !plannedBySku.has(sku)) return;
+    plannedBySku.get(sku).push({
+      sourceType: "FO",
+      sourceLabel,
+      etaDate,
+    });
+  });
+
+  plannedBySku.forEach(list => list.sort((a, b) => a.etaDate - b.etaDate));
+  return plannedBySku;
+}
+
+function computeSkuCoverage(state, months) {
+  const activeSkus = getActiveSkus(state);
+  const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
+  const plannedIndex = buildSkuPlanningIndex(state, activeSkus);
+  const coverage = new Map();
+  const details = new Map();
+  const plannedByMonth = new Map();
+  const totalCount = activeSkus.length;
+
+  months.forEach(month => {
+    const monthEnd = getMonthEnd(month);
+    const plannedMap = new Map();
+    if (monthEnd) {
+      activeSkus.forEach(item => {
+        const records = plannedIndex.get(item.sku) || [];
+        const match = records.find(record => record.etaDate && record.etaDate <= monthEnd);
+        if (match) plannedMap.set(item.sku, match);
+      });
+    }
+    plannedByMonth.set(month, plannedMap);
+    const plannedCount = plannedMap.size;
+    let status = "gray";
+    if (totalCount > 0) {
+      const pct = plannedCount / totalCount;
+      if (pct >= 1) status = "green";
+      else if (pct >= 0.7) status = "yellow";
+      else status = "red";
+    }
+    const missingAliases = totalCount
+      ? activeSkus.filter(item => !plannedMap.has(item.sku)).map(item => item.alias || item.sku)
+      : [];
+    coverage.set(month, status);
+    details.set(month, {
+      status,
+      plannedCount,
+      totalCount,
+      missingAliases,
+      monthEnd,
+    });
+  });
+
+  return {
+    coverage,
+    details,
+    plannedByMonth,
+    activeSkus,
+    groups: buildCategoryGroups(activeSkus, categories),
+  };
+}
+
+function computePlannedPayoutByMonth(state, months) {
+  const forecastEnabled = Boolean(state?.forecast?.settings?.useForecast);
+  const payoutPctByMonth = new Map();
+  (state?.incomings || []).forEach(row => {
+    if (!row?.month) return;
+    payoutPctByMonth.set(row.month, row.payoutPct);
+  });
+
+  const revenueByMonth = new Map();
+  if (forecastEnabled && Array.isArray(state?.forecast?.items)) {
+    if (state?.forecast?.forecastImport && typeof state.forecast.forecastImport === "object") {
+      Object.values(state.forecast.forecastImport).forEach(monthMap => {
+        Object.entries(monthMap || {}).forEach(([month, entry]) => {
+          if (!month || !months.includes(month)) return;
+          const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
+          if (!Number.isFinite(revenue)) return;
+          revenueByMonth.set(month, (revenueByMonth.get(month) || 0) + revenue);
+        });
+      });
+    } else {
+      state.forecast.items.forEach(item => {
+        if (!item?.month) return;
+        const revenue = parseEuro(item.revenueEur ?? item.revenue ?? null);
+        if (Number.isFinite(revenue) && revenue !== 0) {
+          revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + revenue);
+          return;
+        }
+        const qty = Number(item.qty ?? item.units ?? item.quantity ?? 0) || 0;
+        const price = parseEuro(item.priceEur ?? item.price ?? 0);
+        revenueByMonth.set(item.month, (revenueByMonth.get(item.month) || 0) + qty * price);
+      });
+    }
+  } else {
+    (state?.incomings || []).forEach(row => {
+      if (!row?.month) return;
+      revenueByMonth.set(row.month, parseEuro(row.revenueEur));
+    });
   }
-}
 
-function toggleMonthCollapse(month) {
-  if (!month) return;
-  const set = getCollapsedSet();
-  if (set.has(month)) set.delete(month);
-  else set.add(month);
-}
-
-function focusMonthCard(month) {
-  if (!month) return;
-  const available = Array.isArray(plData?.months) ? plData.months : [];
-  if (!available.includes(month)) return;
-  const selection = new Set(plState.selectedMonths || []);
-  selection.add(month);
-  plState.selectedMonths = available.filter(m => selection.has(m));
-  plState.allowEmptySelection = (plState.selectedMonths || []).length === 0;
-  getCollapsedSet().delete(month);
-}
-
-function collapseAllMonths(months) {
-  const set = getCollapsedSet();
-  set.clear();
-  if (!Array.isArray(months)) return;
-  for (const month of months) {
-    if (month) set.add(month);
-  }
-}
-
-function expandAllMonths() {
-  getCollapsedSet().clear();
-}
-
-function aggregateEntries(entries) {
   const result = new Map();
-  for (const entry of entries) {
-    const key = entry.group || "Sonstiges";
-    if (!result.has(key)) result.set(key, []);
-    result.get(key).push(entry);
-  }
+  months.forEach(month => {
+    const revenue = revenueByMonth.get(month) || 0;
+    let pct = Number(payoutPctByMonth.get(month) || 0) || 0;
+    if (pct > 1) pct = pct / 100;
+    const payout = revenue * pct;
+    result.set(month, payout);
+  });
   return result;
 }
 
-function computeRowAmounts(entry) {
-  const baseline = entry.direction === "out" ? -entry.amount : entry.amount;
-  const scenarioAmountRaw = entry.scenarioAmount != null ? entry.scenarioAmount : entry.amount;
-  const scenario = entry.direction === "out" ? -scenarioAmountRaw : scenarioAmountRaw;
-  const delta = scenario - baseline;
-  return { baseline, scenario, delta };
+function buildPoData(state) {
+  const settings = getSettings();
+  const pos = Array.isArray(state?.pos) ? state.pos : [];
+  return pos.map(po => {
+    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings);
+    const transactions = Array.isArray(po.paymentTransactions) ? po.paymentTransactions : [];
+    const txMap = new Map(transactions.map(tx => [tx?.id, tx]));
+    const events = paymentRows
+      .map(row => {
+        const month = toMonthKey(row.dueDate);
+        if (!month) return null;
+        const tx = row.transactionId ? txMap.get(row.transactionId) : null;
+        const actual = Number(row.paidEurActual);
+        const actualEur = Number.isFinite(actual) ? actual : 0;
+        return {
+          id: row.id,
+          month,
+          label: row.typeLabel || row.label || "Zahlung",
+          typeLabel: row.typeLabel || row.label || "Zahlung",
+          dueDate: row.dueDate,
+          plannedEur: Number(row.plannedEur || 0),
+          actualEur,
+          paid: row.status === "paid",
+          paidDate: row.paidDate || null,
+          transactionId: row.transactionId || null,
+          hasInvoiceLink: Boolean(tx?.driveInvoiceLink),
+          invoiceLink: tx?.driveInvoiceLink || null,
+          paidBy: row.paidBy || null,
+          currency: "EUR",
+        };
+      })
+      .filter(Boolean);
+
+    const supplier = po?.supplier || po?.supplierName || "";
+    const units = sumUnits(po);
+    return {
+      record: po,
+      supplier,
+      units,
+      events,
+      transactions,
+    };
+  });
 }
 
-function collectMonthEventIds(month, predicate) {
-  const ids = [];
-  if (!month) return ids;
-  plEntryLookup.forEach(record => {
-    if (!record || record.month !== month) return;
-    if (typeof predicate === "function" && !predicate(record)) return;
-    if (record.eventId) ids.push(record.eventId);
+function buildFoData(state) {
+  const fos = Array.isArray(state?.fos) ? state.fos : [];
+  return fos
+    .filter(fo => String(fo?.status || "").toUpperCase() !== "CONVERTED")
+    .map(fo => {
+      const fxRate = fo.fxRate || state?.settings?.fxRate || 0;
+      const events = (fo.payments || [])
+        .map(payment => {
+          if (!payment?.dueDate) return null;
+          const month = toMonthKey(payment.dueDate);
+          if (!month) return null;
+          const currency = payment.currency || "EUR";
+          const plannedEur = convertToEur(payment.amount, currency, fxRate);
+          return {
+            id: payment.id,
+            month,
+            label: payment.label || "Payment",
+            typeLabel: payment.label || payment.category || "Payment",
+            dueDate: payment.dueDate,
+            plannedEur,
+            actualEur: 0,
+            paid: false,
+            hasInvoiceLink: true,
+            invoiceLink: null,
+            paidBy: null,
+            currency,
+          };
+        })
+        .filter(Boolean);
+      return { record: fo, events };
+    });
+}
+
+function sumPaymentEvents(events, month, currentMonth) {
+  let displayTotal = 0;
+  let plannedTotal = 0;
+  let actualTotal = 0;
+  let paidThisMonthCount = 0;
+  let hasPaidValue = false;
+  events.forEach(evt => {
+    if (evt.month !== month) return;
+    const planned = Number(evt.plannedEur || 0);
+    const actual = Number(evt.actualEur || 0);
+    const paid = evt.paid === true;
+    const actualValid = paid && actual > 0;
+
+    plannedTotal += planned;
+    if (actualValid) {
+      actualTotal += actual;
+      displayTotal += actual;
+      hasPaidValue = true;
+      if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
+        paidThisMonthCount += 1;
+      }
+    } else {
+      displayTotal += planned;
+    }
+  });
+  return {
+    value: displayTotal,
+    plannedTotal,
+    actualTotal,
+    displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+    warnings: [],
+    paidThisMonthCount,
+    hasPaidValue,
+  };
+}
+
+function sumGenericEvents(events, month, currentMonth) {
+  let displayTotal = 0;
+  let plannedTotal = 0;
+  let actualTotal = 0;
+  let paidThisMonthCount = 0;
+  let hasPaidValue = false;
+  events.forEach(evt => {
+    if (evt.month !== month) return;
+    const planned = Number(evt.plannedEur || 0);
+    const actual = Number(evt.actualEur || 0);
+    const paid = evt.paid === true;
+    plannedTotal += planned;
+    if (paid && actual > 0) {
+      actualTotal += actual;
+      displayTotal += actual;
+      hasPaidValue = true;
+      if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
+        paidThisMonthCount += 1;
+      }
+    } else {
+      displayTotal += planned;
+    }
+  });
+  return {
+    value: displayTotal,
+    plannedTotal,
+    actualTotal,
+    displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+    warnings: [],
+    paidThisMonthCount,
+    hasPaidValue,
+  };
+}
+
+function buildRow({
+  id,
+  label,
+  level,
+  children = [],
+  events = [],
+  tooltip = "",
+  emptyHint = "",
+  isSummary = false,
+  alwaysVisible = false,
+  sumMode = "payments",
+  rowType = "detail",
+  section = null,
+  sourceLabel = null,
+  nav = null,
+}) {
+  return {
+    id,
+    label,
+    level,
+    children,
+    events,
+    tooltip,
+    emptyHint,
+    isSummary,
+    alwaysVisible,
+    sumMode,
+    rowType,
+    section,
+    sourceLabel,
+    nav,
+    values: {},
+  };
+}
+
+function collectMonthEvents(row, month) {
+  if (!row) return false;
+  if (row.events && row.events.some(evt => evt.month === month && (Number(evt.plannedEur || 0) !== 0 || Number(evt.actualEur || 0) !== 0))) {
+    return true;
+  }
+  return row.children.some(child => collectMonthEvents(child, month));
+}
+
+function monthHasValues(rows, month) {
+  return rows.some(row => {
+    const value = row.values?.[month]?.value || 0;
+    if (Math.abs(value) > 0.0001) return true;
+    return collectMonthEvents(row, month);
+  });
+}
+
+function applyRowValues(row, months, currentMonth) {
+  if (row.events.length) {
+    months.forEach(month => {
+      const result = row.sumMode === "generic"
+        ? sumGenericEvents(row.events, month, currentMonth)
+        : sumPaymentEvents(row.events, month, currentMonth);
+      row.values[month] = result;
+    });
+  } else if (row.children.length) {
+    row.children.forEach(child => applyRowValues(child, months, currentMonth));
+    months.forEach(month => {
+      const sum = row.children.reduce((acc, child) => acc + (child.values[month]?.value || 0), 0);
+      const plannedTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.plannedTotal || 0), 0);
+      const actualTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.actualTotal || 0), 0);
+      const warnings = row.children.flatMap(child => child.values[month]?.warnings || []);
+      const paidThisMonthCount = row.children.reduce((acc, child) => acc + (child.values[month]?.paidThisMonthCount || 0), 0);
+      const hasPaidValue = row.children.some(child => child.values[month]?.hasPaidValue);
+      row.values[month] = {
+        value: sum,
+        plannedTotal,
+        actualTotal,
+        displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+        warnings,
+        paidThisMonthCount,
+        hasPaidValue,
+      };
+    });
+  }
+}
+
+function rowHasValues(row, months) {
+  return months.some(month => Math.abs(row.values[month]?.value || 0) > 0.0001);
+}
+
+function filterRows(row, months) {
+  const filteredChildren = row.children
+    .map(child => filterRows(child, months))
+    .filter(Boolean);
+  row.children = filteredChildren;
+  const hasChildren = filteredChildren.length > 0;
+  const hasValues = rowHasValues(row, months);
+  if (row.alwaysVisible || row.isSummary) return row;
+  if (hasChildren) return row;
+  return hasValues ? row : null;
+}
+
+function flattenRows(rows, expandedSet) {
+  const result = [];
+  function traverse(row) {
+    result.push(row);
+    if (!row.children.length) return;
+    if (!expandedSet.has(row.id)) return;
+    if (row.children.length > MAX_DETAIL_ROWS && row.level >= 2) {
+      row.children.slice(0, MAX_DETAIL_ROWS).forEach(child => traverse(child));
+      const remaining = row.children.length - MAX_DETAIL_ROWS;
+      result.push(buildRow({
+        id: `${row.id}-more`,
+        label: `+ ${remaining} weitere …`,
+        level: row.level + 1,
+        rowType: "detail",
+        section: row.section,
+        sourceLabel: row.sourceLabel,
+      }));
+      return;
+    }
+    row.children.forEach(child => traverse(child));
+  }
+  rows.forEach(traverse);
+  return result;
+}
+
+function buildDashboardRows(state, months, options = {}) {
+  const plannedPayoutMap = computePlannedPayoutByMonth(state, months);
+  const actualPayoutMap = new Map();
+  const monthlyActuals = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+    ? state.monthlyActuals
+    : {};
+  Object.entries(monthlyActuals).forEach(([month, entry]) => {
+    if (!months.includes(month)) return;
+    const revenue = Number(entry?.realRevenueEUR);
+    const payoutRate = Number(entry?.realPayoutRatePct);
+    if (!Number.isFinite(revenue) || !Number.isFinite(payoutRate)) return;
+    actualPayoutMap.set(month, revenue * (payoutRate / 100));
+  });
+  const coverage = options.coverage instanceof Map ? options.coverage : new Map();
+
+  const amazonEvents = months.map(month => ({
+    id: `amazon-${month}`,
+    month,
+    plannedEur: plannedPayoutMap.get(month) || 0,
+    actualEur: actualPayoutMap.get(month) || 0,
+    paid: actualPayoutMap.has(month),
+  }));
+
+  const extraRows = Array.isArray(state?.extras) ? state.extras : [];
+  const extraInEvents = extraRows
+    .filter(row => parseEuro(row?.amountEur) >= 0)
+    .map(row => ({
+      id: row.id || row.label || row.month,
+      month: row.month || toMonthKey(row.date),
+      plannedEur: parseEuro(row.amountEur),
+      actualEur: parseEuro(row.amountEur),
+      paid: true,
+    }))
+    .filter(evt => evt.month);
+
+  const extraOutEvents = extraRows
+    .filter(row => parseEuro(row?.amountEur) < 0)
+    .map(row => ({
+      id: row.id || row.label || row.month,
+      month: row.month || toMonthKey(row.date),
+      plannedEur: Math.abs(parseEuro(row.amountEur)),
+      actualEur: Math.abs(parseEuro(row.amountEur)),
+      paid: true,
+    }))
+    .filter(evt => evt.month);
+
+  const dividendEvents = (state?.dividends || [])
+    .map(row => ({
+      id: row.id || row.label || row.month,
+      month: row.month || toMonthKey(row.date),
+      plannedEur: Math.abs(parseEuro(row.amountEur)),
+      actualEur: Math.abs(parseEuro(row.amountEur)),
+      paid: true,
+    }))
+    .filter(evt => evt.month);
+
+  const fixcostInstances = expandFixcostInstances(state, { months });
+  const fixcostEvents = fixcostInstances.map(inst => ({
+    id: inst.id,
+    month: inst.month,
+    plannedEur: inst.amount,
+    actualEur: inst.amount,
+    paid: inst.paid === true,
+    fixedCostId: inst.fixedCostId,
+    paidDate: inst.paid ? inst.dueDateIso : null,
+  }));
+
+  const vatPreview = computeVatPreview(state || {});
+  const taxEvents = vatPreview.rows.map(row => ({
+    id: `tax-${row.month}`,
+    month: row.month,
+    plannedEur: Math.max(0, Number(row.payable || 0)),
+    actualEur: 0,
+    paid: false,
+  }));
+
+  const poData = buildPoData(state);
+  const foData = buildFoData(state);
+
+  const amazonRow = buildRow({
+    id: "amazon-payout",
+    label: "Amazon Auszahlungen",
+    level: 1,
+    events: amazonEvents,
+    sumMode: "generic",
+    rowType: "subtotal",
+    section: "inflows",
+    sourceLabel: "Eingaben",
+    nav: { route: "#eingaben" },
+  });
+  const extraInRow = buildRow({
+    id: "other-in",
+    label: "Weitere Einzahlungen",
+    level: 1,
+    events: extraInEvents,
+    sumMode: "generic",
+    rowType: "detail",
+    section: "inflows",
+    sourceLabel: "Eingaben",
+  });
+
+  const inflowRow = buildRow({
+    id: "inflows",
+    label: "Einzahlungen",
+    level: 0,
+    children: [amazonRow, extraInRow],
+    rowType: "section",
+    section: "inflows",
+    sourceLabel: "Einzahlungen",
+  });
+
+  const poChildren = poData.map(po => {
+    const poLabel = po.record?.poNo ? `PO ${po.record.poNo}` : "PO";
+    const depositPaid = po.events.some(evt => /deposit/i.test(evt.typeLabel || "") && evt.paid);
+    const balancePaid = po.events.some(evt => /balance/i.test(evt.typeLabel || "") && evt.paid);
+    const tooltipParts = [
+      `PO: ${po.record?.poNo || "—"}`,
+      `Supplier: ${po.supplier || "—"}`,
+      `Units: ${po.units || 0}`,
+      `Deposit: ${depositPaid ? "bezahlt" : "offen"}`,
+      `Balance: ${balancePaid ? "bezahlt" : "offen"}`,
+    ];
+    const paymentRows = po.events.map(evt => {
+      const eventTooltip = [
+        `Typ: ${evt.typeLabel || "Zahlung"}`,
+        `Datum: ${evt.dueDate || "—"}`,
+        `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
+        evt.currency ? `Währung: ${evt.currency}` : null,
+        evt.paidBy ? `Paid by: ${evt.paidBy}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return buildRow({
+        id: `po-${po.record?.id || poLabel}-${evt.id}`,
+        label: evt.typeLabel || evt.label || "Zahlung",
+        level: 3,
+        events: [evt],
+        tooltip: eventTooltip,
+        rowType: "detail",
+        section: "outflows",
+        sourceLabel: "PO Zahlung",
+      nav: {
+        route: "#po",
+        open: po.record?.id || po.record?.poNo || "",
+        focus: evt.typeLabel ? `payment:${evt.typeLabel}` : null,
+      },
+    });
+  });
+
+    return buildRow({
+      id: `po-${po.record?.id || poLabel}`,
+      label: poLabel,
+      level: 2,
+      children: paymentRows,
+      events: [],
+      tooltip: tooltipParts.join(" · "),
+      rowType: "detail",
+      section: "outflows",
+      sourceLabel: "PO",
+      nav: { route: "#po", open: po.record?.id || po.record?.poNo || "" },
+    });
+  });
+
+  const poRow = buildRow({
+    id: "po-payments",
+    label: "PO Zahlungen",
+    level: 1,
+    children: poChildren,
+    alwaysVisible: true,
+    rowType: "subtotal",
+    section: "outflows",
+    sourceLabel: "PO Zahlungen",
+  });
+
+  const foChildren = foData.map(fo => {
+    const label = fo.record?.foNo ? `FO ${fo.record.foNo}` : "FO";
+    const foTooltip = [
+      `FO: ${fo.record?.foNo || fo.record?.id || "—"}`,
+      `SKU: ${fo.record?.sku || "—"}`,
+      `Units: ${fo.record?.units || 0}`,
+      `ETA: ${fo.record?.etaDate || fo.record?.targetDeliveryDate || "—"}`,
+      `Status: ${fo.record?.status || "—"}`,
+    ].join(" · ");
+    const events = fo.events.map(evt => {
+      const tooltip = [
+        `Typ: ${evt.typeLabel || "Payment"}`,
+        `Datum: ${evt.dueDate || "—"}`,
+        `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
+        evt.currency ? `Währung: ${evt.currency}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return buildRow({
+        id: `fo-${fo.record?.id || label}-${evt.id}`,
+        label: evt.typeLabel || evt.label || "Payment",
+        level: 3,
+        events: [evt],
+        tooltip,
+        rowType: "detail",
+        section: "outflows",
+        sourceLabel: "FO Zahlung",
+        nav: { route: "#fo", open: fo.record?.id || fo.record?.foNo || "" },
+      });
+    });
+    return buildRow({
+      id: `fo-${fo.record?.id || label}`,
+      label,
+      level: 2,
+      children: events,
+      events: [],
+      tooltip: foTooltip,
+      rowType: "detail",
+      section: "outflows",
+      sourceLabel: "FO",
+      nav: { route: "#fo", open: fo.record?.id || fo.record?.foNo || "" },
+    });
+  });
+
+  const foRow = buildRow({
+    id: "fo-payments",
+    label: "FO Zahlungen",
+    level: 1,
+    children: foChildren,
+    alwaysVisible: true,
+    rowType: "subtotal",
+    section: "outflows",
+    sourceLabel: "FO Zahlungen",
+  });
+
+  const fixcostRow = buildRow({
+    id: "fixcosts",
+    label: "Fixkosten",
+    level: 1,
+    events: fixcostEvents,
+    sumMode: "generic",
+    alwaysVisible: true,
+    emptyHint: "Keine Fixkosten vorhanden.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Fixkosten",
+    nav: { route: "#fixkosten" },
+  });
+
+  const taxRow = buildRow({
+    id: "taxes",
+    label: "Steuern",
+    level: 1,
+    events: taxEvents,
+    sumMode: "generic",
+    alwaysVisible: true,
+    emptyHint: "Keine Steuerdaten hinterlegt.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Steuern",
+  });
+
+  const dividendRow = buildRow({
+    id: "dividends",
+    label: "Dividende",
+    level: 1,
+    events: dividendEvents,
+    sumMode: "generic",
+    alwaysVisible: true,
+    emptyHint: "Keine Dividenden erfasst.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Dividende",
+  });
+
+  const otherOutRow = buildRow({
+    id: "other-out",
+    label: "Weitere Auszahlungen",
+    level: 1,
+    events: extraOutEvents,
+    sumMode: "generic",
+    alwaysVisible: true,
+    emptyHint: "Keine weiteren Auszahlungen vorhanden.",
+    rowType: "detail",
+    section: "outflows",
+    sourceLabel: "Auszahlungen",
+  });
+
+  const outflowRow = buildRow({
+    id: "outflows",
+    label: "Auszahlungen",
+    level: 0,
+    children: [poRow, foRow, fixcostRow, taxRow, dividendRow, otherOutRow],
+    rowType: "section",
+    section: "outflows",
+    sourceLabel: "Auszahlungen",
+  });
+
+  applyRowValues(inflowRow, months, options.currentMonth);
+  applyRowValues(outflowRow, months, options.currentMonth);
+
+  const netRow = buildRow({
+    id: "net-cashflow",
+    label: "Netto Cashflow",
+    level: 0,
+    isSummary: true,
+    alwaysVisible: true,
+    rowType: "summary",
+    section: "summary",
+    sourceLabel: "Netto Cashflow",
+  });
+  months.forEach(month => {
+    const inflow = inflowRow.values[month]?.value || 0;
+    const outflow = outflowRow.values[month]?.value || 0;
+    const plannedTotal = (inflowRow.values[month]?.plannedTotal || 0) - (outflowRow.values[month]?.plannedTotal || 0);
+    const actualTotal = (inflowRow.values[month]?.actualTotal || 0) - (outflowRow.values[month]?.actualTotal || 0);
+    netRow.values[month] = {
+      value: inflow - outflow,
+      plannedTotal,
+      actualTotal,
+      displayLabel: getDisplayLabel(Math.abs(plannedTotal), Math.abs(actualTotal)),
+      warnings: [],
+      paidThisMonthCount: 0,
+    };
+  });
+
+  const openingRaw = state?.openingEur ?? state?.settings?.openingBalance ?? null;
+  const openingBalance = parseEuro(openingRaw || 0);
+  const monthlyActualsMap = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+    ? state.monthlyActuals
+    : {};
+  const balanceRow = buildRow({
+    id: "balance",
+    label: "Kontostand Monatsende",
+    level: 0,
+    isSummary: true,
+    alwaysVisible: true,
+    rowType: "summary",
+    section: "summary",
+    sourceLabel: "Kontostand",
+  });
+  if (months.length) {
+    let baseBalance = openingBalance;
+    const lastGreenIndex = options.limitBalanceToGreen
+      ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
+      : months.length - 1;
+    months.forEach((month, idx) => {
+      const actualClosing = Number(monthlyActualsMap?.[month]?.realClosingBalanceEUR);
+      const hasActual = Number.isFinite(actualClosing);
+      const net = netRow.values[month]?.value || 0;
+      const plannedClosing = (Number.isFinite(baseBalance) ? baseBalance : 0) + net;
+      if (options.limitBalanceToGreen && idx > lastGreenIndex) {
+        balanceRow.values[month] = { value: null, plannedTotal: 0, actualTotal: 0, displayLabel: "Plan", warnings: [], paidThisMonthCount: 0 };
+        return;
+      }
+      const displayValue = hasActual ? actualClosing : plannedClosing;
+      balanceRow.values[month] = {
+        value: displayValue,
+        plannedTotal: plannedClosing,
+        actualTotal: hasActual ? actualClosing : plannedClosing,
+        displayLabel: hasActual ? "Ist" : "Plan",
+        warnings: [],
+        paidThisMonthCount: 0,
+        isActual: hasActual,
+      };
+      baseBalance = hasActual ? actualClosing : plannedClosing;
+    });
+  }
+
+  const summaryRows = [netRow, balanceRow];
+
+  return { inflowRow, outflowRow, summaryRows };
+}
+
+function buildDashboardHTML(state) {
+  const startMonth = state?.settings?.startMonth || "2025-01";
+  const horizon = Number(state?.settings?.horizonMonths || 12) || 12;
+  const endMonth = addMonths(startMonth, horizon - 1);
+  const allMonths = getMonthlyBuckets(startMonth, endMonth);
+  const currentMonth = currentMonthKey();
+  const months = allMonths.filter(month => month >= currentMonth);
+  const rangeOptions = getRangeOptions(months);
+  if (rangeOptions.length && !rangeOptions.some(option => option.value === dashboardState.range)) {
+    dashboardState.range = rangeOptions[0].value;
+  }
+  const baseMonths = rangeOptions.length
+    ? applyRange(months, dashboardState.range)
+    : months.slice();
+  const skuCoverage = computeSkuCoverage(state, baseMonths);
+
+  const rowsBoth = buildDashboardRows(state, baseMonths, {
+    limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+    currentMonth,
+    coverage: skuCoverage.coverage,
+  });
+  const filteredInflow = filterRows(rowsBoth.inflowRow, baseMonths);
+  const filteredOutflow = filterRows(rowsBoth.outflowRow, baseMonths);
+  const topRowsAll = [filteredInflow, filteredOutflow, ...rowsBoth.summaryRows].filter(Boolean);
+  const nonEmptyMonths = dashboardState.hideEmptyMonths
+    ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
+    : baseMonths.slice();
+
+  const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, nonEmptyMonths, {
+    limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+    currentMonth,
+    coverage: skuCoverage.coverage,
+  });
+  const filteredVisibleInflow = filterRows(inflowRow, nonEmptyMonths);
+  const filteredVisibleOutflow = filterRows(outflowRow, nonEmptyMonths);
+
+  const topRows = [filteredVisibleInflow, filteredVisibleOutflow, ...summaryRows].filter(Boolean);
+  const flatRows = flattenRows(topRows, dashboardState.expanded);
+  const coverageNoticeNeeded = skuCoverage.activeSkus.length > 0
+    && nonEmptyMonths.some(month => skuCoverage.coverage.get(month) !== "green");
+
+  const rangeSelect = rangeOptions.length
+    ? `
+      <label class="dashboard-range">
+        <span>Monatsbereich</span>
+        <select id="dashboard-range">
+          ${rangeOptions.map(option => `<option value="${option.value}" ${option.value === dashboardState.range ? "selected" : ""}>${option.label}</option>`).join("")}
+        </select>
+      </label>
+    `
+    : "";
+
+  const headerCells = nonEmptyMonths
+    .map((month, idx) => {
+      const columnClass = monthColumnClass(idx);
+      const status = skuCoverage.coverage.get(month) || "gray";
+      const detail = skuCoverage.details.get(month);
+      const plannedCount = detail?.plannedCount ?? 0;
+      const totalCount = detail?.totalCount ?? 0;
+      const missing = detail?.missingAliases || [];
+      const missingPreview = missing.slice(0, 5);
+      const missingRest = missing.length > 5 ? ` +${missing.length - 5} weitere` : "";
+      const missingLine = missingPreview.length
+        ? `Fehlend: ${missingPreview.join(", ")}${missingRest}`
+        : (totalCount ? "Fehlend: —" : "Keine aktiven SKUs");
+      const tooltip = [
+        `Coverage: ${plannedCount}/${totalCount} SKUs`,
+        missingLine,
+      ].join(" · ");
+      return `
+        <th scope="col" class="${columnClass}">
+          <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
+          <span>${escapeHtml(month)}</span>
+        </th>
+      `;
+    })
+    .join("");
+
+  const bodyRows = flatRows
+    .map(row => {
+      const hasChildren = row.children.length > 0;
+      const isExpanded = dashboardState.expanded.has(row.id);
+      const indentClass = `tree-level-${row.level}`;
+      const toggle = hasChildren
+        ? `<button type="button" class="tree-toggle" data-row-id="${escapeHtml(row.id)}" aria-expanded="${isExpanded}">${isExpanded ? "▼" : "▶"}</button>`
+        : `<span class="tree-spacer" aria-hidden="true"></span>`;
+      const labelTitle = row.tooltip || row.emptyHint || "";
+      const rowClasses = [
+        row.rowType === "section" ? "row-section" : "",
+        row.rowType === "subtotal" ? "row-subtotal" : "",
+        row.rowType === "summary" ? "row-summary" : "",
+        row.rowType === "detail" ? "row-detail" : "",
+        row.section ? `section-${row.section}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const labelCell = `
+        <td class="tree-cell ${indentClass} ${row.isSummary ? "tree-summary" : ""}" title="${escapeHtml(labelTitle)}">
+          ${toggle}
+          <span class="tree-label">${escapeHtml(row.label)}</span>
+        </td>
+      `;
+
+      const valueCells = nonEmptyMonths
+        .map((month, idx) => {
+          const columnClass = monthColumnClass(idx);
+          const cell = row.values[month] || { value: 0, warnings: [] };
+          const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(skuCoverage.coverage.get(month));
+          const balanceWarning = showBalanceWarning
+            ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da Planung fehlt.">⚠︎</span>`
+            : "";
+          const formatted = formatCellValue(cell.value);
+          const paidThisMonth = month === currentMonth && (cell.paidThisMonthCount || 0) > 0;
+          const paidHint = paidThisMonth ? `Zahlungen diesen Monat bezahlt: ${cell.paidThisMonthCount}` : null;
+          const isPaidValue = cell.hasPaidValue && String(row.sourceLabel || "").toLowerCase().includes("po");
+          const actualMarker = cell.isActual ? `<span class="cell-actual-tag" title="Realer Wert">Ist</span>` : "";
+          const tooltip = [
+            `Geplant: ${formatValueOnly(cell.plannedTotal)}`,
+            `Ist: ${formatValueOnly(cell.actualTotal)}`,
+            `Status: ${cell.displayLabel || "Plan"}`,
+            `Quelle: ${row.sourceLabel || row.label}`,
+            `Anzeige: ${cell.displayLabel || "Plan"}`,
+            paidHint,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          const isClickable = row.nav && !formatted.isEmpty;
+          const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
+          return `
+            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
+              ${balanceWarning}
+              <span class="${formatted.isEmpty ? "cell-empty" : ""} ${isPaidValue ? "cell-paid-value" : ""}">${formatted.text}</span>
+              ${actualMarker}
+              ${isClickable ? `<span class="cell-link-icon" aria-hidden="true">↗</span>` : ""}
+            </td>
+          `;
+        })
+        .join("");
+
+      return `<tr data-row-id="${escapeHtml(row.id)}" class="${rowClasses}">${labelCell}${valueCells}</tr>`;
+    })
+    .join("");
+
+  const coverageGroups = skuCoverage.groups;
+  const coverageRows = coverageGroups.length
+    ? coverageGroups
+      .map(group => {
+        const isCollapsed = dashboardState.coverageCollapsed.has(group.id);
+        const groupToggle = `
+          <button type="button" class="tree-toggle coverage-toggle" data-coverage-group="${escapeHtml(group.id)}" aria-expanded="${!isCollapsed}">
+            ${isCollapsed ? "▶" : "▼"}
+          </button>
+        `;
+        const groupRow = `
+          <tr class="coverage-group-row" data-coverage-group="${escapeHtml(group.id)}">
+            <th scope="row" class="coverage-label">
+              ${groupToggle}
+              <span class="tree-label">${escapeHtml(group.name)}</span>
+              <span class="coverage-count muted">${group.items.length}</span>
+            </th>
+            ${nonEmptyMonths.map(() => `<td class="coverage-cell muted">—</td>`).join("")}
+          </tr>
+        `;
+        const skuRows = isCollapsed
+          ? ""
+          : group.items.map(item => {
+            const skuLabel = item.alias || item.sku;
+            const skuMeta = item.alias && item.sku && item.alias !== item.sku
+              ? `<span class="muted coverage-sku">(${escapeHtml(item.sku)})</span>`
+              : "";
+            const cells = nonEmptyMonths.map(month => {
+              const match = skuCoverage.plannedByMonth.get(month)?.get(item.sku) || null;
+              if (match) {
+                const detail = skuCoverage.details.get(month);
+                const monthEnd = detail?.monthEnd;
+                const tooltip = [
+                  `Geplant bis: ${formatDate(monthEnd)}`,
+                  `Quelle: ${match.sourceType} ${match.sourceLabel}`,
+                  `ETA: ${formatDate(match.etaDate)}`,
+                ].join(" · ");
+                return `
+                  <td class="coverage-cell coverage-planned" title="${escapeHtml(tooltip)}">
+                    <span class="coverage-chip planned" aria-hidden="true">✅</span>
+                  </td>
+                `;
+              }
+              const monthEnd = getMonthEnd(month);
+              const tooltip = `Keine FO/PO bis einschließlich ${formatMonthLabel(month)}`;
+              const targetDate = monthEnd ? monthEnd.toISOString().slice(0, 10) : "";
+              return `
+                <td class="coverage-cell coverage-missing" data-create-fo="true" data-sku="${escapeHtml(item.sku)}" data-target-date="${escapeHtml(targetDate)}" title="${escapeHtml(tooltip)}" role="button" tabindex="0">
+                  <span class="coverage-chip missing" aria-hidden="true">⛔</span>
+                </td>
+              `;
+            }).join("");
+            return `
+              <tr class="coverage-sku-row" data-coverage-sku="${escapeHtml(item.sku)}">
+                <td class="coverage-label">
+                  <span class="tree-spacer" aria-hidden="true"></span>
+                  <span>${escapeHtml(skuLabel)}</span>
+                  ${skuMeta}
+                </td>
+                ${cells}
+              </tr>
+            `;
+          }).join("");
+        return `${groupRow}${skuRows}`;
+      }).join("")
+    : `
+      <tr>
+        <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine aktiven SKUs vorhanden.</td>
+      </tr>
+    `;
+
+  const coverageNotice = coverageNoticeNeeded
+    ? `
+      <div class="dashboard-coverage-notice">
+        <span>Planungsstand unvollständig – Ausgaben können fehlen.</span>
+        <button type="button" class="btn ghost" id="dashboard-coverage-link">Details anzeigen</button>
+      </div>
+    `
+    : "";
+
+  return `
+    <section class="dashboard">
+      <div class="dashboard-header">
+        <div>
+          <h2>Dashboard</h2>
+          <p class="muted">Planwerte werden durch Ist ersetzt, sobald Zahlungen verbucht sind. Drilldowns zeigen PO/FO-Events.</p>
+        </div>
+      </div>
+      <div class="dashboard-controls">
+        <div class="dashboard-toggle" role="group" aria-label="Expand">
+          <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
+          <button type="button" class="btn secondary" data-expand="expand">Alles auf</button>
+        </div>
+        <label class="dashboard-toggle dashboard-checkbox">
+          <input type="checkbox" id="dashboard-hide-empty" ${dashboardState.hideEmptyMonths ? "checked" : ""} />
+          <span>Leere Monate ausblenden</span>
+        </label>
+        <label class="dashboard-toggle dashboard-checkbox">
+          <input type="checkbox" id="dashboard-limit-balance" ${dashboardState.limitBalanceToGreen ? "checked" : ""} />
+          <span>Kontostand nur bis letztem grünen Monat</span>
+        </label>
+        ${rangeSelect}
+      </div>
+      ${coverageNotice}
+      <div class="dashboard-legend muted">
+        <span class="coverage-indicator coverage-green"></span> Reifegrad (SKU-Abdeckung)
+        <span class="coverage-indicator coverage-yellow"></span> Teilweise geplant
+        <span class="coverage-indicator coverage-red"></span> Planung fehlt
+        <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
+      </div>
+      <div class="dashboard-table-wrap">
+        <table class="table-compact dashboard-tree-table" role="table">
+          <thead>
+            <tr>
+              <th scope="col" class="tree-header">Kategorie / Zeile</th>
+              ${headerCells}
+            </tr>
+          </thead>
+          <tbody>
+            ${bodyRows || `
+              <tr>
+                <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+              </tr>
+            `}
+          </tbody>
+        </table>
+      </div>
+      <div class="dashboard-coverage" id="dashboard-coverage-panel">
+        <div class="dashboard-coverage-header">
+          <h3>SKU Coverage (Planungsstand)</h3>
+          <p class="muted">Grün = geplant (FO/PO mit ETA bis Monatsende), Rot = fehlt Planung.</p>
+        </div>
+        <div class="dashboard-coverage-wrap">
+          <table class="table-compact dashboard-coverage-table" role="table">
+            <thead>
+              <tr>
+                <th scope="col" class="coverage-header">Kategorie / SKU</th>
+                ${nonEmptyMonths.map(month => `<th scope="col">${escapeHtml(month)}</th>`).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${coverageRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function collectExpandableIds(rows, ids = new Set()) {
+  rows.forEach(row => {
+    if (row.children.length) ids.add(row.id);
+    row.children.forEach(child => collectExpandableIds([child], ids));
   });
   return ids;
 }
 
-function buildPLCards(data) {
-  plEntryLookup = new Map();
-  plExportRows = [];
-  if (!data || !Array.isArray(data.months) || !Array.isArray(data.breakdown)) return "";
-  const order = data.months;
-  const selectedSet = new Set(plState.selectedMonths || []);
-  const cards = [];
-  for (const month of order) {
-    if (!selectedSet.has(month)) continue;
-    const row = data.breakdown.find(r => r.month === month);
-    if (!row) continue;
-    cards.push(buildMonthCard(row));
-  }
-  return cards.join("");
-}
-
-function buildMonthCard(row) {
-  const entries = Array.isArray(row.entries) ? row.entries.slice() : [];
-  let filtered = entries;
-  if (plState.mode === "planned") filtered = filtered.filter(e => !e.paid);
-  else if (plState.mode === "paid") filtered = filtered.filter(e => e.paid);
-
-  if (plState.categories.size) {
-    filtered = filtered.filter(e => plState.categories.has(e.group));
-  }
-
-  if (plState.search) {
-    const needle = plState.search.toLowerCase();
-    filtered = filtered.filter(e => (e.label || "").toLowerCase().includes(needle));
-  }
-
-  const grouped = aggregateEntries(filtered);
-  const orderedGroups = CATEGORY_ORDER.concat([...grouped.keys()].filter(k => !CATEGORY_ORDER.includes(k)));
-
-  let cardNet = 0;
-  let cardScenario = 0;
-
-  const sections = [];
-  let rowIndex = 0;
-  let paidSum = 0;
-  let openSum = 0;
-
-  for (const groupKey of orderedGroups) {
-    const records = grouped.get(groupKey);
-    if (!records || !records.length) continue;
-
-    let groupBaseline = 0;
-    let groupScenario = 0;
-
-    const rows = records
-      .map((entry, idx) => {
-        const { baseline, scenario, delta } = computeRowAmounts(entry);
-        groupBaseline += baseline;
-        groupScenario += scenario;
-        const entryKey = `${row.month}-${rowIndex++}-${entry.id || entry.label || "entry"}`;
-        const eventId = entry.statusId || entry.id || entryKey;
-        const ariaLabel = entry.autoApplied ? "Automatisch bezahlt" : "Bezahlt";
-        const tooltip = entry.autoTooltip ? ` title="${escapeHtml(entry.autoTooltip)}"` : "";
-        const autoIcon = entry.autoTooltip
-          ? `<span class="pl-auto-icon" aria-hidden="true">${entry.autoApplied ? "⏱" : "ⓘ"}</span>`
-          : "";
-        const statusCell = `
-          <td class="pl-row-status" data-label="Bezahlt">
-            <label class="pl-row-checkbox"${tooltip}>
-              <input type="checkbox" data-event-id="${escapeHtml(eventId)}" ${entry.paid ? "checked" : ""} aria-label="${escapeHtml(ariaLabel)}" />
-              ${autoIcon}
-            </label>
-          </td>`;
-        const signedValue = baseline;
-        if (entry.paid) paidSum += signedValue; else openSum += signedValue;
-        plEntryLookup.set(entryKey, {
-          entry,
-          month: row.month,
-          monthLabel: formatMonthLabel(row.month),
-          group: groupKey,
-          baseline,
-          scenario,
-          delta,
-          opening: row.opening,
-          closing: row.closing,
-          eventId,
-          autoTooltip: entry.autoTooltip,
-          autoApplied: entry.autoApplied,
-        });
-        plExportRows.push({
-          key: entryKey,
-          month: row.month,
-          monthLabel: formatMonthLabel(row.month),
-          group: groupKey,
-          label: entry.label,
-          date: entry.date,
-          baseline,
-          scenario,
-          delta,
-          status: entry.paid ? "Bezahlt" : "Geplant",
-        });
-        return `
-          <tr class="pl-row" data-entry-id="${escapeHtml(entryKey)}" tabindex="0">
-            <td class="pl-row-cat" data-label="Kategorie">${escapeHtml(groupKey)}</td>
-            <td class="pl-row-label" data-label="Label">
-              <span class="pl-direction" aria-hidden="true">${iconForDirection(entry.direction)}</span>
-              <span class="pl-label-text">${escapeHtml(entry.label || "")}</span>
-              <span class="badge ${entry.paid ? "badge-paid" : "badge-plan"}">${entry.paid ? "Bezahlt" : "Geplant"}</span>
-            </td>
-            <td class="pl-row-date" data-label="Datum">${escapeHtml(formatDateLabel(entry.date))}</td>
-            ${statusCell}
-            <td class="pl-row-amount" data-label="Betrag">${fmtSigned(baseline)}</td>
-            ${plState.showScenario ? `<td class="pl-row-delta" data-label="Δ">${fmtSigned(delta)}</td>` : ""}
-          </tr>
-        `;
-      })
-      .join("");
-
-    cardNet += groupBaseline;
-    cardScenario += groupScenario;
-
-    sections.push(`
-      <details class="pl-group" open>
-        <summary>
-          <span class="pl-group-title">${escapeHtml(groupKey)}</span>
-          <span class="pl-group-sum">${fmtSigned(groupBaseline)}</span>
-          ${plState.showScenario ? `<span class="pl-group-delta">${fmtSigned(groupScenario - groupBaseline)}</span>` : ""}
-        </summary>
-        <div class="pl-group-body">
-          <table class="pl-table" role="table">
-            <thead>
-              <tr>
-                <th scope="col">Kategorie</th>
-                <th scope="col">Label</th>
-                <th scope="col">Datum</th>
-                <th scope="col">Bezahlt</th>
-                <th scope="col">Betrag</th>
-                ${plState.showScenario ? "<th scope=\"col\">Δ</th>" : ""}
-              </tr>
-            </thead>
-            <tbody>
-              ${rows}
-            </tbody>
-          </table>
-        </div>
-      </details>
-    `);
-  }
-
-  const closing = row.opening + cardNet;
-  const scenarioNet = cardScenario;
-  const scenarioDelta = scenarioNet - cardNet;
-  const collapsedSet = getCollapsedSet();
-  const collapsed = collapsedSet.has(row.month);
-  const bodyId = `pl-body-${row.month.replace(/[^0-9A-Za-z]/g, "")}`;
-
-  return `
-    <article class="pl-card${collapsed ? " is-collapsed" : ""}" data-month="${escapeHtml(row.month)}">
-      <header class="pl-card-header">
-        <button type="button" class="pl-card-toggle" data-month="${escapeHtml(row.month)}" aria-expanded="${collapsed ? "false" : "true"}" aria-controls="${escapeHtml(bodyId)}">
-          <div class="pl-card-main">
-            <div class="pl-card-info">
-              <h3>${escapeHtml(formatMonthLabel(row.month))}</h3>
-              <p class="pl-card-sub">Saldo Monatsende: ${fmtSigned(closing)}</p>
-            </div>
-            <div class="pl-card-metrics">
-              <div class="pl-metric">
-                <span class="pl-metric-label">P/L gesamt</span>
-                <span class="pl-metric-value">${fmtSigned(cardNet)}</span>
-              </div>
-              ${plState.showScenario ? `
-                <div class="pl-metric">
-                  <span class="pl-metric-label">Δ Szenario</span>
-                  <span class="pl-metric-value">${fmtSigned(scenarioDelta)}</span>
-                </div>
-              ` : ""}
-              <div class="pl-metric">
-                <span class="pl-metric-label">Offen</span>
-                <span class="pl-metric-value">${fmtSigned(openSum)}</span>
-              </div>
-              <div class="pl-metric">
-                <span class="pl-metric-label">Bezahlt</span>
-                <span class="pl-metric-value">${fmtSigned(paidSum)}</span>
-              </div>
-            </div>
-          </div>
-          <span class="pl-card-chevron" aria-hidden="true">${collapsed ? "▶" : "▼"}</span>
-        </button>
-      </header>
-      <div class="pl-card-body" id="${escapeHtml(bodyId)}" ${collapsed ? "hidden" : ""}>
-        ${filtered.length ? `
-          <div class="pl-card-actions">
-            <button type="button" class="chip secondary" data-action="confirm-month" data-month="${escapeHtml(row.month)}">Alle offenen Zahlungen dieses Monats bestätigen</button>
-          </div>
-        ` : ""}
-        ${sections.join("") || '<p class="pl-empty">Keine Daten in diesem Monat.</p>'}
-      </div>
-    </article>
-  `;
-}
-
-function buildMonthChips(months) {
-  const selected = new Set(plState.selectedMonths || []);
-  const chips = months
-    .map(month => {
-      const active = selected.has(month);
-      const label = formatMonthShortLabel(month);
-      return `<button type="button" class="chip ${active ? "active" : ""}" data-month="${escapeHtml(month)}" aria-pressed="${active}">${escapeHtml(label)}</button>`;
-    })
-    .join("");
-  return chips;
-}
-
-function buildCategoryFilters() {
-  const options = CATEGORY_ORDER;
-  return options
-    .map(key => {
-      const checked = plState.categories.has(key);
-      return `
-        <label class="pl-cat">
-          <input type="checkbox" class="pl-cat-checkbox" value="${escapeHtml(key)}" ${checked ? "checked" : ""} />
-          <span>${escapeHtml(key)}</span>
-        </label>
-      `;
-    })
-    .join("");
-}
-
-function buildPLSectionHTML(data) {
-  ensureSelection(data.months || []);
-  const chips = buildMonthChips(data.months || []);
-  const cards = buildPLCards(data);
-  const selectionCount = plState.selectedMonths ? plState.selectedMonths.length : 0;
-  const panelOpen = plState.showAdvancedFilters;
-  return `
-    <div class="pl-headline">
-      <h2>Monats-P/L</h2>
-      <p class="pl-lead">Wähle Monate aus, um Gewinn/Verlust und alle Positionen transparent einzusehen.</p>
-    </div>
-    <div class="pl-controls" role="group" aria-label="Monatsauswahl">
-      <div class="pl-control-bar">
-        <div class="pl-presets" aria-label="Schnellauswahl">
-          ${CONTROL_PRESETS.map(preset => `<button type="button" class="chip secondary" data-control="${preset.key}">${preset.label}</button>`).join("")}
-        </div>
-        <div class="pl-selection-count">Ausgewählt: ${selectionCount} ${selectionCount === 1 ? "Monat" : "Monate"}</div>
-        <div class="pl-collapse-controls" role="group" aria-label="Monatsdetails">
-          <button type="button" class="chip tertiary" data-collapse="expand">Alle öffnen</button>
-          <button type="button" class="chip tertiary" data-collapse="collapse">Alle schließen</button>
-        </div>
-      </div>
-      <div class="pl-month-chips" role="listbox" aria-label="Monate wählen">
-        ${chips}
-      </div>
-    </div>
-    <div class="pl-toolbar">
-      <div class="pl-modes" role="group" aria-label="Modus">
-        ${MODE_OPTIONS.map(option => `<button type="button" class="pl-mode ${plState.mode === option.key ? "active" : ""}" data-mode="${option.key}">${option.label}</button>`).join("")}
-      </div>
-      <button type="button" class="pl-filter-toggle" data-filter-toggle aria-expanded="${panelOpen}">Filter</button>
-      <button type="button" class="pl-export" id="pl-export">Export (CSV)</button>
-    </div>
-    <section class="pl-filter-panel${panelOpen ? " open" : ""}" data-filter-panel${panelOpen ? "" : " hidden"}>
-      <header class="pl-filter-head">
-        <h3>Filter &amp; Optionen</h3>
-        <button type="button" class="pl-filter-close" data-filter-toggle aria-label="Filter schließen">×</button>
-      </header>
-      <div class="pl-filter-grid">
-        <label class="pl-search">
-          <span class="pl-search-label">Suche</span>
-          <input type="search" id="pl-search" placeholder="Label durchsuchen" value="${escapeHtml(plState.search)}" />
-        </label>
-        <label class="pl-scenario">
-          <input type="checkbox" id="pl-scenario-toggle" ${plState.showScenario ? "checked" : ""} />
-          <span>Δ-Szenario anzeigen</span>
-        </label>
-        <label class="pl-auto-manual">
-          <input type="checkbox" id="pl-auto-manual" ${plState.autoManualCheck ? "checked" : ""} />
-          <span>Automatische Zahlungen manuell prüfen</span>
-        </label>
-        <div class="pl-category-filter" aria-label="Kategorie-Filter">
-          ${buildCategoryFilters()}
-        </div>
-      </div>
-    </section>
-    <div class="pl-cards">
-      ${cards || '<div class="pl-empty">Keine Monate ausgewählt. Wähle oben mindestens einen Monat.</div>'}
-    </div>
-    <aside class="pl-drawer" data-pl-drawer role="dialog" aria-modal="true" hidden tabindex="-1">
-      <div class="pl-drawer-inner">
-        <button type="button" class="pl-drawer-close" aria-label="Details schließen">×</button>
-        <div class="pl-drawer-content"></div>
-      </div>
-    </aside>
-  `;
-}
-
-function attachPLHandlers(plRoot) {
-  const monthsWrap = plRoot.querySelector(".pl-month-chips");
-  if (monthsWrap) {
-    monthsWrap.addEventListener("click", ev => {
-      const btn = ev.target.closest(".chip[data-month]");
-      if (!btn) return;
-      const month = btn.getAttribute("data-month");
-      const set = new Set(plState.selectedMonths || []);
-      if (set.has(month)) set.delete(month); else set.add(month);
-      const ordered = (plData?.months || []).filter(m => set.has(m));
-      plState.selectedMonths = ordered;
-      plState.allowEmptySelection = ordered.length === 0;
-      updatePLSection(plRoot);
-    });
-  }
-
-  plRoot.querySelectorAll(".chip[data-control]").forEach(btn => {
+function attachDashboardHandlers(root, state) {
+  root.querySelectorAll("[data-expand]").forEach(btn => {
     btn.addEventListener("click", () => {
-      const control = btn.getAttribute("data-control");
-      plState.selectedMonths = applyControlSelection(control, plData?.months || []);
-      updatePLSection(plRoot);
-    });
-  });
-
-  plRoot.querySelectorAll("[data-filter-toggle]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      plState.showAdvancedFilters = !plState.showAdvancedFilters;
-      updatePLSection(plRoot);
-    });
-  });
-
-  plRoot.querySelectorAll(".pl-mode").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const mode = btn.getAttribute("data-mode");
-      plState.mode = mode;
-      updatePLSection(plRoot);
-    });
-  });
-
-  const scenarioToggle = plRoot.querySelector("#pl-scenario-toggle");
-  if (scenarioToggle) {
-    scenarioToggle.addEventListener("change", () => {
-      plState.showScenario = scenarioToggle.checked;
-      updatePLSection(plRoot);
-    });
-  }
-
-  const autoManualToggle = plRoot.querySelector("#pl-auto-manual");
-  if (autoManualToggle) {
-    autoManualToggle.addEventListener("change", () => {
-      plState.autoManualCheck = autoManualToggle.checked;
-      setAutoManualCheck(autoManualToggle.checked);
-      updatePLSection(plRoot);
-    });
-  }
-
-  const searchInput = plRoot.querySelector("#pl-search");
-  if (searchInput) {
-    searchInput.addEventListener("input", () => {
-      plState.search = searchInput.value || "";
-      updatePLSection(plRoot);
-    });
-  }
-
-  plRoot.querySelectorAll(".pl-cat-checkbox").forEach(box => {
-    box.addEventListener("change", () => {
-      const value = box.value;
-      if (box.checked) plState.categories.add(value);
-      else plState.categories.delete(value);
-      updatePLSection(plRoot);
-    });
-  });
-
-  const exportBtn = plRoot.querySelector("#pl-export");
-  if (exportBtn) {
-    exportBtn.addEventListener("click", () => {
-      exportPLCsv();
-    });
-  }
-
-  plRoot.querySelectorAll(".pl-collapse-controls [data-collapse]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const action = btn.getAttribute("data-collapse");
-      const targetMonths = plState.selectedMonths || [];
-      if (action === "collapse") collapseAllMonths(targetMonths);
-      else expandAllMonths();
-      updatePLSection(plRoot);
-    });
-  });
-
-  const cards = plRoot.querySelector(".pl-cards");
-  if (cards) {
-    cards.addEventListener("click", ev => {
-      const confirmBtn = ev.target.closest("[data-action='confirm-month']");
-      if (confirmBtn) {
-        ev.preventDefault();
-        const month = confirmBtn.getAttribute("data-month");
-        if (!month) return;
-        if (!confirm("Möchten Sie wirklich alle offenen Zahlungen für diesen Monat als bezahlt markieren?")) return;
-        const ids = collectMonthEventIds(month, record => record && record.entry && !record.entry.paid && !record.entry.auto);
-        if (ids.length) setEventsManualPaid(ids, true);
-        return;
-      }
-      const toggle = ev.target.closest(".pl-card-toggle");
-      if (toggle) {
-        ev.preventDefault();
-        const month = toggle.getAttribute("data-month");
-        toggleMonthCollapse(month);
-        updatePLSection(plRoot);
-        return;
-      }
-      if (ev.target.closest(".pl-row-checkbox")) return;
-      const row = ev.target.closest(".pl-row");
-      if (!row) return;
-      const id = row.getAttribute("data-entry-id");
-      showDrawer(id, plRoot);
-    });
-    cards.addEventListener("change", ev => {
-      const checkbox = ev.target.closest(".pl-row-checkbox input[type='checkbox']");
-      if (!checkbox) return;
-      const row = checkbox.closest(".pl-row");
-      if (!row) return;
-      const entryId = row.getAttribute("data-entry-id");
-      const record = plEntryLookup.get(entryId);
-      if (!record || !record.eventId) return;
-      setEventManualPaid(record.eventId, checkbox.checked);
-    });
-    cards.addEventListener("keydown", ev => {
-      if (ev.key !== "Enter" && ev.key !== " ") return;
-      const toggle = ev.target.closest(".pl-card-toggle");
-      if (toggle) {
-        ev.preventDefault();
-        const month = toggle.getAttribute("data-month");
-        toggleMonthCollapse(month);
-        updatePLSection(plRoot);
-        return;
-      }
-      if (ev.target.closest("[data-action='confirm-month']")) return;
-      if (ev.target.closest(".pl-row-checkbox")) return;
-      const row = ev.target.closest(".pl-row");
-      if (!row) return;
-      ev.preventDefault();
-      const id = row.getAttribute("data-entry-id");
-      showDrawer(id, plRoot);
-    });
-  }
-
-  const drawer = plRoot.querySelector("[data-pl-drawer]");
-  if (drawer) {
-    drawer.addEventListener("keydown", ev => {
-      if (ev.key === "Escape") {
-        ev.stopPropagation();
-        hideDrawer(plRoot);
-      }
-    });
-    const closeBtn = drawer.querySelector(".pl-drawer-close");
-    if (closeBtn) closeBtn.addEventListener("click", () => hideDrawer(plRoot));
-  }
-}
-
-function buildDrawerHtml(record) {
-  if (!record) return "";
-  const { entry, monthLabel, group, baseline, scenario, delta } = record;
-  const rows = [
-    { label: "Kategorie", value: group },
-    { label: "Monat", value: monthLabel },
-    { label: "Datum", value: formatDateLabel(entry.date) },
-    { label: "Betrag", value: fmtSigned(baseline) },
-  ];
-  if (plState.showScenario) {
-    rows.push({ label: "Szenario", value: fmtSigned(scenario) });
-    rows.push({ label: "Δ", value: fmtSigned(delta) });
-  }
-  rows.push({ label: "Status", value: entry.paid ? "Bezahlt" : "Geplant" });
-  if (entry.autoTooltip) rows.push({ label: "Hinweis", value: entry.autoTooltip });
-  if (entry.anchor) rows.push({ label: "Anchor", value: entry.anchor });
-  if (entry.lagDays != null) rows.push({ label: "Lag (Tage)", value: String(entry.lagDays) });
-  if (entry.lagMonths != null) rows.push({ label: "Lag (Monate)", value: String(entry.lagMonths) });
-  if (entry.percent != null) rows.push({ label: "Satz", value: `${entry.percent}` });
-  if (entry.sourceNumber) rows.push({ label: "Beleg", value: entry.sourceNumber });
-  if (entry.source) rows.push({ label: "Quelle", value: entry.source.toUpperCase ? entry.source.toUpperCase() : entry.source });
-
-  const targetTab = entry.sourceTab || "#dashboard";
-  return `
-    <h3>${escapeHtml(entry.label || "Detail")}</h3>
-    <dl class="pl-drawer-list">
-      ${rows
-        .map(item => `<div><dt>${escapeHtml(item.label)}</dt><dd>${escapeHtml(String(item.value ?? ""))}</dd></div>`)
-        .join("")}
-    </dl>
-    <p class="pl-drawer-link"><a href="${escapeHtml(targetTab)}">Zur Quelle wechseln</a></p>
-    ${entry.tooltip ? `<p class="pl-drawer-hint">${escapeHtml(entry.tooltip)}</p>` : ""}
-  `;
-}
-
-function showDrawer(entryId, plRoot) {
-  if (!entryId || !plRoot) return;
-  const record = plEntryLookup.get(entryId);
-  const drawer = plRoot.querySelector("[data-pl-drawer]");
-  if (!record || !drawer) return;
-  const content = drawer.querySelector(".pl-drawer-content");
-  if (content) content.innerHTML = buildDrawerHtml(record);
-  drawer.hidden = false;
-  drawer.classList.add("open");
-  drawer.focus();
-}
-
-function hideDrawer(plRoot) {
-  const drawer = plRoot.querySelector("[data-pl-drawer]");
-  if (!drawer) return;
-  drawer.hidden = true;
-  drawer.classList.remove("open");
-}
-
-function exportPLCsv() {
-  if (!plExportRows.length) {
-    alert("Keine Daten für den Export ausgewählt.");
-    return;
-  }
-  const showScenario = plState.showScenario;
-  const header = ["Monat", "Kategorie", "Label", "Datum", "Status", "Betrag"];
-  if (showScenario) header.push("Szenario", "Δ");
-  const lines = [header.join(";")];
-  for (const row of plExportRows) {
-    const base = [
-      row.month,
-      row.group,
-      row.label,
-      row.date ? formatDateLabel(row.date) : "",
-      row.status,
-      fmtSigned(row.baseline),
-    ];
-    if (showScenario) {
-      base.push(fmtSigned(row.scenario));
-      base.push(fmtSigned(row.delta));
-    }
-    lines.push(base.map(value => `"${String(value).replace(/"/g, '""')}"`).join(";"));
-  }
-  const payload = lines.join("\n");
-  const months = plState.selectedMonths || [];
-  const first = months[0] || "";
-  const last = months[months.length - 1] || first;
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const fileName = `PL_${first}-${last}_${stamp}.csv`;
-  const blob = new Blob([payload], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function updatePLSection(plRoot) {
-  if (!plRoot || !plData) return;
-  plRoot.innerHTML = buildPLSectionHTML(plData);
-  attachPLHandlers(plRoot);
-}
-
-export async function render(root) {
-  dashboardRoot = root;
-  const state = loadState();
-  plState.autoManualCheck = state?.status?.autoManualCheck === true;
-  const computed = computeSeries(state);
-  const kpis = computed.kpis || {};
-  const zipped = (computed.months || []).map((month, idx) => ({
-    month,
-    series: computed.series ? computed.series[idx] : null,
-    breakdown: computed.breakdown ? computed.breakdown[idx] : null,
-  }));
-  zipped.sort((a, b) => a.month.localeCompare(b.month));
-  const months = zipped.map(item => item.month);
-  const series = zipped.map(item => item.series || {});
-  const breakdown = zipped.map(item => item.breakdown || {});
-  plData = { months, breakdown };
-  ensureSelection(months);
-  if (!plState.defaultCollapseApplied) {
-    const collapsedSet = getCollapsedSet();
-    collapsedSet.clear();
-    const keepOpen = months.slice(-3);
-    const keepSet = new Set(keepOpen);
-    for (const month of months) {
-      if (!keepSet.has(month)) collapsedSet.add(month);
-    }
-    plState.defaultCollapseApplied = true;
-  }
-
-  const opening = Number(kpis.opening || 0);
-  const monthOpening = breakdown.map(b => Number(b?.opening || 0));
-  const closing = breakdown.map(b => Number(b?.closing || 0));
-  const firstNegativeIndex = closing.findIndex(value => value < 0);
-  const legend = plState.legend || {};
-  const showInflow = legend.inflow !== false;
-  const showOutflow = legend.outflow !== false;
-  const showNetLine = legend.netLine !== false;
-
-  const inflowTotals = showInflow ? series.map(r => Number(r.inflow?.total || 0)) : [];
-  const outflowTotals = showOutflow ? series.map(r => Number(r.outflow?.total || 0)) : [];
-  const netLineValues = showNetLine ? closing : [];
-
-  const barPosMax = Math.max(0, ...inflowTotals, ...outflowTotals);
-  const barMin = 0;
-
-  const lineValues = [...netLineValues, opening];
-  const linePosMaxRaw = Math.max(0, ...lineValues);
-  const lineNegMaxRaw = Math.min(0, ...lineValues);
-
-  function buildScale(maxVal, minVal) {
-    const steps = 5;
-    const headroomFactor = 1.05;
-    const paddedTop = maxVal === 0 ? 0 : maxVal * headroomFactor;
-    const paddedBottom = minVal === 0 ? 0 : minVal * headroomFactor;
-    const range = (paddedTop - paddedBottom) / steps || 1;
-    const niceStep = niceStepSize(range);
-    const topVal = Math.max(niceStep, Math.ceil(paddedTop / niceStep) * niceStep);
-    const bottomVal = minVal < 0 ? Math.floor(paddedBottom / niceStep) * niceStep : 0;
-    const spanVal = (topVal - bottomVal) || niceStep;
-    const ticks = Array.from({ length: steps + 1 }, (_, i) => topVal - (spanVal / steps) * i);
-    return { topVal, bottomVal, spanVal, ticks };
-  }
-
-  const { topVal: barTop, bottomVal: barBottom, ticks: yTicksBar } = buildScale(barPosMax, barMin);
-
-  const linePosSpan = Math.max(0, linePosMaxRaw);
-  const lineNegSpan = Math.abs(lineNegMaxRaw);
-  const lineHeadroom = 1.2;
-  const linePosScale = Math.max(1, linePosSpan * lineHeadroom || 1);
-  const lineNegScale = lineNegSpan > 0 ? lineNegSpan * lineHeadroom : 0;
-  const zeroY = (linePosScale / (linePosScale + lineNegScale || 1)) * 1000;
-
-  const lineAxisPosMax = linePosScale;
-  const lineAxisNegMax = lineNegScale;
-
-  const barHeadroom = 1.02;
-  const barScaleVal = barPosMax ? barPosMax * barHeadroom : 1;
-
-  const posStep = lineAxisPosMax ? niceStepSize(lineAxisPosMax / 4) : 0;
-  const negStep = lineAxisNegMax ? niceStepSize(lineAxisNegMax / 4) : 0;
-  const yTicksLine = [];
-  if (lineAxisPosMax && posStep) {
-    for (let v = lineAxisPosMax; v > 0; v -= posStep) yTicksLine.push(v);
-  }
-  yTicksLine.push(0);
-  if (lineAxisNegMax && negStep) {
-    for (let v = negStep; v <= lineAxisNegMax + 1e-6; v += negStep) yTicksLine.push(-v);
-  }
-
-  const YLine = v => {
-    const val = Number(v || 0);
-    if (val >= 0) {
-      if (!linePosScale) return zeroY;
-      return zeroY - (val / linePosScale) * zeroY;
-    }
-    if (!lineNegScale) return zeroY;
-    return zeroY + (-val / lineNegScale) * (1000 - zeroY);
-  };
-
-  const monthsCount = months.length || 0;
-  const groupWidth = 56;
-  const groupGap = 28;
-  const innerGap = 6;
-  const chartWidth = monthsCount
-    ? groupWidth * monthsCount + groupGap * Math.max(0, monthsCount - 1)
-    : groupWidth * 18 + groupGap * 17;
-  const centers = months.map((_, idx) => idx * (groupWidth + groupGap) + groupWidth / 2);
-  const X = px => {
-    const safeWidth = chartWidth || 1;
-    return (px / safeWidth) * 1000;
-  };
-  const YBar = v => {
-    const val = Number(v || 0);
-    if (!barScaleVal) return zeroY;
-    return zeroY - (val / barScaleVal) * zeroY;
-  };
-  const zeroPct = Math.max(0, Math.min(100, zeroY / 10));
-
-  const points = showNetLine
-    ? netLineValues.map((v, i) => `${X(centers[i] || 0)},${YLine(v)}`).join(" ")
-    : "";
-  const dots = showNetLine
-    ? netLineValues
-        .map((v, i) => `<circle class="dot" data-idx="${i}" cx="${X(centers[i] || 0)}" cy="${YLine(v)}" r="6"></circle>`)
-        .join("")
-    : "";
-  const axisRows = yTicksBar.length || 6;
-  const yAxisLineHtml = yTicksLine
-    .map(val => `<div class="ytick-line" style="top:${(YLine(val) / 10).toFixed(2)}%">${fmtTick(val)}</div>`)
-    .join("");
-  const netStrip = series
-    .map((row, idx) => {
-      const monthKey = months[idx] || "";
-      const monthLabel = formatMonthShortLabel(monthKey);
-      const value = Number(row?.net?.total || 0);
-      const display = `${monthLabel} · ${fmtEUR0(value)}`;
-      const ariaLabel = `${formatMonthLabel(monthKey)} – Netto ${fmtEUR(value)}`;
-      return `<button type="button" class="net ${value >= 0 ? "pos" : "neg"}" data-month="${escapeHtml(monthKey)}" aria-label="${escapeHtml(ariaLabel)}">${escapeHtml(display)}</button>`;
-    })
-    .join("");
-
-  function valuesFor(type, row) {
-    if (type === "inflow") {
-      if (!plState.legend || plState.legend.inflow === false) return [];
-      const total = Number(row?.inflow?.total || 0);
-      if (!total) return [];
-      return [{ key: "total", value: total }];
-    }
-    if (type === "outflow") {
-      if (!plState.legend || plState.legend.outflow === false) return [];
-      const total = Number(row?.outflow?.total || 0);
-      if (!total) return [];
-      return [{ key: "total", value: total }];
-    }
-    return [];
-  }
-
-  function stackSegments(values) {
-    const segments = [];
-    let posBase = 0;
-    let negBase = 0;
-    for (const seg of values) {
-      const val = Number(seg.value || 0);
-      if (!Number.isFinite(val) || val === 0) continue;
-      if (val >= 0) {
-        const start = posBase;
-        posBase += val;
-        segments.push({ ...seg, start, end: posBase });
+      const action = btn.getAttribute("data-expand");
+      const startMonth = state?.settings?.startMonth || "2025-01";
+      const horizon = Number(state?.settings?.horizonMonths || 12) || 12;
+      const endMonth = addMonths(startMonth, horizon - 1);
+      const currentMonth = currentMonthKey();
+      const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
+      const baseMonths = applyRange(months, dashboardState.range);
+      const skuCoverage = computeSkuCoverage(state, baseMonths);
+      const rowsBoth = buildDashboardRows(state, baseMonths, {
+        limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+        currentMonth,
+        coverage: skuCoverage.coverage,
+      });
+      const topRowsAll = [
+        filterRows(rowsBoth.inflowRow, baseMonths),
+        filterRows(rowsBoth.outflowRow, baseMonths),
+        ...rowsBoth.summaryRows,
+      ].filter(Boolean);
+      const visibleMonths = dashboardState.hideEmptyMonths
+        ? baseMonths.filter(month => monthHasValues(topRowsAll, month))
+        : baseMonths;
+      const { inflowRow, outflowRow, summaryRows } = buildDashboardRows(state, visibleMonths, {
+        limitBalanceToGreen: dashboardState.limitBalanceToGreen,
+        currentMonth,
+        coverage: skuCoverage.coverage,
+      });
+      const topRows = [filterRows(inflowRow, visibleMonths), filterRows(outflowRow, visibleMonths), ...summaryRows].filter(Boolean);
+      const expandableIds = collectExpandableIds(topRows);
+      if (action === "collapse") {
+        dashboardState.expanded = new Set();
       } else {
-        const start = negBase;
-        negBase += val;
-        segments.push({ ...seg, start, end: negBase });
+        dashboardState.expanded = new Set(expandableIds);
       }
-    }
-    return segments;
-  }
-
-  function fmtBarValue(type, value) {
-    const numeric = Number(value || 0);
-    if (type === "outflow") return fmtEUR(-numeric);
-    return fmtEUR(numeric);
-  }
-
-  function ariaForBar(type, row, monthKey) {
-    const prettyMonth = formatMonthLabel(monthKey);
-    const target = type === "inflow" ? row.inflow : row.outflow;
-    if (!target) return prettyMonth;
-    const label = type === "inflow" ? "Inflow" : "Outflow";
-    return `${prettyMonth}: ${label} gesamt ${fmtBarValue(type, target.total)} – bezahlt ${fmtBarValue(type, target.paid)} – offen ${fmtBarValue(type, target.open)}`;
-  }
-
-  function renderSegment(type, seg) {
-    const yStart = YBar(seg.start);
-    const yEnd = YBar(seg.end);
-    const topPct = Math.min(yStart, yEnd) / 10;
-    const heightPct = Math.abs(yStart - yEnd) / 10;
-    if (heightPct <= 0.05) return "";
-    const classes = `vbar-segment segment-${type}-${seg.key}`;
-    return `<div class="${classes}" style="--seg-top:${topPct.toFixed(2)}; --seg-height:${heightPct.toFixed(2)}"></div>`;
-  }
-
-  function renderBar(type, row, monthIndex) {
-    const stacked = stackSegments(valuesFor(type, row));
-    const totalValue = type === "inflow"
-      ? Number(row.inflow?.total || 0)
-      : Number(row.outflow?.total || 0);
-    const orientation = totalValue >= 0 ? "pos" : "neg";
-    if (!stacked.length) {
-      return `<div class="vbar-wrap type-${type} ${orientation} empty" aria-hidden="true"></div>`;
-    }
-    const aria = escapeHtml(ariaForBar(type, row, months[monthIndex]));
-    const segmentsHtml = stacked.map(seg => renderSegment(type, seg)).join("");
-    return `<div class="vbar-wrap type-${type} ${orientation}"><div class="vbar ${type}" data-idx="${monthIndex}" data-type="${type}" tabindex="0" role="img" aria-label="${aria}">${segmentsHtml}</div></div>`;
-  }
-
-  function monthTipHtml(monthKey, row, closingValue, openingValue) {
-    const prettyMonth = formatMonthLabel(monthKey);
-    const inflowPaid = Number(row?.inflow?.paid || 0);
-    const inflowOpen = Number(row?.inflow?.open || 0);
-    const outflowPaid = Number(row?.outflow?.paid || 0);
-    const outflowOpen = Number(row?.outflow?.open || 0);
-    const netPaid = Number(row?.net?.paid || 0);
-    const netOpen = Number(row?.net?.open || 0);
-    const formatSection = (title, paidValue, openValue, options = {}) => {
-      const totalValue = paidValue + openValue;
-      const paidLabel = escapeHtml(options.paidLabel || "bezahlt");
-      const openLabel = escapeHtml(options.openLabel || "offen");
-      const swatchPaid = options.swatchPaid ? `<span class="tip-swatch ${options.swatchPaid}" aria-hidden="true"></span>` : "";
-      const swatchOpen = options.swatchOpen ? `<span class="tip-swatch ${options.swatchOpen}" aria-hidden="true"></span>` : "";
-      return `
-        <div class="tip-section">
-          <div class="tip-subtitle">${escapeHtml(title)}</div>
-          <div class="tip-row">
-            <span>${swatchPaid}${paidLabel}</span>
-            <b>${fmtEUR(options.negative ? -paidValue : paidValue)}</b>
-          </div>
-          <div class="tip-row">
-            <span>${swatchOpen}${openLabel}</span>
-            <b>${fmtEUR(options.negative ? -openValue : openValue)}</b>
-          </div>
-          <div class="tip-row total">
-            <span>Gesamt</span>
-            <b>${fmtEUR(options.negative ? -(totalValue) : totalValue)}</b>
-          </div>
-        </div>
-      `;
-    };
-    const inflowSection = formatSection("Inflow", inflowPaid, inflowOpen, {
-      swatchPaid: "swatch-inflow",
-      swatchOpen: "swatch-inflow",
-    });
-    const outflowSection = formatSection("Outflow", outflowPaid, outflowOpen, {
-      swatchPaid: "swatch-outflow",
-      swatchOpen: "swatch-outflow",
-      negative: true,
-    });
-    const netSection = formatSection("Netto", netPaid, netOpen, {
-      swatchPaid: "swatch-net",
-      swatchOpen: "swatch-net",
-    });
-    const balanceSection = `
-      <div class="tip-divider"></div>
-      <div class="tip-row">
-        <span>Monatsanfang</span>
-        <b>${fmtEUR(openingValue)}</b>
-      </div>
-      <div class="tip-row">
-        <span>Kontostand Monatsende</span>
-        <b>${fmtEUR(closingValue)}</b>
-      </div>
-    `;
-    return `
-      <div class="tip-title">${prettyMonth}</div>
-      ${inflowSection}
-      ${outflowSection}
-      ${netSection}
-      ${balanceSection}
-    `;
-  }
-
-  const barGroupsHtml = series
-    .map((row, i) => {
-      const inflowBar = renderBar("inflow", row, i);
-      const outflowBar = renderBar("outflow", row, i);
-      return `<div class="vbar-group" style="width:${groupWidth}px; --inner-gap:${innerGap}px" data-month="${escapeHtml(months[i] || "")}">${inflowBar}${outflowBar}</div>`;
-    })
-    .join("");
-
-  const viewport = typeof window !== "undefined" ? window.innerWidth || 0 : 0;
-  const maxXTicks = viewport && viewport < 900 ? 6 : 8;
-  const step = Math.max(1, Math.ceil((months.length || 1) / maxXTicks));
-  const xLabelsHtml = months
-    .map((monthKey, idx) => {
-      const label = idx % step === 0 ? formatMonthShortLabel(monthKey) : "";
-      return `<div class="xlabel" style="width:${groupWidth}px">${label ? escapeHtml(label) : "&nbsp;"}</div>`;
-    })
-    .join("");
-
-  const legendRows = [
-    { key: "inflow", label: "Inflow", swatch: "swatch-inflow" },
-    { key: "outflow", label: "Outflow", swatch: "swatch-outflow" },
-    { key: "netLine", label: "Kontostand", swatch: "swatch-net-line" },
-  ];
-
-  const legendHtml = `
-    <div class="chart-legend" role="list">
-      ${legendRows
-        .map(row => `
-          <button type="button" class="legend-button ${plState.legend[row.key] === false ? "is-off" : ""}" data-legend="${row.key}" aria-pressed="${plState.legend[row.key] !== false}">
-            <span class="legend-swatch ${row.swatch}" aria-hidden="true"></span>
-            <span class="legend-label">${row.label}</span>
-          </button>
-        `)
-        .join("")}
-    </div>
-  `;
-
-  const firstNegativeDisplay =
-    firstNegativeIndex >= 0 ? formatMonthLabel(months[firstNegativeIndex]) : "—";
-
-  root.innerHTML = `
-    <section class="card">
-      <h2>Dashboard</h2>
-      <p class="dashboard-intro">Plane Ein-/Auszahlungen, POs/FOs und Importkosten – behalte deinen Kontostand pro Monat im Blick.</p>
-      <div class="grid three">
-        <div class="kpi"><div class="kpi-label" title="Kontostand zu Beginn des Startmonats.">Opening heute</div><div class="kpi-value">${fmtEUR(opening)}</div></div>
-        <div class="kpi"><div class="kpi-label" title="Durchschnittliche Amazon-Auszahlungsquote über die sichtbaren Monate.">Sales × Payout (Monat ∅)</div><div class="kpi-value">${fmtEUR(kpis.salesPayoutAvg || 0)}</div></div>
-        <div class="kpi"><div class="kpi-label" title="Erster Monat, in dem der geplante Saldo unter den kritischen Puffer fällt.">Erster negativer Monat</div><div class="kpi-value">${firstNegativeDisplay}</div></div>
-      </div>
-      <div class="vchart" style="--rows:${axisRows}; --zero:${zeroPct.toFixed(2)}">
-        <div class="vchart-y">${yTicksBar.map(v => `<div class="ytick">${fmtTick(v)}</div>`).join("")}</div>
-        <div class="vchart-y-right">${yAxisLineHtml}</div>
-        <div class="vchart-stage" style="--chart-width:${chartWidth}px; --group-gap:${groupGap}px;">
-          <div class="vchart-stage-inner">
-            <div class="vchart-grid">${yTicksBar.map(() => "<div class=\"yline\"></div>").join("")}</div>
-            <div class="vchart-zero"></div>
-            <div class="vchart-bars">
-              ${barGroupsHtml}
-            </div>
-            <div class="vchart-lines" aria-hidden="true">
-              <svg viewBox="0 0 ${Math.max(chartWidth, 1)} 1000" preserveAspectRatio="none">
-                ${showNetLine ? `<polyline class="line" points="${points}"></polyline>${dots}` : ""}
-              </svg>
-            </div>
-          </div>
-          <div class="vchart-x">${xLabelsHtml}</div>
-        </div>
-      </div>
-      ${legendHtml}
-      <div class="net-strip-label">Netto je Monat</div>
-      <div class="net-strip">${netStrip}</div>
-    </section>
-    <section class="card pl-container" id="pl-root"></section>
-  `;
-
-  const plRoot = root.querySelector("#pl-root");
-
-  root.querySelectorAll('.legend-button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const type = btn.getAttribute('data-legend');
-      if (!type) return;
-      const current = plState.legend[type] !== false;
-      plState.legend[type] = current ? false : true;
       render(root);
     });
   });
 
-  const tip = ensureGlobalTip();
-  const dotNodes = Array.from(root.querySelectorAll(".vchart-lines .dot"));
+  root.querySelectorAll(".tree-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const rowId = btn.getAttribute("data-row-id");
+      if (!rowId) return;
+      if (dashboardState.expanded.has(rowId)) dashboardState.expanded.delete(rowId);
+      else dashboardState.expanded.add(rowId);
+      render(root);
+    });
+  });
 
-  function showBarTip(el) {
-    if (!el) return;
-    const i = Number(el.getAttribute("data-idx"));
-    if (!Number.isFinite(i)) return;
-    const row = series[i];
-    const eom = closing[i];
-    const mos = monthOpening[i];
-    tip.innerHTML = monthTipHtml(months[i], row, eom, mos);
-    tip.hidden = false;
-    const br = el.getBoundingClientRect();
-    const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-    const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-    const width = tip.offsetWidth || 220;
-    const height = tip.offsetHeight || 120;
-    let left = br.left + br.width + 12;
-    if (left + width + 8 > vw) left = Math.max(8, br.left - width - 12);
-    let topPx = br.top - 8;
-    if (topPx + height + 8 > vh) topPx = Math.max(8, vh - height - 8);
-    tip.style.left = `${left}px`;
-    tip.style.top = `${topPx}px`;
-    if (dotNodes.length) {
-      dotNodes.forEach((dot, idx) => {
-        dot.classList.toggle("is-active", idx === i);
-      });
-    }
-  }
-
-  function hideTip(force = false) {
-    if (!force) {
-      const active = document.activeElement;
-      if (active && active.classList && active.classList.contains("vbar")) {
-        return;
-      }
-    }
-    if (dotNodes.length) {
-      dotNodes.forEach(dot => dot.classList.remove("is-active"));
-    }
-    tip.hidden = true;
-  }
-
-  const barsWrap = root.querySelector(".vchart-bars");
-  if (barsWrap) {
-    barsWrap.addEventListener("pointerenter", ev => {
-      const el = ev.target.closest(".vbar");
-      if (el) showBarTip(el);
-    }, true);
-    barsWrap.addEventListener("pointermove", ev => {
-      const el = ev.target.closest(".vbar");
-      if (el) showBarTip(el);
-    }, true);
-    barsWrap.addEventListener("pointerleave", () => hideTip(), true);
-    barsWrap.addEventListener("click", ev => {
-      const el = ev.target.closest(".vbar");
-      if (!el) return;
-      const idx = Number(el.getAttribute("data-idx"));
-      if (!Number.isFinite(idx)) return;
-      const monthKey = months[idx];
-      hideTip(true);
-      focusMonthCard(monthKey);
-      if (plRoot) updatePLSection(plRoot);
+  const rangeSelect = root.querySelector("#dashboard-range");
+  if (rangeSelect) {
+    rangeSelect.addEventListener("change", () => {
+      dashboardState.range = rangeSelect.value;
+      render(root);
     });
   }
 
-  const barNodes = root.querySelectorAll(".vbar[data-type]");
-  barNodes.forEach(node => {
-    node.addEventListener("focus", () => showBarTip(node));
-    node.addEventListener("blur", () => hideTip(true));
-    node.addEventListener("keydown", ev => {
+  const hideEmptyToggle = root.querySelector("#dashboard-hide-empty");
+  if (hideEmptyToggle) {
+    hideEmptyToggle.addEventListener("change", () => {
+      dashboardState.hideEmptyMonths = hideEmptyToggle.checked;
+      render(root);
+    });
+  }
+
+  const limitBalanceToggle = root.querySelector("#dashboard-limit-balance");
+  if (limitBalanceToggle) {
+    limitBalanceToggle.addEventListener("change", () => {
+      dashboardState.limitBalanceToGreen = limitBalanceToggle.checked;
+      render(root);
+    });
+  }
+
+  const table = root.querySelector(".dashboard-tree-table");
+  if (table) {
+    const navigate = (payload) => {
+      if (!payload?.route) return;
+      const params = new URLSearchParams();
+      if (payload.open) params.set("open", payload.open);
+      if (payload.focus) params.set("focus", payload.focus);
+      if (payload.month) params.set("month", payload.month);
+      const query = params.toString();
+      location.hash = query ? `${payload.route}?${query}` : payload.route;
+    };
+
+    table.addEventListener("dblclick", (event) => {
+      const cell = event.target.closest("td[data-nav]");
+      if (!cell) return;
+      const raw = cell.getAttribute("data-nav");
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(decodeURIComponent(raw));
+        navigate(payload);
+      } catch {}
+    });
+
+    table.addEventListener("click", (event) => {
+      const icon = event.target.closest(".cell-link-icon");
+      if (!icon) return;
+      const cell = icon.closest("td[data-nav]");
+      if (!cell) return;
+      const raw = cell.getAttribute("data-nav");
+      if (!raw) return;
+      try {
+        const payload = JSON.parse(decodeURIComponent(raw));
+        navigate(payload);
+      } catch {}
+    });
+  }
+
+  const coverageWrap = root.querySelector(".dashboard-coverage-wrap");
+  const tableWrap = root.querySelector(".dashboard-table-wrap");
+  if (coverageWrap && tableWrap) {
+    let syncing = false;
+    const syncScroll = (source, target) => {
+      if (syncing) return;
+      syncing = true;
+      target.scrollLeft = source.scrollLeft;
+      requestAnimationFrame(() => {
+        syncing = false;
+      });
+    };
+    tableWrap.addEventListener("scroll", () => syncScroll(tableWrap, coverageWrap));
+    coverageWrap.addEventListener("scroll", () => syncScroll(coverageWrap, tableWrap));
+  }
+
+  root.querySelectorAll(".coverage-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const groupId = btn.getAttribute("data-coverage-group");
+      if (!groupId) return;
+      if (dashboardState.coverageCollapsed.has(groupId)) {
+        dashboardState.coverageCollapsed.delete(groupId);
+      } else {
+        dashboardState.coverageCollapsed.add(groupId);
+      }
+      render(root);
+    });
+  });
+
+  root.querySelectorAll(".coverage-cell[data-create-fo]").forEach(cell => {
+    const handler = () => {
+      const sku = cell.getAttribute("data-sku") || "";
+      const targetDate = cell.getAttribute("data-target-date") || "";
+      const params = new URLSearchParams();
+      params.set("create", "1");
+      if (sku) params.set("sku", sku);
+      if (targetDate) params.set("target", targetDate);
+      location.hash = `#fo?${params.toString()}`;
+    };
+    cell.addEventListener("click", handler);
+    cell.addEventListener("keydown", ev => {
       if (ev.key === "Enter" || ev.key === " ") {
-        showBarTip(node);
-        const idx = Number(node.getAttribute("data-idx"));
-        if (Number.isFinite(idx)) {
-          hideTip(true);
-          focusMonthCard(months[idx]);
-          if (plRoot) updatePLSection(plRoot);
-        }
         ev.preventDefault();
+        handler();
       }
     });
   });
 
-  const netStripNode = root.querySelector(".net-strip");
-  if (netStripNode) {
-    netStripNode.addEventListener("click", ev => {
-      const btn = ev.target.closest("button[data-month]");
-      if (!btn) return;
-      const monthKey = btn.getAttribute("data-month");
-      hideTip(true);
-      focusMonthCard(monthKey);
-      if (plRoot) updatePLSection(plRoot);
+  const coverageLink = root.querySelector("#dashboard-coverage-link");
+  if (coverageLink) {
+    coverageLink.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const panel = root.querySelector("#dashboard-coverage-panel");
+      if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
+}
 
-  if (plRoot) updatePLSection(plRoot);
+let dashboardRoot = null;
+let stateListenerOff = null;
+
+export function render(root) {
+  dashboardRoot = root;
+  const state = loadState();
+  root.innerHTML = buildDashboardHTML(state);
+  attachDashboardHandlers(root, state);
 
   if (!stateListenerOff) {
     stateListenerOff = addStateListener(() => {
       if (location.hash.replace("#", "") === "dashboard" && dashboardRoot) render(dashboardRoot);
     });
   }
-}
-
-function niceStepSize(range) {
-  if (!Number.isFinite(range) || range <= 0) return 1;
-  const exponent = Math.floor(Math.log10(range));
-  const fraction = range / Math.pow(10, exponent);
-  let niceFraction;
-  if (fraction <= 1) niceFraction = 1;
-  else if (fraction <= 2) niceFraction = 2;
-  else if (fraction <= 5) niceFraction = 5;
-  else niceFraction = 10;
-  return niceFraction * Math.pow(10, exponent);
-}
-
-function fmtTick(v) {
-  return new Intl.NumberFormat("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    maximumFractionDigits: 0,
-    minimumFractionDigits: 0,
-  }).format(Number(v || 0));
 }
 
 export default { render };
