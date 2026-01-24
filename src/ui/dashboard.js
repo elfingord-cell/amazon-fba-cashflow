@@ -1,5 +1,5 @@
 import { loadState, addStateListener } from "../data/storageLocal.js";
-import { parseEuro, fmtEUR, expandFixcostInstances } from "../domain/cashflow.js";
+import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
@@ -27,18 +27,28 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function formatEur0(value) {
+  if (value == null) return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  const rounded = Math.round(num);
+  return `${new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 }).format(rounded)} €`;
+}
+
 function formatCellValue(value) {
-  const num = Number(value || 0);
-  if (!Number.isFinite(num) || Math.abs(num) < 0.0001) {
+  if (value == null) {
+    return { text: "—", isEmpty: true };
+  }
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return { text: "—", isEmpty: true };
+  }
+  const rounded = Math.round(num);
+  if (rounded === 0) {
     return { text: "—", isEmpty: true };
   }
   return {
-    text: new Intl.NumberFormat("de-DE", {
-      style: "currency",
-      currency: "EUR",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(num),
+    text: formatEur0(rounded),
     isEmpty: false,
   };
 }
@@ -147,6 +157,10 @@ function formatMonthLabel(monthKey) {
   return date.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" });
 }
 
+function monthColumnClass(index) {
+  return `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
+}
+
 function sumUnits(record) {
   if (!record) return 0;
   if (Array.isArray(record.items) && record.items.length) {
@@ -229,23 +243,46 @@ function computeFoEta(fo) {
   return addDays(target, -bufferDays);
 }
 
-function buildSkuPlanningIndex(state, activeSkus) {
-  const plannedBySku = new Map(activeSkus.map(item => [item.sku, []]));
+function getForecastUnits(state, sku, month) {
+  const manual = state?.forecast?.forecastManual?.[sku]?.[month];
+  if (manual != null) return Number(manual);
+  const imported = state?.forecast?.forecastImport?.[sku]?.[month]?.units;
+  if (imported != null) return Number(imported);
+  return null;
+}
+
+function buildSkuSignalMap(state, activeSkus, months) {
+  const monthSet = new Set(months);
+  const signals = new Map();
+  const hasForecast = new Map();
+
+  activeSkus.forEach(item => {
+    const sku = item.sku;
+    signals.set(sku, new Map(months.map(month => [month, { payment: false, inbound: false, forecast: false }])));
+    hasForecast.set(sku, false);
+  });
+
+  const settings = getSettings();
   const pos = Array.isArray(state?.pos) ? state.pos : [];
   pos.forEach(po => {
     if (!po || po.archived) return;
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
     const etaDate = computePoEta(po);
-    if (!etaDate) return;
-    const sourceLabel = po.poNo || po.number || po.id || "PO";
+    const etaMonth = etaDate ? toMonthKey(etaDate) : null;
     const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
+    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings);
     items.forEach(item => {
       const sku = String(item?.sku || "").trim();
-      if (!sku || !plannedBySku.has(sku)) return;
-      plannedBySku.get(sku).push({
-        sourceType: "PO",
-        sourceLabel,
-        etaDate,
+      if (!sku || !signals.has(sku)) return;
+      if (etaMonth) {
+        if (monthSet.has(etaMonth)) {
+          signals.get(sku).get(etaMonth).inbound = true;
+        }
+      }
+      paymentRows.forEach(row => {
+        const dueMonth = toMonthKey(row.dueDate);
+        if (!dueMonth || !monthSet.has(dueMonth)) return;
+        signals.get(sku).get(dueMonth).payment = true;
       });
     });
   });
@@ -255,68 +292,89 @@ function buildSkuPlanningIndex(state, activeSkus) {
     if (!fo) return;
     const status = String(fo.status || "").toUpperCase();
     if (status === "CONVERTED" || status === "CANCELLED") return;
-    const etaDate = computeFoEta(fo);
-    if (!etaDate) return;
-    const sourceLabel = fo.foNo || fo.number || fo.id || "FO";
     const sku = String(fo.sku || "").trim();
-    if (!sku || !plannedBySku.has(sku)) return;
-    plannedBySku.get(sku).push({
-      sourceType: "FO",
-      sourceLabel,
-      etaDate,
+    if (!sku || !signals.has(sku)) return;
+    const etaDate = computeFoEta(fo);
+    const etaMonth = etaDate ? toMonthKey(etaDate) : null;
+    if (etaMonth) {
+      if (monthSet.has(etaMonth)) {
+        signals.get(sku).get(etaMonth).inbound = true;
+      }
+    }
+    const payments = Array.isArray(fo.payments) ? fo.payments : [];
+    payments.forEach(payment => {
+      const dueMonth = toMonthKey(payment.dueDate);
+      if (!dueMonth || !monthSet.has(dueMonth)) return;
+      signals.get(sku).get(dueMonth).payment = true;
     });
   });
 
-  plannedBySku.forEach(list => list.sort((a, b) => a.etaDate - b.etaDate));
-  return plannedBySku;
+  activeSkus.forEach(item => {
+    const sku = item.sku;
+    months.forEach(month => {
+      const units = getForecastUnits(state, sku, month);
+      if (units != null && units > 0) {
+        signals.get(sku).get(month).forecast = true;
+        hasForecast.set(sku, true);
+      }
+    });
+  });
+
+  return { signals, hasForecast };
+}
+
+function isMonthCovered(signalRow, allowForecast) {
+  return Boolean(signalRow.payment || signalRow.inbound || (allowForecast && signalRow.forecast));
 }
 
 function computeSkuCoverage(state, months) {
   const activeSkus = getActiveSkus(state);
   const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
-  const plannedIndex = buildSkuPlanningIndex(state, activeSkus);
   const coverage = new Map();
   const details = new Map();
-  const plannedByMonth = new Map();
+  const perSkuCoverage = new Map();
   const totalCount = activeSkus.length;
+  const { signals, hasForecast } = buildSkuSignalMap(state, activeSkus, months);
+
+  activeSkus.forEach(item => {
+    perSkuCoverage.set(item.sku, new Map());
+  });
 
   months.forEach(month => {
-    const monthEnd = getMonthEnd(month);
-    const plannedMap = new Map();
-    if (monthEnd) {
-      activeSkus.forEach(item => {
-        const records = plannedIndex.get(item.sku) || [];
-        const match = records.find(record => record.etaDate && record.etaDate <= monthEnd);
-        if (match) plannedMap.set(item.sku, match);
-      });
-    }
-    plannedByMonth.set(month, plannedMap);
-    const plannedCount = plannedMap.size;
+    const coveredSkus = new Set();
+    activeSkus.forEach(item => {
+      const sku = item.sku;
+      const signalRow = signals.get(sku)?.get(month);
+      const allowForecast = hasForecast.get(sku);
+      const isCovered = Boolean(signalRow && isMonthCovered(signalRow, allowForecast));
+      perSkuCoverage.get(sku).set(month, isCovered);
+      if (isCovered) coveredSkus.add(sku);
+    });
+    const coveredCount = coveredSkus.size;
+    const ratio = totalCount ? coveredCount / totalCount : 0;
     let status = "gray";
-    if (totalCount > 0) {
-      const pct = plannedCount / totalCount;
-      if (pct >= 1) status = "green";
-      else if (pct >= 0.7) status = "yellow";
-      else status = "red";
-    }
+    if (ratio >= 1) status = "green";
+    else if (ratio >= 0.6) status = "amber";
     const missingAliases = totalCount
-      ? activeSkus.filter(item => !plannedMap.has(item.sku)).map(item => item.alias || item.sku)
+      ? activeSkus.filter(item => !coveredSkus.has(item.sku)).map(item => item.alias || item.sku)
       : [];
     coverage.set(month, status);
     details.set(month, {
       status,
-      plannedCount,
+      coveredCount,
       totalCount,
+      ratio,
       missingAliases,
-      monthEnd,
     });
   });
+  return result;
+}
 
   return {
     coverage,
     details,
-    plannedByMonth,
     activeSkus,
+    perSkuCoverage,
     groups: buildCategoryGroups(activeSkus, categories),
   };
 }
@@ -396,8 +454,6 @@ function buildPoData(state) {
           paid: row.status === "paid",
           paidDate: row.paidDate || null,
           transactionId: row.transactionId || null,
-          hasInvoiceLink: Boolean(tx?.driveInvoiceLink),
-          invoiceLink: tx?.driveInvoiceLink || null,
           paidBy: row.paidBy || null,
           currency: "EUR",
         };
@@ -438,8 +494,6 @@ function buildFoData(state) {
             plannedEur,
             actualEur: 0,
             paid: false,
-            hasInvoiceLink: true,
-            invoiceLink: null,
             paidBy: null,
             currency,
           };
@@ -454,56 +508,19 @@ function sumPaymentEvents(events, month, currentMonth) {
   let plannedTotal = 0;
   let actualTotal = 0;
   let paidThisMonthCount = 0;
-  const warnings = [];
+  let hasPaidValue = false;
   events.forEach(evt => {
     if (evt.month !== month) return;
     const planned = Number(evt.plannedEur || 0);
     const actual = Number(evt.actualEur || 0);
     const paid = evt.paid === true;
-    const hasInvoice = evt.hasInvoiceLink !== false;
-    const actualValid = paid && actual > 0 && hasInvoice;
-    const missingInvoice = paid && (!hasInvoice || actual <= 0);
-
-    if (missingInvoice) {
-      const txLabel = evt.transactionId ? `Transfer ${evt.transactionId}` : "Transfer —";
-      warnings.push(`${evt.label || "Zahlung"} · ${txLabel} · Invoice-Link fehlt`);
-    }
+    const actualValid = paid && actual > 0;
 
     plannedTotal += planned;
     if (actualValid) {
       actualTotal += actual;
       displayTotal += actual;
-      if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
-        paidThisMonthCount += 1;
-      }
-    } else {
-      displayTotal += planned;
-    }
-  });
-  return {
-    value: displayTotal,
-    plannedTotal,
-    actualTotal,
-    displayLabel: getDisplayLabel(plannedTotal, actualTotal),
-    warnings,
-    paidThisMonthCount,
-  };
-}
-
-function sumGenericEvents(events, month, currentMonth) {
-  let displayTotal = 0;
-  let plannedTotal = 0;
-  let actualTotal = 0;
-  let paidThisMonthCount = 0;
-  events.forEach(evt => {
-    if (evt.month !== month) return;
-    const planned = Number(evt.plannedEur || 0);
-    const actual = Number(evt.actualEur || 0);
-    const paid = evt.paid === true;
-    plannedTotal += planned;
-    if (paid && actual > 0) {
-      actualTotal += actual;
-      displayTotal += actual;
+      hasPaidValue = true;
       if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
         paidThisMonthCount += 1;
       }
@@ -518,6 +535,41 @@ function sumGenericEvents(events, month, currentMonth) {
     displayLabel: getDisplayLabel(plannedTotal, actualTotal),
     warnings: [],
     paidThisMonthCount,
+    hasPaidValue,
+  };
+}
+
+function sumGenericEvents(events, month, currentMonth) {
+  let displayTotal = 0;
+  let plannedTotal = 0;
+  let actualTotal = 0;
+  let paidThisMonthCount = 0;
+  let hasPaidValue = false;
+  events.forEach(evt => {
+    if (evt.month !== month) return;
+    const planned = Number(evt.plannedEur || 0);
+    const actual = Number(evt.actualEur || 0);
+    const paid = evt.paid === true;
+    plannedTotal += planned;
+    if (paid && actual > 0) {
+      actualTotal += actual;
+      displayTotal += actual;
+      hasPaidValue = true;
+      if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
+        paidThisMonthCount += 1;
+      }
+    } else {
+      displayTotal += planned;
+    }
+  });
+  return {
+    value: displayTotal,
+    plannedTotal,
+    actualTotal,
+    displayLabel: getDisplayLabel(plannedTotal, actualTotal),
+    warnings: [],
+    paidThisMonthCount,
+    hasPaidValue,
   };
 }
 
@@ -588,6 +640,7 @@ function applyRowValues(row, months, currentMonth) {
       const actualTotal = row.children.reduce((acc, child) => acc + (child.values[month]?.actualTotal || 0), 0);
       const warnings = row.children.flatMap(child => child.values[month]?.warnings || []);
       const paidThisMonthCount = row.children.reduce((acc, child) => acc + (child.values[month]?.paidThisMonthCount || 0), 0);
+      const hasPaidValue = row.children.some(child => child.values[month]?.hasPaidValue);
       row.values[month] = {
         value: sum,
         plannedTotal,
@@ -595,6 +648,7 @@ function applyRowValues(row, months, currentMonth) {
         displayLabel: getDisplayLabel(plannedTotal, actualTotal),
         warnings,
         paidThisMonthCount,
+        hasPaidValue,
       };
     });
   }
@@ -644,9 +698,15 @@ function flattenRows(rows, expandedSet) {
 function buildDashboardRows(state, months, options = {}) {
   const plannedPayoutMap = computePlannedPayoutByMonth(state, months);
   const actualPayoutMap = new Map();
-  (state?.actuals || []).forEach(row => {
-    if (!row?.month) return;
-    actualPayoutMap.set(row.month, parseEuro(row.payoutEur));
+  const monthlyActuals = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+    ? state.monthlyActuals
+    : {};
+  Object.entries(monthlyActuals).forEach(([month, entry]) => {
+    if (!months.includes(month)) return;
+    const revenue = Number(entry?.realRevenueEUR);
+    const payoutRate = Number(entry?.realPayoutRatePct);
+    if (!Number.isFinite(revenue) || !Number.isFinite(payoutRate)) return;
+    actualPayoutMap.set(month, revenue * (payoutRate / 100));
   });
   const coverage = options.coverage instanceof Map ? options.coverage : new Map();
 
@@ -750,23 +810,20 @@ function buildDashboardRows(state, months, options = {}) {
     const poLabel = po.record?.poNo ? `PO ${po.record.poNo}` : "PO";
     const depositPaid = po.events.some(evt => /deposit/i.test(evt.typeLabel || "") && evt.paid);
     const balancePaid = po.events.some(evt => /balance/i.test(evt.typeLabel || "") && evt.paid);
-    const missingInvoice = po.events.some(evt => evt.paid && !evt.hasInvoiceLink);
     const tooltipParts = [
       `PO: ${po.record?.poNo || "—"}`,
       `Supplier: ${po.supplier || "—"}`,
       `Units: ${po.units || 0}`,
       `Deposit: ${depositPaid ? "bezahlt" : "offen"}`,
       `Balance: ${balancePaid ? "bezahlt" : "offen"}`,
-      `Invoice-Link: ${missingInvoice ? "fehlt" : "ok"}`,
     ];
     const paymentRows = po.events.map(evt => {
       const eventTooltip = [
         `Typ: ${evt.typeLabel || "Zahlung"}`,
         `Datum: ${evt.dueDate || "—"}`,
-        `Ist EUR: ${fmtEUR(evt.actualEur || 0)}`,
+        `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
         evt.currency ? `Währung: ${evt.currency}` : null,
         evt.paidBy ? `Paid by: ${evt.paidBy}` : null,
-        evt.paid && !evt.hasInvoiceLink ? "Paid but missing invoice link" : null,
       ]
         .filter(Boolean)
         .join(" · ");
@@ -825,7 +882,7 @@ function buildDashboardRows(state, months, options = {}) {
       const tooltip = [
         `Typ: ${evt.typeLabel || "Payment"}`,
         `Datum: ${evt.dueDate || "—"}`,
-        `Ist EUR: ${fmtEUR(evt.actualEur || 0)}`,
+        `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
         evt.currency ? `Währung: ${evt.currency}` : null,
       ]
         .filter(Boolean)
@@ -960,41 +1017,48 @@ function buildDashboardRows(state, months, options = {}) {
 
   const openingRaw = state?.openingEur ?? state?.settings?.openingBalance ?? null;
   const openingBalance = parseEuro(openingRaw || 0);
-  let running = openingBalance;
-  let balanceRow = null;
-  if (openingBalance !== 0) {
-    balanceRow = buildRow({
-      id: "balance",
-      label: "Kontostand (kumuliert)",
-      level: 0,
-      isSummary: true,
-      alwaysVisible: true,
-      rowType: "summary",
-      section: "summary",
-      sourceLabel: "Kontostand",
-    });
+  const monthlyActualsMap = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+    ? state.monthlyActuals
+    : {};
+  const balanceRow = buildRow({
+    id: "balance",
+    label: "Kontostand Monatsende",
+    level: 0,
+    isSummary: true,
+    alwaysVisible: true,
+    rowType: "summary",
+    section: "summary",
+    sourceLabel: "Kontostand",
+  });
+  if (months.length) {
+    let baseBalance = openingBalance;
     const lastGreenIndex = options.limitBalanceToGreen
       ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
       : months.length - 1;
     months.forEach((month, idx) => {
+      const actualClosing = Number(monthlyActualsMap?.[month]?.realClosingBalanceEUR);
+      const hasActual = Number.isFinite(actualClosing);
+      const net = netRow.values[month]?.value || 0;
+      const plannedClosing = (Number.isFinite(baseBalance) ? baseBalance : 0) + net;
       if (options.limitBalanceToGreen && idx > lastGreenIndex) {
         balanceRow.values[month] = { value: null, plannedTotal: 0, actualTotal: 0, displayLabel: "Plan", warnings: [], paidThisMonthCount: 0 };
         return;
       }
-      running += netRow.values[month]?.value || 0;
+      const displayValue = hasActual ? actualClosing : plannedClosing;
       balanceRow.values[month] = {
-        value: running,
-        plannedTotal: running,
-        actualTotal: running,
-        displayLabel: "Ist/Plan",
+        value: displayValue,
+        plannedTotal: plannedClosing,
+        actualTotal: hasActual ? actualClosing : plannedClosing,
+        displayLabel: hasActual ? "Ist" : "Plan",
         warnings: [],
         paidThisMonthCount: 0,
+        isActual: hasActual,
       };
+      baseBalance = hasActual ? actualClosing : plannedClosing;
     });
   }
 
-  const summaryRows = [netRow];
-  if (balanceRow) summaryRows.push(balanceRow);
+  const summaryRows = [netRow, balanceRow];
 
   return { inflowRow, outflowRow, summaryRows };
 }
@@ -1052,11 +1116,13 @@ function buildDashboardHTML(state) {
     : "";
 
   const headerCells = nonEmptyMonths
-    .map(month => {
+    .map((month, idx) => {
+      const columnClass = monthColumnClass(idx);
       const status = skuCoverage.coverage.get(month) || "gray";
       const detail = skuCoverage.details.get(month);
-      const plannedCount = detail?.plannedCount ?? 0;
+      const plannedCount = detail?.coveredCount ?? 0;
       const totalCount = detail?.totalCount ?? 0;
+      const ratio = detail?.ratio ?? 0;
       const missing = detail?.missingAliases || [];
       const missingPreview = missing.slice(0, 5);
       const missingRest = missing.length > 5 ? ` +${missing.length - 5} weitere` : "";
@@ -1064,11 +1130,11 @@ function buildDashboardHTML(state) {
         ? `Fehlend: ${missingPreview.join(", ")}${missingRest}`
         : (totalCount ? "Fehlend: —" : "Keine aktiven SKUs");
       const tooltip = [
-        `Coverage: ${plannedCount}/${totalCount} SKUs`,
+        `Reifegrad: ${plannedCount}/${totalCount} SKUs geplant (${Math.round(ratio * 100)}%)`,
         missingLine,
       ].join(" · ");
       return `
-        <th scope="col">
+        <th scope="col" class="${columnClass}">
           <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
           <span>${escapeHtml(month)}</span>
         </th>
@@ -1102,19 +1168,18 @@ function buildDashboardHTML(state) {
       `;
 
       const valueCells = nonEmptyMonths
-        .map(month => {
+        .map((month, idx) => {
+          const columnClass = monthColumnClass(idx);
           const cell = row.values[month] || { value: 0, warnings: [] };
-          const warnings = cell.warnings || [];
-          const warnIcon = warnings.length
-            ? `<span class="cell-warning" title="${escapeHtml(warnings.join(" · "))}">⚠</span>`
-            : "";
-          const showBalanceWarning = row.id === "balance" && ["red", "yellow"].includes(skuCoverage.coverage.get(month));
+          const showBalanceWarning = row.id === "balance" && ["gray", "amber"].includes(skuCoverage.coverage.get(month));
           const balanceWarning = showBalanceWarning
             ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da Planung fehlt.">⚠︎</span>`
             : "";
           const formatted = formatCellValue(cell.value);
           const paidThisMonth = month === currentMonth && (cell.paidThisMonthCount || 0) > 0;
           const paidHint = paidThisMonth ? `Zahlungen diesen Monat bezahlt: ${cell.paidThisMonthCount}` : null;
+          const isPaidValue = cell.hasPaidValue && String(row.sourceLabel || "").toLowerCase().includes("po");
+          const actualMarker = cell.isActual ? `<span class="cell-actual-tag" title="Realer Wert">Ist</span>` : "";
           const tooltip = [
             `Geplant: ${formatValueOnly(cell.plannedTotal)}`,
             `Ist: ${formatValueOnly(cell.actualTotal)}`,
@@ -1128,10 +1193,10 @@ function buildDashboardHTML(state) {
           const isClickable = row.nav && !formatted.isEmpty;
           const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
           return `
-            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
-              ${warnIcon}
+            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
               ${balanceWarning}
-              <span class="${formatted.isEmpty ? "cell-empty" : ""}">${formatted.text}</span>
+              <span class="${formatted.isEmpty ? "cell-empty" : ""} ${isPaidValue ? "cell-paid-value" : ""}">${formatted.text}</span>
+              ${actualMarker}
               ${isClickable ? `<span class="cell-link-icon" aria-hidden="true">↗</span>` : ""}
             </td>
           `;
@@ -1170,27 +1235,20 @@ function buildDashboardHTML(state) {
               ? `<span class="muted coverage-sku">(${escapeHtml(item.sku)})</span>`
               : "";
             const cells = nonEmptyMonths.map(month => {
-              const match = skuCoverage.plannedByMonth.get(month)?.get(item.sku) || null;
-              if (match) {
-                const detail = skuCoverage.details.get(month);
-                const monthEnd = detail?.monthEnd;
-                const tooltip = [
-                  `Geplant bis: ${formatDate(monthEnd)}`,
-                  `Quelle: ${match.sourceType} ${match.sourceLabel}`,
-                  `ETA: ${formatDate(match.etaDate)}`,
-                ].join(" · ");
+              const isCovered = skuCoverage.perSkuCoverage.get(item.sku)?.get(month);
+              if (isCovered) {
                 return `
-                  <td class="coverage-cell coverage-planned" title="${escapeHtml(tooltip)}">
-                    <span class="coverage-chip planned" aria-hidden="true">✅</span>
+                  <td class="coverage-cell coverage-planned">
+                    <span class="coverage-chip planned" aria-hidden="true">✓</span>
                   </td>
                 `;
               }
-              const monthEnd = getMonthEnd(month);
-              const tooltip = `Keine FO/PO bis einschließlich ${formatMonthLabel(month)}`;
-              const targetDate = monthEnd ? monthEnd.toISOString().slice(0, 10) : "";
+              const targetDate = `${month}-15`;
+              const tooltip = `Nicht geplant für ${formatMonthLabel(month)}`;
               return `
-                <td class="coverage-cell coverage-missing" data-create-fo="true" data-sku="${escapeHtml(item.sku)}" data-target-date="${escapeHtml(targetDate)}" title="${escapeHtml(tooltip)}" role="button" tabindex="0">
-                  <span class="coverage-chip missing" aria-hidden="true">⛔</span>
+                <td class="coverage-cell coverage-missing" title="${escapeHtml(tooltip)}">
+                  <span class="coverage-chip missing" aria-hidden="true">—</span>
+                  <button type="button" class="coverage-plan-btn" data-plan-sku="${escapeHtml(item.sku)}" data-plan-month="${escapeHtml(month)}" data-plan-target="${escapeHtml(targetDate)}">Planen</button>
                 </td>
               `;
             }).join("");
@@ -1198,8 +1256,10 @@ function buildDashboardHTML(state) {
               <tr class="coverage-sku-row" data-coverage-sku="${escapeHtml(item.sku)}">
                 <td class="coverage-label">
                   <span class="tree-spacer" aria-hidden="true"></span>
-                  <span>${escapeHtml(skuLabel)}</span>
-                  ${skuMeta}
+                  <div class="coverage-sku-block">
+                    <span>${escapeHtml(skuLabel)}</span>
+                    ${skuMeta}
+                  </div>
                 </td>
                 ${cells}
               </tr>
@@ -1247,10 +1307,9 @@ function buildDashboardHTML(state) {
       </div>
       ${coverageNotice}
       <div class="dashboard-legend muted">
-        <span class="coverage-indicator coverage-green"></span> Reifegrad (SKU-Abdeckung)
-        <span class="coverage-indicator coverage-yellow"></span> Teilweise geplant
-        <span class="coverage-indicator coverage-red"></span> Planung fehlt
-        <span class="legend-item">⚠ Warnung</span>
+        <span class="coverage-indicator coverage-green"></span> Reifegrad (vollständig geplant)
+        <span class="coverage-indicator coverage-amber"></span> Teilweise geplant
+        <span class="coverage-indicator coverage-gray"></span> Planung fehlt
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">
@@ -1272,15 +1331,15 @@ function buildDashboardHTML(state) {
       </div>
       <div class="dashboard-coverage" id="dashboard-coverage-panel">
         <div class="dashboard-coverage-header">
-          <h3>SKU Coverage (Planungsstand)</h3>
-          <p class="muted">Grün = geplant (FO/PO mit ETA bis Monatsende), Rot = fehlt Planung.</p>
+          <h3>SKU-Planungsübersicht</h3>
+          <p class="muted">✓ = Planung vorhanden, — = keine Planung für den Monat.</p>
         </div>
         <div class="dashboard-coverage-wrap">
           <table class="table-compact dashboard-coverage-table" role="table">
             <thead>
               <tr>
                 <th scope="col" class="coverage-header">Kategorie / SKU</th>
-                ${nonEmptyMonths.map(month => `<th scope="col">${escapeHtml(month)}</th>`).join("")}
+                ${nonEmptyMonths.map((month, idx) => `<th scope="col" class="${monthColumnClass(idx)}">${escapeHtml(month)}</th>`).join("")}
               </tr>
             </thead>
             <tbody>
@@ -1332,10 +1391,13 @@ function attachDashboardHandlers(root, state) {
       });
       const topRows = [filterRows(inflowRow, visibleMonths), filterRows(outflowRow, visibleMonths), ...summaryRows].filter(Boolean);
       const expandableIds = collectExpandableIds(topRows);
+      const coverageGroups = skuCoverage.groups || [];
       if (action === "collapse") {
         dashboardState.expanded = new Set();
+        dashboardState.coverageCollapsed = new Set(coverageGroups.map(group => group.id));
       } else {
         dashboardState.expanded = new Set(expandableIds);
+        dashboardState.coverageCollapsed = new Set();
       }
       render(root);
     });
@@ -1441,22 +1503,15 @@ function attachDashboardHandlers(root, state) {
     });
   });
 
-  root.querySelectorAll(".coverage-cell[data-create-fo]").forEach(cell => {
-    const handler = () => {
-      const sku = cell.getAttribute("data-sku") || "";
-      const targetDate = cell.getAttribute("data-target-date") || "";
+  root.querySelectorAll(".coverage-plan-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sku = btn.getAttribute("data-plan-sku") || "";
+      const targetDate = btn.getAttribute("data-plan-target") || "";
       const params = new URLSearchParams();
       params.set("create", "1");
       if (sku) params.set("sku", sku);
       if (targetDate) params.set("target", targetDate);
       location.hash = `#fo?${params.toString()}`;
-    };
-    cell.addEventListener("click", handler);
-    cell.addEventListener("keydown", ev => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        handler();
-      }
     });
   });
 

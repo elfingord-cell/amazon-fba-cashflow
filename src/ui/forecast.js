@@ -9,6 +9,7 @@ const defaultView = {
   range: "next12",
   onlyActive: true,
   onlyWithForecast: false,
+  view: "units",
   collapsed: {},
 };
 
@@ -25,12 +26,15 @@ const forecastView = (() => {
   }
 })();
 
+forecastView.scrollLeft = Number(forecastView.scrollLeft || 0);
+
 function persistView() {
   localStorage.setItem(FORECAST_VIEW_KEY, JSON.stringify({
     search: forecastView.search,
     range: forecastView.range,
     onlyActive: forecastView.onlyActive,
     onlyWithForecast: forecastView.onlyWithForecast,
+    view: forecastView.view,
     collapsed: forecastView.collapsed,
   }));
 }
@@ -119,6 +123,17 @@ function formatForecastValue(value) {
   });
 }
 
+function formatUnits(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return Math.round(Number(value)).toLocaleString("de-DE", { maximumFractionDigits: 0 });
+}
+
+function formatEur0(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  const rounded = Math.round(Number(value));
+  return `${rounded.toLocaleString("de-DE", { maximumFractionDigits: 0 })} €`;
+}
+
 function isProductActive(product) {
   if (!product) return false;
   if (typeof product.active === "boolean") return product.active;
@@ -166,6 +181,11 @@ function applyRange(months, range) {
   return months.slice(0, count);
 }
 
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function getRangeOptions(months) {
   const options = [];
   [12, 18, 24].forEach(count => {
@@ -190,6 +210,19 @@ function getEffectiveValue(state, sku, month) {
   if (manual != null) return manual;
   const imported = getImportValue(state, sku, month);
   return imported?.units ?? null;
+}
+
+function getDerivedValue(view, units, product) {
+  if (units == null || !Number.isFinite(Number(units))) return null;
+  const qty = Number(units);
+  if (view === "units") return qty;
+  const price = Number(product?.avgSellingPriceGrossEUR);
+  if (!Number.isFinite(price)) return null;
+  const revenue = qty * price;
+  if (view === "revenue") return revenue;
+  const margin = Number(product?.sellerboardMarginPct);
+  if (!Number.isFinite(margin)) return null;
+  return revenue * (margin / 100);
 }
 
 function parseVentoryMonth(raw) {
@@ -304,25 +337,107 @@ function showToast(message) {
   setTimeout(() => { toast.hidden = true; }, 2200);
 }
 
-function renderTable(el, state, months, groups) {
+function renderTable(el, state, months, monthsAll, groups, view) {
+  const currentMonth = currentMonthKey();
+  const currentYear = Number(currentMonth.split("-")[0]);
   const table = document.createElement("table");
   table.className = "forecast-tree-table";
+
+  const sumNumeric = (values) => {
+    const nums = values.filter(value => Number.isFinite(value));
+    return nums.length ? nums.reduce((acc, val) => acc + val, 0) : null;
+  };
+
+  const formatValue = (value) => {
+    return view === "units" ? formatUnits(value) : formatEur0(value);
+  };
+
+  const totalsHeaders = `
+    <th class="forecast-total">Summe (Auswahl)</th>
+    <th class="forecast-total">Summe (Jahr)</th>
+    <th class="forecast-total">Summe (Gesamt)</th>
+  `;
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   headRow.innerHTML = `
     <th class="forecast-sticky">Kategorie / Produkt</th>
     ${months.map(month => `<th>${month}</th>`).join("")}
+    ${totalsHeaders}
   `;
   thead.appendChild(headRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
 
+  const overallTotals = months.map(month => {
+    const values = groups.flatMap(group => group.items.map(product => {
+      const sku = String(product.sku || "").trim();
+      const units = getEffectiveValue(state, sku, month);
+      return getDerivedValue(view, units, product);
+    }));
+    return sumNumeric(values);
+  });
+  const overallTotalsAll = monthsAll.map(month => {
+    const values = groups.flatMap(group => group.items.map(product => {
+      const sku = String(product.sku || "").trim();
+      const units = getEffectiveValue(state, sku, month);
+      return getDerivedValue(view, units, product);
+    }));
+    return sumNumeric(values);
+  });
+
+  const overallRow = document.createElement("tr");
+  overallRow.className = "forecast-category-row forecast-overall-row";
+  overallRow.innerHTML = `
+    <th class="forecast-sticky">
+      <span class="tree-label">Gesamt</span>
+    </th>
+    ${months.map((month, idx) => `<td class="forecast-cell forecast-total">${formatValue(overallTotals[idx])}</td>`).join("")}
+    ${(() => {
+      const sumRange = sumNumeric(overallTotals.filter(Number.isFinite));
+      const sumAll = sumNumeric(overallTotalsAll.filter(Number.isFinite));
+      const yearValues = monthsAll
+        .map((month, idx) => ({ month, value: overallTotalsAll[idx] }))
+        .filter(entry => Number.isFinite(entry.value) && Number(entry.month.split("-")[0]) === currentYear && entry.month >= currentMonth)
+        .map(entry => entry.value);
+      const sumYear = sumNumeric(yearValues);
+      return `
+        <td class="forecast-cell forecast-total">${formatValue(sumRange)}</td>
+        <td class="forecast-cell forecast-total">${formatValue(sumYear)}</td>
+        <td class="forecast-cell forecast-total">${formatValue(sumAll)}</td>
+      `;
+    })()}
+  `;
+  tbody.appendChild(overallRow);
+
   groups.forEach(group => {
     const isCollapsed = Boolean(forecastView.collapsed[group.id]);
+    const categoryTotals = months.map(month => {
+      const values = group.items.map(product => {
+        const sku = String(product.sku || "").trim();
+        const units = getEffectiveValue(state, sku, month);
+        return getDerivedValue(view, units, product);
+      });
+      return sumNumeric(values);
+    });
+    const categoryTotalsAll = monthsAll.map(month => {
+      const values = group.items.map(product => {
+        const sku = String(product.sku || "").trim();
+        const units = getEffectiveValue(state, sku, month);
+        return getDerivedValue(view, units, product);
+      });
+      return sumNumeric(values);
+    });
     const categoryRow = document.createElement("tr");
     categoryRow.className = "forecast-category-row";
+    const categorySumRange = sumNumeric(categoryTotals.filter(Number.isFinite));
+    const categorySumAll = sumNumeric(categoryTotalsAll.filter(Number.isFinite));
+    const categoryYearValues = monthsAll
+      .map((month, idx) => ({ month, value: categoryTotalsAll[idx] }))
+      .filter(entry => Number.isFinite(entry.value) && Number(entry.month.split("-")[0]) === currentYear && entry.month >= currentMonth)
+      .map(entry => entry.value);
+    const categoryYearSum = sumNumeric(categoryYearValues);
     categoryRow.innerHTML = `
       <th class="forecast-sticky">
         <button type="button" class="tree-toggle" data-category="${group.id}">
@@ -331,7 +446,10 @@ function renderTable(el, state, months, groups) {
         <span class="tree-label">${group.name}</span>
         <span class="forecast-count muted">${group.items.length}</span>
       </th>
-      ${months.map(() => `<td class="forecast-cell muted">—</td>`).join("")}
+      ${months.map((month, idx) => `<td class="forecast-cell forecast-total">${formatValue(categoryTotals[idx])}</td>`).join("")}
+      <td class="forecast-cell forecast-total">${formatValue(categorySumRange)}</td>
+      <td class="forecast-cell forecast-total">${formatValue(categoryYearSum)}</td>
+      <td class="forecast-cell forecast-total">${formatValue(categorySumAll)}</td>
     `;
     tbody.appendChild(categoryRow);
 
@@ -341,25 +459,46 @@ function renderTable(el, state, months, groups) {
         const alias = product.alias || sku;
         const row = document.createElement("tr");
         row.className = "forecast-product-row";
+        const productValues = months.map(month => {
+          const units = getEffectiveValue(state, sku, month);
+          return getDerivedValue(view, units, product);
+        });
+        const productValuesAll = monthsAll.map(month => {
+          const units = getEffectiveValue(state, sku, month);
+          return getDerivedValue(view, units, product);
+        });
+        const sumRange = sumNumeric(productValues.filter(Number.isFinite));
+        const sumAll = sumNumeric(productValuesAll.filter(Number.isFinite));
+        const yearValues = monthsAll
+          .map((month, idx) => ({ month, value: productValuesAll[idx] }))
+          .filter(entry => Number.isFinite(entry.value) && Number(entry.month.split("-")[0]) === currentYear && entry.month >= currentMonth)
+          .map(entry => entry.value);
+        const sumYear = sumNumeric(yearValues);
         row.innerHTML = `
           <td class="forecast-sticky forecast-product-cell">
             <div class="forecast-alias">${alias}</div>
             <div class="forecast-sku muted">${sku}</div>
           </td>
-          ${months.map(month => {
+          ${months.map((month, idx) => {
             const manual = getManualValue(state, sku, month);
             const imported = getImportValue(state, sku, month);
-            const effective = getEffectiveValue(state, sku, month);
-            const value = formatForecastValue(effective);
+            const units = getEffectiveValue(state, sku, month);
+            const derived = productValues[idx];
+            const value = formatValue(derived);
             const manualFlag = manual != null ? "forecast-manual" : "";
             const hint = manual != null ? "Manuell" : (imported ? "Import" : "");
+            const missingInput = derived == null && units != null && view !== "units";
+            const title = missingInput ? "Produktdaten fehlen" : hint;
             return `
-              <td class="forecast-cell ${manualFlag}" data-sku="${sku}" data-month="${month}" title="${hint}">
+              <td class="forecast-cell ${manualFlag}" data-sku="${sku}" data-month="${month}" title="${title}">
                 <span class="forecast-value">${value}</span>
                 ${manual != null ? `<span class="forecast-manual-dot" aria-hidden="true"></span>` : ""}
               </td>
             `;
           }).join("")}
+          <td class="forecast-cell forecast-total">${formatValue(sumRange)}</td>
+          <td class="forecast-cell forecast-total">${formatValue(sumYear)}</td>
+          <td class="forecast-cell forecast-total">${formatValue(sumAll)}</td>
         `;
         tbody.appendChild(row);
       });
@@ -414,6 +553,7 @@ function renderTable(el, state, months, groups) {
   }
 
   tbody.addEventListener("click", ev => {
+    if (forecastView.view !== "units") return;
     const cell = ev.target.closest("td[data-sku]");
     if (!cell || activeInput) return;
     const sku = cell.dataset.sku;
@@ -436,6 +576,35 @@ function renderTable(el, state, months, groups) {
     forecastView.collapsed[categoryId] = !forecastView.collapsed[categoryId];
     persistView();
     render(el);
+  }
+
+  function onKeydown(ev) {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      closeEditor({ commit: true });
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeEditor({ commit: false });
+    }
+  }
+
+  function onBlur() {
+    closeEditor({ commit: true });
+  }
+
+  tbody.addEventListener("click", ev => {
+    const cell = ev.target.closest("td[data-sku]");
+    if (!cell || activeInput) return;
+    const sku = cell.dataset.sku;
+    const month = cell.dataset.month;
+    if (!sku || !month) return;
+    const current = getEffectiveValue(state, sku, month);
+    cell.innerHTML = `<input class="forecast-input" type="text" inputmode="decimal" value="${current ?? ""}" />`;
+    activeInput = cell.querySelector("input");
+    activeInput.addEventListener("keydown", onKeydown);
+    activeInput.addEventListener("blur", onBlur);
+    activeInput.focus();
+    activeInput.select();
   });
 
   return table;
@@ -495,7 +664,10 @@ function render(el) {
     }
     if (forecastView.onlyWithForecast) {
       const sku = String(product.sku || "").trim();
-      const hasForecast = months.some(month => getEffectiveValue(state, sku, month) != null);
+      const hasForecast = months.some(month => {
+        const value = getEffectiveValue(state, sku, month);
+        return Number.isFinite(Number(value)) && Number(value) > 0;
+      });
       if (!hasForecast) return false;
     }
     return true;
@@ -527,6 +699,11 @@ function render(el) {
             ${rangeOptions.map(option => `<option value="${option.value}" ${option.value === forecastView.range ? "selected" : ""}>${option.label}</option>`).join("")}
           </select>
         </label>
+        <div class="forecast-view-toggle" role="group" aria-label="Forecast-Ansicht">
+          <button class="btn ${forecastView.view === "units" ? "secondary" : "ghost"}" type="button" data-forecast-view="units">Absatz</button>
+          <button class="btn ${forecastView.view === "revenue" ? "secondary" : "ghost"}" type="button" data-forecast-view="revenue">Umsatz</button>
+          <button class="btn ${forecastView.view === "profit" ? "secondary" : "ghost"}" type="button" data-forecast-view="profit">Gewinn</button>
+        </div>
         <label class="toggle">
           <input type="checkbox" ${forecastView.onlyActive ? "checked" : ""} data-only-active />
           <span>Nur aktive Produkte</span>
@@ -555,7 +732,12 @@ function render(el) {
     empty.textContent = "Keine Produkte gefunden.";
     tableHost.appendChild(empty);
   } else {
-    tableHost.appendChild(renderTable(el, state, months, groups));
+    const table = renderTable(el, state, months, monthsAll, groups, forecastView.view);
+    tableHost.appendChild(table);
+    tableHost.scrollLeft = forecastView.scrollLeft || 0;
+    tableHost.addEventListener("scroll", () => {
+      forecastView.scrollLeft = tableHost.scrollLeft;
+    }, { passive: true });
   }
   wrap.appendChild(tableHost);
   el.appendChild(wrap);
@@ -587,6 +769,16 @@ function render(el) {
     forecastView.range = ev.target.value;
     persistView();
     render(el);
+  });
+
+  wrap.querySelectorAll('[data-forecast-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const nextView = btn.getAttribute('data-forecast-view');
+      if (!nextView || nextView === forecastView.view) return;
+      forecastView.view = nextView;
+      persistView();
+      render(el);
+    });
   });
 
   wrap.querySelector('[data-only-active]').addEventListener('change', ev => {

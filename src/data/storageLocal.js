@@ -301,6 +301,47 @@ function ensureActuals(state) {
   if (!Array.isArray(state.actuals)) state.actuals = [];
 }
 
+function ensureMonthlyActuals(state) {
+  if (!state) return;
+  if (!state.monthlyActuals || typeof state.monthlyActuals !== "object") {
+    state.monthlyActuals = {};
+  }
+  const cleaned = {};
+  Object.entries(state.monthlyActuals).forEach(([month, values]) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const entry = values && typeof values === "object" ? values : {};
+    const revenue = Number(entry.realRevenueEUR);
+    const payoutRate = Number(entry.realPayoutRatePct);
+    const closing = Number(entry.realClosingBalanceEUR);
+    const normalized = {};
+    if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
+    if (Number.isFinite(payoutRate)) normalized.realPayoutRatePct = payoutRate;
+    if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
+    if (Object.keys(normalized).length) cleaned[month] = normalized;
+  });
+  state.monthlyActuals = cleaned;
+
+  if (!Object.keys(state.monthlyActuals).length && Array.isArray(state.actuals) && state.actuals.length) {
+    state.actuals.forEach(entry => {
+      if (!entry?.month) return;
+      const month = String(entry.month || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(month)) return;
+      const revenue = parseEuro(entry.revenueEur);
+      const payout = parseEuro(entry.payoutEur);
+      const closing = parseEuro(entry.closingBalanceEur);
+      const normalized = {};
+      if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
+      if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
+      if (Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payout)) {
+        normalized.realPayoutRatePct = (payout / revenue) * 100;
+      }
+      if (Object.keys(normalized).length) {
+        state.monthlyActuals[month] = normalized;
+      }
+    });
+  }
+}
+
 function monthIndex(ym) {
   if (!/^\d{4}-\d{2}$/.test(ym || "")) return null;
   const [y, m] = ym.split("-").map(Number);
@@ -452,18 +493,24 @@ function migrateProducts(state) {
     if (!skuClean) return null;
     const existing = map.get(skuClean);
     const base = existing || {};
-    const next = {
-      id: prod.id || base.id || `prod-${Math.random().toString(36).slice(2, 9)}`,
-      sku: String(prod.sku || base.sku || "").trim(),
-      alias: cleanAlias(prod.alias || base.alias, prod.sku || base.sku),
-      supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
-      status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
-      tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
-      categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
-      template: normaliseTemplate(prod.template || base.template),
-      createdAt: prod.createdAt || base.createdAt || now,
-      updatedAt: prod.updatedAt || now,
-    };
+      const next = {
+        id: prod.id || base.id || `prod-${Math.random().toString(36).slice(2, 9)}`,
+        sku: String(prod.sku || base.sku || "").trim(),
+        alias: cleanAlias(prod.alias || base.alias, prod.sku || base.sku),
+        supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
+        status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
+        tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
+        categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
+        avgSellingPriceGrossEUR: Number.isFinite(Number(prod.avgSellingPriceGrossEUR))
+          ? Number(prod.avgSellingPriceGrossEUR)
+          : (Number.isFinite(Number(base.avgSellingPriceGrossEUR)) ? Number(base.avgSellingPriceGrossEUR) : null),
+        sellerboardMarginPct: Number.isFinite(Number(prod.sellerboardMarginPct))
+          ? clampPercent(Number(prod.sellerboardMarginPct))
+          : (Number.isFinite(Number(base.sellerboardMarginPct)) ? clampPercent(Number(base.sellerboardMarginPct)) : null),
+        template: normaliseTemplate(prod.template || base.template),
+        createdAt: prod.createdAt || base.createdAt || now,
+        updatedAt: prod.updatedAt || now,
+      };
     map.set(skuClean, next);
     return next;
   }).filter(Boolean);
@@ -484,6 +531,8 @@ function migrateProducts(state) {
         status: "active",
         tags: [],
         template: null,
+        avgSellingPriceGrossEUR: null,
+        sellerboardMarginPct: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -566,7 +615,24 @@ function normaliseProductInput(input) {
   const jurisdiction = input.jurisdiction || "DE";
   const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
   const vatExempt = input.vatExempt === true;
-  return { sku, alias, supplierId, categoryId, status, tags, template, vatRate, jurisdiction, returnsRate, vatExempt };
+  const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
+  const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
+  const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
+  return {
+    sku,
+    alias,
+    supplierId,
+    categoryId,
+    status,
+    tags,
+    template,
+    vatRate,
+    jurisdiction,
+    returnsRate,
+    vatExempt,
+    avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
+    sellerboardMarginPct,
+  };
 }
 
 function updateProductStatsMeta(state, product) {
@@ -610,6 +676,7 @@ export function createEmptyState(){
   ensureVatData(clone);
   ensureForecast(clone);
   ensureActuals(clone);
+  ensureMonthlyActuals(clone);
   ensureGlobalSettings(clone);
   ensureSuppliers(clone);
   ensureProductSuppliers(clone);
@@ -633,6 +700,7 @@ export function loadState(){
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
+  ensureMonthlyActuals(_state);
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
   ensureProductSuppliers(_state);
@@ -652,6 +720,7 @@ export function saveState(s){
   ensureVatData(_state);
   ensureForecast(_state);
   ensureActuals(_state);
+  ensureMonthlyActuals(_state);
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
   ensureProductSuppliers(_state);
@@ -695,6 +764,7 @@ export function importStateFile(file, cb){
       ensureVatData(json);
       ensureForecast(json);
       ensureActuals(json);
+      ensureMonthlyActuals(json);
       ensureGlobalSettings(json);
       ensureSuppliers(json);
       ensureProductSuppliers(json);
@@ -874,6 +944,8 @@ export function upsertProduct(input){
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
+      avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
+      sellerboardMarginPct: normalised.sellerboardMarginPct,
       createdAt: now,
       updatedAt: now,
     };
@@ -885,6 +957,8 @@ export function upsertProduct(input){
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;
+    target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
+    target.sellerboardMarginPct = normalised.sellerboardMarginPct;
     target.updatedAt = now;
     target.sku = normalised.sku;
   }
