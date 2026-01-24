@@ -110,16 +110,17 @@ export async function render(root) {
     `;
   }
 
+  let signalRow;
   const barsWrap = root.querySelector(".vchart-bars");
 
   function showTip(ev) {
     const el = ev.target.closest(".vbar");
     if (!el) return;
     const i = Number(el.getAttribute("data-idx"));
-    const row = series[i];
+    signalRow = series[i];
     const eom = closing[i];
 
-    tip.innerHTML = tipHtml(months[i], row, eom);
+    tip.innerHTML = tipHtml(months[i], signalRow, eom);
     tip.hidden = false;
 
     const br = el.getBoundingClientRect();
