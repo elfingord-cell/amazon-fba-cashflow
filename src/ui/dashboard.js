@@ -362,6 +362,7 @@ function computeSkuCoverage(state, months) {
     activeSkus.forEach(item => {
       const sku = item.sku;
       const signalRow = signals.has(sku) ? signals.get(sku).get(month) : null;
+      const signalRow = signals.get(sku)?.get(month);
       const allowForecast = hasForecast.get(sku);
       const isCovered = Boolean(signalRow && isMonthCovered(signalRow, allowForecast));
       perSkuCoverage.get(sku).set(month, isCovered);
@@ -384,6 +385,8 @@ function computeSkuCoverage(state, months) {
       missingAliases,
     });
   });
+  return result;
+}
 
   return {
     coverage,
@@ -399,6 +402,10 @@ function computePlannedPayoutByMonth(state, months) {
   const payoutPctByMonth = new Map();
   (state && Array.isArray(state.incomings) ? state.incomings : []).forEach(row => {
     if (!row || !row.month) return;
+  const forecastEnabled = Boolean(state?.forecast?.settings?.useForecast);
+  const payoutPctByMonth = new Map();
+  (state?.incomings || []).forEach(row => {
+    if (!row?.month) return;
     payoutPctByMonth.set(row.month, row.payoutPct);
   });
 
@@ -409,6 +416,12 @@ function computePlannedPayoutByMonth(state, months) {
         Object.entries(monthMap || {}).forEach(([month, entry]) => {
           if (!month || !months.includes(month)) return;
           const revenue = parseEuro(entry && entry.revenueEur != null ? entry.revenueEur : (entry ? entry.revenue : null));
+  if (forecastEnabled && Array.isArray(state?.forecast?.items)) {
+    if (state?.forecast?.forecastImport && typeof state.forecast.forecastImport === "object") {
+      Object.values(state.forecast.forecastImport).forEach(monthMap => {
+        Object.entries(monthMap || {}).forEach(([month, entry]) => {
+          if (!month || !months.includes(month)) return;
+          const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
           if (!Number.isFinite(revenue)) return;
           revenueByMonth.set(month, (revenueByMonth.get(month) || 0) + revenue);
         });
