@@ -68,7 +68,7 @@ function validateState(s){
 
 // ---- JSON aufbereiten (Clean) ---------------------------------------------
 function buildCleanJson(s){
-  const { _computed, ...clean } = s || {};
+  const { _computed, ...clean } = structuredClone(s || {});
 
   // Migration: falls ein altes Backup nur settings.openingBalance hatte
   if (!clean.openingEur && clean?.settings?.openingBalance) {
@@ -78,7 +78,62 @@ function buildCleanJson(s){
   if (clean?.settings) {
     delete clean.settings.openingBalance;
   }
+  clean.export = {
+    forecast: buildForecastExport(clean),
+  };
   return clean;
+}
+
+function buildForecastExport(state) {
+  const settings = state?.settings || {};
+  const start = settings.startMonth || "2025-01";
+  const horizon = Number(settings.horizonMonths || 18);
+  const months = [];
+  const [y0, m0] = String(start).split("-").map(Number);
+  for (let i = 0; i < horizon; i += 1) {
+    const y = y0 + Math.floor((m0 - 1 + i) / 12);
+    const m = ((m0 - 1 + i) % 12) + 1;
+    months.push(`${y}-${String(m).padStart(2, "0")}`);
+  }
+  const manual = state?.forecast?.forecastManual || {};
+  const imported = state?.forecast?.forecastImport || {};
+  const items = (state?.products || [])
+    .filter(product => product?.sku)
+    .map(product => {
+      const sku = String(product.sku || "").trim();
+      const values = {};
+      const manualMonths = [];
+      months.forEach(month => {
+        const manualVal = manual?.[sku]?.[month] ?? null;
+        const importVal = imported?.[sku]?.[month]?.units ?? null;
+        const effective = manualVal ?? importVal ?? null;
+        values[month] = effective;
+        if (manualVal != null) manualMonths.push(month);
+      });
+      return {
+        sku,
+        alias: product.alias || "",
+        categoryId: product.categoryId || "",
+        avgSellingPriceGrossEUR: Number.isFinite(Number(product.avgSellingPriceGrossEUR))
+          ? Number(product.avgSellingPriceGrossEUR)
+          : null,
+        sellerboardMarginPct: Number.isFinite(Number(product.sellerboardMarginPct))
+          ? Number(product.sellerboardMarginPct)
+          : null,
+        values,
+        meta: {
+          manualOverridesMonths: manualMonths,
+        },
+      };
+    });
+  return {
+    generatedAt: new Date().toISOString(),
+    sourcePriority: ["manual", "ventoryOne"],
+    lastImportAt: state?.forecast?.lastImportAt || null,
+    forecastLastImportedAt: state?.forecast?.lastImportAt || null,
+    months,
+    items,
+  };
 }
 
 // ---- Render ---------------------------------------------------------------
@@ -112,7 +167,7 @@ export async function render(root){
       <h2>Export / Import</h2>
 
       <div class="row" style="gap:8px; flex-wrap:wrap">
-        <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}">
+        <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}" ${canDownload ? '' : 'disabled aria-disabled="true"'}>
           JSON herunterladen
         </button>
         <label class="btn" for="file-imp" style="cursor:pointer">JSON importieren</label>
@@ -154,7 +209,7 @@ export async function render(root){
   // ---- Events --------------------------------------------------------------
   $("#btn-dl")?.addEventListener("click", ()=>{
     if (!canDownload) return;
-    exportState(s); // nutzt bestehenden Export (Dateiname mit Timestamp)
+    exportState(clean); // nutzt bestehenden Export (Dateiname mit Timestamp)
   });
 
   $("#file-imp")?.addEventListener("change", (ev)=>{
