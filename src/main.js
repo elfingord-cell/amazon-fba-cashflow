@@ -11,10 +11,13 @@ const routes = {
   '#eingaben': () => import('./ui/eingaben.js'),
   '#fixkosten': () => import('./ui/fixkosten.js'),
   '#po': () => import('./ui/po.js'),
-  '#fo': () => import('./ui/fo.js'),
   '#forecast': () => import('./ui/forecast.js'),
+  '#fo': () => import('./ui/fo.js'),
   '#ust': () => import('./ui/ust.js'),
   '#produkte': () => import('./ui/products.js'),
+  '#suppliers': () => import('./ui/suppliers.js'),
+  '#settings': () => import('./ui/settings.js'),
+  '#payments-export': () => import('./ui/paymentsExport.js'),
   '#export': () => import('./ui/export.js'),
   '#plan': () =>
     import('./ui/plan.js').catch(() => ({
@@ -42,6 +45,17 @@ function setActiveTab(hash) {
 function normalizeHash(hash) {
   if (!hash) return '#dashboard';
   return hash.startsWith('#') ? hash : `#${hash}`;
+}
+
+function parseHash(hash) {
+  const normalised = normalizeHash(hash || '#dashboard');
+  const [base, query] = normalised.split('?');
+  const params = new URLSearchParams(query || '');
+  const queryObj = {};
+  params.forEach((value, key) => {
+    queryObj[key] = value;
+  });
+  return { base, query: queryObj };
 }
 
 function initSidebarToggle() {
@@ -105,9 +119,12 @@ function pickRenderer(mod) {
 
 function renderRoute(forcedHash) {
   const candidate = typeof forcedHash === 'string' ? forcedHash : location.hash;
-  const hash = normalizeHash(candidate);
-  const loader = routes[hash] || routes['#dashboard'];
-  setActiveTab(hash);
+  const { base, query } = parseHash(candidate);
+  const resolvedHash = routes[base] ? base : '#dashboard';
+  window.__routeQuery = query;
+  const loader = routes[resolvedHash];
+  APP.classList.toggle('app-wide', resolvedHash === '#po');
+  setActiveTab(resolvedHash);
   if (typeof APP.__cleanup === 'function') {
     try { APP.__cleanup(); } catch {}
     APP.__cleanup = null;
@@ -140,7 +157,12 @@ window.addEventListener('hashchange', renderRoute);
 window.addEventListener('storage', (e) => {
   if (!e || e.key === STATE_KEY) renderRoute();
 });
-window.addEventListener('state:changed', renderRoute);
+window.addEventListener('state:changed', (event) => {
+  const source = event?.detail?.source;
+  const hash = normalizeHash(location.hash);
+  if (source === 'payment-update' && (hash === '#po' || hash === '#fo')) return;
+  renderRoute();
+});
 
 initSidebarToggle();
 renderRoute();
