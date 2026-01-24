@@ -1385,13 +1385,30 @@ function buildDashboardHTML(state) {
   `;
 }
 
-function collectExpandableIds(rows, ids = new Set()) {
-  rows.forEach(row => {
-    if (row.children.length) ids.add(row.id);
-    row.children.forEach(child => collectExpandableIds([child], ids));
-  });
-  return ids;
-}
+  // --- Globaler Tooltip an <body> (nicht clipbar) ---
+  function ensureGlobalTip(){
+    let el = document.getElementById("global-chart-tip");
+    if (!el){
+      el = document.createElement("div");
+      el.id = "global-chart-tip";
+      el.className = "chart-tip";
+      el.hidden = true;
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+  const tip = ensureGlobalTip();
+
+  function tipHtml(m, seriesRow, eom) {
+    return `
+      <div class="tip-title">${m}</div>
+      <div class="tip-row"><span>Netto</span><b>${fmtEUR(seriesRow.net)}</b></div>
+      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(seriesRow.inflow)}</b></div>
+      <div class="tip-row"><span>Extras</span><b>${fmtEUR(seriesRow.extras)}</b></div>
+      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-Math.abs(seriesRow.out))}</b></div>
+      <div class="tip-row"><span>Kontostand (EOM)</span><b>${fmtEUR(eom)}</b></div>
+    `;
+  }
 
 function attachDashboardHandlers(root, state) {
   root.querySelectorAll("[data-expand]").forEach(btn => {
@@ -1436,23 +1453,15 @@ function attachDashboardHandlers(root, state) {
     });
   });
 
-  root.querySelectorAll(".tree-toggle").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const rowId = btn.getAttribute("data-row-id");
-      if (!rowId) return;
-      if (dashboardState.expanded.has(rowId)) dashboardState.expanded.delete(rowId);
-      else dashboardState.expanded.add(rowId);
-      render(root);
-    });
-  });
+  function showTip(ev) {
+    const el = ev.target.closest(".vbar");
+    if (!el) return;
+    const i = Number(el.getAttribute("data-idx"));
+    const seriesRow = series[i];
+    const eom = closing[i];
 
-  const rangeSelect = root.querySelector("#dashboard-range");
-  if (rangeSelect) {
-    rangeSelect.addEventListener("change", () => {
-      dashboardState.range = rangeSelect.value;
-      render(root);
-    });
-  }
+    tip.innerHTML = tipHtml(months[i], seriesRow, eom);
+    tip.hidden = false;
 
   const hideEmptyToggle = root.querySelector("#dashboard-hide-empty");
   if (hideEmptyToggle) {
