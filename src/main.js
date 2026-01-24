@@ -9,8 +9,15 @@ const STATE_KEY = 'amazon_fba_cashflow_v1';
 const routes = {
   '#dashboard': () => import('./ui/dashboard.js'),
   '#eingaben': () => import('./ui/eingaben.js'),
+  '#fixkosten': () => import('./ui/fixkosten.js'),
   '#po': () => import('./ui/po.js'),
+  '#forecast': () => import('./ui/forecast.js'),
   '#fo': () => import('./ui/fo.js'),
+  '#ust': () => import('./ui/ust.js'),
+  '#produkte': () => import('./ui/products.js'),
+  '#suppliers': () => import('./ui/suppliers.js'),
+  '#settings': () => import('./ui/settings.js'),
+  '#payments-export': () => import('./ui/paymentsExport.js'),
   '#export': () => import('./ui/export.js'),
   '#plan': () =>
     import('./ui/plan.js').catch(() => ({
@@ -35,6 +42,71 @@ function setActiveTab(hash) {
   });
 }
 
+function normalizeHash(hash) {
+  if (!hash) return '#dashboard';
+  return hash.startsWith('#') ? hash : `#${hash}`;
+}
+
+function parseHash(hash) {
+  const normalised = normalizeHash(hash || '#dashboard');
+  const [base, query] = normalised.split('?');
+  const params = new URLSearchParams(query || '');
+  const queryObj = {};
+  params.forEach((value, key) => {
+    queryObj[key] = value;
+  });
+  return { base, query: queryObj };
+}
+
+function initSidebarToggle() {
+  const toggle = document.querySelector('.sidebar-toggle');
+  const sidebar = document.querySelector('.sidebar');
+  const layout = document.querySelector('.layout');
+  if (!toggle || !sidebar || !layout) return;
+  const mq = window.matchMedia('(max-width: 960px)');
+  function applyMatch() {
+    if (mq.matches) {
+      toggle.setAttribute('aria-expanded', 'false');
+      layout.classList.add('sidebar-collapsed');
+      sidebar.setAttribute('data-collapsed', 'true');
+    } else {
+      toggle.setAttribute('aria-expanded', 'true');
+      layout.classList.remove('sidebar-collapsed');
+      sidebar.removeAttribute('data-collapsed');
+    }
+  }
+  applyMatch();
+  mq.addEventListener('change', applyMatch);
+  toggle.addEventListener('click', () => {
+    const expanded = toggle.getAttribute('aria-expanded') === 'true';
+    const next = !expanded;
+    toggle.setAttribute('aria-expanded', String(next));
+    layout.classList.toggle('sidebar-collapsed', !next);
+    if (!next) {
+      sidebar.setAttribute('data-collapsed', 'true');
+    } else {
+      sidebar.removeAttribute('data-collapsed');
+    }
+  });
+  sidebar.addEventListener('click', ev => {
+    const link = ev.target.closest('a[data-tab]');
+    if (!link) return;
+    ev.preventDefault();
+    const targetHash = normalizeHash(link.getAttribute('href'));
+    const currentHash = normalizeHash(location.hash);
+    if (targetHash === currentHash) {
+      renderRoute(targetHash);
+    } else {
+      location.hash = targetHash;
+    }
+    if (window.matchMedia('(max-width: 960px)').matches) {
+      toggle.setAttribute('aria-expanded', 'false');
+      layout.classList.add('sidebar-collapsed');
+      sidebar.setAttribute('data-collapsed', 'true');
+    }
+  });
+}
+
 // akzeptiert verschiedene Modul-Formen
 function pickRenderer(mod) {
   if (!mod) return null;
@@ -45,15 +117,27 @@ function pickRenderer(mod) {
   return null;
 }
 
-function renderRoute() {
-  const hash = location.hash || '#dashboard';
-  const loader = routes[hash] || routes['#dashboard'];
-  setActiveTab(hash);
+function renderRoute(forcedHash) {
+  const candidate = typeof forcedHash === 'string' ? forcedHash : location.hash;
+  const { base, query } = parseHash(candidate);
+  const resolvedHash = routes[base] ? base : '#dashboard';
+  window.__routeQuery = query;
+  const loader = routes[resolvedHash];
+  APP.classList.toggle('app-wide', resolvedHash === '#po');
+  setActiveTab(resolvedHash);
+  if (typeof APP.__cleanup === 'function') {
+    try { APP.__cleanup(); } catch {}
+    APP.__cleanup = null;
+  }
+  APP.innerHTML = '';
   loader()
     .then(mod => {
       const fn = pickRenderer(mod);
       if (typeof fn === 'function') {
-        fn(APP);
+        const result = fn(APP);
+        if (typeof APP.__cleanup !== 'function' && result && typeof result === 'object' && typeof result.cleanup === 'function') {
+          APP.__cleanup = result.cleanup;
+        }
       } else {
         console.warn('Route-Modul ohne passenden Export. Verfügbare Keys:', Object.keys(mod || {}));
         APP.innerHTML = `<section class="panel">
@@ -73,6 +157,12 @@ window.addEventListener('hashchange', renderRoute);
 window.addEventListener('storage', (e) => {
   if (!e || e.key === STATE_KEY) renderRoute();
 });
-window.addEventListener('state:changed', renderRoute);
+window.addEventListener('state:changed', (event) => {
+  const source = event?.detail?.source;
+  const hash = normalizeHash(location.hash);
+  if (source === 'payment-update' && (hash === '#po' || hash === '#fo')) return;
+  renderRoute();
+});
 
+initSidebarToggle();
 renderRoute();
