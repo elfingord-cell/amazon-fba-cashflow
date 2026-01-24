@@ -90,6 +90,7 @@ const defaults = {
     events: {},
   },
   actuals: [],
+  monthlyActuals: {},
   suppliers: [],
   productSuppliers: [],
 };

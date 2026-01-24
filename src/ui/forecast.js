@@ -19,7 +19,7 @@ const forecastView = (() => {
     return {
       ...defaultView,
       ...raw,
-      collapsed: raw?.collapsed || {},
+      collapsed: (raw && raw.collapsed) || {},
     };
   } catch {
     return { ...defaultView };
@@ -77,7 +77,7 @@ async function parseExcelFile(file) {
     }
   }
 
-  if (!workbook?.SheetNames?.length) {
+  if (!workbook || !workbook.SheetNames || !workbook.SheetNames.length) {
     throw new Error('Keine Tabellenblätter gefunden');
   }
   const sheet = workbook.SheetNames[0];
@@ -151,7 +151,11 @@ function buildCategoryGroups(products, categories = []) {
   });
   const sortedCategories = categories
     .slice()
-    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
+    .sort((a, b) => {
+      const aSort = Number.isFinite(a.sortOrder) ? a.sortOrder : 0;
+      const bSort = Number.isFinite(b.sortOrder) ? b.sortOrder : 0;
+      return aSort - bSort || String(a.name || "").localeCompare(String(b.name || ""));
+    });
   const groups = sortedCategories.map(category => ({
     id: String(category.id),
     name: category.name || "Ohne Kategorie",
@@ -198,29 +202,41 @@ function getRangeOptions(months) {
 }
 
 function getImportValue(state, sku, month) {
-  return state.forecast?.forecastImport?.[sku]?.[month] || null;
+  const forecast = state && state.forecast;
+  const importMap = forecast && forecast.forecastImport;
+  if (!importMap) return null;
+  const skuMap = importMap[sku];
+  if (!skuMap) return null;
+  return skuMap[month] || null;
 }
 
 function getManualValue(state, sku, month) {
-  return state.forecast?.forecastManual?.[sku]?.[month] ?? null;
+  const forecast = state && state.forecast;
+  const manualMap = forecast && forecast.forecastManual;
+  if (!manualMap) return null;
+  const skuMap = manualMap[sku];
+  if (!skuMap || typeof skuMap !== "object") return null;
+  const value = skuMap[month];
+  return typeof value === "undefined" ? null : value;
 }
 
 function getEffectiveValue(state, sku, month) {
   const manual = getManualValue(state, sku, month);
   if (manual != null) return manual;
   const imported = getImportValue(state, sku, month);
-  return imported?.units ?? null;
+  if (!imported || typeof imported !== "object") return null;
+  return typeof imported.units === "undefined" ? null : imported.units;
 }
 
 function getDerivedValue(view, units, product) {
   if (units == null || !Number.isFinite(Number(units))) return null;
   const qty = Number(units);
   if (view === "units") return qty;
-  const price = Number(product?.avgSellingPriceGrossEUR);
+  const price = Number(product && product.avgSellingPriceGrossEUR);
   if (!Number.isFinite(price)) return null;
   const revenue = qty * price;
   if (view === "revenue") return revenue;
-  const margin = Number(product?.sellerboardMarginPct);
+  const margin = Number(product && product.sellerboardMarginPct);
   if (!Number.isFinite(margin)) return null;
   return revenue * (margin / 100);
 }
@@ -276,7 +292,11 @@ function detectMonthBlocks(row0, row1) {
       warnings.push(`Monat konnte nicht erkannt werden: "${cell}"`);
       return;
     }
-    const sub = [row1?.[idx], row1?.[idx + 1], row1?.[idx + 2]].map(normalizeHeader);
+    const sub = [
+      row1 ? row1[idx] : null,
+      row1 ? row1[idx + 1] : null,
+      row1 ? row1[idx + 2] : null,
+    ].map(normalizeHeader);
     const expected = ['einheiten', 'umsatz [€]', 'gewinn [€]'];
     if (!sub.every((val, subIdx) => val === normalizeHeader(expected[subIdx]))) {
       warnings.push(`Subheader ab Spalte ${idx + 1} abweichend (${sub.filter(Boolean).join(' / ') || 'leer'}).`);
@@ -293,8 +313,8 @@ function findColumnIndex(row1, candidates) {
 }
 
 function parseVentoryRows(rows) {
-  const row0 = rows?.[0] || [];
-  const row1 = rows?.[1] || [];
+  const row0 = (rows && rows[0]) || [];
+  const row1 = (rows && rows[1]) || [];
   const { blocks, warnings } = detectMonthBlocks(row0, row1);
   const statusCol = findColumnIndex(row1, ['status']);
   const aliasCol = findColumnIndex(row1, ['variation', 'alias', 'produkt', 'name']);
@@ -512,8 +532,8 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   function closeEditor({ commit }) {
     if (!activeInput) return;
     const cell = activeInput.closest("td");
-    const sku = cell?.dataset?.sku;
-    const month = cell?.dataset?.month;
+    const sku = cell && cell.dataset ? cell.dataset.sku : null;
+    const month = cell && cell.dataset ? cell.dataset.month : null;
     const raw = activeInput.value;
     activeInput.removeEventListener("keydown", onKeydown);
     activeInput.removeEventListener("blur", onBlur);
@@ -560,7 +580,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
     const month = cell.dataset.month;
     if (!sku || !month) return;
     const current = getEffectiveValue(state, sku, month);
-    cell.innerHTML = `<input class="forecast-input" type="text" inputmode="decimal" value="${current ?? ""}" />`;
+    cell.innerHTML = `<input class="forecast-input" type="text" inputmode="decimal" value="${current != null ? current : ""}" />`;
     activeInput = cell.querySelector("input");
     activeInput.addEventListener("keydown", onKeydown);
     activeInput.addEventListener("blur", onBlur);
@@ -641,10 +661,13 @@ function render(el) {
   el.innerHTML = '';
   const products = Array.isArray(state.products) ? state.products : [];
   const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
-  const monthsAll = getMonthBuckets(state.settings?.startMonth || "2025-01", Number(state.settings?.horizonMonths || 18));
+  const monthsAll = getMonthBuckets(
+    (state.settings && state.settings.startMonth) || "2025-01",
+    Number((state.settings && state.settings.horizonMonths) || 18)
+  );
   const rangeOptions = getRangeOptions(monthsAll);
   if (!rangeOptions.some(option => option.value === forecastView.range)) {
-    forecastView.range = rangeOptions[0]?.value || "all";
+    forecastView.range = rangeOptions[0] ? rangeOptions[0].value : "all";
   }
   const months = applyRange(monthsAll, forecastView.range);
   const searchTerm = forecastView.search.trim().toLowerCase();
@@ -656,7 +679,7 @@ function render(el) {
         product.alias,
         product.sku,
         ...(product.tags || []),
-        category?.name,
+        category ? category.name : null,
       ]
         .filter(Boolean)
         .map(val => String(val).toLowerCase());
@@ -921,7 +944,7 @@ function openVentoryImportModal(host) {
   }
 
   fileInput.addEventListener('change', async ev => {
-    const file = ev.target.files?.[0];
+    const file = ev.target.files && ev.target.files[0];
     if (!file) return;
     parsed = null;
     importBtn.disabled = true;
@@ -933,7 +956,7 @@ function openVentoryImportModal(host) {
       alert('Datei konnte nicht gelesen werden. Bitte erneut versuchen.');
       return;
     }
-    if (parsed?.error) {
+    if (parsed && parsed.error) {
       alert(parsed.error);
       return;
     }
@@ -941,15 +964,15 @@ function openVentoryImportModal(host) {
   });
 
   onlyActiveToggle.addEventListener('change', async () => {
-    const file = fileInput.files?.[0];
+    const file = fileInput.files && fileInput.files[0];
     if (!file) return;
     parsed = await parseFile(file);
     renderPreview();
   });
 
   importBtn.addEventListener('click', () => {
-    if (!parsed?.records?.length) return;
-    const mode = modal.querySelector('input[name="import-mode"]:checked')?.value || 'overwrite';
+    if (!parsed || !parsed.records || !parsed.records.length) return;
+    const mode = (modal.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
     const st = loadState();
     ensureForecastContainers(st);
     const products = Array.isArray(st.products) ? st.products : [];
@@ -1063,7 +1086,7 @@ function openVentoryCsvImportModal(host) {
   }
 
   fileInput.addEventListener("change", async ev => {
-    const file = ev.target.files?.[0];
+    const file = ev.target.files && ev.target.files[0];
     if (!file) return;
     parsed = null;
     importBtn.disabled = true;
@@ -1084,7 +1107,7 @@ function openVentoryCsvImportModal(host) {
   });
 
   importBtn.addEventListener("click", () => {
-    if (!parsed?.records?.length) return;
+    if (!parsed || !parsed.records || !parsed.records.length) return;
     const st = loadState();
     ensureForecastContainers(st);
     const products = Array.isArray(st.products) ? st.products : [];
