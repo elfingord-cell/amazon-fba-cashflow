@@ -39,6 +39,18 @@ const defaults = {
       feeRateDefault: 0.38,
       fixInputDefault: 0,
     },
+    transportLeadTimesDays: {
+      air: 10,
+      rail: 25,
+      sea: 45,
+    },
+    defaultBufferDays: 0,
+    defaultCurrency: "EUR",
+    lastUpdatedAt: null,
+    productsTableColumns: {
+      list: [],
+      grid: [],
+    },
   },
   incomings: [ { month:"2025-02", revenueEur:"20.000,00", payoutPct:"100" } ],
   extras:    [ ],
@@ -50,6 +62,7 @@ const defaults = {
   fixcostOverrides: {},
   poTemplates: [],
   products: [],
+  productCategories: [],
   recentProducts: [],
   vatCostRules: [
     { name: "Lizenz", isGrossInput: true, vatRate: "19", reverseCharge: false },
@@ -67,11 +80,19 @@ const defaults = {
     settings: {
       useForecast: false,
     },
+    forecastImport: {},
+    forecastManual: {},
+    lastImportAt: null,
+    importSource: null,
   },
   status: {
     autoManualCheck: false,
     events: {},
   },
+  actuals: [],
+  monthlyActuals: {},
+  suppliers: [],
+  productSuppliers: [],
 };
 
 function ensureFixcostContainers(state) {
@@ -91,6 +112,28 @@ function ensureProducts(state) {
   if (!state) return;
   if (!Array.isArray(state.products)) state.products = [];
   if (!Array.isArray(state.recentProducts)) state.recentProducts = [];
+}
+
+function ensureProductCategories(state) {
+  if (!state) return;
+  if (!Array.isArray(state.productCategories)) {
+    state.productCategories = [];
+    return;
+  }
+  state.productCategories = state.productCategories
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      const name = String(entry.name || "").trim();
+      const sortOrder = entry.sortOrder != null ? Number(entry.sortOrder) : null;
+      return {
+        id: entry.id || `cat-${Math.random().toString(36).slice(2, 9)}`,
+        name: name || "Ohne Kategorie",
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+    });
 }
 
 function ensureVatData(state) {
@@ -115,6 +158,101 @@ function ensureVatData(state) {
   }
 }
 
+function ensureGlobalSettings(state) {
+  if (!state) return;
+  if (!state.settings || typeof state.settings !== "object") state.settings = {};
+  const settings = state.settings;
+  if (!settings.transportLeadTimesDays || typeof settings.transportLeadTimesDays !== "object") {
+    settings.transportLeadTimesDays = structuredClone(defaults.settings.transportLeadTimesDays);
+  } else {
+    const base = defaults.settings.transportLeadTimesDays;
+    settings.transportLeadTimesDays.air = Number(settings.transportLeadTimesDays.air ?? base.air) || base.air;
+    settings.transportLeadTimesDays.rail = Number(settings.transportLeadTimesDays.rail ?? base.rail) || base.rail;
+    settings.transportLeadTimesDays.sea = Number(settings.transportLeadTimesDays.sea ?? base.sea) || base.sea;
+  }
+  if (settings.fxRate == null || String(settings.fxRate).trim() === "") {
+    settings.fxRate = defaults.settings.fxRate;
+  }
+  settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
+  settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
+  settings.lastUpdatedAt = settings.lastUpdatedAt || null;
+  if (!settings.productsTableColumns || typeof settings.productsTableColumns !== "object") {
+    settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
+  } else {
+    if (!Array.isArray(settings.productsTableColumns.list)) settings.productsTableColumns.list = [];
+    if (!Array.isArray(settings.productsTableColumns.grid)) settings.productsTableColumns.grid = [];
+  }
+}
+
+function ensureSuppliers(state) {
+  if (!state) return;
+  if (!Array.isArray(state.suppliers)) {
+    state.suppliers = [];
+    return;
+  }
+  state.suppliers = state.suppliers
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      const name = String(entry.name || "").trim();
+      return {
+        ...entry,
+        id: entry.id || `sup-${Math.random().toString(36).slice(2, 9)}`,
+        name: name || "Unbenannt",
+        company_name: entry.company_name != null ? String(entry.company_name).trim() : "",
+        productionLeadTimeDaysDefault: entry.productionLeadTimeDaysDefault ?? 30,
+        incotermDefault: entry.incotermDefault || "EXW",
+        currencyDefault: entry.currencyDefault || "EUR",
+        paymentTermsDefault: Array.isArray(entry.paymentTermsDefault) ? entry.paymentTermsDefault : null,
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+    });
+}
+
+function ensureProductSuppliers(state) {
+  if (!state) return;
+  if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
+  const seenPreferred = new Set();
+  state.productSuppliers = state.productSuppliers
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      const normalized = {
+        id: entry.id || `sp-${Math.random().toString(36).slice(2, 9)}`,
+        supplierId: String(entry.supplierId || "").trim(),
+        sku: String(entry.sku || "").trim(),
+        isPreferred: Boolean(entry.isPreferred),
+        isActive: entry.isActive !== false,
+        supplierSku: entry.supplierSku != null ? String(entry.supplierSku) : "",
+        unitPrice: entry.unitPrice != null ? entry.unitPrice : null,
+        currency: String(entry.currency || "").trim() || "USD",
+        productionLeadTimeDays: entry.productionLeadTimeDays != null ? Number(entry.productionLeadTimeDays) : null,
+        incoterm: String(entry.incoterm || "").trim() || "EXW",
+        paymentTermsTemplate: Array.isArray(entry.paymentTermsTemplate) ? entry.paymentTermsTemplate : null,
+        minOrderQty: entry.minOrderQty != null ? Number(entry.minOrderQty) : null,
+        notes: entry.notes != null ? String(entry.notes) : "",
+        validFrom: entry.validFrom || null,
+        validTo: entry.validTo || null,
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+      if (!normalized.sku || !normalized.supplierId) return null;
+      const key = productKey(normalized.sku);
+      if (normalized.isPreferred) {
+        if (seenPreferred.has(key)) normalized.isPreferred = false;
+        else seenPreferred.add(key);
+      }
+      return normalized;
+    })
+    .filter(Boolean);
+}
+
+function ensureFos(state) {
+  if (!state) return;
+  if (!Array.isArray(state.fos)) state.fos = [];
+}
+
 function ensureForecast(state) {
   if (!state) return;
   if (!state.forecast || typeof state.forecast !== "object") {
@@ -125,6 +263,83 @@ function ensureForecast(state) {
     state.forecast.settings = { useForecast: false };
   } else {
     state.forecast.settings.useForecast = Boolean(state.forecast.settings.useForecast);
+  }
+  if (!state.forecast.forecastImport || typeof state.forecast.forecastImport !== "object") {
+    state.forecast.forecastImport = {};
+  }
+  if (!state.forecast.forecastManual || typeof state.forecast.forecastManual !== "object") {
+    state.forecast.forecastManual = {};
+  }
+  if (!state.forecast.lastImportAt) state.forecast.lastImportAt = null;
+  if (!state.forecast.importSource) state.forecast.importSource = null;
+  if (!Object.keys(state.forecast.forecastImport).length && state.forecast.items.length) {
+    state.forecast.items.forEach(item => {
+      if (!item?.sku || !item?.month) return;
+      const skuKey = String(item.sku || "").trim();
+      if (!skuKey) return;
+      const monthKey = String(item.month || "").trim();
+      const isManual = String(item.source || "").toLowerCase() === "manual";
+      if (isManual) {
+        if (!state.forecast.forecastManual[skuKey]) state.forecast.forecastManual[skuKey] = {};
+        const units = Number(item.units ?? item.qty ?? item.quantity ?? NaN);
+        if (Number.isFinite(units)) {
+          state.forecast.forecastManual[skuKey][monthKey] = units;
+        }
+      } else {
+        if (!state.forecast.forecastImport[skuKey]) state.forecast.forecastImport[skuKey] = {};
+        state.forecast.forecastImport[skuKey][monthKey] = {
+          units: item.units ?? item.qty ?? item.quantity ?? null,
+          revenueEur: item.revenueEur ?? item.priceEur ?? item.price ?? null,
+          profitEur: item.profitEur ?? null,
+        };
+      }
+    });
+  }
+}
+
+function ensureActuals(state) {
+  if (!state) return;
+  if (!Array.isArray(state.actuals)) state.actuals = [];
+}
+
+function ensureMonthlyActuals(state) {
+  if (!state) return;
+  if (!state.monthlyActuals || typeof state.monthlyActuals !== "object") {
+    state.monthlyActuals = {};
+  }
+  const cleaned = {};
+  Object.entries(state.monthlyActuals).forEach(([month, values]) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const entry = values && typeof values === "object" ? values : {};
+    const revenue = Number(entry.realRevenueEUR);
+    const payoutRate = Number(entry.realPayoutRatePct);
+    const closing = Number(entry.realClosingBalanceEUR);
+    const normalized = {};
+    if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
+    if (Number.isFinite(payoutRate)) normalized.realPayoutRatePct = payoutRate;
+    if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
+    if (Object.keys(normalized).length) cleaned[month] = normalized;
+  });
+  state.monthlyActuals = cleaned;
+
+  if (!Object.keys(state.monthlyActuals).length && Array.isArray(state.actuals) && state.actuals.length) {
+    state.actuals.forEach(entry => {
+      if (!entry?.month) return;
+      const month = String(entry.month || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(month)) return;
+      const revenue = parseEuro(entry.revenueEur);
+      const payout = parseEuro(entry.payoutEur);
+      const closing = parseEuro(entry.closingBalanceEur);
+      const normalized = {};
+      if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
+      if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
+      if (Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payout)) {
+        normalized.realPayoutRatePct = (payout / revenue) * 100;
+      }
+      if (Object.keys(normalized).length) {
+        state.monthlyActuals[month] = normalized;
+      }
+    });
   }
 }
 
@@ -217,26 +432,46 @@ function normaliseTemplate(template) {
   }
   if (template.name) next.name = String(template.name);
   if (template.supplierId) next.supplierId = String(template.supplierId);
-  const copyFields = [
-    "unitPriceUsd",
-    "extraPerUnitUsd",
-    "extraFlatUsd",
-    "transport",
-    "productionDays",
-    "transitDays",
-    "freightEur",
-    "dutyPct",
-    "dutyIncludesFreight",
-    "vatImportPct",
-    "vatRefundActive",
-    "vatRefundLag",
-    "fxRate",
-    "fxFeePct",
-    "ddp",
-  ];
-  for (const field of copyFields) {
-    if (template[field] != null) next[field] = template[field];
-  }
+  const rawFields = template.fields && typeof template.fields === "object"
+    ? template.fields
+    : template;
+  const transportRaw = rawFields.transportMode || rawFields.transport || "SEA";
+  const currencyRaw = rawFields.currency || "USD";
+  const parseNumber = (value) => {
+    if (value == null || value === "") return null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
+    if (!cleaned) return null;
+    const num = Number(cleaned);
+    return Number.isFinite(num) ? num : null;
+  };
+  const clamp = (value, min, max) => {
+    if (!Number.isFinite(value)) return null;
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  };
+  const normalizedFields = {
+    unitPriceUsd: clamp(parseNumber(rawFields.unitPriceUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    extraPerUnitUsd: clamp(parseNumber(rawFields.extraPerUnitUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    extraFlatUsd: clamp(parseNumber(rawFields.extraFlatUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    transportMode: String(transportRaw || "SEA").toUpperCase(),
+    productionDays: Math.max(0, Math.round(parseNumber(rawFields.productionDays ?? 0) ?? 0)),
+    transitDays: Math.max(0, Math.round(parseNumber(rawFields.transitDays ?? 0) ?? 0)),
+    freightEur: clamp(parseNumber(rawFields.freightEur ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
+    dutyPct: clamp(parseNumber(rawFields.dutyPct ?? 0) ?? 0, 0, 100),
+    dutyIncludesFreight: rawFields.dutyIncludesFreight === true,
+    vatImportPct: clamp(parseNumber(rawFields.vatImportPct ?? 19) ?? 19, 0, 100),
+    vatRefundActive: rawFields.vatRefundActive === true,
+    vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
+    fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
+    fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
+    ddp: rawFields.ddp === true,
+    currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
+      ? String(currencyRaw).toUpperCase()
+      : "USD",
+  };
+  next.fields = normalizedFields;
   if (Array.isArray(template.milestones)) {
     next.milestones = template.milestones.map(row => ({
       id: row.id || `ms-${Math.random().toString(36).slice(2, 9)}`,
@@ -245,9 +480,6 @@ function normaliseTemplate(template) {
       anchor: row.anchor || "ETA",
       lagDays: Number(row.lagDays) || 0,
     }));
-  }
-  if (template.fields && typeof template.fields === "object") {
-    next.fields = JSON.parse(JSON.stringify(template.fields));
   }
   return next;
 }
@@ -269,6 +501,7 @@ function migrateProducts(state) {
       supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
       status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
       tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
+      categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
       template: normaliseTemplate(prod.template || base.template),
       createdAt: prod.createdAt || base.createdAt || now,
       updatedAt: prod.updatedAt || now,
@@ -364,6 +597,10 @@ function normaliseProductInput(input) {
   if (!sku) throw new Error("SKU darf nicht leer sein.");
   const alias = cleanAlias(input.alias, sku);
   const supplierId = input.supplierId != null ? String(input.supplierId).trim() : "";
+  const categoryValue = input.categoryId ?? input.category_id ?? null;
+  const categoryId = categoryValue != null && String(categoryValue).trim()
+    ? String(categoryValue).trim()
+    : null;
   const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
   const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
   const template = normaliseTemplate(input.template);
@@ -371,7 +608,7 @@ function normaliseProductInput(input) {
   const jurisdiction = input.jurisdiction || "DE";
   const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
   const vatExempt = input.vatExempt === true;
-  return { sku, alias, supplierId, status, tags, template, vatRate, jurisdiction, returnsRate, vatExempt };
+  return { sku, alias, supplierId, categoryId, status, tags, template, vatRate, jurisdiction, returnsRate, vatExempt };
 }
 
 function updateProductStatsMeta(state, product) {
@@ -411,8 +648,15 @@ export function createEmptyState(){
   ensureFixcostContainers(clone);
   ensurePoTemplates(clone);
   ensureProducts(clone);
+  ensureProductCategories(clone);
   ensureVatData(clone);
   ensureForecast(clone);
+  ensureActuals(clone);
+  ensureMonthlyActuals(clone);
+  ensureGlobalSettings(clone);
+  ensureSuppliers(clone);
+  ensureProductSuppliers(clone);
+  ensureFos(clone);
   return clone;
 }
 
@@ -428,8 +672,15 @@ export function loadState(){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureProductCategories(_state);
   ensureVatData(_state);
   ensureForecast(_state);
+  ensureActuals(_state);
+  ensureMonthlyActuals(_state);
+  ensureGlobalSettings(_state);
+  ensureSuppliers(_state);
+  ensureProductSuppliers(_state);
+  ensureFos(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
   return _state;
@@ -441,8 +692,15 @@ export function saveState(s){
   ensureFixcostContainers(_state);
   ensurePoTemplates(_state);
   ensureProducts(_state);
+  ensureProductCategories(_state);
   ensureVatData(_state);
   ensureForecast(_state);
+  ensureActuals(_state);
+  ensureMonthlyActuals(_state);
+  ensureGlobalSettings(_state);
+  ensureSuppliers(_state);
+  ensureProductSuppliers(_state);
+  ensureFos(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -476,7 +734,17 @@ export function importStateFile(file, cb){
       const json = JSON.parse(reader.result || '{}');
       ensureStatusSection(json);
       ensureFixcostContainers(json);
+      ensurePoTemplates(json);
+      ensureProducts(json);
+      ensureProductCategories(json);
+      ensureVatData(json);
       ensureForecast(json);
+      ensureActuals(json);
+      ensureMonthlyActuals(json);
+      ensureGlobalSettings(json);
+      ensureSuppliers(json);
+      ensureProductSuppliers(json);
+      ensureFos(json);
       migrateLegacyOutgoings(json);
       cb(json);
     } catch (err) {
@@ -550,6 +818,17 @@ export function setEventsManualPaid(eventIds, paid){
     saveState(state);
     broadcastStateChanged();
   }
+}
+
+export function setProductsTableColumns(view, widths){
+  if (!view || !Array.isArray(widths)) return;
+  const state = loadState();
+  ensureGlobalSettings(state);
+  if (!state.settings.productsTableColumns || typeof state.settings.productsTableColumns !== "object") {
+    state.settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
+  }
+  state.settings.productsTableColumns[view] = widths.map(val => Number(val)).filter(Number.isFinite);
+  saveState(state);
 }
 
 export function getProductsSnapshot(){
@@ -637,6 +916,7 @@ export function upsertProduct(input){
       sku: normalised.sku,
       alias: normalised.alias,
       supplierId: normalised.supplierId,
+      categoryId: normalised.categoryId,
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
@@ -647,6 +927,7 @@ export function upsertProduct(input){
   } else {
     target.alias = normalised.alias;
     target.supplierId = normalised.supplierId;
+    target.categoryId = normalised.categoryId;
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;
@@ -670,6 +951,102 @@ export function upsertProduct(input){
 
   saveState(state);
   return updateProductStatsMeta(loadState(), target);
+}
+
+function clampPercent(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  if (num > 100) return 100;
+  return num;
+}
+
+function normalisePaymentTerms(terms) {
+  if (!Array.isArray(terms) || !terms.length) return null;
+  return terms.map(term => ({
+    label: term.label ? String(term.label) : "Milestone",
+    percent: clampPercent(term.percent ?? 0),
+    triggerEvent: String(term.triggerEvent || "ORDER_DATE"),
+    offsetDays: Number(term.offsetDays || 0),
+    currency: term.currency ? String(term.currency) : undefined,
+  }));
+}
+
+function normaliseProductSupplierInput(input = {}) {
+  return {
+    id: input.id,
+    supplierId: String(input.supplierId || "").trim(),
+    sku: String(input.sku || "").trim(),
+    isPreferred: Boolean(input.isPreferred),
+    isActive: input.isActive !== false,
+    supplierSku: input.supplierSku != null ? String(input.supplierSku).trim() : "",
+    unitPrice: input.unitPrice != null && input.unitPrice !== "" ? Number(input.unitPrice) : null,
+    currency: String(input.currency || "").trim() || "USD",
+    productionLeadTimeDays: input.productionLeadTimeDays != null && input.productionLeadTimeDays !== ""
+      ? Number(input.productionLeadTimeDays)
+      : null,
+    incoterm: String(input.incoterm || "").trim() || "EXW",
+    paymentTermsTemplate: normalisePaymentTerms(input.paymentTermsTemplate),
+    minOrderQty: input.minOrderQty != null && input.minOrderQty !== "" ? Number(input.minOrderQty) : null,
+    notes: input.notes != null ? String(input.notes) : "",
+    validFrom: input.validFrom || null,
+    validTo: input.validTo || null,
+  };
+}
+
+export function upsertProductSupplier(input) {
+  const state = loadState();
+  ensureProductSuppliers(state);
+  const normalised = normaliseProductSupplierInput(input);
+  if (!normalised.sku || !normalised.supplierId) {
+    throw new Error("Supplier und SKU sind erforderlich.");
+  }
+  const now = new Date().toISOString();
+  let target = state.productSuppliers.find(entry => entry.id === normalised.id) || null;
+  if (!target) {
+    target = {
+      id: normalised.id || `sp-${Math.random().toString(36).slice(2, 9)}`,
+      createdAt: now,
+    };
+    state.productSuppliers.push(target);
+  }
+  Object.assign(target, normalised, { updatedAt: now, createdAt: target.createdAt || now });
+  if (target.isPreferred) {
+    const skuKey = productKey(target.sku);
+    state.productSuppliers.forEach(entry => {
+      if (entry.id !== target.id && productKey(entry.sku) === skuKey) {
+        entry.isPreferred = false;
+      }
+    });
+  }
+  saveState(state);
+  return target;
+}
+
+export function deleteProductSupplier(id) {
+  if (!id) return;
+  const state = loadState();
+  ensureProductSuppliers(state);
+  const before = state.productSuppliers.length;
+  state.productSuppliers = state.productSuppliers.filter(entry => entry.id !== id);
+  if (state.productSuppliers.length !== before) {
+    saveState(state);
+  }
+}
+
+export function setPreferredProductSupplier(id) {
+  if (!id) return;
+  const state = loadState();
+  ensureProductSuppliers(state);
+  const target = state.productSuppliers.find(entry => entry.id === id);
+  if (!target) return;
+  const skuKey = productKey(target.sku);
+  state.productSuppliers.forEach(entry => {
+    if (productKey(entry.sku) === skuKey) {
+      entry.isPreferred = entry.id === id;
+    }
+  });
+  target.updatedAt = new Date().toISOString();
+  saveState(state);
 }
 
 export function setProductStatus(sku, status){
