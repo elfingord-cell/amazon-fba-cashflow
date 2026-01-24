@@ -1399,13 +1399,13 @@ function buildDashboardHTML(state) {
   }
   const tip = ensureGlobalTip();
 
-  function tipHtml(m, seriesRow, eom) {
+  function tipHtml(m, row, eom) {
     return `
       <div class="tip-title">${m}</div>
-      <div class="tip-row"><span>Netto</span><b>${fmtEUR(seriesRow.net)}</b></div>
-      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(seriesRow.inflow)}</b></div>
-      <div class="tip-row"><span>Extras</span><b>${fmtEUR(seriesRow.extras)}</b></div>
-      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-Math.abs(seriesRow.out))}</b></div>
+      <div class="tip-row"><span>Netto</span><b>${fmtEUR(row.net)}</b></div>
+      <div class="tip-row"><span>Inflow</span><b>${fmtEUR(row.inflow)}</b></div>
+      <div class="tip-row"><span>Extras</span><b>${fmtEUR(row.extras)}</b></div>
+      <div class="tip-row"><span>Outflow</span><b>${fmtEUR(-Math.abs(row.out))}</b></div>
       <div class="tip-row"><span>Kontostand (EOM)</span><b>${fmtEUR(eom)}</b></div>
     `;
   }
@@ -1457,10 +1457,10 @@ function attachDashboardHandlers(root, state) {
     const el = ev.target.closest(".vbar");
     if (!el) return;
     const i = Number(el.getAttribute("data-idx"));
-    const seriesRow = series[i];
+    const row = series[i];
     const eom = closing[i];
 
-    tip.innerHTML = tipHtml(months[i], seriesRow, eom);
+    tip.innerHTML = tipHtml(months[i], row, eom);
     tip.hidden = false;
 
   const hideEmptyToggle = root.querySelector("#dashboard-hide-empty");
