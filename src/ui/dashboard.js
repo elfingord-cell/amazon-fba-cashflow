@@ -361,7 +361,6 @@ function computeSkuCoverage(state, months) {
     const coveredSkus = new Set();
     activeSkus.forEach(item => {
       const sku = item.sku;
-      const signalRow = signals.has(sku) ? signals.get(sku).get(month) : null;
       const signalRow = signals.get(sku)?.get(month);
       const allowForecast = hasForecast.get(sku);
       const isCovered = Boolean(signalRow && isMonthCovered(signalRow, allowForecast));
@@ -385,9 +384,6 @@ function computeSkuCoverage(state, months) {
       missingAliases,
     });
   });
-  return result;
-}
-
   return {
     coverage,
     details,
@@ -398,10 +394,6 @@ function computeSkuCoverage(state, months) {
 }
 
 function computePlannedPayoutByMonth(state, months) {
-  const forecastEnabled = Boolean(safeGet(state, ["forecast", "settings", "useForecast"]));
-  const payoutPctByMonth = new Map();
-  (state && Array.isArray(state.incomings) ? state.incomings : []).forEach(row => {
-    if (!row || !row.month) return;
   const forecastEnabled = Boolean(state?.forecast?.settings?.useForecast);
   const payoutPctByMonth = new Map();
   (state?.incomings || []).forEach(row => {
@@ -410,12 +402,6 @@ function computePlannedPayoutByMonth(state, months) {
   });
 
   const revenueByMonth = new Map();
-  if (forecastEnabled && state && state.forecast && Array.isArray(state.forecast.items)) {
-    if (state.forecast.forecastImport && typeof state.forecast.forecastImport === "object") {
-      Object.values(state.forecast.forecastImport).forEach(monthMap => {
-        Object.entries(monthMap || {}).forEach(([month, entry]) => {
-          if (!month || !months.includes(month)) return;
-          const revenue = parseEuro(entry && entry.revenueEur != null ? entry.revenueEur : (entry ? entry.revenue : null));
   if (forecastEnabled && Array.isArray(state?.forecast?.items)) {
     if (state?.forecast?.forecastImport && typeof state.forecast.forecastImport === "object") {
       Object.values(state.forecast.forecastImport).forEach(monthMap => {
