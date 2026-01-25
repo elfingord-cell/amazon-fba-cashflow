@@ -361,10 +361,9 @@ function computeSkuCoverage(state, months) {
     const coveredSkus = new Set();
     activeSkus.forEach(item => {
       const sku = item.sku;
-      const signalRow = signals.has(sku) ? signals.get(sku).get(month) : null;
-      const signalRow = signals.get(sku)?.get(month);
+      const skuSignal = signals.get(sku)?.get(month);
       const allowForecast = hasForecast.get(sku);
-      const isCovered = Boolean(signalRow && isMonthCovered(signalRow, allowForecast));
+      const isCovered = Boolean(skuSignal && isMonthCovered(skuSignal, allowForecast));
       perSkuCoverage.get(sku).set(month, isCovered);
       if (isCovered) coveredSkus.add(sku);
     });
