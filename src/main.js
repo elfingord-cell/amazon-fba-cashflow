@@ -160,8 +160,9 @@ window.addEventListener('storage', (e) => {
 window.addEventListener('state:changed', (event) => {
   const source = event?.detail?.source;
   const hash = normalizeHash(location.hash);
-  if (source === 'payment-update' && (hash === '#po' || hash === '#fo')) return;
-  renderRoute();
+  if (source !== 'payment-update' || (hash !== '#po' && hash !== '#fo')) {
+    renderRoute();
+  }
 });
 
 initSidebarToggle();
