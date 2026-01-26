@@ -46,6 +46,10 @@ const defaults = {
     defaultCurrency: "EUR",
     defaultDdp: false,
     lastUpdatedAt: null,
+    cny: {
+      start: "",
+      end: "",
+    },
     cnyBlackoutByYear: {},
     productsTableColumns: {
       list: [],
@@ -194,6 +198,12 @@ function ensureGlobalSettings(state) {
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
   settings.defaultDdp = settings.defaultDdp === true;
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
+  if (!settings.cny || typeof settings.cny !== "object") {
+    settings.cny = structuredClone(defaults.settings.cny);
+  } else {
+    settings.cny.start = settings.cny.start || "";
+    settings.cny.end = settings.cny.end || "";
+  }
   if (!settings.cnyBlackoutByYear || typeof settings.cnyBlackoutByYear !== "object") {
     settings.cnyBlackoutByYear = {};
   }

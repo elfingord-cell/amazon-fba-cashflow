@@ -46,3 +46,7 @@ export function parseMoneyInput(value) {
 export function formatMoneyDE(value, decimals = 2) {
   return formatLocalizedNumber(value, decimals, { useGrouping: false });
 }
+
+export function formatEurDE(value, decimals = 2) {
+  return formatLocalizedNumber(value, decimals, { useGrouping: true });
+}

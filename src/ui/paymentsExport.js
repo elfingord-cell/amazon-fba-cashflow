@@ -1,6 +1,6 @@
 import { loadState, getProductsSnapshot } from "../data/storageLocal.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
-import { formatMoneyDE } from "./utils/numberFormat.js";
+import { formatEurDE } from "./utils/numberFormat.js";
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -36,7 +36,7 @@ function fmtEurPlain(value) {
   if (value == null || value === "") return "—";
   const num = Number(value);
   return Number.isFinite(num)
-    ? `${formatMoneyDE(num, 2)} EUR`
+    ? `${formatEurDE(num, 2)} EUR`
     : "—";
 }
 
@@ -44,7 +44,7 @@ function formatCsvNumber(value) {
   if (value == null || value === "") return "";
   const num = Number(value);
   if (!Number.isFinite(num)) return "";
-  return formatMoneyDE(num, 2);
+  return formatEurDE(num, 2);
 }
 
 function toCsv(rows, headers, delimiter = ";") {
@@ -167,6 +167,63 @@ function getRowMonth(row) {
   return date ? date.slice(0, 7) : "";
 }
 
+function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecord, paymentIndexes, state }) {
+  const issues = [];
+  if (row.status !== "PAID") return { amountActualEur: null, issues };
+  if (!row.paidDate) issues.push("PAID_WITHOUT_DATE");
+
+  if (Number.isFinite(Number(paymentRow?.paidEurActual)) && Number(paymentRow.paidEurActual) > 0) {
+    return { amountActualEur: Number(paymentRow.paidEurActual), issues };
+  }
+
+  if (paymentRecord?.allocations?.length) {
+    const allocation = paymentRecord.allocations.find(entry => {
+      if (!entry) return false;
+      if (entry.eventId && paymentRow?.id && entry.eventId === paymentRow.id) return true;
+      if (entry.plannedId && paymentRow?.id && entry.plannedId === paymentRow.id) return true;
+      if (entry.entityType && entry.paymentType) {
+        const matchesType = String(entry.paymentType) === String(row.paymentType);
+        const matchesEntity = String(entry.entityType) === String(row.entityType);
+        const matchesNumber = row.entityType === "PO"
+          ? String(entry.poNumber || "") === String(row.poNumber || "")
+          : String(entry.foNumber || "") === String(row.foNumber || "");
+        return matchesType && matchesEntity && matchesNumber;
+      }
+      return false;
+    });
+    if (allocation && Number.isFinite(Number(allocation.amountEur))) {
+      return { amountActualEur: Number(allocation.amountEur), issues };
+    }
+  }
+
+  if (paymentRecord && paymentRow?.paymentId) {
+    const allocation = paymentIndexes?.allocationByEvent?.get(paymentRow.id)
+      || resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
+    if (allocation && Number.isFinite(Number(allocation.actual))) {
+      issues.push("PRO_RATA_ALLOCATION");
+      return { amountActualEur: Number(allocation.actual), issues };
+    }
+    if (Number.isFinite(Number(paymentRecord.amountActualEurTotal)) && paymentRows?.length === 1) {
+      return { amountActualEur: Number(paymentRecord.amountActualEurTotal), issues };
+    }
+  }
+
+  if (!paymentRow?.paymentId && row.paidDate && paymentRow?.id) {
+    const match = (state.payments || []).find(payment => {
+      if (!payment) return false;
+      if (payment.paidDate !== row.paidDate) return false;
+      if (Array.isArray(payment.coveredEventIds) && payment.coveredEventIds.includes(paymentRow.id)) return true;
+      return false;
+    });
+    if (match && Number.isFinite(Number(match.amountActualEurTotal))) {
+      return { amountActualEur: Number(match.amountActualEurTotal), issues };
+    }
+  }
+
+  issues.push("MISSING_PAYMENT_MAPPING");
+  return { amountActualEur: null, issues };
+}
+
 function buildPaymentJournalRows({ month, scope }) {
   const state = loadState();
   const settings = getSettings();
@@ -190,19 +247,15 @@ function buildPaymentJournalRows({ month, scope }) {
       const paymentType = normalizePaymentType({ label: payment.typeLabel || payment.label, eventType: payment.eventType });
       if (!paymentType) return;
       const paymentRecord = payment.paymentId ? paymentIndexes.byId.get(payment.paymentId) : null;
-      const allocation = paymentIndexes.allocationByEvent.get(payment.id)
-        || resolveActualAllocation({ payment: paymentRecord, paymentRow: payment, paymentRows: payments });
       const status = payment.status === "paid" || payment.status === "PAID" ? "PAID" : "OPEN";
       const dueDate = payment.dueDate || "";
       const paidDate = paymentRecord?.paidDate || payment.paidDate || "";
       const planned = Number.isFinite(Number(payment.plannedEur)) ? Number(payment.plannedEur) : null;
-      const actualFromRow = Number.isFinite(Number(payment.paidEurActual)) ? Number(payment.paidEurActual) : null;
-      const allocationActual = allocation && Number.isFinite(Number(allocation.actual)) ? Number(allocation.actual) : null;
-      const actual = status === "PAID" ? (actualFromRow ?? allocationActual ?? null) : null;
       const entityId = record.id || record.poNo || "";
       const rowId = `PO-${entityId}-${paymentType}-${dueDate || paidDate || ""}`;
-      rows.push({
+      const rowBase = {
         rowId,
+        eventId: payment.id,
         month: getRowMonth({ status, dueDate, paidDate }),
         entityType: "PO",
         poNumber: record.poNo || "",
@@ -215,11 +268,23 @@ function buildPaymentJournalRows({ month, scope }) {
         paidDate,
         paymentId: payment.paymentId || "",
         amountPlannedEur: planned,
-        amountActualEur: actual,
         payer: payment.paidBy || "",
         paymentMethod: payment.method || "",
         note: payment.note || "",
         internalId: record.id || rowId,
+      };
+      const { amountActualEur, issues } = resolveActualAmountForLine({
+        row: rowBase,
+        paymentRow: payment,
+        paymentRows: payments,
+        paymentRecord,
+        paymentIndexes,
+        state,
+      });
+      rows.push({
+        ...rowBase,
+        amountActualEur,
+        issues,
       });
     });
   });
@@ -245,6 +310,7 @@ function buildPaymentJournalRows({ month, scope }) {
       const rowId = `FO-${entityId}-${paymentType}-${dueDate || ""}`;
       rows.push({
         rowId,
+        eventId: payment.id || rowId,
         month: getRowMonth({ status: "OPEN", dueDate, paidDate: "" }),
         entityType: "FO",
         poNumber: record.convertedPoNo || "",
@@ -262,6 +328,7 @@ function buildPaymentJournalRows({ month, scope }) {
         paymentMethod: "",
         note: "",
         internalId: record.id || rowId,
+        issues: [],
       });
     });
   });
@@ -303,6 +370,7 @@ function buildCsvRows(rows) {
     paidDate: row.paidDate,
     amountPlannedEur: formatCsvNumber(row.amountPlannedEur),
     amountActualEur: row.status === "PAID" ? formatCsvNumber(row.amountActualEur) : "",
+    issues: row.issues?.length ? row.issues.join("|") : "",
     paymentId: row.paymentId || "",
     payer: row.payer,
     paymentMethod: row.paymentMethod,
@@ -349,6 +417,7 @@ function openPrintView(rows, { month, scope }) {
       <td>${row.dueDate || ""}</td>
       <td>${row.paidDate || ""}</td>
       <td>${row.status === "PAID" ? formatCsvNumber(row.amountActualEur) : ""}</td>
+      <td>${row.issues?.length ? row.issues.join(" | ") : ""}</td>
       <td>${row.paymentId || ""}</td>
       <td>${row.paymentMethod || ""}</td>
       <td>${row.payer || ""}</td>
@@ -392,6 +461,7 @@ function openPrintView(rows, { month, scope }) {
         <th>DueDate</th>
         <th>PaidDate</th>
         <th>Ist EUR</th>
+        <th>Issues</th>
         <th>PaymentId</th>
         <th>Methode</th>
         <th>Zahler</th>
@@ -453,6 +523,7 @@ export function render(root) {
       el("th", {}, ["Bezahlt"]),
       el("th", {}, ["Soll EUR"]),
       el("th", {}, ["Ist EUR"]),
+      el("th", {}, ["Issues"]),
       el("th", {}, ["Payment ID"]),
       el("th", {}, ["Zahler"]),
       el("th", {}, ["Methode"]),
@@ -486,7 +557,7 @@ export function render(root) {
 
     if (!rows.length) {
       tbody.append(el("tr", {}, [
-        el("td", { colspan: "15", class: "muted" }, ["Keine Zahlungen gefunden."]),
+        el("td", { colspan: "16", class: "muted" }, ["Keine Zahlungen gefunden."]),
       ]));
       return rows;
     }
@@ -495,6 +566,8 @@ export function render(root) {
       const actualValue = Number.isFinite(Number(row.amountActualEur)) && Number(row.amountActualEur) > 0
         ? fmtEurPlain(row.amountActualEur)
         : "—";
+      const issueText = row.issues?.length ? row.issues.join(" | ") : "";
+      const showWarning = row.status === "PAID" && (!Number.isFinite(Number(row.amountActualEur)) || Number(row.amountActualEur) <= 0);
       tbody.append(el("tr", {}, [
         el("td", {}, [row.month || "—"]),
         el("td", {}, [row.entityType]),
@@ -506,7 +579,11 @@ export function render(root) {
         el("td", {}, [fmtDate(row.dueDate)]),
         el("td", {}, [fmtDate(row.paidDate)]),
         el("td", {}, [fmtEurPlain(row.amountPlannedEur)]),
-        el("td", {}, [row.status === "PAID" ? fmtEurPlain(row.amountActualEur) : "—"]),
+        el("td", {}, [
+          row.status === "PAID" ? fmtEurPlain(row.amountActualEur) : "—",
+          showWarning ? el("span", { class: "cell-warning", title: "Bezahlt, aber keine Ist-Zahlung zugeordnet" }, ["⚠︎"]) : null,
+        ]),
+        el("td", {}, [issueText || "—"]),
         el("td", {}, [row.paymentId || "—"]),
         el("td", {}, [row.payer || "—"]),
         el("td", {}, [row.paymentMethod || "—"]),
@@ -546,6 +623,7 @@ export function render(root) {
       { key: "paidDate", label: "paidDate" },
       { key: "amountPlannedEur", label: "amountPlannedEur" },
       { key: "amountActualEur", label: "amountActualEur" },
+      { key: "issues", label: "issues" },
       { key: "paymentId", label: "paymentId" },
       { key: "payer", label: "payer" },
       { key: "paymentMethod", label: "paymentMethod" },
