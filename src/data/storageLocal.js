@@ -470,10 +470,10 @@ function normaliseTemplate(template, options = {}) {
     if (value > max) return max;
     return value;
   };
-  const parseBoolean = (value, fallback) => {
+  const parseBoolean = (value) => {
     if (value === true || value === 1 || value === "true") return true;
     if (value === false || value === 0 || value === "false") return false;
-    return fallback === true;
+    return false;
   };
   const normalizedFields = {
     unitPriceUsd: clamp(parseNumber(rawFields.unitPriceUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
@@ -490,7 +490,7 @@ function normaliseTemplate(template, options = {}) {
     vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
     fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
     fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
-    ddp: parseBoolean(rawFields.ddp, options.defaultDdp),
+    ddp: Boolean(rawFields.ddp),
     currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
       ? String(currencyRaw).toUpperCase()
       : "USD",
@@ -535,9 +535,7 @@ function migrateProducts(state) {
         productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
           ? Number(prod.productionLeadTimeDaysDefault)
           : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
-        template: normaliseTemplate(prod.template || base.template, {
-          defaultDdp: state?.settings?.defaultDdp,
-        }),
+        template: normaliseTemplate(prod.template || base.template),
         createdAt: prod.createdAt || base.createdAt || now,
         updatedAt: prod.updatedAt || now,
       };

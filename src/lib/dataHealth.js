@@ -1,6 +1,6 @@
 const CURRENCIES = ["EUR", "USD", "CNY"];
 
-export function parseLocalizedNumber(value) {
+export function parseDeNumber(value) {
   if (value == null || value === "") return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const raw = String(value).trim();
@@ -21,11 +21,7 @@ export function parseLocalizedNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
-export function parseDeNumber(value) {
-  return parseLocalizedNumber(value);
-}
-
-export function formatLocalizedNumber(value, decimals = 2, options = {}) {
+export function formatDeNumber(value, decimals = 2, options = {}) {
   const num = Number(value);
   if (!Number.isFinite(num)) return options.emptyValue ?? "—";
   return num.toLocaleString("de-DE", {
@@ -33,10 +29,6 @@ export function formatLocalizedNumber(value, decimals = 2, options = {}) {
     maximumFractionDigits: options.maximumFractionDigits ?? decimals,
     useGrouping: options.useGrouping ?? false,
   });
-}
-
-export function formatDeNumber(value, decimals = 2, options = {}) {
-  return formatLocalizedNumber(value, decimals, options);
 }
 
 export function makeIssue({

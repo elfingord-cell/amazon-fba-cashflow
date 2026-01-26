@@ -7,7 +7,7 @@ import {
   upsertProduct,
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
-import { formatLocalizedNumber, makeIssue, parseLocalizedNumber, validateAll } from "../lib/dataHealth.js";
+import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
