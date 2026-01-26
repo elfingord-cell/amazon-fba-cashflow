@@ -232,11 +232,11 @@ function getDerivedValue(view, units, product) {
   if (units == null || !Number.isFinite(Number(units))) return null;
   const qty = Number(units);
   if (view === "units") return qty;
-  const price = Number(product && product.avgSellingPriceGrossEUR);
+  const price = parseNumberDE(product && product.avgSellingPriceGrossEUR);
   if (!Number.isFinite(price)) return null;
   const revenue = qty * price;
   if (view === "revenue") return revenue;
-  const margin = Number(product && product.sellerboardMarginPct);
+  const margin = parseNumberDE(product && product.sellerboardMarginPct);
   if (!Number.isFinite(margin)) return null;
   return revenue * (margin / 100);
 }
