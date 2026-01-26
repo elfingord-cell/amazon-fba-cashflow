@@ -167,12 +167,25 @@ function getRowMonth(row) {
   return date ? date.slice(0, 7) : "";
 }
 
+function isActualAmountValid(amount, planned) {
+  if (!Number.isFinite(Number(amount))) return false;
+  const actual = Number(amount);
+  const plannedValue = Number.isFinite(Number(planned)) ? Number(planned) : null;
+  if (actual > 0) return true;
+  if (actual === 0 && plannedValue != null && plannedValue === 0) return true;
+  return false;
+}
+
 function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecord, paymentIndexes, state }) {
   const issues = [];
   if (row.status !== "PAID") return { amountActualEur: null, issues };
   if (!row.paidDate) issues.push("PAID_WITHOUT_DATE");
 
-  if (Number.isFinite(Number(paymentRow?.paidEurActual)) && Number(paymentRow.paidEurActual) > 0) {
+  if (Number.isFinite(Number(paymentRow?.paidEurActual))) {
+    if (isActualAmountValid(paymentRow.paidEurActual, row.amountPlannedEur)) {
+      return { amountActualEur: Number(paymentRow.paidEurActual), issues };
+    }
+    issues.push("MISSING_ACTUAL_AMOUNT");
     return { amountActualEur: Number(paymentRow.paidEurActual), issues };
   }
 
@@ -191,7 +204,7 @@ function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecor
       }
       return false;
     });
-    if (allocation && Number.isFinite(Number(allocation.amountEur))) {
+    if (allocation && isActualAmountValid(allocation.amountEur, row.amountPlannedEur)) {
       return { amountActualEur: Number(allocation.amountEur), issues };
     }
   }
@@ -199,11 +212,11 @@ function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecor
   if (paymentRecord && paymentRow?.paymentId) {
     const allocation = paymentIndexes?.allocationByEvent?.get(paymentRow.id)
       || resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
-    if (allocation && Number.isFinite(Number(allocation.actual))) {
+    if (allocation && isActualAmountValid(allocation.actual, row.amountPlannedEur)) {
       issues.push("PRO_RATA_ALLOCATION");
       return { amountActualEur: Number(allocation.actual), issues };
     }
-    if (Number.isFinite(Number(paymentRecord.amountActualEurTotal)) && paymentRows?.length === 1) {
+    if (isActualAmountValid(paymentRecord.amountActualEurTotal, row.amountPlannedEur) && paymentRows?.length === 1) {
       return { amountActualEur: Number(paymentRecord.amountActualEurTotal), issues };
     }
   }
@@ -215,12 +228,12 @@ function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecor
       if (Array.isArray(payment.coveredEventIds) && payment.coveredEventIds.includes(paymentRow.id)) return true;
       return false;
     });
-    if (match && Number.isFinite(Number(match.amountActualEurTotal))) {
+    if (match && isActualAmountValid(match.amountActualEurTotal, row.amountPlannedEur)) {
       return { amountActualEur: Number(match.amountActualEurTotal), issues };
     }
   }
 
-  issues.push("MISSING_PAYMENT_MAPPING");
+  issues.push("MISSING_ACTUAL_AMOUNT");
   return { amountActualEur: null, issues };
 }
 
@@ -271,7 +284,7 @@ function buildPaymentJournalRows({ month, scope }) {
         payer: payment.paidBy || "",
         paymentMethod: payment.method || "",
         note: payment.note || "",
-        internalId: record.id || rowId,
+        internalId: payment.paymentInternalId || payment.id || record.id || rowId,
       };
       const { amountActualEur, issues } = resolveActualAmountForLine({
         row: rowBase,
@@ -551,7 +564,10 @@ export function render(root) {
     runExportAssertions();
     rows.forEach(row => {
       if (row.status === "PAID" && Number.isFinite(Number(row.amountActualEur))) {
-        console.assert(Number(row.amountActualEur) > 0, "Paid rows should not have 0 actual amounts");
+        const planned = Number.isFinite(Number(row.amountPlannedEur)) ? Number(row.amountPlannedEur) : null;
+        if (planned == null || planned > 0) {
+          console.assert(Number(row.amountActualEur) > 0, "Paid rows should not have 0 actual amounts");
+        }
       }
     });
 
@@ -563,11 +579,10 @@ export function render(root) {
     }
 
     rows.forEach(row => {
-      const actualValue = Number.isFinite(Number(row.amountActualEur)) && Number(row.amountActualEur) > 0
-        ? fmtEurPlain(row.amountActualEur)
-        : "—";
+      const hasActual = isActualAmountValid(row.amountActualEur, row.amountPlannedEur);
+      const actualValue = hasActual ? fmtEurPlain(row.amountActualEur) : "—";
       const issueText = row.issues?.length ? row.issues.join(" | ") : "";
-      const showWarning = row.status === "PAID" && (!Number.isFinite(Number(row.amountActualEur)) || Number(row.amountActualEur) <= 0);
+      const showWarning = row.status === "PAID" && !hasActual;
       tbody.append(el("tr", {}, [
         el("td", {}, [row.month || "—"]),
         el("td", {}, [row.entityType]),
@@ -580,7 +595,7 @@ export function render(root) {
         el("td", {}, [fmtDate(row.paidDate)]),
         el("td", {}, [fmtEurPlain(row.amountPlannedEur)]),
         el("td", {}, [
-          row.status === "PAID" ? fmtEurPlain(row.amountActualEur) : "—",
+          row.status === "PAID" ? actualValue : "—",
           showWarning ? el("span", { class: "cell-warning", title: "Bezahlt, aber keine Ist-Zahlung zugeordnet" }, ["⚠︎"]) : null,
         ]),
         el("td", {}, [issueText || "—"]),

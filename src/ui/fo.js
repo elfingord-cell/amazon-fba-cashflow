@@ -2120,9 +2120,9 @@ export default function render(root) {
   $("#fo-add", root).addEventListener("click", () => openFoModal(null));
 
   tableHost.addEventListener("click", (ev) => {
-    const row = ev.target.closest("tr[data-id]");
+    const row = ev.target.closest("tr[data-id], tr[data-key]");
     if (!row) return;
-    const id = row.dataset.id;
+    const id = row.dataset.id || row.dataset.key;
     const fo = state.fos.find(item => item.id === id);
     if (!fo) return;
     const action = ev.target.closest("button")?.dataset?.action;
