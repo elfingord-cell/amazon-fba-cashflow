@@ -102,17 +102,6 @@ export function render(root) {
           <small class="form-error" id="fx-rate-error"></small>
           <small class="health-hint" id="fx-rate-health"></small>
         </label>
-        <label>
-          Default Production Lead Time
-          <input id="default-production-lead" type="text" inputmode="decimal" placeholder="z. B. 30" value="${settings.defaultProductionLeadTimeDays ?? ""}">
-          <small class="form-error" id="default-production-lead-error"></small>
-        </label>
-      </div>
-      <div class="grid two" style="margin-top: 12px;">
-        <label class="inline-checkbox">
-          <input id="default-ddp" type="checkbox" ${settings.defaultDdp ? "checked" : ""} />
-          Default DDP (falls Feld fehlt)
-        </label>
       </div>
     </section>
 
@@ -199,15 +188,11 @@ export function render(root) {
     const sea = clampNonNegative($("#lead-sea", root).value);
     const buffer = clampNonNegative($("#default-buffer", root).value);
     const fxRate = parseDeNumber($("#default-fx-rate", root).value);
-    const defaultProductionLead = parseDeNumber($("#default-production-lead", root).value);
     if (air == null) errors.air = "Wert muss ≥ 0 sein.";
     if (rail == null) errors.rail = "Wert muss ≥ 0 sein.";
     if (sea == null) errors.sea = "Wert muss ≥ 0 sein.";
     if (buffer == null) errors.buffer = "Wert muss ≥ 0 sein.";
     if (fxRate == null || fxRate <= 0) errors.fxRate = "Wert muss > 0 sein.";
-    if (defaultProductionLead != null && defaultProductionLead <= 0) {
-      errors.defaultProductionLeadTime = "Wert muss > 0 sein.";
-    }
     $("#lead-air-error", root).textContent = errors.air;
     $("#lead-rail-error", root).textContent = errors.rail;
     $("#lead-sea-error", root).textContent = errors.sea;

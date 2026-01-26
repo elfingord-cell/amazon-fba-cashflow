@@ -6,8 +6,6 @@ import {
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
-import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
-import { parseDeNumber } from "../lib/dataHealth.js";
 import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 
@@ -67,7 +65,7 @@ function formatDate(input) {
 }
 
 function parseLocaleNumber(value) {
-  return parseDeNumber(value);
+  return parseLocalizedNumber(value);
 }
 
 function parseNumber(value) {
@@ -988,7 +986,7 @@ export default function render(root) {
     if (baseForm.dutyRatePct == null) baseForm.dutyRatePct = state.settings?.dutyRatePct ?? 0;
     if (baseForm.eustRatePct == null) baseForm.eustRatePct = state.settings?.eustRatePct ?? 0;
     if (baseForm.fxRate == null) baseForm.fxRate = state.settings?.fxRate ?? "";
-    if (!baseForm.currency) baseForm.currency = state.settings?.defaultCurrency || "EUR";
+    if (!baseForm.currency) baseForm.currency = "USD";
     if (typeof baseForm.productionLeadTimeDaysManual === "undefined") {
       baseForm.productionLeadTimeDaysManual = null;
     }

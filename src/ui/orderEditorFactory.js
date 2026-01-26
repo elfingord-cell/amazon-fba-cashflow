@@ -7,7 +7,7 @@ import {
   upsertProduct,
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
-import { formatLocalizedNumber, makeIssue, parseDeNumber, validateAll } from "../lib/dataHealth.js";
+import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
@@ -56,7 +56,7 @@ function formatSkuSummary(record) {
 }
 
 function parseDE(value) {
-  const parsed = parseDeNumber(value);
+  const parsed = parseLocalizedNumber(value);
   return parsed == null ? NaN : parsed;
 }
 
