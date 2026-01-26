@@ -924,6 +924,22 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .fix-instance-table .checkbox input{width:20px; height:20px;}
 .badge.auto{background:#1976d2; color:#fff; border-radius:999px; font-size:0.75rem; padding:2px 8px; margin-left:6px;}
 .badge.override{background:#f57c00; color:#fff; border-radius:999px; font-size:0.75rem; padding:2px 8px; margin-left:6px;}
+.data-health-badge{margin-left:auto; border:none; background:rgba(15,27,45,0.08); color:var(--ink); font-size:12px; padding:4px 10px; border-radius:999px; cursor:pointer;}
+.data-health-badge.is-ok{background:rgba(34,197,94,0.18); color:#15803d;}
+.data-health-badge.is-issues{background:rgba(245,158,11,0.22); color:#92400e;}
+.data-health-group{padding:12px 0; border-bottom:1px solid rgba(15,27,45,0.08);}
+.data-health-group:last-child{border-bottom:none;}
+.data-health-group h4{margin:0 0 10px; font-size:14px;}
+.data-health-item{display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:center; padding:10px 0;}
+.data-health-item-text{display:flex; flex-direction:column; gap:4px;}
+.data-health-pill{font-size:11px; padding:2px 8px; border-radius:999px; background:rgba(15,27,45,0.08); color:var(--ink);}
+.data-health-pill.error{background:rgba(239,68,68,0.16); color:#b91c1c;}
+.data-health-pill.warning{background:rgba(234,179,8,0.18); color:#92400e;}
+.data-health-dot{width:10px; height:10px; border-radius:999px; background:#f59e0b; border:none; padding:0; margin-right:6px; cursor:pointer; display:inline-block;}
+.data-health-dot:focus{outline:none; box-shadow:0 0 0 3px var(--ring);}
+.data-health-inline{display:inline-flex; align-items:center; gap:6px;}
+.data-health-blocking-list{margin:0; padding-left:18px;}
+.health-hint{display:block; font-size:11px; margin-top:4px; color:#b91c1c;}
 .fix-edit-grid{display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); align-items:end;}
 .fix-edit-grid label{display:flex; flex-direction:column; gap:4px; font-size:0.9rem;}
 .fix-edit-grid input{padding:8px; border:1px solid #c5d5cc; border-radius:6px;}

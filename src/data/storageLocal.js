@@ -1,16 +1,12 @@
 // FBA-CF-0027 — Local Storage Layer (schlank, mit Listenern)
+import { parseDeNumber } from "../lib/dataHealth.js";
+
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 
 function parseEuro(value) {
   if (value == null) return 0;
-  const cleaned = String(value)
-    .trim()
-    .replace(/€/g, "")
-    .replace(/\s+/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
+  const parsed = parseDeNumber(String(value).replace(/€/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatEuro(value) {
@@ -190,6 +186,18 @@ function ensureSuppliers(state) {
     state.suppliers = [];
     return;
   }
+  const normaliseSkuOverrides = (overrides) => {
+    if (!overrides || typeof overrides !== "object") return {};
+    return Object.entries(overrides).reduce((acc, [sku, values]) => {
+      if (!sku) return acc;
+      const entry = values && typeof values === "object" ? values : {};
+      const productionLeadTimeDays = entry.productionLeadTimeDays != null ? Number(entry.productionLeadTimeDays) : null;
+      acc[String(sku).trim()] = {
+        productionLeadTimeDays: Number.isFinite(productionLeadTimeDays) ? productionLeadTimeDays : null,
+      };
+      return acc;
+    }, {});
+  };
   state.suppliers = state.suppliers
     .filter(Boolean)
     .map(entry => {
@@ -204,6 +212,7 @@ function ensureSuppliers(state) {
         incotermDefault: entry.incotermDefault || "EXW",
         currencyDefault: entry.currencyDefault || "EUR",
         paymentTermsDefault: Array.isArray(entry.paymentTermsDefault) ? entry.paymentTermsDefault : null,
+        skuOverrides: normaliseSkuOverrides(entry.skuOverrides),
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
       };
@@ -425,12 +434,7 @@ function cleanAlias(alias, sku) {
 }
 
 function parseNumber(value) {
-  if (value == null || value === "") return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
-  if (!cleaned) return null;
-  const num = Number(cleaned);
-  return Number.isFinite(num) ? num : null;
+  return parseDeNumber(value);
 }
 
 function normaliseTemplate(template) {
@@ -452,6 +456,11 @@ function normaliseTemplate(template) {
     if (value > max) return max;
     return value;
   };
+  const parseBoolean = (value) => {
+    if (value === true || value === 1 || value === "true") return true;
+    if (value === false || value === 0 || value === "false") return false;
+    return false;
+  };
   const normalizedFields = {
     unitPriceUsd: clamp(parseNumber(rawFields.unitPriceUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
     extraPerUnitUsd: clamp(parseNumber(rawFields.extraPerUnitUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
@@ -467,7 +476,7 @@ function normaliseTemplate(template) {
     vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
     fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
     fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
-    ddp: rawFields.ddp === true,
+    ddp: parseBoolean(rawFields.ddp),
     currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
       ? String(currencyRaw).toUpperCase()
       : "USD",
@@ -509,6 +518,9 @@ function migrateProducts(state) {
         sellerboardMarginPct: Number.isFinite(Number(prod.sellerboardMarginPct))
           ? clampPercent(Number(prod.sellerboardMarginPct))
           : (Number.isFinite(Number(base.sellerboardMarginPct)) ? clampPercent(Number(base.sellerboardMarginPct)) : null),
+        productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
+          ? Number(prod.productionLeadTimeDaysDefault)
+          : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
         template: normaliseTemplate(prod.template || base.template),
         createdAt: prod.createdAt || base.createdAt || now,
         updatedAt: prod.updatedAt || now,
@@ -617,6 +629,7 @@ function normaliseProductInput(input) {
   const jurisdiction = input.jurisdiction || "DE";
   const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
   const vatExempt = input.vatExempt === true;
+  const productionLeadTimeDaysDefault = parseNumber(input.productionLeadTimeDaysDefault ?? null);
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
@@ -632,6 +645,7 @@ function normaliseProductInput(input) {
     jurisdiction,
     returnsRate,
     vatExempt,
+    productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
     sellerboardMarginPct,
   };
@@ -946,6 +960,7 @@ export function upsertProduct(input){
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
+      productionLeadTimeDaysDefault: normalised.productionLeadTimeDaysDefault,
       avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
       sellerboardMarginPct: normalised.sellerboardMarginPct,
       createdAt: now,
@@ -959,6 +974,7 @@ export function upsertProduct(input){
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;
+    target.productionLeadTimeDaysDefault = normalised.productionLeadTimeDaysDefault;
     target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
     target.sellerboardMarginPct = normalised.sellerboardMarginPct;
     target.updatedAt = now;
