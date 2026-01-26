@@ -126,7 +126,7 @@ function renderRoute(forcedHash) {
   const resolvedHash = routes[base] ? base : '#dashboard';
   window.__routeQuery = query;
   const loader = routes[resolvedHash];
-  APP.classList.toggle('app-wide', resolvedHash === '#po');
+  APP.classList.toggle('app-wide', resolvedHash === '#po' || resolvedHash === '#dashboard');
   setActiveTab(resolvedHash);
   if (typeof APP.__cleanup === 'function') {
     try { APP.__cleanup(); } catch {}

@@ -234,6 +234,55 @@ function getActiveSkus(state) {
     .filter(item => item.sku);
 }
 
+function normalizeSku(value) {
+  return String(value || "").trim();
+}
+
+function buildSkuAliasMap(state) {
+  const products = state && Array.isArray(state.products) ? state.products : [];
+  const map = new Map();
+  products.forEach(product => {
+    const sku = normalizeSku(product && product.sku).toLowerCase();
+    if (!sku) return;
+    const alias = normalizeSku(product && product.alias);
+    if (alias) {
+      map.set(sku, alias);
+    }
+  });
+  return map;
+}
+
+function getPoAliasInfo(record, aliasMap) {
+  const skus = new Set();
+  if (Array.isArray(record && record.items)) {
+    record.items.forEach(item => {
+      const sku = normalizeSku(item && item.sku);
+      if (sku) skus.add(sku);
+    });
+  }
+  if (!skus.size) {
+    const sku = normalizeSku(record && record.sku);
+    if (sku) skus.add(sku);
+  }
+  const aliases = Array.from(skus)
+    .map(sku => aliasMap.get(sku.toLowerCase()))
+    .filter(Boolean);
+  const uniqueAliases = Array.from(new Set(aliases));
+  return { aliases: uniqueAliases, hasSku: skus.size > 0 };
+}
+
+function formatAliasTooltip(info) {
+  if (!info) return null;
+  const { aliases, hasSku } = info;
+  if (!aliases.length) {
+    return hasSku ? "Alias: —" : null;
+  }
+  const limited = aliases.slice(0, 3);
+  const suffix = aliases.length > limited.length ? " …" : "";
+  const label = aliases.length > 1 ? "Aliases" : "Alias";
+  return `${label}: ${limited.join(", ")}${suffix}`;
+}
+
 function buildCategoryGroups(items, categories = []) {
   const sortedCategories = categories
     .slice()
@@ -800,6 +849,7 @@ function buildDashboardRows(state, months, options = {}) {
     paid: false,
   }));
 
+  const skuAliasMap = buildSkuAliasMap(state);
   const poData = buildPoData(state);
   const foData = buildFoData(state);
 
@@ -840,10 +890,12 @@ function buildDashboardRows(state, months, options = {}) {
     const poLabel = poNo ? `PO ${poNo}` : "PO";
     const depositPaid = po.events.some(evt => /deposit/i.test(evt.typeLabel || "") && evt.paid);
     const balancePaid = po.events.some(evt => /balance/i.test(evt.typeLabel || "") && evt.paid);
+    const aliasLine = formatAliasTooltip(getPoAliasInfo(po.record, skuAliasMap));
     const tooltipParts = [
       `PO: ${poNo || "—"}`,
       `Supplier: ${po.supplier || "—"}`,
       `Units: ${po.units || 0}`,
+      aliasLine,
       `Deposit: ${depositPaid ? "bezahlt" : "offen"}`,
       `Balance: ${balancePaid ? "bezahlt" : "offen"}`,
     ];
@@ -852,6 +904,7 @@ function buildDashboardRows(state, months, options = {}) {
         `Typ: ${evt.typeLabel || "Zahlung"}`,
         `Datum: ${evt.dueDate || "—"}`,
         `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
+        aliasLine,
         evt.currency ? `Währung: ${evt.currency}` : null,
         evt.paidBy ? `Paid by: ${evt.paidBy}` : null,
       ]
@@ -1334,21 +1387,23 @@ function buildDashboardHTML(state) {
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">
-        <table class="table-compact dashboard-tree-table" role="table">
-          <thead>
-            <tr>
-              <th scope="col" class="tree-header">Kategorie / Zeile</th>
-              ${headerCells}
-            </tr>
-          </thead>
-          <tbody>
-            ${bodyRows || `
+        <div class="dashboard-table-scroll">
+          <table class="table-compact dashboard-tree-table" role="table">
+            <thead>
               <tr>
-                <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+                <th scope="col" class="tree-header">Kategorie / Zeile</th>
+                ${headerCells}
               </tr>
-            `}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${bodyRows || `
+                <tr>
+                  <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   `;
@@ -1500,7 +1555,7 @@ function attachDashboardHandlers(root, state) {
   }
 
   const coverageWrap = root.querySelector(".dashboard-coverage-wrap");
-  const tableWrap = root.querySelector(".dashboard-table-wrap");
+  const tableWrap = root.querySelector(".dashboard-table-scroll");
   if (coverageWrap && tableWrap) {
     let syncing = false;
     const syncScroll = (source, target) => {
