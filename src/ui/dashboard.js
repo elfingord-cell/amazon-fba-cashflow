@@ -1448,6 +1448,7 @@ function attachDashboardHandlers(root, state) {
 
     tip.innerHTML = tipHtml(months[i], row, eom);
     tip.hidden = false;
+  }
 
   const hideEmptyToggle = root.querySelector("#dashboard-hide-empty");
   if (hideEmptyToggle) {
