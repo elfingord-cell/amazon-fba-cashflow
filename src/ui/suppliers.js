@@ -176,7 +176,7 @@ export function render(root) {
     const columns = [
       { key: "name", label: "Supplier Name" },
       { key: "company", label: "Company" },
-      { key: "lead", label: "Production LT (days)", className: "num" },
+      { key: "lead", label: "Default Production Lead Time", className: "num" },
       { key: "incoterm", label: "Incoterm" },
       { key: "currency", label: "Currency" },
       { key: "terms", label: "Payment Terms" },
@@ -368,7 +368,7 @@ export function render(root) {
         select.value = base.currency || supplier.currencyDefault || "USD";
         return select;
       })(),
-      el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
+      el("label", { style: "margin-top:12px" }, ["Default Production Lead Time"]),
       el("input", { type: "number", min: "0", step: "1", id: "mapping-lead-time", value: base.productionLeadTimeDays ?? "" }),
       el("label", { style: "margin-top:12px" }, ["Incoterm"]),
       (() => {
@@ -713,7 +713,7 @@ export function render(root) {
       el("input", { type: "text", id: "supplier-name", value: supplier.name }),
       el("label", { style: "margin-top:12px" }, ["Company"]),
       el("input", { type: "text", id: "supplier-company", value: supplier.company_name || "" }),
-      el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
+      el("label", { style: "margin-top:12px" }, ["Default Production Lead Time"]),
       el("input", { type: "number", min: "0", step: "1", id: "supplier-lt", value: supplier.productionLeadTimeDaysDefault }),
       el("label", { style: "margin-top:12px" }, ["Incoterm"]),
       (() => {

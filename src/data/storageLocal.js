@@ -186,6 +186,18 @@ function ensureSuppliers(state) {
     state.suppliers = [];
     return;
   }
+  const normaliseSkuOverrides = (overrides) => {
+    if (!overrides || typeof overrides !== "object") return {};
+    return Object.entries(overrides).reduce((acc, [sku, values]) => {
+      if (!sku) return acc;
+      const entry = values && typeof values === "object" ? values : {};
+      const productionLeadTimeDays = entry.productionLeadTimeDays != null ? Number(entry.productionLeadTimeDays) : null;
+      acc[String(sku).trim()] = {
+        productionLeadTimeDays: Number.isFinite(productionLeadTimeDays) ? productionLeadTimeDays : null,
+      };
+      return acc;
+    }, {});
+  };
   state.suppliers = state.suppliers
     .filter(Boolean)
     .map(entry => {
@@ -200,6 +212,7 @@ function ensureSuppliers(state) {
         incotermDefault: entry.incotermDefault || "EXW",
         currencyDefault: entry.currencyDefault || "EUR",
         paymentTermsDefault: Array.isArray(entry.paymentTermsDefault) ? entry.paymentTermsDefault : null,
+        skuOverrides: normaliseSkuOverrides(entry.skuOverrides),
         createdAt: entry.createdAt || now,
         updatedAt: entry.updatedAt || now,
       };
@@ -505,6 +518,9 @@ function migrateProducts(state) {
         sellerboardMarginPct: Number.isFinite(Number(prod.sellerboardMarginPct))
           ? clampPercent(Number(prod.sellerboardMarginPct))
           : (Number.isFinite(Number(base.sellerboardMarginPct)) ? clampPercent(Number(base.sellerboardMarginPct)) : null),
+        productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
+          ? Number(prod.productionLeadTimeDaysDefault)
+          : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
         template: normaliseTemplate(prod.template || base.template),
         createdAt: prod.createdAt || base.createdAt || now,
         updatedAt: prod.updatedAt || now,
@@ -613,6 +629,7 @@ function normaliseProductInput(input) {
   const jurisdiction = input.jurisdiction || "DE";
   const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
   const vatExempt = input.vatExempt === true;
+  const productionLeadTimeDaysDefault = parseNumber(input.productionLeadTimeDaysDefault ?? null);
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
@@ -628,6 +645,7 @@ function normaliseProductInput(input) {
     jurisdiction,
     returnsRate,
     vatExempt,
+    productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
     sellerboardMarginPct,
   };
@@ -942,6 +960,7 @@ export function upsertProduct(input){
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
+      productionLeadTimeDaysDefault: normalised.productionLeadTimeDaysDefault,
       avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
       sellerboardMarginPct: normalised.sellerboardMarginPct,
       createdAt: now,
@@ -955,6 +974,7 @@ export function upsertProduct(input){
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;
+    target.productionLeadTimeDaysDefault = normalised.productionLeadTimeDaysDefault;
     target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
     target.sellerboardMarginPct = normalised.sellerboardMarginPct;
     target.updatedAt = now;

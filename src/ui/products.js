@@ -395,6 +395,7 @@ function buildHistoryTable(state, sku) {
       createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]),
       createEl("label", {}, ["Ø VK-Preis (Brutto)", avgSellingPriceInput]),
       createEl("label", {}, ["Sellerboard Marge (%)", sellerboardMarginInput]),
+      createEl("label", {}, ["Default Production Lead Time (Fallback)", productionLeadTimeInput]),
       createEl("hr"),
       templateHeader
     );
@@ -402,6 +403,7 @@ function buildHistoryTable(state, sku) {
     const numericFields = [
       { input: avgSellingPriceInput, decimals: 2 },
       { input: sellerboardMarginInput, decimals: 2 },
+      { input: productionLeadTimeInput, decimals: 0 },
     ];
     numericFields.forEach(({ input, decimals }) => {
       input.addEventListener("blur", () => {
@@ -700,6 +702,7 @@ function buildHistoryTable(state, sku) {
           .filter(Boolean),
         avgSellingPriceGrossEUR: parseDeNumber(avgSellingPriceInput.value.trim()),
         sellerboardMarginPct: parseDeNumber(sellerboardMarginInput.value.trim()),
+        productionLeadTimeDaysDefault: parseDeNumber(productionLeadTimeInput.value.trim()),
       };
       if (existing?.sku) {
         payload.originalSku = existing.sku;
@@ -1012,7 +1015,8 @@ function buildHistoryTable(state, sku) {
         { value: "inactive", label: "Inaktiv" },
       ], width: "110px", className: "col-status" },
       { key: "avgSellingPriceGrossEUR", label: "Ø VK-Preis (Brutto)", type: "number", decimals: 2, width: "150px", className: "col-amount" },
-      { key: "sellerboardMarginPct", label: "Sellerboard Marge (%)", type: "number", decimals: 2, width: "140px", className: "col-short col-group-end" },
+      { key: "sellerboardMarginPct", label: "Sellerboard Marge (%)", type: "number", decimals: 2, width: "140px", className: "col-short" },
+      { key: "productionLeadTimeDaysDefault", label: "Default Production Lead Time (Fallback)", type: "number", decimals: 0, width: "170px", className: "col-days col-group-end" },
       { key: "template.unitPriceUsd", label: "Stückpreis (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.extraPerUnitUsd", label: "Zusatz je Stück (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.extraFlatUsd", label: "Zusatz pauschal (USD)", type: "number", decimals: 2, width: "140px", className: "col-amount col-group-end" },
@@ -1167,7 +1171,7 @@ function buildHistoryTable(state, sku) {
     colgroup.append(createEl("col", { style: `width:${actionsWidth}` }));
     const thead = createEl("thead", {}, [
       createEl("tr", { class: "products-grid-group-header" }, [
-        createEl("th", { colspan: "7", title: "Stammdaten" }, ["Stammdaten"]),
+        createEl("th", { colspan: "8", title: "Stammdaten" }, ["Stammdaten"]),
         createEl("th", { colspan: "3", title: "Kosten" }, ["Kosten"]),
         createEl("th", { colspan: "4", title: "Logistik" }, ["Logistik"]),
         createEl("th", { colspan: "5", title: "Steuern" }, ["Steuern"]),
