@@ -361,7 +361,9 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   const currentMonth = currentMonthKey();
   const currentYear = Number(currentMonth.split("-")[0]);
   const table = document.createElement("table");
-  table.className = "forecast-tree-table";
+  table.className = "table-compact dashboard-tree-table forecast-tree-table";
+
+  const monthColumnClass = (index) => `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
 
   const sumNumeric = (values) => {
     const nums = values.filter(value => Number.isFinite(value));
@@ -381,9 +383,9 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
   headRow.innerHTML = `
-    <th class="forecast-sticky">Kategorie / Produkt</th>
-    ${months.map(month => `<th>${month}</th>`).join("")}
-    ${totalsHeaders}
+    <th class="tree-header">Kategorie / Produkt</th>
+    ${months.map((month, idx) => `<th class="${monthColumnClass(idx)}">${month}</th>`).join("")}
+    ${totalsHeaders.replaceAll('forecast-total', 'forecast-total num')}
   `;
   thead.appendChild(headRow);
   table.appendChild(thead);
@@ -408,12 +410,13 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   });
 
   const overallRow = document.createElement("tr");
-  overallRow.className = "forecast-category-row forecast-overall-row";
+  overallRow.className = "forecast-category-row forecast-overall-row row-summary";
   overallRow.innerHTML = `
-    <th class="forecast-sticky">
+    <td class="tree-cell tree-summary tree-level-0">
+      <span class="tree-spacer" aria-hidden="true"></span>
       <span class="tree-label">Gesamt</span>
-    </th>
-    ${months.map((month, idx) => `<td class="forecast-cell forecast-total">${formatValue(overallTotals[idx])}</td>`).join("")}
+    </td>
+    ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}">${formatValue(overallTotals[idx])}</td>`).join("")}
     ${(() => {
       const sumRange = sumNumeric(overallTotals.filter(Number.isFinite));
       const sumAll = sumNumeric(overallTotalsAll.filter(Number.isFinite));
@@ -423,9 +426,9 @@ function renderTable(el, state, months, monthsAll, groups, view) {
         .map(entry => entry.value);
       const sumYear = sumNumeric(yearValues);
       return `
-        <td class="forecast-cell forecast-total">${formatValue(sumRange)}</td>
-        <td class="forecast-cell forecast-total">${formatValue(sumYear)}</td>
-        <td class="forecast-cell forecast-total">${formatValue(sumAll)}</td>
+        <td class="forecast-cell forecast-total num">${formatValue(sumRange)}</td>
+        <td class="forecast-cell forecast-total num">${formatValue(sumYear)}</td>
+        <td class="forecast-cell forecast-total num">${formatValue(sumAll)}</td>
       `;
     })()}
   `;
@@ -450,7 +453,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
       return sumNumeric(values);
     });
     const categoryRow = document.createElement("tr");
-    categoryRow.className = "forecast-category-row";
+    categoryRow.className = "forecast-category-row row-section";
     const categorySumRange = sumNumeric(categoryTotals.filter(Number.isFinite));
     const categorySumAll = sumNumeric(categoryTotalsAll.filter(Number.isFinite));
     const categoryYearValues = monthsAll
@@ -459,17 +462,17 @@ function renderTable(el, state, months, monthsAll, groups, view) {
       .map(entry => entry.value);
     const categoryYearSum = sumNumeric(categoryYearValues);
     categoryRow.innerHTML = `
-      <th class="forecast-sticky">
+      <td class="tree-cell tree-level-0">
         <button type="button" class="tree-toggle" data-category="${group.id}">
           ${isCollapsed ? "▶" : "▼"}
         </button>
         <span class="tree-label">${group.name}</span>
         <span class="forecast-count muted">${group.items.length}</span>
-      </th>
-      ${months.map((month, idx) => `<td class="forecast-cell forecast-total">${formatValue(categoryTotals[idx])}</td>`).join("")}
-      <td class="forecast-cell forecast-total">${formatValue(categorySumRange)}</td>
-      <td class="forecast-cell forecast-total">${formatValue(categoryYearSum)}</td>
-      <td class="forecast-cell forecast-total">${formatValue(categorySumAll)}</td>
+      </td>
+      ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}">${formatValue(categoryTotals[idx])}</td>`).join("")}
+      <td class="forecast-cell forecast-total num">${formatValue(categorySumRange)}</td>
+      <td class="forecast-cell forecast-total num">${formatValue(categoryYearSum)}</td>
+      <td class="forecast-cell forecast-total num">${formatValue(categorySumAll)}</td>
     `;
     tbody.appendChild(categoryRow);
 
@@ -478,7 +481,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
         const sku = String(product.sku || "").trim();
         const alias = product.alias || sku;
         const row = document.createElement("tr");
-        row.className = "forecast-product-row";
+        row.className = "forecast-product-row row-detail";
         const productValues = months.map(month => {
           const units = getEffectiveValue(state, sku, month);
           return getDerivedValue(view, units, product);
@@ -495,9 +498,12 @@ function renderTable(el, state, months, monthsAll, groups, view) {
           .map(entry => entry.value);
         const sumYear = sumNumeric(yearValues);
         row.innerHTML = `
-          <td class="forecast-sticky forecast-product-cell">
-            <div class="forecast-alias">${alias}</div>
-            <div class="forecast-sku muted">${sku}</div>
+          <td class="tree-cell tree-level-1 forecast-product-cell">
+            <span class="tree-spacer" aria-hidden="true"></span>
+            <span class="coverage-sku-block">
+              <span class="tree-label">${alias}</span>
+              <span class="forecast-sku muted">${sku}</span>
+            </span>
           </td>
           ${months.map((month, idx) => {
             const manual = getManualValue(state, sku, month);
@@ -510,15 +516,15 @@ function renderTable(el, state, months, monthsAll, groups, view) {
             const missingInput = derived == null && units != null && view !== "units";
             const title = missingInput ? "Produktdaten fehlen" : hint;
             return `
-              <td class="forecast-cell ${manualFlag}" data-sku="${sku}" data-month="${month}" title="${title}">
+              <td class="forecast-cell num ${manualFlag} ${monthColumnClass(idx)}" data-sku="${sku}" data-month="${month}" title="${title}">
                 <span class="forecast-value">${value}</span>
                 ${manual != null ? `<span class="forecast-manual-dot" aria-hidden="true"></span>` : ""}
               </td>
             `;
           }).join("")}
-          <td class="forecast-cell forecast-total">${formatValue(sumRange)}</td>
-          <td class="forecast-cell forecast-total">${formatValue(sumYear)}</td>
-          <td class="forecast-cell forecast-total">${formatValue(sumAll)}</td>
+          <td class="forecast-cell forecast-total num">${formatValue(sumRange)}</td>
+          <td class="forecast-cell forecast-total num">${formatValue(sumYear)}</td>
+          <td class="forecast-cell forecast-total num">${formatValue(sumAll)}</td>
         `;
         tbody.appendChild(row);
       });
@@ -718,7 +724,7 @@ function render(el) {
     </div>
   `;
   const tableHost = document.createElement('div');
-  tableHost.className = 'forecast-table-wrap';
+  tableHost.className = 'forecast-table-wrap dashboard-table-wrap';
   if (!groups.length) {
     const empty = document.createElement("div");
     empty.className = "muted";
