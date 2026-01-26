@@ -1978,18 +1978,6 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               currency: "EUR",
               amountActualEurTotal: parsed,
               coveredEventIds: allocations.map(entry => entry.eventId),
-              allocations: allocations.map(entry => {
-                const evt = selectedEvents.find(item => item.id === entry.eventId);
-                return {
-                  eventId: entry.eventId,
-                  amountAllocatedEur: entry.actual,
-                  amountPlannedEur: entry.planned,
-                  paymentType: evt?.typeLabel || evt?.label || "",
-                  dueDate: evt?.dueDate || "",
-                  entityType: "PO",
-                  poNumber: record.poNo || "",
-                };
-              }),
               note: noteInput.value.trim() || null,
             };
 
