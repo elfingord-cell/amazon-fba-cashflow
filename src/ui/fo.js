@@ -798,7 +798,7 @@ export default function render(root) {
             return el("div", { class: "table-actions" }, [
               el("button", { class: "btn", type: "button", dataset: { action: "edit" } }, ["View/Edit"]),
               el("button", { class: "btn secondary", type: "button", dataset: { action: "convert" }, disabled: row.status === "CONVERTED" ? "true" : null }, ["Convert to PO"]),
-              el("button", { class: "btn danger", type: "button", dataset: { action: "delete" }, disabled: row.status === "CONVERTED" ? "true" : null }, ["Delete"]),
+              el("button", { class: "btn danger", type: "button", dataset: { action: "delete" } }, ["Delete"]),
             ]);
           default:
             return "—";
@@ -2120,12 +2120,14 @@ export default function render(root) {
   $("#fo-add", root).addEventListener("click", () => openFoModal(null));
 
   tableHost.addEventListener("click", (ev) => {
-    const row = ev.target.closest("tr[data-id], tr[data-key]");
+    const target = ev.target?.closest ? ev.target : ev.target?.parentElement;
+    if (!target) return;
+    const row = target.closest("tr[data-id], tr[data-key]");
     if (!row) return;
     const id = row.dataset.id || row.dataset.key;
     const fo = state.fos.find(item => item.id === id);
     if (!fo) return;
-    const action = ev.target.closest("button")?.dataset?.action;
+    const action = target.closest("button")?.dataset?.action;
     if (action === "edit") {
       openFoModal(fo);
     } else if (action === "convert") {
