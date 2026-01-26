@@ -9,6 +9,8 @@ import {
   setProductsTableColumns,
 } from "../data/storageLocal.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
+import { formatDeNumber, parseDeNumber, validateProducts } from "../lib/dataHealth.js";
+import { openDataHealthPanel } from "./dataHealthUi.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -61,26 +63,32 @@ function fmtEUR(value) {
   return parsed.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 }
 
-function parseDeNumber(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (value == null) return null;
-  const cleaned = String(value)
-    .trim()
-    .replace(/\s+/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  if (!cleaned) return null;
-  const num = Number(cleaned);
-  return Number.isFinite(num) ? num : null;
+function formatInputNumber(value, decimals = 2) {
+  return formatDeNumber(value, decimals, { emptyValue: "", useGrouping: false });
 }
 
-function formatDeNumber(value, decimals = 2) {
-  if (!Number.isFinite(Number(value))) return "—";
-  return Number(value).toLocaleString("de-DE", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-    useGrouping: false,
+function getIssueTooltip(issues) {
+  if (!issues.length) return "";
+  const fields = issues.map(issue => issue.field);
+  const labels = fields.map((field) => {
+    switch (field) {
+      case "alias":
+        return "Alias";
+      case "currency":
+        return "Currency";
+      case "unitPrice":
+        return "Unit Price";
+      case "avgSellingPriceGrossEUR":
+        return "Ø VK-Preis";
+      case "sellerboardMarginPct":
+        return "Sellerboard Marge";
+      case "ddp":
+        return "DDP";
+      default:
+        return field;
+    }
   });
+  return `Fehlt: ${[...new Set(labels)].join(", ")}`;
 }
 
 function showToast(message) {
@@ -183,6 +191,14 @@ function buildHistoryTable(state, sku) {
   function renderProducts(root) {
   const state = loadState();
   const products = getProductsSnapshot();
+  const productIssues = validateProducts(products, state.settings || {});
+  const productIssuesBySku = new Map();
+  productIssues.forEach(issue => {
+    const key = String(issue.entityId || "").trim();
+    if (!key) return;
+    if (!productIssuesBySku.has(key)) productIssuesBySku.set(key, []);
+    productIssuesBySku.get(key).push(issue);
+  });
   const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
   const categoryById = new Map(categories.map(category => [String(category.id), category]));
   const supplierLabelMap = buildSupplierLabelMap(state, products);
@@ -204,6 +220,22 @@ function buildHistoryTable(state, sku) {
       // ignore
     }
     sessionStorage.removeItem("healthFocus");
+  }
+
+  function buildHealthDot(sku) {
+    const issues = productIssuesBySku.get(sku) || [];
+    if (!issues.length) return null;
+    const tooltip = getIssueTooltip(issues);
+    return createEl("button", {
+      class: "data-health-dot",
+      type: "button",
+      title: tooltip,
+      "aria-label": tooltip,
+      onclick: (event) => {
+        event.stopPropagation();
+        openDataHealthPanel({ scope: "product", entityId: sku });
+      },
+    });
   }
 
   function applyFilter(list, term) {
@@ -299,11 +331,11 @@ function buildHistoryTable(state, sku) {
     })();
     const tagsInput = createEl("input", { value: (product.tags || []).join(", ") });
     const avgSellingPriceInput = createEl("input", {
-      value: product.avgSellingPriceGrossEUR != null ? formatDeNumber(parseDeNumber(product.avgSellingPriceGrossEUR), 2) : "",
+      value: product.avgSellingPriceGrossEUR != null ? formatInputNumber(parseDeNumber(product.avgSellingPriceGrossEUR), 2) : "",
       inputmode: "decimal",
     });
     const sellerboardMarginInput = createEl("input", {
-      value: product.sellerboardMarginPct != null ? formatDeNumber(parseDeNumber(product.sellerboardMarginPct), 2) : "",
+      value: product.sellerboardMarginPct != null ? formatInputNumber(parseDeNumber(product.sellerboardMarginPct), 2) : "",
       inputmode: "decimal",
     });
 
@@ -374,7 +406,7 @@ function buildHistoryTable(state, sku) {
     numericFields.forEach(({ input, decimals }) => {
       input.addEventListener("blur", () => {
         const parsed = parseDeNumber(input.value);
-        input.value = parsed == null ? "" : formatDeNumber(parsed, decimals);
+        input.value = parsed == null ? "" : formatInputNumber(parsed, decimals);
       });
     });
 
@@ -482,13 +514,13 @@ function buildHistoryTable(state, sku) {
         const decimals = typeof field.decimals === "number" ? field.decimals : 2;
         const rawValue = template[field.key] ?? templateDefaults[field.key];
         const parsedValue = parseDeNumber(rawValue);
-        const displayValue = parsedValue != null ? formatDeNumber(parsedValue, decimals) : "";
+        const displayValue = parsedValue != null ? formatInputNumber(parsedValue, decimals) : "";
         const input = createEl("input", { name: field.key, value: displayValue, inputmode: "decimal" });
         input.addEventListener("blur", () => {
           const parsed = parseDeNumber(input.value);
           const defaultValue = templateDefaults[field.key];
           const nextValue = parsed == null ? defaultValue : parsed;
-          input.value = nextValue == null ? "" : formatDeNumber(nextValue, decimals);
+          input.value = nextValue == null ? "" : formatInputNumber(nextValue, decimals);
           validateField(field.key);
           updateSaveState();
         });
@@ -526,7 +558,7 @@ function buildHistoryTable(state, sku) {
       }
       const decimals = typeof meta.decimals === "number" ? meta.decimals : 2;
       const parsed = parseDeNumber(value);
-      input.value = parsed == null ? "" : formatDeNumber(parsed, decimals);
+      input.value = parsed == null ? "" : formatInputNumber(parsed, decimals);
       validateField(key);
     }
 
@@ -764,7 +796,8 @@ function buildHistoryTable(state, sku) {
     const renderCell = (product, col) => {
       switch (col.key) {
         case "alias":
-          return createEl("div", {}, [
+          return createEl("div", { class: "data-health-inline" }, [
+            buildHealthDot(product.sku),
             product.alias || "—",
             product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
           ]);
@@ -1029,7 +1062,7 @@ function buildHistoryTable(state, sku) {
     function formatValue(value, field) {
       if (field.type === "number") {
         const parsed = parseDeNumber(value);
-        return parsed == null ? "" : formatDeNumber(parsed, field.decimals ?? 2);
+        return parsed == null ? "" : formatInputNumber(parsed, field.decimals ?? 2);
       }
       if (field.type === "checkbox") {
         return Boolean(value);
@@ -1204,10 +1237,14 @@ function buildHistoryTable(state, sku) {
               onblur: () => {
                 if (field.type === "number") {
                   const parsed = parseDeNumber(input.value);
-                  input.value = parsed == null ? "" : formatDeNumber(parsed, field.decimals ?? 2);
+                  input.value = parsed == null ? "" : formatInputNumber(parsed, field.decimals ?? 2);
                 }
               },
             });
+            if (field.key === "alias") {
+              const dot = buildHealthDot(product.sku);
+              if (dot) cell.append(dot);
+            }
             cell.append(input);
           }
           const original = normalizeValue(getFieldValue(product, field), field);
