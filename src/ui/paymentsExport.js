@@ -1,5 +1,6 @@
 import { loadState, getProductsSnapshot } from "../data/storageLocal.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
+import { formatMoneyDE } from "./utils/numberFormat.js";
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -35,7 +36,7 @@ function fmtEurPlain(value) {
   if (value == null || value === "") return "—";
   const num = Number(value);
   return Number.isFinite(num)
-    ? `${num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR`
+    ? `${formatMoneyDE(num, 2)} EUR`
     : "—";
 }
 
@@ -43,26 +44,82 @@ function formatCsvNumber(value) {
   if (value == null || value === "") return "";
   const num = Number(value);
   if (!Number.isFinite(num)) return "";
-  return num.toFixed(2);
+  return formatMoneyDE(num, 2);
 }
 
-function toCsv(rows, headers) {
+function toCsv(rows, headers, delimiter = ";") {
   const escapeCell = value => {
     const raw = value == null ? "" : String(value);
     const escaped = raw.replace(/"/g, '""');
     return `"${escaped}"`;
   };
-  const head = headers.map(h => escapeCell(h.label)).join(",");
-  const body = rows.map(row => headers.map(h => escapeCell(row[h.key])).join(",")).join("\n");
+  const head = headers.map(h => escapeCell(h.label)).join(delimiter);
+  const body = rows.map(row => headers.map(h => escapeCell(row[h.key])).join(delimiter)).join("\n");
   return `${head}\n${body}`;
 }
 
-function normalizeTransactionId(value) {
-  if (!value) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-  const normalized = raw.replace(/^(tx-?)+/i, "");
-  return `tx-${normalized}`;
+function buildPaymentIndexes(payments = []) {
+  const byId = new Map();
+  const allocationByEvent = new Map();
+  (payments || []).forEach(payment => {
+    if (!payment?.id) return;
+    byId.set(payment.id, payment);
+    if (Array.isArray(payment.allocations)) {
+      payment.allocations.forEach(allocation => {
+        if (allocation?.eventId) allocationByEvent.set(allocation.eventId, allocation);
+      });
+    }
+  });
+  return { byId, allocationByEvent };
+}
+
+function allocateByPlanned(total, events) {
+  const plannedValues = events.map(evt => Number(evt.plannedEur || 0));
+  const sumPlanned = plannedValues.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) return null;
+  const allocations = plannedValues.map((planned, index) => {
+    const share = planned / sumPlanned;
+    const raw = total * share;
+    return {
+      eventId: events[index].id,
+      actual: Math.round(raw * 100) / 100,
+    };
+  });
+  const roundedSum = allocations.reduce((sum, entry) => sum + entry.actual, 0);
+  const remainder = Math.round((total - roundedSum) * 100) / 100;
+  if (Math.abs(remainder) > 0) {
+    const target = allocations[allocations.length - 1];
+    target.actual = Math.round((target.actual + remainder) * 100) / 100;
+  }
+  return allocations;
+}
+
+function allocateByDueDate(total, events) {
+  let remaining = Math.round(total * 100) / 100;
+  const allocations = [];
+  const ordered = [...events].sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
+  ordered.forEach(evt => {
+    if (remaining <= 0) return;
+    const planned = Math.round(Number(evt.plannedEur || 0) * 100) / 100;
+    const actual = Math.min(remaining, planned);
+    allocations.push({ eventId: evt.id, actual });
+    remaining = Math.round((remaining - actual) * 100) / 100;
+  });
+  return allocations;
+}
+
+function resolveActualAllocation({ payment, paymentRow, paymentRows }) {
+  if (!payment || !Number.isFinite(Number(payment.amountActualEurTotal))) return null;
+  const covered = Array.isArray(payment.coveredEventIds) ? payment.coveredEventIds : [];
+  const coveredEvents = paymentRows.filter(row => covered.includes(row.id));
+  if (coveredEvents.length) {
+    const allocations = allocateByPlanned(Number(payment.amountActualEurTotal), coveredEvents);
+    return allocations?.find(entry => entry.eventId === paymentRow.id) || null;
+  }
+  const fallbackEvents = paymentRows.filter(row => row.status === "open");
+  if (!fallbackEvents.length) return null;
+  const allocations = allocateByDueDate(Number(payment.amountActualEurTotal), fallbackEvents);
+  return allocations?.find(entry => entry.eventId === paymentRow.id) || null;
 }
 
 function buildSupplierNameMap(state) {
@@ -129,6 +186,7 @@ function buildPaymentJournalRows({ month, scope }) {
   const skuAliasMap = buildSkuAliasMap(products);
   const poRecords = Array.isArray(state.pos) ? state.pos : [];
   const foRecords = Array.isArray(state.fos) ? state.fos : [];
+  const paymentIndexes = buildPaymentIndexes(state.payments || []);
   const rows = [];
 
   const poConfig = { slug: "po", entityLabel: "PO", numberField: "poNo" };
@@ -137,29 +195,29 @@ function buildPaymentJournalRows({ month, scope }) {
     if (!record) return;
     const supplierName = resolveSupplierName(record, supplierNameMap);
     const skuAliases = resolveSkuAliases(record, skuAliasMap);
-    const transactions = Array.isArray(record.paymentTransactions) ? record.paymentTransactions : [];
-    const txMap = new Map();
-    transactions.forEach(tx => {
-      if (!tx) return;
-      if (tx.id) txMap.set(String(tx.id), tx);
-      const normalized = normalizeTransactionId(tx.id);
-      if (normalized) txMap.set(normalized, tx);
-    });
     const snapshot = JSON.parse(JSON.stringify(record));
-    const payments = buildPaymentRows(snapshot, poConfig, settings);
-    payments.forEach(payment => {
+    const paymentRows = buildPaymentRows(snapshot, poConfig, settings, state.payments || []);
+    paymentRows.forEach(payment => {
       const paymentType = normalizePaymentType({ label: payment.typeLabel || payment.label, eventType: payment.eventType });
       if (!paymentType) return;
-      const status = payment.status === "paid" ? "PAID" : "OPEN";
+      const paymentRecord = payment.paymentId ? paymentIndexes.byId.get(payment.paymentId) : null;
+      const allocation = paymentIndexes.allocationByEvent.get(payment.id)
+        || resolveActualAllocation({ payment: paymentRecord, paymentRow: payment, paymentRows });
       const dueDate = payment.dueDate || "";
-      const paidDate = payment.paidDate || "";
+      const paidDate = paymentRecord?.paidDate || payment.paidDate || "";
       const planned = Number.isFinite(Number(payment.plannedEur)) ? Number(payment.plannedEur) : null;
-      const actual = status === "PAID"
-        ? (Number.isFinite(Number(payment.paidEurActual)) ? Number(payment.paidEurActual) : planned)
-        : null;
-      const tx = payment.transactionId ? txMap.get(payment.transactionId) : null;
+      const actualCandidate = Number.isFinite(Number(payment.paidEurActual))
+        ? Number(payment.paidEurActual)
+        : (Number.isFinite(Number(allocation?.amountAllocatedEur ?? allocation?.actual))
+          ? Number(allocation.amountAllocatedEur ?? allocation.actual)
+          : null);
+      const hasActual = Number.isFinite(actualCandidate) && actualCandidate > 0;
+      const isPartial = hasActual && Number.isFinite(planned) && actualCandidate < planned && !paidDate;
+      const status = (hasActual && !isPartial) || paidDate ? "PAID" : "OPEN";
+      const actual = hasActual ? actualCandidate : null;
       const entityId = record.id || record.poNo || "";
       const rowId = `PO-${entityId}-${paymentType}-${dueDate || paidDate || ""}`;
+      const hasActualOrPaid = hasActual || Boolean(paidDate);
       rows.push({
         rowId,
         month: getRowMonth({ status, dueDate, paidDate }),
@@ -171,13 +229,13 @@ function buildPaymentJournalRows({ month, scope }) {
         paymentType,
         status,
         dueDate,
-        paidDate,
+        paidDate: status === "PAID" ? paidDate : "",
+        paymentId: hasActualOrPaid ? (payment.paymentId || paymentRecord?.id || "") : "",
         amountPlannedEur: planned,
         amountActualEur: actual,
-        payer: payment.paidBy || tx?.paidBy || "",
-        paymentMethod: payment.method || tx?.method || "",
-        driveLink: tx?.driveInvoiceLink || "",
-        note: tx?.note || payment.note || "",
+        payer: hasActualOrPaid ? (paymentRecord?.payer || payment.paidBy || "") : "",
+        paymentMethod: hasActualOrPaid ? (paymentRecord?.method || payment.method || "") : "",
+        note: hasActualOrPaid ? (paymentRecord?.note || payment.note || "") : "",
         internalId: record.id || rowId,
       });
     });
@@ -214,11 +272,11 @@ function buildPaymentJournalRows({ month, scope }) {
         status: "OPEN",
         dueDate,
         paidDate: "",
+        paymentId: "",
         amountPlannedEur: planned,
         amountActualEur: null,
         payer: "",
         paymentMethod: "",
-        driveLink: "",
         note: "",
         internalId: record.id || rowId,
       });
@@ -261,10 +319,12 @@ function buildCsvRows(rows) {
     dueDate: row.dueDate,
     paidDate: row.paidDate,
     amountPlannedEur: formatCsvNumber(row.amountPlannedEur),
-    amountActualEur: row.status === "PAID" ? formatCsvNumber(row.amountActualEur) : "",
+    amountActualEur: Number.isFinite(Number(row.amountActualEur)) && Number(row.amountActualEur) > 0
+      ? formatCsvNumber(row.amountActualEur)
+      : "",
+    paymentId: row.paymentId || "",
     payer: row.payer,
     paymentMethod: row.paymentMethod,
-    driveLink: row.driveLink,
     note: row.note,
     internalId: row.internalId,
   }));
@@ -272,6 +332,23 @@ function buildCsvRows(rows) {
 
 function sumRows(rows, key) {
   return rows.reduce((sum, row) => sum + (Number(row[key]) || 0), 0);
+}
+
+let exportAssertionsRan = false;
+
+function runExportAssertions() {
+  if (exportAssertionsRan) return;
+  exportAssertionsRan = true;
+  const sampleEvents = [
+    { id: "dep", plannedEur: 3000, dueDate: "2025-01-10", status: "open" },
+    { id: "bal", plannedEur: 7000, dueDate: "2025-02-10", status: "open" },
+  ];
+  const allocations = allocateByPlanned(9500, sampleEvents) || [];
+  const totalAllocated = allocations.reduce((sum, entry) => sum + Number(entry.actual || 0), 0);
+  console.assert(Math.round(totalAllocated * 100) / 100 === 9500, "Allocation sum should match total");
+  const depAlloc = allocations.find(entry => entry.eventId === "dep");
+  console.assert(depAlloc && Math.round(depAlloc.actual * 100) / 100 === 2850, "Deposit allocation should be proportional");
+  console.assert(sampleEvents[0].plannedEur === 3000 && sampleEvents[1].plannedEur === 7000, "Planned values should remain unchanged");
 }
 
 function openPrintView(rows, { month, scope }) {
@@ -290,10 +367,10 @@ function openPrintView(rows, { month, scope }) {
       <td>${row.status}</td>
       <td>${row.dueDate || ""}</td>
       <td>${row.paidDate || ""}</td>
-      <td>${row.status === "PAID" ? formatCsvNumber(row.amountActualEur) : ""}</td>
+      <td>${Number.isFinite(Number(row.amountActualEur)) && Number(row.amountActualEur) > 0 ? formatCsvNumber(row.amountActualEur) : ""}</td>
+      <td>${row.paymentId || ""}</td>
       <td>${row.paymentMethod || ""}</td>
       <td>${row.payer || ""}</td>
-      <td>${row.driveLink || ""}</td>
     </tr>
   `).join("");
 
@@ -334,9 +411,9 @@ function openPrintView(rows, { month, scope }) {
         <th>DueDate</th>
         <th>PaidDate</th>
         <th>Ist EUR</th>
+        <th>PaymentId</th>
         <th>Methode</th>
         <th>Zahler</th>
-        <th>DriveLink</th>
       </tr>
     </thead>
     <tbody>
@@ -395,9 +472,9 @@ export function render(root) {
       el("th", {}, ["Bezahlt"]),
       el("th", {}, ["Soll EUR"]),
       el("th", {}, ["Ist EUR"]),
+      el("th", {}, ["Payment ID"]),
       el("th", {}, ["Zahler"]),
       el("th", {}, ["Methode"]),
-      el("th", {}, ["Drive Link"]),
       el("th", {}, ["Notiz"]),
     ]),
   ]);
@@ -419,6 +496,12 @@ export function render(root) {
     const month = filterMonth.value || "";
     const scope = getScopeValue();
     const rows = buildPaymentJournalRows({ month, scope });
+    runExportAssertions();
+    rows.forEach(row => {
+      if (row.status === "PAID" && Number.isFinite(Number(row.amountActualEur))) {
+        console.assert(Number(row.amountActualEur) > 0, "Paid rows should not have 0 actual amounts");
+      }
+    });
 
     if (!rows.length) {
       tbody.append(el("tr", {}, [
@@ -428,6 +511,9 @@ export function render(root) {
     }
 
     rows.forEach(row => {
+      const actualValue = Number.isFinite(Number(row.amountActualEur)) && Number(row.amountActualEur) > 0
+        ? fmtEurPlain(row.amountActualEur)
+        : "—";
       tbody.append(el("tr", {}, [
         el("td", {}, [row.month || "—"]),
         el("td", {}, [row.entityType]),
@@ -439,10 +525,10 @@ export function render(root) {
         el("td", {}, [fmtDate(row.dueDate)]),
         el("td", {}, [fmtDate(row.paidDate)]),
         el("td", {}, [fmtEurPlain(row.amountPlannedEur)]),
-        el("td", {}, [row.status === "PAID" ? fmtEurPlain(row.amountActualEur) : "—"]),
+        el("td", {}, [actualValue]),
+        el("td", {}, [row.paymentId || "—"]),
         el("td", {}, [row.payer || "—"]),
         el("td", {}, [row.paymentMethod || "—"]),
-        el("td", {}, [row.driveLink || "—"]),
         el("td", {}, [row.note || "—"]),
       ]));
     });
@@ -479,14 +565,14 @@ export function render(root) {
       { key: "paidDate", label: "paidDate" },
       { key: "amountPlannedEur", label: "amountPlannedEur" },
       { key: "amountActualEur", label: "amountActualEur" },
+      { key: "paymentId", label: "paymentId" },
       { key: "payer", label: "payer" },
       { key: "paymentMethod", label: "paymentMethod" },
-      { key: "driveLink", label: "driveLink" },
       { key: "note", label: "note" },
       { key: "internalId", label: "internalId" },
     ];
     const csvRows = buildCsvRows(rows);
-    const csv = toCsv(csvRows, headers);
+    const csv = toCsv(csvRows, headers, ";");
     const scopeLabel = scope || "both";
     const fileMonth = month || currentMonthKey();
     const fileName = `payment_journal_${fileMonth}_${scopeLabel}.csv`;
