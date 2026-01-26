@@ -260,8 +260,8 @@ td.num, th.num{text-align:right}
 .inventory-cell.safety-negative::after{content:""; position:absolute; right:2px; top:2px; width:0; height:0; border-top:8px solid rgba(220,38,38,0.8); border-left:8px solid transparent;}
 .inventory-warning-icon{margin-left:4px; color:rgba(185,28,28,0.9);}
 .inventory-cell-value{position:relative; z-index:2;}
-.inventory-cell .inventory-tooltip{position:absolute; left:0; top:100%; margin-top:6px; min-width:260px; max-width:320px; background:#0f1b2d; color:#fff; font-size:12px; padding:10px; border-radius:10px; box-shadow:var(--shadow); opacity:0; pointer-events:none; transform:translateY(-4px); transition:opacity .12s ease, transform .12s ease; z-index:15;}
-.inventory-cell:hover .inventory-tooltip{opacity:1; pointer-events:auto; transform:translateY(0);}
+.inventory-tooltip-layer{position:fixed; min-width:260px; max-width:340px; background:#0f1b2d; color:#fff; font-size:12px; padding:10px; border-radius:10px; box-shadow:var(--shadow); z-index:50; pointer-events:auto;}
+.inventory-tooltip-layer[hidden]{display:none;}
 .inventory-tooltip-header{margin-bottom:8px;}
 .inventory-tooltip-title{font-weight:700; margin-bottom:4px;}
 .inventory-tooltip-alias{font-size:12px; color:rgba(255,255,255,0.8);}
@@ -270,6 +270,14 @@ td.num, th.num{text-align:right}
 .inventory-tooltip-row:first-child{border-top:none; padding-top:0;}
 .inventory-tooltip-meta{text-align:right;}
 .inventory-tooltip-actions{display:flex; justify-content:flex-end;}
+.inventory-legend{display:flex; flex-wrap:wrap; gap:12px; margin-top:12px; font-size:12px;}
+.inventory-legend-item{display:inline-flex; align-items:center; gap:6px; color:var(--muted);}
+.inventory-legend-item .legend-swatch{width:14px; height:8px; border-radius:999px; display:inline-block; background:#e2e8f0;}
+.inventory-legend-item .legend-swatch.safety-negative{background:rgba(255,107,107,0.4);}
+.inventory-legend-item .legend-swatch.safety-low{background:rgba(255,204,102,0.35);}
+.inventory-legend-item .legend-swatch.inbound-po{background:rgba(59,130,246,0.65);}
+.inventory-legend-item .legend-swatch.inbound-fo{background:rgba(124,58,237,0.65);}
+.inventory-toggle-group{display:flex; align-items:center; gap:8px;}
 .forecast-toolbar{display:flex; flex-direction:column; gap:12px; margin-bottom:12px;}
 .forecast-toolbar-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
 .forecast-toolbar .toggle{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin:0;}

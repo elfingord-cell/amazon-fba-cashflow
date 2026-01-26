@@ -99,6 +99,7 @@ function loadViewState() {
       collapsed: raw.collapsed && typeof raw.collapsed === "object" ? raw.collapsed : {},
       search: raw.search || "",
       showSafety: raw.showSafety !== false,
+      projectionMode: raw.projectionMode === "doh" ? "doh" : "units",
     };
   } catch {
     return {
@@ -106,6 +107,7 @@ function loadViewState() {
       collapsed: {},
       search: "",
       showSafety: true,
+      projectionMode: "units",
     };
   }
 }
@@ -226,6 +228,27 @@ function getProductEkEur(product, settings) {
   return null;
 }
 
+function formatEur(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return Number(value).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatShortDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function resolvePoEtd(po) {
+  const manual = parseISODate(po?.etdManual || po?.etdDate);
+  if (manual) return manual;
+  const orderDate = parseISODate(po?.orderDate);
+  if (!orderDate) return null;
+  const prodDays = Number(po?.prodDays || 0);
+  const etd = new Date(orderDate.getTime());
+  etd.setDate(etd.getDate() + Math.max(0, prodDays));
+  return etd;
+}
+
 function buildInboundMap(state) {
   const inboundMap = new Map();
   const missingEtaSkus = new Set();
@@ -315,6 +338,76 @@ function buildInboundMap(state) {
   return { inboundMap, missingEtaSkus };
 }
 
+function buildInTransitMap(state) {
+  const map = new Map();
+  const today = new Date();
+  const addEntry = (sku, entry) => {
+    if (!map.has(sku)) map.set(sku, { total: 0, entries: [] });
+    const target = map.get(sku);
+    target.total += entry.qty;
+    target.entries.push(entry);
+  };
+
+  (state.pos || []).forEach(po => {
+    if (!po || po.archived) return;
+    if (String(po.status || "").toUpperCase() === "CANCELLED") return;
+    const eta = resolvePoEta(po);
+    if (eta && eta < today) return;
+    const etd = resolvePoEtd(po);
+    const items = Array.isArray(po.items) && po.items.length
+      ? po.items
+      : [{ sku: po.sku, units: po.units }];
+    items.forEach(item => {
+      const sku = String(item?.sku || "").trim();
+      if (!sku) return;
+      const units = parseDeNumber(item?.units ?? 0);
+      const qty = Number.isFinite(units) ? Math.round(units) : 0;
+      if (!qty) return;
+      addEntry(sku, {
+        type: "PO",
+        id: String(po.id || po.poNo || sku),
+        label: po.poNo || po.id || "PO",
+        supplier: getSupplierName(state, po.supplierId || po.supplier),
+        qty,
+        etd: etd ? formatShortDate(etd) : "—",
+        eta: eta ? formatShortDate(eta) : "—",
+        route: "#po",
+        open: po.id || po.poNo || "",
+      });
+    });
+  });
+
+  (state.fos || []).forEach(fo => {
+    if (!fo) return;
+    if (String(fo.status || "").toUpperCase() === "CANCELLED") return;
+    const eta = resolveFoArrival(fo);
+    if (eta && eta < today) return;
+    const items = Array.isArray(fo.items) && fo.items.length
+      ? fo.items
+      : [{ sku: fo.sku, units: fo.units }];
+    items.forEach(item => {
+      const sku = String(item?.sku || "").trim();
+      if (!sku) return;
+      const units = parseDeNumber(item?.units ?? 0);
+      const qty = Number.isFinite(units) ? Math.round(units) : 0;
+      if (!qty) return;
+      addEntry(sku, {
+        type: "FO",
+        id: String(fo.id || fo.foNo || sku),
+        label: fo.foNo || fo.id || "FO",
+        supplier: getSupplierName(state, fo.supplierId || fo.supplier),
+        qty,
+        etd: "—",
+        eta: eta ? formatShortDate(eta) : "—",
+        route: "#fo",
+        open: fo.id || fo.foNo || "",
+      });
+    });
+  });
+
+  return map;
+}
+
 function renderInboundTooltip({ alias, month, events }) {
   if (!events || !events.length) return "";
   const rows = events.map(event => `
@@ -344,6 +437,39 @@ function renderInboundTooltip({ alias, month, events }) {
   `;
 }
 
+function renderInTransitTooltip({ alias, entries }) {
+  if (!entries || !entries.length) return "";
+  const rows = entries.map(entry => `
+    <div class="inventory-tooltip-row">
+      <div>
+        <strong>${escapeHtml(entry.type)} ${escapeHtml(entry.label)}</strong>
+        <div class="muted">${escapeHtml(entry.supplier || "—")}</div>
+      </div>
+      <div class="inventory-tooltip-meta">
+        <div>${formatInt(entry.qty)}</div>
+        <div class="muted">ETD ${escapeHtml(entry.etd)} · ETA ${escapeHtml(entry.eta)}</div>
+      </div>
+    </div>
+    <div class="inventory-tooltip-actions">
+      <button class="btn sm secondary inventory-link" type="button" data-route="${entry.route}" data-open="${escapeHtml(entry.open)}">Open ${entry.type}</button>
+    </div>
+  `).join("");
+
+  return `
+    <div class="inventory-tooltip">
+      <div class="inventory-tooltip-header">
+        <div class="inventory-tooltip-title">In Transit</div>
+        <div class="inventory-tooltip-alias">${escapeHtml(alias || "—")}</div>
+      </div>
+      <div class="inventory-tooltip-body">${rows}</div>
+    </div>
+  `;
+}
+
+function encodeTooltip(html) {
+  return encodeURIComponent(html || "");
+}
+
 function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories }) {
   const search = view.search.trim().toLowerCase();
   const filtered = products.filter(product => {
@@ -358,12 +484,15 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
     const sku = String(item.sku || "").trim();
     if (sku) prevMap.set(sku, item);
   });
+  const inTransitMap = buildInTransitMap(state);
 
   const rows = groups.map(group => {
     const collapsed = view.collapsed[group.id];
     const items = group.items.map(product => {
       const sku = String(product.sku || "").trim();
       const item = getSnapshotItem(snapshot, sku);
+      const inTransit = inTransitMap.get(sku);
+      const inTransitTotal = inTransit ? inTransit.total : 0;
       const prevItem = prevMap.get(sku);
       const amazonUnits = Number(item?.amazonUnits || 0);
       const threePLUnits = Number(item?.threePLUnits || 0);
@@ -373,6 +502,9 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
       const ekEur = getProductEkEur(product, state.settings || {});
       const totalValue = Number.isFinite(ekEur) ? Math.round(totalUnits * ekEur) : null;
       const warning = !Number.isFinite(ekEur);
+      const transitTooltip = inTransit && inTransit.entries.length
+        ? renderInTransitTooltip({ alias: product.alias || sku, entries: inTransit.entries })
+        : "";
       return `
         <tr class="inventory-row ${collapsed ? "is-collapsed" : ""}" data-sku="${escapeHtml(sku)}" data-category="${escapeHtml(group.id)}">
           <td class="inventory-col-sku sticky-cell">${escapeHtml(sku)}</td>
@@ -387,9 +519,10 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
             <span class="inventory-input-hint">Nur ganze Einheiten</span>
           </td>
           <td class="num inventory-value" data-field="totalUnits">${formatInt(totalUnits)}</td>
+          <td class="num inventory-value inventory-in-transit" data-tooltip-html="${encodeTooltip(transitTooltip)}">${formatInt(inTransitTotal)}</td>
           <td class="num">
             ${warning ? `<span class="cell-warning" title="EK fehlt im Produkt">${"⚠︎"}</span>` : ""}
-            <span data-field="ekEur">${Number.isFinite(ekEur) ? formatInt(ekEur) : "—"}</span>
+            <span data-field="ekEur">${Number.isFinite(ekEur) ? formatEur(ekEur) : "—"}</span>
           </td>
           <td class="num inventory-value" data-field="totalValue">${Number.isFinite(totalValue) ? formatInt(totalValue) : "—"}</td>
           <td class="num inventory-value" data-field="delta">${formatInt(delta)}</td>
@@ -399,17 +532,17 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
     }).join("");
 
     return `
-      <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
-        <th class="inventory-col-sku sticky-cell" colspan="3">
-          <button type="button" class="tree-toggle" data-category="${escapeHtml(group.id)}">${collapsed ? "▸" : "▾"}</button>
-          <span class="tree-label">${escapeHtml(group.name)}</span>
-          <span class="muted">(${group.items.length})</span>
-        </th>
-        <th colspan="7"></th>
-      </tr>
-      ${items}
-    `;
-  }).join("");
+        <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
+          <th class="inventory-col-sku sticky-cell" colspan="3">
+            <button type="button" class="tree-toggle" data-category="${escapeHtml(group.id)}">${collapsed ? "▸" : "▾"}</button>
+            <span class="tree-label">${escapeHtml(group.name)}</span>
+            <span class="muted">(${group.items.length})</span>
+          </th>
+          <th colspan="8"></th>
+        </tr>
+        ${items}
+      `;
+    }).join("");
 
   return `
     <table class="table-compact inventory-table inventory-snapshot-table">
@@ -421,6 +554,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
           <th class="num">Amazon Units</th>
           <th class="num">3PL Units</th>
           <th class="num">Total Units</th>
+          <th class="num">In Transit</th>
           <th class="num">EK (EUR)</th>
           <th class="num">Total Value €</th>
           <th class="num">Delta vs prev</th>
@@ -428,7 +562,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
         </tr>
       </thead>
       <tbody>
-        ${rows || `<tr><td class="muted" colspan="10">Keine Produkte gefunden.</td></tr>`}
+        ${rows || `<tr><td class="muted" colspan="11">Keine Produkte gefunden.</td></tr>`}
       </tbody>
     </table>
   `;
@@ -458,6 +592,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
       const startAvailable = (snapshotItem?.amazonUnits || 0) + (snapshotItem?.threePLUnits || 0);
       let prevAvailable = Number.isFinite(startAvailable) ? startAvailable : 0;
       let previousUnknown = false;
+      let inboundDetailIndex = 0;
       const cells = months.map(month => {
         const skuInbound = inboundMap.get(sku);
         const inboundEntry = skuInbound ? skuInbound.get(month) : null;
@@ -471,8 +606,9 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           previousUnknown = true;
         }
         const forecastMissing = !Number.isFinite(forecastUnits) || previousUnknown;
+        const safetyDays = state.inventory?.settings?.safetyDays || 60;
         const safetyUnits = view.showSafety && Number.isFinite(forecastUnits)
-          ? Math.round((forecastUnits / daysInMonth(month)) * (state.inventory?.settings?.safetyDays || 60))
+          ? Math.round((forecastUnits / daysInMonth(month)) * safetyDays)
           : null;
         const safetyLow = Number.isFinite(endAvailable) && Number.isFinite(safetyUnits) && endAvailable < safetyUnits;
         const safetyNegative = Number.isFinite(endAvailable) && endAvailable < 0;
@@ -489,11 +625,23 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
             ? "safety-low"
             : "";
         const incompleteClass = forecastMissing ? "incomplete" : "";
+        const dailyDemand = Number.isFinite(forecastUnits) && forecastUnits > 0
+          ? forecastUnits / daysInMonth(month)
+          : null;
+        const dohValue = Number.isFinite(endAvailable) && Number.isFinite(dailyDemand) && dailyDemand > 0
+          ? Math.max(0, Math.round(endAvailable / dailyDemand))
+          : null;
+        const showDoh = view.projectionMode === "doh";
         const displayValue = forecastMissing
           ? "—"
           : safetyNegative
             ? `0 <span class="inventory-warning-icon">⚠︎</span>`
-            : formatInt(endAvailable);
+            : showDoh
+              ? (dohValue == null ? "—" : formatInt(dohValue))
+              : formatInt(endAvailable);
+        const safetyClassFinal = showDoh
+          ? (Number.isFinite(dohValue) && dohValue < safetyDays ? "safety-negative" : "")
+          : safetyClass;
         const inboundMarkers = inboundEntry
           ? `
             ${inboundEntry.hasPo ? `<span class="inventory-inbound-marker po"></span>` : ""}
@@ -503,11 +651,12 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const tooltip = inboundEntry
           ? renderInboundTooltip({ alias, month, events: inboundEntry.events })
           : "";
+        const tooltipHtml = tooltip ? tooltip.replace(/\s+/g, " ").trim() : "";
+        const tooltipId = tooltip ? `inventory-inbound-${sku}-${month}-${inboundDetailIndex++}` : "";
         return `
-          <td class="num ${inboundClasses} ${safetyClass} ${incompleteClass}">
+          <td class="num ${inboundClasses} ${safetyClassFinal} ${incompleteClass}" ${tooltip ? `data-tooltip-html="${encodeTooltip(tooltipHtml)}"` : ""} ${tooltipId ? `data-tooltip-id="${tooltipId}"` : ""}>
             <span class="inventory-cell-value">${displayValue}</span>
             ${inboundMarkers}
-            ${tooltip}
           </td>
         `;
       }).join("");
@@ -640,6 +789,15 @@ export function render(root) {
               ${projectionOptions.map(option => `<option value="${option}" ${option === projectionMonths ? "selected" : ""}>${option} Monate</option>`).join("")}
             </select>
           </label>
+          <div class="inventory-toggle-group">
+            <span class="muted">Anzeige</span>
+            <div class="segment-control">
+              <input type="radio" id="inventory-mode-units" name="inventory-mode" value="units" ${view.projectionMode === "units" ? "checked" : ""} />
+              <label for="inventory-mode-units">Units</label>
+              <input type="radio" id="inventory-mode-doh" name="inventory-mode" value="doh" ${view.projectionMode === "doh" ? "checked" : ""} />
+              <label for="inventory-mode-doh">Days on hand</label>
+            </div>
+          </div>
           <label class="inventory-toggle">
             <input type="checkbox" id="inventory-safety" ${view.showSafety ? "checked" : ""} />
             <span>Show safety threshold</span>
@@ -651,7 +809,14 @@ export function render(root) {
           ${buildProjectionTable({ state, view, snapshot, products, categories, months })}
         </div>
       </div>
+      <div class="inventory-legend">
+        <span class="inventory-legend-item"><span class="legend-swatch safety-negative"></span> Stockout / unter Safety</span>
+        <span class="inventory-legend-item"><span class="legend-swatch safety-low"></span> Unter Safety (Units)</span>
+        <span class="inventory-legend-item"><span class="legend-swatch inbound-po"></span> Inbound PO</span>
+        <span class="inventory-legend-item"><span class="legend-swatch inbound-fo"></span> Inbound FO</span>
+      </div>
     </section>
+    <div id="inventory-tooltip-layer" class="inventory-tooltip-layer" hidden></div>
   `;
 
   const monthSelect = root.querySelector("#inventory-month");
@@ -758,6 +923,73 @@ export function render(root) {
     });
   }
 
+  const tooltipLayer = root.querySelector("#inventory-tooltip-layer");
+  let activeTooltipTarget = null;
+
+  function positionTooltip(event) {
+    if (!tooltipLayer || tooltipLayer.hidden) return;
+    const offset = 12;
+    const maxX = window.innerWidth - tooltipLayer.offsetWidth - 8;
+    const maxY = window.innerHeight - tooltipLayer.offsetHeight - 8;
+    const x = Math.min(event.clientX + offset, maxX);
+    const y = Math.min(event.clientY + offset, maxY);
+    tooltipLayer.style.left = `${Math.max(8, x)}px`;
+    tooltipLayer.style.top = `${Math.max(8, y)}px`;
+  }
+
+  function showTooltip(target, html, event) {
+    if (!tooltipLayer || !html) return;
+    let decoded = html;
+    try {
+      decoded = decodeURIComponent(html);
+    } catch {
+      decoded = html;
+    }
+    tooltipLayer.innerHTML = decoded;
+    tooltipLayer.hidden = false;
+    tooltipLayer.classList.add("is-visible");
+    activeTooltipTarget = target;
+    positionTooltip(event);
+  }
+
+  function hideTooltip() {
+    if (!tooltipLayer) return;
+    tooltipLayer.hidden = true;
+    tooltipLayer.classList.remove("is-visible");
+    tooltipLayer.innerHTML = "";
+    activeTooltipTarget = null;
+  }
+
+  root.addEventListener("mouseover", (event) => {
+    const target = event.target.closest("[data-tooltip-html]");
+    if (!target || target === activeTooltipTarget) return;
+    const html = target.getAttribute("data-tooltip-html");
+    if (!html) return;
+    showTooltip(target, html, event);
+  });
+
+  root.addEventListener("mousemove", (event) => {
+    if (!activeTooltipTarget) return;
+    positionTooltip(event);
+  });
+
+  root.addEventListener("mouseout", (event) => {
+    if (!activeTooltipTarget) return;
+    if (event.relatedTarget && tooltipLayer && tooltipLayer.contains(event.relatedTarget)) {
+      return;
+    }
+    const leavingTarget = event.target.closest("[data-tooltip-html]");
+    if (leavingTarget && leavingTarget === activeTooltipTarget) {
+      hideTooltip();
+    }
+  });
+
+  if (tooltipLayer) {
+    tooltipLayer.addEventListener("mouseleave", () => {
+      hideTooltip();
+    });
+  }
+
   root.addEventListener("click", (event) => {
     const link = event.target.closest(".inventory-link");
     if (!link) return;
@@ -789,6 +1021,15 @@ export function render(root) {
       render(root);
     });
   }
+
+  const modeInputs = root.querySelectorAll("input[name='inventory-mode']");
+  modeInputs.forEach(input => {
+    input.addEventListener("change", (event) => {
+      view.projectionMode = event.target.value === "doh" ? "doh" : "units";
+      saveViewState(view);
+      render(root);
+    });
+  });
 }
 
 export default { render };

@@ -55,6 +55,12 @@ function monthEndFromKey(yyyymm) {
   return new Date(y, m, 0);
 }
 function getCnyWindow(settings, year) {
+  const direct = settings?.cny;
+  if (direct?.start && direct?.end) {
+    const start = parseISODate(direct.start);
+    const end = parseISODate(direct.end);
+    if (start && end && end >= start) return { start, end };
+  }
   const entry = settings?.cnyBlackoutByYear?.[String(year)];
   if (!entry) return null;
   const start = parseISODate(entry.start);
@@ -68,27 +74,25 @@ function applyCnyBlackout(orderDate, prodDays, settings) {
   if (!(orderDate instanceof Date) || Number.isNaN(orderDate.getTime())) {
     return { prodDone: orderDate, adjustmentDays: 0 };
   }
-  const remainingBase = Math.max(0, Number(prodDays || 0));
-  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
-    return { prodDone: addDays(orderDate, remainingBase), adjustmentDays: 0 };
+  const baseDays = Math.max(0, Number(prodDays || 0));
+  const prodEnd = addDays(orderDate, baseDays);
+  if (!settings || baseDays === 0) {
+    return { prodDone: prodEnd, adjustmentDays: 0 };
   }
-  let remaining = remainingBase;
-  let current = new Date(orderDate.getTime());
   let adjustmentDays = 0;
-  while (remaining > 0) {
-    const window = getCnyWindow(settings, current.getUTCFullYear());
-    if (window) {
-      const endExclusive = addDays(window.end, 1);
-      if (current >= window.start && current < endExclusive) {
-        adjustmentDays += 1;
-        current = addDays(current, 1);
-        continue;
-      }
-    }
-    remaining -= 1;
-    current = addDays(current, 1);
+  const startYear = orderDate.getUTCFullYear();
+  const endYear = prodEnd.getUTCFullYear();
+  for (let year = startYear; year <= endYear; year += 1) {
+    const window = getCnyWindow(settings, year);
+    if (!window) continue;
+    const overlapStart = window.start > orderDate ? window.start : orderDate;
+    const overlapEnd = window.end < prodEnd ? window.end : prodEnd;
+    if (overlapEnd < overlapStart) continue;
+    const overlap = Math.round((overlapEnd.getTime() - overlapStart.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    adjustmentDays += Math.max(0, overlap);
   }
-  return { prodDone: current, adjustmentDays };
+  const prodDone = adjustmentDays ? addDays(prodEnd, adjustmentDays) : prodEnd;
+  return { prodDone, adjustmentDays };
 }
 
 function anchorsFor(row, settings) {

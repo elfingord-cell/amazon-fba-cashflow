@@ -10,6 +10,7 @@ import { createDataTable } from "./components/dataTable.js";
 import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMoneyDE } from "./utils/numberFormat.js";
+import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUtil } from "../lib/dateUtils.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -165,6 +166,12 @@ function formatDateISO(date) {
 }
 
 function getCnyWindow(settings, year) {
+  const direct = settings?.cny;
+  if (direct?.start && direct?.end) {
+    const start = parseISODateUtil(direct.start);
+    const end = parseISODateUtil(direct.end);
+    if (start && end && end >= start) return { start, end };
+  }
   const entry = settings?.cnyBlackoutByYear?.[String(year)];
   if (!entry) return null;
   const start = parseISOToDate(entry.start);
@@ -175,40 +182,37 @@ function getCnyWindow(settings, year) {
   return { start, end };
 }
 
-function addDaysUtc(date, days) {
-  return addDays(date, days);
-}
-
 function applyCnyBlackout(orderDate, prodDays, settings) {
   if (!(orderDate instanceof Date) || Number.isNaN(orderDate.getTime())) {
     return { prodDone: orderDate, adjustmentDays: 0, cnyStart: null, cnyEnd: null };
   }
-  const remainingBase = Math.max(0, Number(prodDays || 0));
-  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
-    return { prodDone: addDaysUtc(orderDate, remainingBase), adjustmentDays: 0, cnyStart: null, cnyEnd: null };
-  }
-  let remaining = remainingBase;
-  let current = new Date(orderDate.getTime());
+  const baseDays = Math.max(0, Number(prodDays || 0));
+  const prodEnd = addDaysUtcDate(orderDate, baseDays);
+  if (!prodEnd) return { prodDone: orderDate, adjustmentDays: 0, cnyStart: null, cnyEnd: null };
+
   let adjustmentDays = 0;
   let usedStart = null;
   let usedEnd = null;
-  while (remaining > 0) {
-    const year = current.getUTCFullYear();
+  const startYear = orderDate.getUTCFullYear();
+  const endYear = prodEnd.getUTCFullYear();
+  for (let year = startYear; year <= endYear; year += 1) {
     const window = getCnyWindow(settings, year);
-    if (window) {
-      const endExclusive = addDaysUtc(window.end, 1);
-      if (current >= window.start && current < endExclusive) {
-        adjustmentDays += 1;
-        usedStart = !usedStart || window.start < usedStart ? window.start : usedStart;
-        usedEnd = !usedEnd || window.end > usedEnd ? window.end : usedEnd;
-        current = addDaysUtc(current, 1);
-        continue;
-      }
+    if (!window) continue;
+    const overlap = overlapDays(orderDate, prodEnd, window.start, window.end);
+    if (overlap > 0) {
+      adjustmentDays += overlap;
+      usedStart = !usedStart || window.start < usedStart ? window.start : usedStart;
+      usedEnd = !usedEnd || window.end > usedEnd ? window.end : usedEnd;
     }
-    remaining -= 1;
-    current = addDaysUtc(current, 1);
   }
-  return { prodDone: current, adjustmentDays, cnyStart: usedStart, cnyEnd: usedEnd };
+
+  const adjustedEnd = adjustmentDays ? addDaysUtcDate(prodEnd, adjustmentDays) : prodEnd;
+  return {
+    prodDone: adjustedEnd || prodEnd,
+    adjustmentDays,
+    cnyStart: usedStart,
+    cnyEnd: usedEnd,
+  };
 }
 
 const QUICKFILL_FIELD_MAP = [

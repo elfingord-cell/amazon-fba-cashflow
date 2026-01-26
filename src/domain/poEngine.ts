@@ -37,6 +37,7 @@ export type Settings = {
   freightLagDays: number;
   vatRefundEnabled: boolean;
   vatRefundLagMonths: number;
+  cny?: { start: string; end: string };
   cnyBlackoutByYear?: Record<string, { start: string; end: string }>;
 };
 
@@ -87,6 +88,13 @@ function addDays(value: Date, days: number): Date {
 }
 
 function getCnyWindow(settings: Settings, year: number): { start: Date; end: Date } | null {
+  if (settings?.cny?.start && settings?.cny?.end) {
+    const directStart = parseDateOptional(settings.cny.start);
+    const directEnd = parseDateOptional(settings.cny.end);
+    if (directStart && directEnd && directEnd >= directStart) {
+      return { start: directStart, end: directEnd };
+    }
+  }
   const entry = settings?.cnyBlackoutByYear?.[String(year)];
   if (!entry) return null;
   const start = parseDateOptional(entry.start);
@@ -97,27 +105,25 @@ function getCnyWindow(settings: Settings, year: number): { start: Date; end: Dat
 }
 
 function applyCnyBlackout(orderDate: Date, prodDays: number, settings: Settings): { prodDone: Date; adjustmentDays: number } {
-  const remainingBase = Math.max(0, Number(prodDays || 0));
-  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
-    return { prodDone: addDays(orderDate, remainingBase), adjustmentDays: 0 };
+  const baseDays = Math.max(0, Number(prodDays || 0));
+  const prodEnd = addDays(orderDate, baseDays);
+  if (baseDays === 0) {
+    return { prodDone: prodEnd, adjustmentDays: 0 };
   }
-  let remaining = remainingBase;
-  let current = new Date(orderDate.getTime());
   let adjustmentDays = 0;
-  while (remaining > 0) {
-    const window = getCnyWindow(settings, current.getUTCFullYear());
-    if (window) {
-      const endExclusive = addDays(window.end, 1);
-      if (current >= window.start && current < endExclusive) {
-        adjustmentDays += 1;
-        current = addDays(current, 1);
-        continue;
-      }
-    }
-    remaining -= 1;
-    current = addDays(current, 1);
+  const startYear = orderDate.getUTCFullYear();
+  const endYear = prodEnd.getUTCFullYear();
+  for (let year = startYear; year <= endYear; year += 1) {
+    const window = getCnyWindow(settings, year);
+    if (!window) continue;
+    const overlapStart = window.start > orderDate ? window.start : orderDate;
+    const overlapEnd = window.end < prodEnd ? window.end : prodEnd;
+    if (overlapEnd < overlapStart) continue;
+    const overlap = Math.round((overlapEnd.getTime() - overlapStart.getTime()) / MILLIS_PER_DAY) + 1;
+    adjustmentDays += Math.max(0, overlap);
   }
-  return { prodDone: current, adjustmentDays };
+  const prodDone = adjustmentDays ? addDays(prodEnd, adjustmentDays) : prodEnd;
+  return { prodDone, adjustmentDays };
 }
 
 function lastOfMonth(year: number, month: number): Date {

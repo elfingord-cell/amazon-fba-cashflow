@@ -1,5 +1,6 @@
 import { loadState, saveState } from "../data/storageLocal.js";
 import { formatDeNumber, parseDeNumber, validateAll, validateSettings } from "../lib/dataHealth.js";
+import { parseISODate } from "../lib/dateUtils.js";
 import { goToIssue } from "./dataHealthUi.js";
 
 const CURRENCIES = ["EUR", "USD", "CNY"];
@@ -37,6 +38,12 @@ function updateSettings(state, patch) {
   if (typeof patch.defaultDdp !== "undefined") {
     state.settings.defaultDdp = patch.defaultDdp === true;
   }
+  if (patch.cny && typeof patch.cny === "object") {
+    state.settings.cny = {
+      start: patch.cny.start || "",
+      end: patch.cny.end || "",
+    };
+  }
   if (patch.cnyBlackoutByYear && typeof patch.cnyBlackoutByYear === "object") {
     state.settings.cnyBlackoutByYear = state.settings.cnyBlackoutByYear || {};
     Object.entries(patch.cnyBlackoutByYear).forEach(([year, entry]) => {
@@ -54,8 +61,15 @@ export function render(root) {
   const state = loadState();
   const settings = state.settings || {};
   const lead = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
-  const currentYear = new Date().getFullYear();
-  const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "", defaultProductionLeadTime: "" };
+  const errors = {
+    air: "",
+    rail: "",
+    sea: "",
+    buffer: "",
+    fxRate: "",
+    defaultProductionLeadTime: "",
+    cny: "",
+  };
 
   root.innerHTML = `
     <section class="card">
@@ -118,15 +132,12 @@ export function render(root) {
 
     <section class="card">
       <h3>CNY Blackout</h3>
-      <p class="muted">Produktionspause rund um das chinesische Neujahr. Pro Jahr hinterlegbar.</p>
-      <div class="grid three">
-        <label>
-          Jahr
-          <input id="cny-year" type="number" min="2000" step="1" value="${currentYear}">
-        </label>
+      <p class="muted">Produktionspause rund um das chinesische Neujahr. Gilt für die Terminberechnung.</p>
+      <div class="grid two">
         <label>
           CNY Start
           <input id="cny-start" type="date" />
+          <small class="form-error" id="cny-error"></small>
         </label>
         <label>
           CNY Ende
@@ -166,21 +177,10 @@ export function render(root) {
     </section>
   `;
   $("#default-currency", root).value = settings.defaultCurrency || "EUR";
-  const cnyYearInput = $("#cny-year", root);
   const cnyStartInput = $("#cny-start", root);
   const cnyEndInput = $("#cny-end", root);
-
-  const loadCnyForYear = (yearValue) => {
-    const yearKey = String(yearValue || currentYear);
-    const entry = state.settings?.cnyBlackoutByYear?.[yearKey] || {};
-    if (cnyStartInput) cnyStartInput.value = entry.start || "";
-    if (cnyEndInput) cnyEndInput.value = entry.end || "";
-  };
-
-  if (cnyYearInput) {
-    loadCnyForYear(cnyYearInput.value || currentYear);
-    cnyYearInput.addEventListener("change", () => loadCnyForYear(cnyYearInput.value || currentYear));
-  }
+  if (cnyStartInput) cnyStartInput.value = settings?.cny?.start || "";
+  if (cnyEndInput) cnyEndInput.value = settings?.cny?.end || "";
 
   function renderHealthHints() {
     const issues = validateSettings(state.settings || {});
@@ -236,16 +236,29 @@ export function render(root) {
     const productionLeadInput = $("#default-production-lead", root);
     const productionLeadRaw = productionLeadInput ? parseDeNumber(productionLeadInput.value) : null;
     const defaultProductionLead = productionLeadRaw == null ? null : Math.max(0, Math.round(productionLeadRaw));
+    const cnyStart = cnyStartInput ? cnyStartInput.value : "";
+    const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
+    const cnyStartDate = parseISODate(cnyStart);
+    const cnyEndDate = parseISODate(cnyEnd);
     if (air == null) errors.air = "Wert muss ≥ 0 sein.";
     if (rail == null) errors.rail = "Wert muss ≥ 0 sein.";
     if (sea == null) errors.sea = "Wert muss ≥ 0 sein.";
     if (buffer == null) errors.buffer = "Wert muss ≥ 0 sein.";
     if (fxRate == null || fxRate <= 0) errors.fxRate = "Wert muss > 0 sein.";
+    if ((cnyStart && !cnyEnd) || (!cnyStart && cnyEnd)) {
+      errors.cny = "Bitte Start und Ende setzen.";
+    } else if (cnyStartDate && cnyEndDate && cnyStartDate > cnyEndDate) {
+      errors.cny = "Start darf nicht nach Ende liegen.";
+    } else {
+      errors.cny = "";
+    }
     $("#lead-air-error", root).textContent = errors.air;
     $("#lead-rail-error", root).textContent = errors.rail;
     $("#lead-sea-error", root).textContent = errors.sea;
     $("#buffer-error", root).textContent = errors.buffer;
     $("#fx-rate-error", root).textContent = errors.fxRate;
+    const cnyError = $("#cny-error", root);
+    if (cnyError) cnyError.textContent = errors.cny;
     const defaultLeadError = $("#default-production-lead-error", root);
     if (defaultLeadError) defaultLeadError.textContent = errors.defaultProductionLeadTime;
     return {
@@ -255,14 +268,13 @@ export function render(root) {
       buffer,
       fxRate,
       defaultProductionLead,
-      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.defaultProductionLeadTime
+      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.defaultProductionLeadTime && !errors.cny
     };
   }
 
   $("#settings-save", root).addEventListener("click", () => {
     const { air, rail, sea, buffer, fxRate, defaultProductionLead, ok } = validate();
     if (!ok) return;
-    const cnyYear = cnyYearInput ? String(cnyYearInput.value || currentYear) : String(currentYear);
     const cnyStart = cnyStartInput ? cnyStartInput.value : "";
     const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
     const patch = {
@@ -272,12 +284,23 @@ export function render(root) {
       fxRate: formatRate(fxRate),
       defaultProductionLeadTimeDays: defaultProductionLead,
       defaultDdp: $("#default-ddp", root).checked,
-      cnyBlackoutByYear: {
-        [cnyYear]: cnyStart && cnyEnd ? { start: cnyStart, end: cnyEnd } : null,
+      cny: {
+        start: cnyStart || "",
+        end: cnyEnd || "",
       },
     };
     updateSettings(state, patch);
     saveState(state);
+    let toast = document.getElementById("settings-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "settings-toast";
+      toast.className = "po-toast";
+      document.body.appendChild(toast);
+    }
+    toast.textContent = "Gespeichert";
+    toast.hidden = false;
+    setTimeout(() => { toast.hidden = true; }, 2000);
     renderHealthHints();
     renderHealth();
   });
