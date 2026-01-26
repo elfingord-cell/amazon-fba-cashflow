@@ -247,7 +247,7 @@ export function render(root) {
           isActive: true,
           supplierSku: "",
           unitPrice: presetDefaults.unitPrice ?? "",
-          currency: presetDefaults.currency || supplier.currencyDefault || "USD",
+          currency: presetDefaults.currency || supplier.currencyDefault || (state.settings?.defaultCurrency || "EUR"),
           productionLeadTimeDays: presetDefaults.productionLeadTimeDays ?? supplier.productionLeadTimeDaysDefault ?? 0,
           incoterm: supplier.incotermDefault || "EXW",
           paymentTermsTemplate: null,
@@ -365,7 +365,7 @@ export function render(root) {
       (() => {
         const select = el("select", { id: "mapping-currency", class: "wide-select" });
         CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
-        select.value = base.currency || supplier.currencyDefault || "USD";
+        select.value = base.currency || supplier.currencyDefault || (state.settings?.defaultCurrency || "EUR");
         return select;
       })(),
       el("label", { style: "margin-top:12px" }, ["Default Production Lead Time"]),
@@ -555,6 +555,7 @@ export function render(root) {
   }
 
   function openSupplierModal(existing) {
+    const settings = state.settings || {};
     const supplier = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
@@ -563,7 +564,7 @@ export function render(root) {
           company_name: "",
           productionLeadTimeDaysDefault: 30,
           incotermDefault: "EXW",
-          currencyDefault: "EUR",
+          currencyDefault: settings.defaultCurrency || "EUR",
           paymentTermsDefault: defaultPaymentTerms(),
           updatedAt: null,
         };
@@ -725,7 +726,7 @@ export function render(root) {
       (() => {
         const select = el("select", { id: "supplier-currency" });
         CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
-        select.value = supplier.currencyDefault || "EUR";
+        select.value = supplier.currencyDefault || settings.defaultCurrency || "EUR";
         return select;
       })(),
       el("h4", { style: "margin-top:16px" }, ["Payment Terms"]),

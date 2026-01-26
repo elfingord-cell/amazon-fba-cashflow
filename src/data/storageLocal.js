@@ -2,6 +2,7 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
 
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
+const CURRENCIES = ["EUR", "USD", "CNY"];
 
 function parseEuro(value) {
   if (value == null) return 0;
@@ -40,8 +41,10 @@ const defaults = {
       rail: 25,
       sea: 45,
     },
+    defaultProductionLeadTimeDays: null,
     defaultBufferDays: 0,
     defaultCurrency: "EUR",
+    defaultDdp: false,
     lastUpdatedAt: null,
     productsTableColumns: {
       list: [],
@@ -169,8 +172,13 @@ function ensureGlobalSettings(state) {
   if (settings.fxRate == null || String(settings.fxRate).trim() === "") {
     settings.fxRate = defaults.settings.fxRate;
   }
+  const defaultProductionLeadTime = parseNumber(settings.defaultProductionLeadTimeDays ?? defaults.settings.defaultProductionLeadTimeDays);
+  settings.defaultProductionLeadTimeDays = Number.isFinite(defaultProductionLeadTime) && defaultProductionLeadTime > 0
+    ? defaultProductionLeadTime
+    : null;
   settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
+  settings.defaultDdp = settings.defaultDdp === true;
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
   if (!settings.productsTableColumns || typeof settings.productsTableColumns !== "object") {
     settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
@@ -203,6 +211,10 @@ function ensureSuppliers(state) {
     .map(entry => {
       const now = new Date().toISOString();
       const name = String(entry.name || "").trim();
+      const currencyCandidate = String(entry.currencyDefault || "").trim().toUpperCase();
+      const currencyDefault = CURRENCIES.includes(currencyCandidate)
+        ? currencyCandidate
+        : (defaults.settings.defaultCurrency || "EUR");
       return {
         ...entry,
         id: entry.id || `sup-${Math.random().toString(36).slice(2, 9)}`,
@@ -210,7 +222,7 @@ function ensureSuppliers(state) {
         company_name: entry.company_name != null ? String(entry.company_name).trim() : "",
         productionLeadTimeDaysDefault: entry.productionLeadTimeDaysDefault ?? 30,
         incotermDefault: entry.incotermDefault || "EXW",
-        currencyDefault: entry.currencyDefault || "EUR",
+        currencyDefault,
         paymentTermsDefault: Array.isArray(entry.paymentTermsDefault) ? entry.paymentTermsDefault : null,
         skuOverrides: normaliseSkuOverrides(entry.skuOverrides),
         createdAt: entry.createdAt || now,
@@ -235,7 +247,9 @@ function ensureProductSuppliers(state) {
         isActive: entry.isActive !== false,
         supplierSku: entry.supplierSku != null ? String(entry.supplierSku) : "",
         unitPrice: entry.unitPrice != null ? entry.unitPrice : null,
-        currency: String(entry.currency || "").trim() || "USD",
+        currency: CURRENCIES.includes(String(entry.currency || "").trim().toUpperCase())
+          ? String(entry.currency || "").trim().toUpperCase()
+          : (defaults.settings.defaultCurrency || "EUR"),
         productionLeadTimeDays: entry.productionLeadTimeDays != null ? Number(entry.productionLeadTimeDays) : null,
         incoterm: String(entry.incoterm || "").trim() || "EXW",
         paymentTermsTemplate: Array.isArray(entry.paymentTermsTemplate) ? entry.paymentTermsTemplate : null,
@@ -437,7 +451,7 @@ function parseNumber(value) {
   return parseDeNumber(value);
 }
 
-function normaliseTemplate(template) {
+function normaliseTemplate(template, options = {}) {
   if (!template || typeof template !== "object") return null;
   const next = {};
   if (template.scope) {
@@ -449,7 +463,7 @@ function normaliseTemplate(template) {
     ? template.fields
     : template;
   const transportRaw = rawFields.transportMode || rawFields.transport || "SEA";
-  const currencyRaw = rawFields.currency || "USD";
+  const currencyRaw = rawFields.currency || defaults.settings.defaultCurrency || "EUR";
   const clamp = (value, min, max) => {
     if (!Number.isFinite(value)) return null;
     if (value < min) return min;
@@ -1018,6 +1032,7 @@ function normalisePaymentTerms(terms) {
 }
 
 function normaliseProductSupplierInput(input = {}) {
+  const currencyCandidate = String(input.currency || "").trim().toUpperCase();
   return {
     id: input.id,
     supplierId: String(input.supplierId || "").trim(),
@@ -1026,7 +1041,7 @@ function normaliseProductSupplierInput(input = {}) {
     isActive: input.isActive !== false,
     supplierSku: input.supplierSku != null ? String(input.supplierSku).trim() : "",
     unitPrice: input.unitPrice != null && input.unitPrice !== "" ? Number(input.unitPrice) : null,
-    currency: String(input.currency || "").trim() || "USD",
+    currency: CURRENCIES.includes(currencyCandidate) ? currencyCandidate : (defaults.settings.defaultCurrency || "EUR"),
     productionLeadTimeDays: input.productionLeadTimeDays != null && input.productionLeadTimeDays !== ""
       ? Number(input.productionLeadTimeDays)
       : null,

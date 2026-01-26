@@ -31,6 +31,12 @@ function updateSettings(state, patch) {
   if (typeof patch.fxRate !== "undefined") {
     state.settings.fxRate = patch.fxRate;
   }
+  if (typeof patch.defaultProductionLeadTimeDays !== "undefined") {
+    state.settings.defaultProductionLeadTimeDays = patch.defaultProductionLeadTimeDays;
+  }
+  if (typeof patch.defaultDdp !== "undefined") {
+    state.settings.defaultDdp = patch.defaultDdp === true;
+  }
   state.settings.lastUpdatedAt = new Date().toISOString();
 }
 
@@ -38,7 +44,7 @@ export function render(root) {
   const state = loadState();
   const settings = state.settings || {};
   const lead = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
-  const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "" };
+  const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "", defaultProductionLeadTime: "" };
 
   root.innerHTML = `
     <section class="card">
@@ -176,6 +182,7 @@ export function render(root) {
     errors.sea = "";
     errors.buffer = "";
     errors.fxRate = "";
+    errors.defaultProductionLeadTime = "";
     const air = clampNonNegative($("#lead-air", root).value);
     const rail = clampNonNegative($("#lead-rail", root).value);
     const sea = clampNonNegative($("#lead-sea", root).value);
@@ -191,24 +198,28 @@ export function render(root) {
     $("#lead-sea-error", root).textContent = errors.sea;
     $("#buffer-error", root).textContent = errors.buffer;
     $("#fx-rate-error", root).textContent = errors.fxRate;
+    $("#default-production-lead-error", root).textContent = errors.defaultProductionLeadTime;
     return {
       air,
       rail,
       sea,
       buffer,
       fxRate,
-      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate
+      defaultProductionLead,
+      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.defaultProductionLeadTime
     };
   }
 
   $("#settings-save", root).addEventListener("click", () => {
-    const { air, rail, sea, buffer, fxRate, ok } = validate();
+    const { air, rail, sea, buffer, fxRate, defaultProductionLead, ok } = validate();
     if (!ok) return;
     const patch = {
       transportLeadTimesDays: { air, rail, sea },
       defaultBufferDays: buffer,
       defaultCurrency: ($("#default-currency", root).value || "EUR").trim() || "EUR",
       fxRate: formatRate(fxRate),
+      defaultProductionLeadTimeDays: defaultProductionLead,
+      defaultDdp: $("#default-ddp", root).checked,
     };
     updateSettings(state, patch);
     saveState(state);
@@ -224,6 +235,14 @@ export function render(root) {
     fxInput.addEventListener("blur", () => {
       const next = parseDeNumber(fxInput.value);
       fxInput.value = next ? formatRate(next) : "";
+      validate();
+    });
+  }
+  const productionLeadInput = $("#default-production-lead", root);
+  if (productionLeadInput) {
+    productionLeadInput.addEventListener("blur", () => {
+      const next = parseDeNumber(productionLeadInput.value);
+      productionLeadInput.value = next == null ? "" : formatDeNumber(next, 0, { emptyValue: "" });
       validate();
     });
   }

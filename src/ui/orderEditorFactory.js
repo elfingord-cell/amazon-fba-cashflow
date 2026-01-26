@@ -56,19 +56,8 @@ function formatSkuSummary(record) {
 }
 
 function parseDE(value) {
-  if (value == null) return NaN;
-  const cleaned = String(value)
-    .trim()
-    .replace(/\s/g, "")
-    .replace(/[^0-9,.-]+/g, "");
-  if (!cleaned) return NaN;
-  const parts = cleaned.split(",");
-  let normalised = parts
-    .map((segment, idx) => (idx === parts.length - 1 ? segment : segment.replace(/\./g, "")))
-    .join(".");
-  normalised = normalised.replace(/\.(?=\d{3}(?:\.|$))/g, "");
-  const num = Number(normalised);
-  return Number.isFinite(num) ? num : NaN;
+  const parsed = parseLocalizedNumber(value);
+  return parsed == null ? NaN : parsed;
 }
 
 function fmtEUR(value) {
@@ -87,10 +76,7 @@ function fmtCurrencyInput(value) {
   const parsed = parseDE(raw);
   if (!raw.trim()) return "";
   if (!Number.isFinite(parsed)) return raw;
-  return Number(parsed).toLocaleString("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return formatLocalizedNumber(parsed, 2, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtUSD(value) {

@@ -358,8 +358,8 @@ function buildHistoryTable(state, sku) {
       vatRefundLag: 0,
       fxRate: fxRateDefault,
       fxFeePct: 0,
-      ddp: false,
-      currency: "USD",
+      ddp: settings.defaultDdp === true,
+      currency: settings.defaultCurrency || "EUR",
     };
 
     const templateFields = [
@@ -991,8 +991,8 @@ function buildHistoryTable(state, sku) {
       vatRefundLag: 0,
       fxRate: fxRateDefault ?? 0,
       fxFeePct: 0,
-      ddp: false,
-      currency: "USD",
+      ddp: settings.defaultDdp === true,
+      currency: settings.defaultCurrency || "EUR",
     };
 
     const suppliers = Array.isArray(state.suppliers) ? state.suppliers : [];

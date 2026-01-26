@@ -43,6 +43,11 @@ const STATUS_LABELS = {
   CANCELLED: "Cancelled",
 };
 
+function normaliseCurrency(value, fallback = "EUR") {
+  const upper = String(value || "").trim().toUpperCase();
+  return CURRENCIES.includes(upper) ? upper : fallback;
+}
+
 function defaultPaymentTerms() {
   return [
     { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
@@ -60,23 +65,7 @@ function formatDate(input) {
 }
 
 function parseLocaleNumber(value) {
-  if (value == null) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const cleaned = String(value).trim().replace(/[^0-9,.-]+/g, "");
-  if (!cleaned) return null;
-  const lastComma = cleaned.lastIndexOf(",");
-  const lastDot = cleaned.lastIndexOf(".");
-  const decimalIndex = Math.max(lastComma, lastDot);
-  let normalised = cleaned;
-  if (decimalIndex >= 0) {
-    const integer = cleaned.slice(0, decimalIndex).replace(/[.,]/g, "");
-    const fraction = cleaned.slice(decimalIndex + 1).replace(/[.,]/g, "");
-    normalised = `${integer}.${fraction}`;
-  } else {
-    normalised = cleaned.replace(/[.,]/g, "");
-  }
-  const num = Number(normalised);
-  return Number.isFinite(num) ? num : null;
+  return parseLocalizedNumber(value);
 }
 
 function parseNumber(value) {
@@ -609,9 +598,9 @@ function normalizeFoRecord(form, schedule, payments) {
     incoterm: form.incoterm,
     unitPrice: parseLocaleNumber(form.unitPrice) || 0,
     unitPriceIsOverridden: Boolean(form.unitPriceIsOverridden),
-    currency: form.currency || "USD",
+    currency: normaliseCurrency(form.currency, "EUR"),
     freight: parseLocaleNumber(form.freight) || 0,
-    freightCurrency: form.freightCurrency || "EUR",
+    freightCurrency: normaliseCurrency(form.freightCurrency, "EUR"),
     dutyRatePct: parseLocaleNumber(form.dutyRatePct) || 0,
     eustRatePct: parseLocaleNumber(form.eustRatePct) || 0,
     fxRate: parseLocaleNumber(form.fxRate) || 0,
@@ -962,7 +951,7 @@ export default function render(root) {
           incoterm: "EXW",
           unitPrice: "",
           unitPriceIsOverridden: false,
-          currency: "USD",
+          currency: state.settings?.defaultCurrency || "EUR",
           freight: "",
           freightCurrency: "EUR",
           dutyRatePct: state.settings?.dutyRatePct ?? 0,
@@ -1141,7 +1130,7 @@ export default function render(root) {
         el("li", {}, [`Preferred Supplier: ${suggested.preferredSupplier ? "Yes" : "No"}`]),
         el("li", {}, [`Supplier source: ${supplierSource}`]),
         el("li", {}, [`Price source: ${unitPriceSource}`]),
-        el("li", {}, [`Lead time source: ${leadTimeSource}`]),
+        el("li", {}, [`Production lead time source: ${leadTimeSource}`]),
         el("li", {}, [`Incoterm source: ${incotermSource}`]),
         el("li", {}, [`Payment terms source: ${paymentTermsSource}`]),
         el("li", {}, [`FX source: ${fxSource}`]),
