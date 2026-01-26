@@ -233,6 +233,9 @@ export function render(root) {
     const sea = clampNonNegative($("#lead-sea", root).value);
     const buffer = clampNonNegative($("#default-buffer", root).value);
     const fxRate = parseDeNumber($("#default-fx-rate", root).value);
+    const productionLeadInput = $("#default-production-lead", root);
+    const productionLeadRaw = productionLeadInput ? parseDeNumber(productionLeadInput.value) : null;
+    const defaultProductionLead = productionLeadRaw == null ? null : Math.max(0, Math.round(productionLeadRaw));
     if (air == null) errors.air = "Wert muss ≥ 0 sein.";
     if (rail == null) errors.rail = "Wert muss ≥ 0 sein.";
     if (sea == null) errors.sea = "Wert muss ≥ 0 sein.";
@@ -243,7 +246,8 @@ export function render(root) {
     $("#lead-sea-error", root).textContent = errors.sea;
     $("#buffer-error", root).textContent = errors.buffer;
     $("#fx-rate-error", root).textContent = errors.fxRate;
-    $("#default-production-lead-error", root).textContent = errors.defaultProductionLeadTime;
+    const defaultLeadError = $("#default-production-lead-error", root);
+    if (defaultLeadError) defaultLeadError.textContent = errors.defaultProductionLeadTime;
     return {
       air,
       rail,

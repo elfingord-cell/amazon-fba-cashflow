@@ -97,8 +97,12 @@ function anchorsFor(row, settings) {
   const transitDays = Number(row.logisticsLeadTimeDays ?? row.transitDays ?? 0);
   const cnyAdjusted = applyCnyBlackout(od, prodDays, settings);
   const prodDone = cnyAdjusted.prodDone ?? addDays(od, prodDays);
-  const etd = prodDone; // einfache Konvention
-  const eta = addDays(etd, transitDays);
+  const etdComputed = prodDone;
+  const etaComputed = addDays(etdComputed, transitDays);
+  const etdManual = parseISODate(row.etdManual);
+  const etaManual = parseISODate(row.etaManual);
+  const etd = etdManual || etdComputed; // einfache Konvention
+  const eta = etaManual || etaComputed;
   return {
     ORDER_DATE: od,
     PROD_DONE: prodDone,
