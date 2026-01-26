@@ -3,10 +3,32 @@ import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
+const RANGE_STORAGE_KEY = "dashboard_month_range";
+const RANGE_DEFAULT = "NEXT_12";
+const RANGE_OPTIONS = [
+  { value: "NEXT_6", label: "Nächste 6 Monate", count: 6 },
+  { value: "NEXT_12", label: "Nächste 12 Monate", count: 12 },
+  { value: "NEXT_24", label: "Nächste 24 Monate", count: 24 },
+  { value: "ALL", label: "Alles", count: null },
+];
+
+function isValidRange(value) {
+  return RANGE_OPTIONS.some(option => option.value === value);
+}
+
+function loadRangePreference() {
+  try {
+    const stored = localStorage.getItem(RANGE_STORAGE_KEY);
+    return isValidRange(stored) ? stored : RANGE_DEFAULT;
+  } catch {
+    return RANGE_DEFAULT;
+  }
+}
+
 const dashboardState = {
   expanded: new Set(["inflows", "outflows", "po-payments", "fo-payments"]),
   coverageCollapsed: new Set(),
-  range: "next12",
+  range: loadRangePreference(),
   hideEmptyMonths: true,
   limitBalanceToGreen: false,
 };
@@ -103,23 +125,16 @@ function getMonthlyBuckets(startMonth, endMonth) {
   return months;
 }
 
-function getRangeOptions(months) {
-  const options = [];
-  const length = months.length;
-  const candidates = [12, 18, 24];
-  candidates.forEach(count => {
-    if (length >= count) options.push({ value: `next${count}`, label: `Nächste ${count}` });
-  });
-  if (length > 0) options.push({ value: "all", label: "Alle" });
-  return options;
-}
-
-function applyRange(months, range) {
-  if (!months.length) return [];
-  if (range === "all") return months.slice();
-  const count = Number(String(range).replace("next", "")) || 0;
-  if (!Number.isFinite(count) || count <= 0) return months.slice();
-  return months.slice(0, count);
+function getVisibleMonths(allMonths, range, nowMonth) {
+  if (!Array.isArray(allMonths) || !allMonths.length) return [];
+  const sortedMonths = allMonths.slice().sort();
+  if (range === "ALL") return sortedMonths;
+  const option = RANGE_OPTIONS.find(item => item.value === range);
+  const count = option && Number.isFinite(option.count) ? option.count : 0;
+  if (!count) return sortedMonths;
+  const startIndex = sortedMonths.findIndex(month => month >= nowMonth);
+  if (startIndex === -1) return [];
+  return sortedMonths.slice(startIndex, startIndex + count);
 }
 
 function getDisplayLabel(plannedTotal, actualTotal) {
@@ -1087,14 +1102,10 @@ function buildDashboardHTML(state) {
   const endMonth = addMonths(startMonth, horizon - 1);
   const allMonths = getMonthlyBuckets(startMonth, endMonth);
   const currentMonth = currentMonthKey();
-  const months = allMonths.filter(month => month >= currentMonth);
-  const rangeOptions = getRangeOptions(months);
-  if (rangeOptions.length && !rangeOptions.some(option => option.value === dashboardState.range)) {
-    dashboardState.range = rangeOptions[0].value;
+  if (!isValidRange(dashboardState.range)) {
+    dashboardState.range = RANGE_DEFAULT;
   }
-  const baseMonths = rangeOptions.length
-    ? applyRange(months, dashboardState.range)
-    : months.slice();
+  const baseMonths = getVisibleMonths(allMonths, dashboardState.range, currentMonth);
   const skuCoverage = computeSkuCoverage(state, baseMonths);
 
   const rowsBoth = buildDashboardRows(state, baseMonths, {
@@ -1122,16 +1133,14 @@ function buildDashboardHTML(state) {
   const coverageNoticeNeeded = skuCoverage.activeSkus.length > 0
     && nonEmptyMonths.some(month => skuCoverage.coverage.get(month) !== "green");
 
-  const rangeSelect = rangeOptions.length
-    ? `
+  const rangeSelect = `
       <label class="dashboard-range">
-        <span>Monatsbereich</span>
+        <span>Zeitraum</span>
         <select id="dashboard-range">
-          ${rangeOptions.map(option => `<option value="${option.value}" ${option.value === dashboardState.range ? "selected" : ""}>${option.label}</option>`).join("")}
+          ${RANGE_OPTIONS.map(option => `<option value="${option.value}" ${option.value === dashboardState.range ? "selected" : ""}>${option.label}</option>`).join("")}
         </select>
       </label>
-    `
-    : "";
+    `;
 
   const headerCells = nonEmptyMonths
     .map((month, idx) => {
@@ -1378,8 +1387,8 @@ function attachDashboardHandlers(root, state) {
       const horizon = Number((state && state.settings && state.settings.horizonMonths) || 12) || 12;
       const endMonth = addMonths(startMonth, horizon - 1);
       const currentMonth = currentMonthKey();
-      const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
-      const baseMonths = applyRange(months, dashboardState.range);
+      const months = getMonthlyBuckets(startMonth, endMonth);
+      const baseMonths = getVisibleMonths(months, dashboardState.range, currentMonth);
       const skuCoverage = computeSkuCoverage(state, baseMonths);
       const rowsBoth = buildDashboardRows(state, baseMonths, {
         limitBalanceToGreen: dashboardState.limitBalanceToGreen,
@@ -1544,6 +1553,11 @@ function attachDashboardHandlers(root, state) {
   if (rangeSelect) {
     rangeSelect.addEventListener("change", () => {
       dashboardState.range = rangeSelect.value;
+      try {
+        if (isValidRange(dashboardState.range)) {
+          localStorage.setItem(RANGE_STORAGE_KEY, dashboardState.range);
+        }
+      } catch {}
       render(root);
     });
   }
