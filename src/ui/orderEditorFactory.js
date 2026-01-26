@@ -547,6 +547,10 @@ function getSettings() {
     vatRefundEnabled: raw.vatRefundEnabled !== false,
     vatRefundLagMonths: Number(raw.vatRefundLagMonths ?? 0) || 0,
     freightLagDays: Number(raw.freightLagDays ?? 0) || 0,
+    cny: raw.cny ? { start: raw.cny.start || "", end: raw.cny.end || "" } : { start: "", end: "" },
+    cnyBlackoutByYear: raw.cnyBlackoutByYear && typeof raw.cnyBlackoutByYear === "object"
+      ? structuredClone(raw.cnyBlackoutByYear)
+      : {},
   };
 }
 
@@ -684,6 +688,17 @@ function buildPaymentMap(payments = []) {
   return map;
 }
 
+function ensurePaymentInternalId(record, eventId) {
+  if (!record || !eventId) return null;
+  const log = record.paymentLog || {};
+  if (!log[eventId] || typeof log[eventId] !== "object") log[eventId] = {};
+  if (!log[eventId].paymentInternalId) {
+    log[eventId].paymentInternalId = `payrow-${Math.random().toString(36).slice(2, 9)}`;
+  }
+  record.paymentLog = log;
+  return log[eventId].paymentInternalId;
+}
+
 function resolvePrimaryAlias(record) {
   const items = Array.isArray(record?.items) ? record.items.filter(Boolean) : [];
   if (items.length > 1) return "Multi";
@@ -773,12 +788,14 @@ function buildPaymentRows(record, config, settings, paymentRecords = []) {
     .filter(evt => evt && Number(evt.amount || 0) < 0)
     .map(evt => {
       const log = record.paymentLog?.[evt.id] || {};
+      const paymentInternalId = ensurePaymentInternalId(record, evt.id);
       const planned = Math.abs(Number(evt.amount || 0));
       const payment = log.paymentId ? paymentMap.get(log.paymentId) : null;
       const status = log.status === "paid" || payment ? "paid" : "open";
       const paidDate = log.paidDate || payment?.paidDate || null;
       return {
         id: evt.id,
+        paymentInternalId,
         typeLabel: mapPaymentType(evt, msMap.get(evt.id)),
         label: evt.label,
         dueDate: evt.date || null,
@@ -2080,28 +2097,40 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               alert("Bitte Paid by auswählen.");
               return;
             }
-            const parsed = parseMoneyInput(actualInput.value);
-            if (!Number.isFinite(parsed)) {
+            const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
+            const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
+            if (!Number.isFinite(sumPlanned)) {
+              alert("Summe der geplanten Beträge muss gültig sein.");
+              return;
+            }
+            const actualRaw = actualInput.value.trim();
+            const parsedActual = actualRaw ? parseMoneyInput(actualRaw) : sumPlanned;
+            if (!Number.isFinite(parsedActual)) {
               alert("Bitte einen gültigen Ist-Betrag eingeben.");
               return;
             }
-            if (parsed <= 0) {
-              alert("Ist-Betrag muss größer als 0 sein.");
+            if (parsedActual < 0) {
+              alert("Ist-Betrag darf nicht negativ sein.");
               return;
             }
-            const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
-            const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
-            if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) {
-              alert("Summe der geplanten Beträge muss größer als 0 sein.");
+            if (parsedActual === 0 && sumPlanned > 0) {
+              alert("Ist-Betrag darf nicht 0 sein, wenn ein Soll-Betrag vorhanden ist.");
               return;
             }
-            const allocations = allocatePayment(parsed, selectedEvents);
+
+            let allocations = null;
+            if (sumPlanned > 0) {
+              allocations = allocatePayment(parsedActual, selectedEvents);
+            } else if (parsedActual === 0) {
+              allocations = selectedEvents.map(evt => ({
+                eventId: evt.id,
+                planned: 0,
+                raw: 0,
+                actual: 0,
+              }));
+            }
             if (!allocations) {
               alert("Konnte die Ist-Beträge nicht aufteilen.");
-              return;
-            }
-            if (allocations.some(entry => entry.actual <= 0)) {
-              alert("Ist-Beträge dürfen nicht 0 sein.");
               return;
             }
 
@@ -2112,7 +2141,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               method: methodSelect.value || null,
               payer: paidBySelect.value,
               currency: "EUR",
-              amountActualEurTotal: parsed,
+              amountActualEurTotal: parsedActual,
               coveredEventIds: allocations.map(entry => entry.eventId),
               note: noteInput.value.trim() || null,
             };
@@ -2124,14 +2153,17 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
             allocations.forEach(entry => {
               const log = record.paymentLog?.[entry.eventId] || {};
+              const paymentInternalId = log.paymentInternalId || ensurePaymentInternalId(record, entry.eventId);
               record.paymentLog[entry.eventId] = {
                 ...log,
+                paymentInternalId,
                 status: "paid",
                 paidDate: paymentRecord.paidDate,
                 paymentId: paymentRecord.id,
                 amountActualEur: entry.actual,
                 method: paymentRecord.method,
                 payer: paymentRecord.payer,
+                note: paymentRecord.note,
               };
             });
 

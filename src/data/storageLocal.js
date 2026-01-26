@@ -300,7 +300,22 @@ function ensureProductSuppliers(state) {
 
 function ensureFos(state) {
   if (!state) return;
-  if (!Array.isArray(state.fos)) state.fos = [];
+  if (!Array.isArray(state.fos)) {
+    state.fos = [];
+    return;
+  }
+  state.fos = state.fos
+    .filter(Boolean)
+    .map(entry => {
+      const now = new Date().toISOString();
+      return {
+        ...entry,
+        id: entry.id || `fo-${Math.random().toString(36).slice(2, 9)}`,
+        status: entry.status || "DRAFT",
+        createdAt: entry.createdAt || now,
+        updatedAt: entry.updatedAt || now,
+      };
+    });
 }
 
 function ensureForecast(state) {
