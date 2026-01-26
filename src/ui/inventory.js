@@ -204,6 +204,12 @@ function resolveFoArrival(fo) {
   return parseISODate(fo?.targetDeliveryDate || fo?.deliveryDate || fo?.etaDate);
 }
 
+function isFoCountable(fo) {
+  const status = String(fo?.status || "").toUpperCase();
+  if (status === "CONVERTED" || status === "CANCELLED") return false;
+  return true;
+}
+
 function getForecastUnits(state, sku, month) {
   const manual = state?.forecast?.forecastManual?.[sku]?.[month];
   const manualParsed = parseDeNumber(manual);
@@ -311,6 +317,7 @@ function buildInboundMap(state) {
 
   (state.fos || []).forEach(fo => {
     if (!fo) return;
+    if (!isFoCountable(fo)) return;
     const items = Array.isArray(fo.items) && fo.items.length
       ? fo.items
       : [{ sku: fo.sku, units: fo.units }];
@@ -379,7 +386,7 @@ function buildInTransitMap(state) {
 
   (state.fos || []).forEach(fo => {
     if (!fo) return;
-    if (String(fo.status || "").toUpperCase() === "CANCELLED") return;
+    if (!isFoCountable(fo)) return;
     const eta = resolveFoArrival(fo);
     if (eta && eta < today) return;
     const items = Array.isArray(fo.items) && fo.items.length

@@ -2132,11 +2132,11 @@ export default function render(root) {
       if (String(fo.status || "").toUpperCase() === "CONVERTED") return;
       openConvertModal(fo);
     } else if (action === "delete") {
-      if (String(fo.status || "").toUpperCase() === "CONVERTED") {
-        window.alert("Converted FOs können nicht gelöscht werden.");
-        return;
-      }
-      const confirmed = window.confirm("Forecast Order wirklich löschen?");
+      const isConverted = String(fo.status || "").toUpperCase() === "CONVERTED";
+      const prompt = isConverted
+        ? "Diese FO wurde bereits in eine PO umgewandelt. FO trotzdem löschen? (Die PO bleibt bestehen.)"
+        : "Forecast Order wirklich löschen?";
+      const confirmed = window.confirm(prompt);
       if (!confirmed) return;
       state.fos = state.fos.filter(item => item.id !== id);
       saveState(state);
