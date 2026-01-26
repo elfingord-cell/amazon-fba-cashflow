@@ -351,7 +351,7 @@ function buildSkuSignalMap(state, activeSkus, months) {
     const etaDate = computePoEta(po);
     const etaMonth = etaDate ? toMonthKey(etaDate) : null;
     const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
-    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings);
+    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings, state?.payments || []);
     items.forEach(item => {
       const sku = String(item && item.sku ? item.sku : "").trim();
       if (!sku || !signals.has(sku)) return;
@@ -511,14 +511,11 @@ function buildPoData(state) {
   const settings = getSettings();
   const pos = state && Array.isArray(state.pos) ? state.pos : [];
   return pos.map(po => {
-    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings);
-    const transactions = Array.isArray(po && po.paymentTransactions) ? po.paymentTransactions : [];
-    const txMap = new Map(transactions.map(tx => [tx && tx.id, tx]));
+    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings, state?.payments || []);
     const events = paymentRows
       .map(row => {
         const month = toMonthKey(row.dueDate);
         if (!month) return null;
-        const tx = row.transactionId ? txMap.get(row.transactionId) : null;
         const actual = Number(row.paidEurActual);
         const actualEur = Number.isFinite(actual) ? actual : 0;
         return {
@@ -531,7 +528,7 @@ function buildPoData(state) {
           actualEur,
           paid: row.status === "paid",
           paidDate: row.paidDate || null,
-          transactionId: row.transactionId || null,
+          paymentId: row.paymentId || null,
           paidBy: row.paidBy || null,
           currency: "EUR",
         };
@@ -545,7 +542,7 @@ function buildPoData(state) {
       supplier,
       units,
       events,
-      transactions,
+      transactions: [],
     };
   });
 }

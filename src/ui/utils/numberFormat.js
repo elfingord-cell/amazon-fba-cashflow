@@ -35,3 +35,14 @@ export function formatLocalizedNumber(value, decimals = 2, options = {}) {
     ...options,
   });
 }
+
+export function parseMoneyInput(value) {
+  const parsed = parseLocalizedNumber(value);
+  if (parsed == null) return null;
+  const rounded = Math.round(parsed * 100) / 100;
+  return Number.isFinite(rounded) ? rounded : null;
+}
+
+export function formatMoneyDE(value, decimals = 2) {
+  return formatLocalizedNumber(value, decimals, { useGrouping: false });
+}
