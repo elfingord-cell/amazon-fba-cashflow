@@ -37,9 +37,6 @@ function updateSettings(state, patch) {
   if (typeof patch.defaultDdp !== "undefined") {
     state.settings.defaultDdp = patch.defaultDdp === true;
   }
-  if (typeof patch.cnyBlackoutYear !== "undefined") {
-    state.settings.cnyBlackoutYear = String(patch.cnyBlackoutYear || "");
-  }
   if (patch.cnyBlackoutByYear && typeof patch.cnyBlackoutByYear === "object") {
     state.settings.cnyBlackoutByYear = state.settings.cnyBlackoutByYear || {};
     Object.entries(patch.cnyBlackoutByYear).forEach(([year, entry]) => {
@@ -58,7 +55,6 @@ export function render(root) {
   const settings = state.settings || {};
   const lead = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
   const currentYear = new Date().getFullYear();
-  const storedCnyYear = settings.cnyBlackoutYear || String(currentYear);
   const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "", defaultProductionLeadTime: "" };
 
   root.innerHTML = `
@@ -126,7 +122,7 @@ export function render(root) {
       <div class="grid three">
         <label>
           Jahr
-          <input id="cny-year" type="number" min="2000" step="1" value="${storedCnyYear}">
+          <input id="cny-year" type="number" min="2000" step="1" value="${currentYear}">
         </label>
         <label>
           CNY Start
@@ -175,15 +171,15 @@ export function render(root) {
   const cnyEndInput = $("#cny-end", root);
 
   const loadCnyForYear = (yearValue) => {
-    const yearKey = String(yearValue || storedCnyYear || currentYear);
+    const yearKey = String(yearValue || currentYear);
     const entry = state.settings?.cnyBlackoutByYear?.[yearKey] || {};
     if (cnyStartInput) cnyStartInput.value = entry.start || "";
     if (cnyEndInput) cnyEndInput.value = entry.end || "";
   };
 
   if (cnyYearInput) {
-    loadCnyForYear(cnyYearInput.value || storedCnyYear || currentYear);
-    cnyYearInput.addEventListener("change", () => loadCnyForYear(cnyYearInput.value || storedCnyYear || currentYear));
+    loadCnyForYear(cnyYearInput.value || currentYear);
+    cnyYearInput.addEventListener("change", () => loadCnyForYear(cnyYearInput.value || currentYear));
   }
 
   function renderHealthHints() {
@@ -262,7 +258,7 @@ export function render(root) {
   $("#settings-save", root).addEventListener("click", () => {
     const { air, rail, sea, buffer, fxRate, defaultProductionLead, ok } = validate();
     if (!ok) return;
-    const cnyYear = cnyYearInput ? String(cnyYearInput.value || storedCnyYear || currentYear) : String(currentYear);
+    const cnyYear = cnyYearInput ? String(cnyYearInput.value || currentYear) : String(currentYear);
     const cnyStart = cnyStartInput ? cnyStartInput.value : "";
     const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
     const patch = {
@@ -272,7 +268,6 @@ export function render(root) {
       fxRate: formatRate(fxRate),
       defaultProductionLeadTimeDays: defaultProductionLead,
       defaultDdp: $("#default-ddp", root).checked,
-      cnyBlackoutYear: cnyYear,
       cnyBlackoutByYear: {
         [cnyYear]: cnyStart && cnyEnd ? { start: cnyStart, end: cnyEnd } : null,
       },

@@ -47,7 +47,6 @@ const defaults = {
     defaultDdp: false,
     lastUpdatedAt: null,
     cnyBlackoutByYear: {},
-    cnyBlackoutYear: null,
     productsTableColumns: {
       list: [],
       grid: [],
@@ -190,9 +189,6 @@ function ensureGlobalSettings(state) {
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
   if (!settings.cnyBlackoutByYear || typeof settings.cnyBlackoutByYear !== "object") {
     settings.cnyBlackoutByYear = {};
-  }
-  if (!settings.cnyBlackoutYear) {
-    settings.cnyBlackoutYear = String(new Date().getFullYear());
   }
   if (!settings.productsTableColumns || typeof settings.productsTableColumns !== "object") {
     settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
