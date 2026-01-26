@@ -94,6 +94,13 @@ const defaults = {
   suppliers: [],
   productSuppliers: [],
   payments: [],
+  inventory: {
+    snapshots: [],
+    settings: {
+      projectionMonths: 12,
+      safetyDays: 60,
+    },
+  },
 };
 
 function ensureFixcostContainers(state) {
@@ -327,6 +334,57 @@ function ensureForecast(state) {
         };
       }
     });
+  }
+}
+
+function ensureInventory(state) {
+  if (!state) return;
+  if (!state.inventory || typeof state.inventory !== "object") {
+    state.inventory = structuredClone(defaults.inventory);
+    return;
+  }
+  if (!Array.isArray(state.inventory.snapshots)) {
+    state.inventory.snapshots = [];
+  }
+  const snapshots = [];
+  state.inventory.snapshots.forEach(snapshot => {
+    if (!snapshot || typeof snapshot !== "object") return;
+    const month = String(snapshot.month || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+    const cleanedItems = items
+      .map(item => {
+        if (!item || typeof item !== "object") return null;
+        const sku = String(item.sku || "").trim();
+        if (!sku) return null;
+        const amazonUnits = Math.round(parseNumber(item.amazonUnits ?? 0) ?? 0);
+        const threePLUnits = Math.round(parseNumber(item.threePLUnits ?? 0) ?? 0);
+        return {
+          sku,
+          amazonUnits: Number.isFinite(amazonUnits) ? amazonUnits : 0,
+          threePLUnits: Number.isFinite(threePLUnits) ? threePLUnits : 0,
+          note: item.note != null ? String(item.note) : "",
+        };
+      })
+      .filter(Boolean);
+    snapshots.push({
+      month,
+      items: cleanedItems,
+    });
+  });
+  state.inventory.snapshots = snapshots;
+  if (!state.inventory.settings || typeof state.inventory.settings !== "object") {
+    state.inventory.settings = structuredClone(defaults.inventory.settings);
+  } else {
+    const base = defaults.inventory.settings;
+    const projectionMonths = Number(state.inventory.settings.projectionMonths ?? base.projectionMonths);
+    const safetyDays = Number(state.inventory.settings.safetyDays ?? base.safetyDays);
+    state.inventory.settings.projectionMonths = Number.isFinite(projectionMonths) && projectionMonths > 0
+      ? projectionMonths
+      : base.projectionMonths;
+    state.inventory.settings.safetyDays = Number.isFinite(safetyDays) && safetyDays > 0
+      ? safetyDays
+      : base.safetyDays;
   }
 }
 
@@ -740,6 +798,7 @@ export function loadState(){
   ensureProductCategories(_state);
   ensureVatData(_state);
   ensureForecast(_state);
+  ensureInventory(_state);
   ensureActuals(_state);
   ensureMonthlyActuals(_state);
   ensureGlobalSettings(_state);
@@ -761,6 +820,7 @@ export function saveState(s){
   ensureProductCategories(_state);
   ensureVatData(_state);
   ensureForecast(_state);
+  ensureInventory(_state);
   ensureActuals(_state);
   ensureMonthlyActuals(_state);
   ensureGlobalSettings(_state);
@@ -806,6 +866,7 @@ export function importStateFile(file, cb){
       ensureProductCategories(json);
       ensureVatData(json);
       ensureForecast(json);
+      ensureInventory(json);
       ensureActuals(json);
       ensureMonthlyActuals(json);
       ensureGlobalSettings(json);
