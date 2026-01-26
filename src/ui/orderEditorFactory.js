@@ -9,7 +9,7 @@ import {
 import { createDataTable } from "./components/dataTable.js";
 import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
-import { formatLocalizedNumber, parseLocalizedNumber } from "./utils/numberFormat.js";
+import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMoneyDE } from "./utils/numberFormat.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -67,9 +67,7 @@ function fmtEUR(value) {
 
 function fmtEURPlain(value) {
   const num = Number(value || 0);
-  return Number.isFinite(num)
-    ? num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : "0,00";
+  return Number.isFinite(num) ? formatMoneyDE(num, 2) : "0,00";
 }
 
 function fmtCurrencyInput(value) {
@@ -583,7 +581,6 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
 function ensurePaymentLog(record) {
   if (!record) return {};
   if (!record.paymentLog || typeof record.paymentLog !== "object") record.paymentLog = {};
-  if (!Array.isArray(record.paymentTransactions)) record.paymentTransactions = [];
   return record.paymentLog;
 }
 
@@ -599,17 +596,25 @@ function safeFilenameChunk(value) {
   return base.replace(/\s+/g, "-");
 }
 
-function normalizeTransactionId(value) {
+function normalizePaymentId(value) {
   if (!value) return null;
   const raw = String(value).trim();
   if (!raw) return null;
-  const normalized = raw.replace(/^(tx-?)+/i, "");
-  return `tx-${normalized}`;
+  const normalized = raw.replace(/^(pay-?)+/i, "");
+  return `pay-${normalized}`;
 }
 
-function formatTransactionLabel(value) {
-  const normalized = normalizeTransactionId(value);
-  return normalized ? `TX-${normalized.slice(3)}` : "—";
+function buildPaymentId() {
+  return normalizePaymentId(`pay-${Math.random().toString(36).slice(2, 9)}`);
+}
+
+function buildPaymentMap(payments = []) {
+  const map = new Map();
+  (payments || []).forEach(payment => {
+    if (!payment?.id) return;
+    map.set(payment.id, payment);
+  });
+  return map;
 }
 
 function resolvePrimaryAlias(record) {
@@ -642,24 +647,6 @@ function mapPaymentType(evt, milestone) {
   return "Other";
 }
 
-function getPaymentTransactions(record) {
-  if (!record) return [];
-  if (!Array.isArray(record.paymentTransactions)) record.paymentTransactions = [];
-  record.paymentTransactions = record.paymentTransactions.map(tx => {
-    if (!tx) return tx;
-    return {
-      ...tx,
-      id: normalizeTransactionId(tx.id) || tx.id,
-    };
-  });
-  return record.paymentTransactions;
-}
-
-function getTransactionById(record, id) {
-  if (!id) return null;
-  return getPaymentTransactions(record).find(tx => tx && tx.id === id) || null;
-}
-
 function buildInvoiceKeyEvents(selectedEvents) {
   const labels = selectedEvents
     .flatMap(evt => [evt?.typeLabel, evt?.label])
@@ -683,22 +670,46 @@ function buildInvoiceKeyEvents(selectedEvents) {
   return `${unique.slice(0, 2).join("+")}+more`;
 }
 
-function buildPaymentRows(record, config, settings) {
+function allocatePayment(total, selectedEvents) {
+  const plannedValues = selectedEvents.map(evt => Number(evt.plannedEur || 0));
+  const sumPlanned = plannedValues.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) return null;
+  const allocations = plannedValues.map((planned, index) => {
+    const share = planned / sumPlanned;
+    const raw = total * share;
+    return {
+      eventId: selectedEvents[index].id,
+      planned,
+      raw,
+      actual: Math.round(raw * 100) / 100,
+    };
+  });
+  const roundedSum = allocations.reduce((sum, entry) => sum + entry.actual, 0);
+  const remainder = Math.round((total - roundedSum) * 100) / 100;
+  if (Math.abs(remainder) > 0) {
+    let target = allocations[allocations.length - 1];
+    if (allocations.length > 1) {
+      target = allocations.reduce((best, entry) => (entry.planned > best.planned ? entry : best), target);
+    }
+    target.actual = Math.round((target.actual + remainder) * 100) / 100;
+  }
+  return allocations;
+}
+
+function buildPaymentRows(record, config, settings, paymentRecords = []) {
   ensurePaymentLog(record);
   const milestones = Array.isArray(record.milestones) ? record.milestones : [];
   const msMap = new Map(milestones.map(item => [item.id, item]));
-  const transactions = getPaymentTransactions(record);
-  const txMap = new Map(transactions.map(tx => [tx.id, tx]));
+  const paymentMap = buildPaymentMap(paymentRecords);
   const events = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
   return events
     .filter(evt => evt && Number(evt.amount || 0) < 0)
     .map(evt => {
       const log = record.paymentLog?.[evt.id] || {};
       const planned = Math.abs(Number(evt.amount || 0));
-      const normalizedTxId = normalizeTransactionId(log.transactionId);
-      const transaction = normalizedTxId ? txMap.get(normalizedTxId) : null;
-      const status = log.status === "paid" || transaction ? "paid" : "open";
-      const paidDate = log.paidDate || transaction?.datePaid || null;
+      const payment = log.paymentId ? paymentMap.get(log.paymentId) : null;
+      const status = log.status === "paid" || payment ? "paid" : "open";
+      const paidDate = log.paidDate || payment?.paidDate || null;
       return {
         id: evt.id,
         typeLabel: mapPaymentType(evt, msMap.get(evt.id)),
@@ -707,11 +718,10 @@ function buildPaymentRows(record, config, settings) {
         plannedEur: planned,
         status,
         paidDate,
-        paidEurActual: Number.isFinite(Number(log.paidEurActual)) ? Number(log.paidEurActual) : null,
-        method: transaction?.method || log.method || null,
-        paidBy: transaction?.paidBy || log.paidBy || null,
-        transactionId: transaction?.id || normalizedTxId || null,
-        transactionTotal: transaction?.actualEurTotal ?? null,
+        paidEurActual: Number.isFinite(Number(log.amountActualEur)) ? Number(log.amountActualEur) : null,
+        method: payment?.method || log.method || null,
+        paidBy: payment?.payer || log.payer || null,
+        paymentId: payment?.id || log.paymentId || null,
         note: log.note || "",
         eventType: evt.type || null,
       };
@@ -799,7 +809,6 @@ function defaultRecord(config, settings = getSettings()) {
       { id: Math.random().toString(36).slice(2, 9), label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
     ],
     paymentLog: {},
-    paymentTransactions: [],
     archived: false,
   };
   ensureAutoEvents(record, settings, record.milestones);
@@ -1018,13 +1027,13 @@ function orderEvents(record, config, settings) {
 
 export { buildPaymentRows, getSettings };
 
-function buildEventList(events, paymentLog = {}, transactions = []) {
+function buildEventList(events, paymentLog = {}, paymentRecords = []) {
   const wrapper = el("div", { class: "po-event-table" });
   if (!events.length) {
     wrapper.append(el("div", { class: "muted" }, ["Keine Ereignisse definiert."]));
     return wrapper;
   }
-  const txMap = new Map((transactions || []).map(tx => [tx.id, tx]));
+  const paymentMap = buildPaymentMap(paymentRecords);
   wrapper.append(
     el("div", { class: "po-event-head" }, [
       el("span", { class: "po-event-col" }, ["Name"]),
@@ -1036,10 +1045,10 @@ function buildEventList(events, paymentLog = {}, transactions = []) {
   );
   for (const evt of events) {
     const log = paymentLog?.[evt.id] || {};
-    const tx = log.transactionId ? txMap.get(log.transactionId) : null;
-    const status = log.status === "paid" || tx ? "paid" : "open";
+    const payment = log.paymentId ? paymentMap.get(log.paymentId) : null;
+    const status = log.status === "paid" || payment ? "paid" : "open";
     const statusLabel = status === "paid" ? "Bezahlt" : "Offen";
-    const txLabel = tx ? formatTransactionLabel(tx.id) : "—";
+    const paymentLabel = payment?.id || log.paymentId || "—";
     wrapper.append(
       el("div", { class: "po-event-row" }, [
         el("span", { class: "po-event-col" }, [evt.label]),
@@ -1049,7 +1058,7 @@ function buildEventList(events, paymentLog = {}, transactions = []) {
           el("span", { class: `po-status-pill ${status === "paid" ? "is-paid" : "is-open"}` }, [statusLabel]),
         ]),
         el("span", { class: "po-event-col status" }, [
-          tx ? el("span", { class: "po-transaction-pill" }, [txLabel]) : "—",
+          paymentLabel ? el("span", { class: "po-transaction-pill" }, [paymentLabel]) : "—",
         ]),
       ]),
     );
@@ -1747,52 +1756,13 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   }, [warn ? `Summe: ${sum}% — Bitte auf 100% anpassen.` : "Summe: 100% ✓"]);
   container.append(note);
 
-  const payments = buildPaymentRows(record, config, settings);
+  const payments = buildPaymentRows(record, config, settings, loadState().payments);
   ensurePaymentLog(record);
-  const transactions = getPaymentTransactions(record);
 
   const paymentSection = el("div", { class: "po-payments-section" }, [
     el("h4", {}, ["Zahlungen"]),
     el("p", { class: "muted" }, ["Markiere Zahlungen als bezahlt und ergänze Ist-Daten für die Buchhaltung."]),
   ]);
-
-  const invoiceLinks = transactions.filter(tx => tx?.driveInvoiceLink || tx?.driveInvoiceFolderLink);
-  if (invoiceLinks.length) {
-    const list = el("div", { class: "po-invoice-links" });
-    invoiceLinks.forEach(tx => {
-      const linkInput = el("input", { type: "text", value: tx.driveInvoiceLink || "", readonly: "readonly" });
-      const openBtn = el("button", { class: "btn secondary", type: "button" }, ["Öffnen"]);
-      openBtn.addEventListener("click", () => {
-        if (tx.driveInvoiceLink) window.open(tx.driveInvoiceLink, "_blank", "noopener");
-      });
-      openBtn.disabled = !tx.driveInvoiceLink;
-      openBtn.title = tx.driveInvoiceLink ? "" : "Invoice Link nicht hinterlegt";
-      const folderBtn = el("button", { class: "btn secondary", type: "button" }, ["Ordner öffnen"]);
-      folderBtn.addEventListener("click", () => {
-        if (tx.driveInvoiceFolderLink) window.open(tx.driveInvoiceFolderLink, "_blank", "noopener");
-      });
-      folderBtn.disabled = !tx.driveInvoiceFolderLink;
-      folderBtn.title = tx.driveInvoiceFolderLink ? "" : "Ordner-Link nicht hinterlegt";
-      const copyBtn = el("button", { class: "btn tertiary", type: "button" }, ["Link kopieren"]);
-      copyBtn.addEventListener("click", () => {
-        navigator.clipboard?.writeText(tx.driveInvoiceLink || "");
-      });
-      list.append(
-        el("div", { class: "po-invoice-link" }, [
-          el("label", {}, [`Invoice Link · ${fmtDateDE(tx.datePaid || "")} · ${formatTransactionLabel(tx.id)}`]),
-          linkInput,
-          el("div", { class: "po-invoice-actions" }, [openBtn, folderBtn, copyBtn]),
-        ]),
-      );
-    });
-    paymentSection.append(list);
-  } else {
-    paymentSection.append(
-      el("div", { class: "po-invoice-warning" }, [
-        "Hinweis: Optional kannst du pro Transfer einen Invoice Drive Link hinterlegen.",
-      ]),
-    );
-  }
 
   const paymentTable = el("table", { class: "po-payments-table" }, [
     el("thead", {}, [
@@ -1814,33 +1784,14 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   paymentTable.append(paymentBody);
 
   function openPaymentModal(payment) {
-    const allPayments = buildPaymentRows(record, config, settings);
+    const allPayments = buildPaymentRows(record, config, settings, loadState().payments);
     const existingLog = payment ? (record.paymentLog?.[payment.id] || {}) : {};
-    const editingTransaction = payment?.transactionId ? getTransactionById(record, payment.transactionId) : null;
     const selectedIds = new Set();
-    if (editingTransaction?.eventIds?.length) {
-      editingTransaction.eventIds.forEach(id => selectedIds.add(id));
-    } else if (payment?.id) {
-      selectedIds.add(payment.id);
-      const fxCandidate = allPayments.find(evt => evt.eventType === "fx_fee" && evt.dueDate === payment.dueDate && evt.status === "open");
-      if (fxCandidate) selectedIds.add(fxCandidate.id);
-    }
-    if (!editingTransaction) {
-      const deposit = allPayments.find(evt => evt.status === "open" && evt.typeLabel.toLowerCase().includes("deposit"));
-      if (deposit) selectedIds.add(deposit.id);
-    }
 
-    const paidDate = editingTransaction?.datePaid || existingLog.paidDate || new Date().toISOString().slice(0, 10);
-    const actualValue = Number.isFinite(Number(editingTransaction?.actualEurTotal))
-      ? fmtCurrencyInput(editingTransaction.actualEurTotal)
-      : fmtCurrencyInput(payment?.plannedEur ?? 0);
-    const methodValue = editingTransaction?.method || existingLog.method || "";
-    const paidByValue = editingTransaction?.paidBy || existingLog.paidBy || "";
-    const noteValue = editingTransaction?.note || existingLog.note || "";
-    const invoiceValue = editingTransaction?.driveInvoiceLink || "";
-    const folderValue = editingTransaction?.driveInvoiceFolderLink || "";
-    const transferValue = normalizeTransactionId(editingTransaction?.id)
-      || normalizeTransactionId(`tx-${Math.random().toString(36).slice(2, 7)}`);
+    const paidDate = existingLog.paidDate || new Date().toISOString().slice(0, 10);
+    const methodValue = existingLog.method || "";
+    const paidByValue = existingLog.payer || "";
+    const noteValue = existingLog.note || "";
 
     const paidDateInput = el("input", { type: "date", value: paidDate });
     const methodSelect = el("select", {}, [
@@ -1861,27 +1812,41 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     ]);
     paidBySelect.value = paidByValue;
 
-    const actualInput = el("input", { type: "text", inputmode: "decimal", value: actualValue, placeholder: "0,00" });
+    const actualInput = el("input", { type: "text", inputmode: "decimal", placeholder: "0,00" });
     const noteInput = el("textarea", { rows: "2", placeholder: "Notiz (optional)" }, [noteValue]);
-    const invoiceInput = el("input", { type: "url", placeholder: "https://drive.google.com/…", value: invoiceValue });
-    const folderInput = el("input", { type: "url", placeholder: "https://drive.google.com/…", value: folderValue });
-    const transferInput = el("input", { type: "text", value: transferValue || "" });
 
     const selectedSummary = el("div", { class: "po-payment-summary muted" });
-    const copyFilenameBtn = el("button", { class: "btn tertiary po-filename-copy", type: "button" }, [""]);
-    copyFilenameBtn.addEventListener("click", () => {
-      const text = copyFilenameBtn.dataset.filename || "";
-      navigator.clipboard?.writeText(text);
-    });
+    const allocationTable = el("table", { class: "table po-payment-allocation" }, [
+      el("thead", {}, [
+        el("tr", {}, [
+          el("th", {}, ["Event"]),
+          el("th", {}, ["Geplant (EUR)"]),
+          el("th", {}, ["Ist (EUR)"]),
+        ]),
+      ]),
+    ]);
+    const allocationBody = el("tbody");
+    allocationTable.append(allocationBody);
 
-    function updateFileName() {
+    function renderAllocation() {
+      allocationBody.innerHTML = "";
       const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
-      const keyEvents = buildInvoiceKeyEvents(selectedEvents);
-      const base = suggestedInvoiceFilename(record, paidDateInput.value);
-      const filename = `${base}_${keyEvents}.pdf`;
-      copyFilenameBtn.dataset.filename = filename;
-      copyFilenameBtn.textContent = filename;
-      copyFilenameBtn.title = "Suggested filename kopieren";
+      if (!selectedEvents.length) {
+        allocationBody.append(el("tr", {}, [
+          el("td", { colspan: "3", class: "muted" }, ["Bitte Events auswählen, um die Aufteilung zu sehen."]),
+        ]));
+        return;
+      }
+      const total = parseMoneyInput(actualInput.value);
+      const allocations = Number.isFinite(total) ? allocatePayment(total, selectedEvents) : null;
+      selectedEvents.forEach(evt => {
+        const allocation = allocations?.find(entry => entry.eventId === evt.id);
+        allocationBody.append(el("tr", {}, [
+          el("td", {}, [evt.label]),
+          el("td", {}, [fmtEURPlain(evt.plannedEur)]),
+          el("td", {}, [allocation ? formatMoneyDE(allocation.actual, 2) : "—"]),
+        ]));
+      });
     }
 
     function updateSummary() {
@@ -1890,11 +1855,11 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       selectedSummary.textContent = selectedEvents.length
         ? `Ausgewählt: ${selectedEvents.length} Events · Geplant ${fmtEURPlain(planned)} EUR`
         : "Bitte mindestens ein Event auswählen.";
-      updateFileName();
+      renderAllocation();
     }
 
     const eventList = el("div", { class: "po-payment-event-list" });
-    const selectableEvents = allPayments.filter(evt => evt.status === "open" || (editingTransaction && evt.transactionId === editingTransaction.id));
+    const selectableEvents = allPayments;
     const toggleSelection = (evtId, force) => {
       if (force === true) selectedIds.add(evtId);
       else if (force === false) selectedIds.delete(evtId);
@@ -1903,16 +1868,13 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       updateSummary();
     };
     selectableEvents.forEach(evt => {
-      const isPaid = evt.status === "paid";
-      const sameTransaction = editingTransaction && evt.transactionId === editingTransaction.id;
-      const disabled = isPaid && !sameTransaction;
+      const disabled = evt.status === "paid";
       const checkbox = el("input", { type: "checkbox", checked: selectedIds.has(evt.id), disabled });
       checkbox.addEventListener("change", () => {
         if (disabled) return;
         toggleSelection(evt.id, checkbox.checked);
       });
       const statusLabel = evt.status === "paid" ? "Bezahlt" : "Offen";
-      const txLabel = evt.transactionId ? formatTransactionLabel(evt.transactionId) : "—";
       const row = el("div", {
         class: `po-payment-event-row ${disabled ? "is-disabled" : ""}`,
         role: "button",
@@ -1924,7 +1886,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           el("span", { class: "muted" }, [`${fmtDateDE(evt.dueDate)} · ${fmtEURPlain(evt.plannedEur)} EUR`]),
         ]),
         el("span", { class: `po-status-pill ${evt.status === "paid" ? "is-paid" : "is-open"}` }, [statusLabel]),
-        el("span", { class: "po-transaction-pill" }, [txLabel]),
+        el("span", { class: "po-transaction-pill" }, [evt.paymentId || "—"]),
       ]);
       row.addEventListener("click", (event) => {
         if (disabled) return;
@@ -1943,7 +1905,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       eventList.append(row);
     });
 
-    paidDateInput.addEventListener("input", updateFileName);
+    actualInput.addEventListener("input", renderAllocation);
     updateSummary();
 
     const form = el("div", { class: "po-payment-form" }, [
@@ -1959,49 +1921,16 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       paidBySelect,
       el("label", {}, ["Ist bezahlt (EUR)"]),
       actualInput,
-      el("label", {}, ["Transfer-ID"]),
-      transferInput,
-      el("label", {}, ["Invoice Drive Link"]),
-      invoiceInput,
-      el("label", {}, ["Invoice Ordner Link (optional)"]),
-      folderInput,
+      el("label", {}, ["Aufteilung (Preview)"]),
+      allocationTable,
       el("label", {}, ["Notiz"]),
       noteInput,
-      el("div", { class: "po-filename-block" }, [
-        copyFilenameBtn,
-      ]),
     ]);
 
-    const markUnpaidBtn = editingTransaction
-      ? el("button", {
-          class: "btn danger",
-          type: "button",
-          onclick: () => {
-            if (!confirm("Transfer wirklich als offen markieren?")) return;
-            editingTransaction.eventIds.forEach(eventId => {
-              const log = record.paymentLog?.[eventId];
-              if (log && log.transactionId === editingTransaction.id) {
-                record.paymentLog[eventId] = {
-                  ...log,
-                  status: "open",
-                  paidDate: null,
-                  paidEurActual: null,
-                  transactionId: null,
-                };
-              }
-            });
-            record.paymentTransactions = record.paymentTransactions.filter(tx => tx.id !== editingTransaction.id);
-            onChange({ persist: true, source: "payment-update" });
-            closeModal(modal);
-          },
-        }, ["Mark as unpaid"])
-      : null;
-
     const modal = buildModal({
-      title: editingTransaction ? "Transfer bearbeiten" : "Zahlungen als bezahlt markieren",
+      title: "Zahlungen als bezahlt markieren",
       content: form,
       actions: [
-        markUnpaidBtn,
         el("button", { class: "btn secondary", type: "button", onclick: () => closeModal(modal) }, ["Abbrechen"]),
         el("button", {
           class: "btn",
@@ -2015,67 +1944,70 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               alert("Bitte Paid by auswählen.");
               return;
             }
-            const parsed = parseDE(actualInput.value);
+            const parsed = parseMoneyInput(actualInput.value);
             if (!Number.isFinite(parsed)) {
               alert("Bitte einen gültigen Ist-Betrag eingeben.");
               return;
             }
-            const transferId = normalizeTransactionId(transferInput.value);
-            if (!transferId) {
-              alert("Bitte eine gültige Transfer-ID eingeben.");
+            if (parsed <= 0) {
+              alert("Ist-Betrag muss größer als 0 sein.");
               return;
             }
-            const hasPaidEvents = Object.values(record.paymentLog || {}).some(log => log?.status === "paid");
-            if (!hasPaidEvents && !invoiceInput.value.trim()) {
-              alert("Bitte den Invoice Drive Link beim ersten bezahlten Event hinterlegen.");
+            const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
+            const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
+            if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) {
+              alert("Summe der geplanten Beträge muss größer als 0 sein.");
               return;
             }
-            const actual = Math.round(parsed * 100) / 100;
-            const transactionId = editingTransaction?.id || transferId;
-            const tx = {
-              id: transactionId,
-              datePaid: paidDateInput.value || null,
+            const allocations = allocatePayment(parsed, selectedEvents);
+            if (!allocations) {
+              alert("Konnte die Ist-Beträge nicht aufteilen.");
+              return;
+            }
+            if (allocations.some(entry => entry.actual <= 0)) {
+              alert("Ist-Beträge dürfen nicht 0 sein.");
+              return;
+            }
+
+            const paymentId = buildPaymentId();
+            const paymentRecord = {
+              id: paymentId,
+              paidDate: paidDateInput.value || null,
               method: methodSelect.value || null,
-              paidBy: paidBySelect.value,
-              actualEurTotal: actual,
-              driveInvoiceLink: invoiceInput.value.trim() || null,
-              driveInvoiceFolderLink: folderInput.value.trim() || null,
+              payer: paidBySelect.value,
+              currency: "EUR",
+              amountActualEurTotal: parsed,
+              coveredEventIds: allocations.map(entry => entry.eventId),
+              allocations: allocations.map(entry => {
+                const evt = selectedEvents.find(item => item.id === entry.eventId);
+                return {
+                  eventId: entry.eventId,
+                  amountAllocatedEur: entry.actual,
+                  amountPlannedEur: entry.planned,
+                  paymentType: evt?.typeLabel || evt?.label || "",
+                  dueDate: evt?.dueDate || "",
+                  entityType: "PO",
+                  poNumber: record.poNo || "",
+                };
+              }),
               note: noteInput.value.trim() || null,
-              eventIds: Array.from(selectedIds),
             };
 
-            const existingTxIndex = record.paymentTransactions.findIndex(entry => entry.id === transactionId);
-            if (existingTxIndex >= 0) record.paymentTransactions[existingTxIndex] = tx;
-            else record.paymentTransactions.push(tx);
+            const state = loadState();
+            if (!Array.isArray(state.payments)) state.payments = [];
+            state.payments.push(paymentRecord);
+            saveState(state);
 
-            const previouslyLinked = new Set(editingTransaction?.eventIds || []);
-            previouslyLinked.forEach(eventId => {
-              if (!selectedIds.has(eventId)) {
-                const log = record.paymentLog?.[eventId];
-                if (log && log.transactionId === transactionId) {
-                  record.paymentLog[eventId] = {
-                    ...log,
-                    status: "open",
-                    paidDate: null,
-                    paidEurActual: null,
-                    transactionId: null,
-                  };
-                }
-              }
-            });
-
-            selectedIds.forEach(eventId => {
-              const log = record.paymentLog?.[eventId] || {};
-              const plannedEur = allPayments.find(evt => evt.id === eventId)?.plannedEur || 0;
-              const actualValue = Number.isFinite(Number(log.paidEurActual))
-                ? Number(log.paidEurActual)
-                : plannedEur;
-              record.paymentLog[eventId] = {
+            allocations.forEach(entry => {
+              const log = record.paymentLog?.[entry.eventId] || {};
+              record.paymentLog[entry.eventId] = {
                 ...log,
                 status: "paid",
-                paidDate: tx.datePaid,
-                transactionId,
-                paidEurActual: actualValue,
+                paidDate: paymentRecord.paidDate,
+                paymentId: paymentRecord.id,
+                amountActualEur: entry.actual,
+                method: paymentRecord.method,
+                payer: paymentRecord.payer,
               };
             });
 
@@ -2083,7 +2015,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
             closeModal(modal);
           },
         }, ["Speichern"]),
-      ].filter(Boolean),
+      ],
     });
   }
 
@@ -2094,7 +2026,6 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     const delta = payment.paidEurActual != null
       ? `Δ ${fmtEURPlain(payment.paidEurActual - payment.plannedEur)} EUR`
       : null;
-    const transactionLabel = payment.transactionId ? formatTransactionLabel(payment.transactionId) : "—";
     const row = el("tr", { dataset: { paymentId: payment.id, paymentType: payment.typeLabel, paymentEventType: payment.eventType || "" } }, [
       el("td", {}, [payment.typeLabel]),
       el("td", {}, [fmtDateDE(payment.dueDate)]),
@@ -2104,13 +2035,14 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("td", {}, [paidActual, delta ? el("div", { class: "muted" }, [delta]) : null]),
       el("td", {}, [payment.method || "—"]),
       el("td", {}, [payment.paidBy || "—"]),
-      el("td", {}, [payment.transactionId ? el("span", { class: "po-transaction-pill" }, [transactionLabel]) : "—"]),
+      el("td", {}, [payment.paymentId ? el("span", { class: "po-transaction-pill" }, [payment.paymentId]) : "—"]),
       el("td", {}, [
         el("button", {
           class: "btn secondary sm",
           type: "button",
           onclick: () => openPaymentModal(payment),
-        }, [payment.status === "paid" ? "Edit transfer" : "Mark as paid"]),
+          disabled: payment.status === "paid",
+        }, [payment.status === "paid" ? "Bezahlt" : "Mark as paid"]),
       ]),
     ]);
     paymentBody.append(row);
@@ -3094,7 +3026,7 @@ export function renderOrderModule(root, config) {
     const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
     preview.append(el("h4", {}, ["Ereignisse"]));
-    preview.append(buildEventList(events, editing.paymentLog, getPaymentTransactions(editing)));
+    preview.append(buildEventList(events, editing.paymentLog, loadState().payments));
   }
 
   function updateSaveEnabled() {
