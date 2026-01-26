@@ -177,7 +177,9 @@ td.num, th.num{text-align:right}
 .dashboard-coverage-notice{display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px dashed rgba(196,140,0,0.4); border-radius:10px; background:rgba(255,231,180,0.2); font-size:13px; margin-bottom:12px;}
 .dashboard-coverage-notice .btn{padding:4px 10px; font-size:12px;}
 .dashboard-table-wrap{border:1px solid var(--table-border); border-radius:12px; overflow-x:auto; background:#fff;}
-.dashboard-tree-table{min-width:960px; font-size:var(--table-font-size); border-collapse:collapse;}
+.dashboard-tree-table{min-width:1200px; width:max-content; font-size:var(--table-font-size); border-collapse:collapse;}
+.dashboard-tree-table th.tree-header,.dashboard-tree-table td.tree-cell{min-width:240px;}
+.dashboard-tree-table th:not(.tree-header),.dashboard-tree-table td.num{min-width:120px;}
 .dashboard-tree-table th,.dashboard-tree-table td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bottom:1px solid var(--table-border); white-space:nowrap;}
 .dashboard-tree-table thead th{background:var(--table-header-bg); font-size:12px; color:var(--muted); font-weight:600; position:sticky; top:0; z-index:4;}
 .dashboard-tree-table th.tree-header{left:0; z-index:6;}
