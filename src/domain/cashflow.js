@@ -44,15 +44,59 @@ function isoDate(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
+
+function parseISODate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 function monthEndFromKey(yyyymm) {
   const [y, m] = yyyymm.split('-').map(Number);
   return new Date(y, m, 0);
 }
-function anchorsFor(row) {
-  const od = row.orderDate ? new Date(row.orderDate) : new Date();
+function getCnyWindow(settings, year) {
+  const entry = settings?.cnyBlackoutByYear?.[String(year)];
+  if (!entry) return null;
+  const start = parseISODate(entry.start);
+  const end = parseISODate(entry.end);
+  if (!start || !end) return null;
+  if (end < start) return null;
+  return { start, end };
+}
+
+function applyCnyBlackout(orderDate, prodDays, settings) {
+  if (!(orderDate instanceof Date) || Number.isNaN(orderDate.getTime())) {
+    return { prodDone: orderDate, adjustmentDays: 0 };
+  }
+  const remainingBase = Math.max(0, Number(prodDays || 0));
+  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
+    return { prodDone: addDays(orderDate, remainingBase), adjustmentDays: 0 };
+  }
+  let remaining = remainingBase;
+  let current = new Date(orderDate.getTime());
+  let adjustmentDays = 0;
+  while (remaining > 0) {
+    const window = getCnyWindow(settings, current.getUTCFullYear());
+    if (window) {
+      const endExclusive = addDays(window.end, 1);
+      if (current >= window.start && current < endExclusive) {
+        adjustmentDays += 1;
+        current = addDays(current, 1);
+        continue;
+      }
+    }
+    remaining -= 1;
+    current = addDays(current, 1);
+  }
+  return { prodDone: current, adjustmentDays };
+}
+
+function anchorsFor(row, settings) {
+  const od = parseISODate(row.orderDate) || new Date();
   const prodDays = Number(row.productionLeadTimeDays ?? row.prodDays ?? 0);
   const transitDays = Number(row.logisticsLeadTimeDays ?? row.transitDays ?? 0);
-  const prodDone = addDays(od, prodDays);
+  const cnyAdjusted = applyCnyBlackout(od, prodDays, settings);
+  const prodDone = cnyAdjusted.prodDone ?? addDays(od, prodDays);
   const etd = prodDone; // einfache Konvention
   const eta = addDays(etd, transitDays);
   return {
@@ -477,7 +521,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
   const ref = row[numberField];
   const prefix = ref ? `${prefixBase} ${ref}` : prefixBase;
   if (Array.isArray(row.payments) && row.payments.length) {
-    const anchors = anchorsFor(row);
+    const anchors = anchorsFor(row, settings);
     return row.payments
       .filter(Boolean)
       .map((payment, idx) => {
@@ -509,7 +553,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
   const totals = computeGoodsTotals(row, settings);
   const goods = totals.eur;
   const freight = computeFreightTotal(row, totals);
-  const anchors = anchorsFor(row);
+  const anchors = anchorsFor(row, settings);
   const manual = Array.isArray(row.milestones) ? row.milestones : [];
   const autoEvents = normaliseAutoEvents(row, settings, manual);
   const events = [];

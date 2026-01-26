@@ -37,6 +37,16 @@ function updateSettings(state, patch) {
   if (typeof patch.defaultDdp !== "undefined") {
     state.settings.defaultDdp = patch.defaultDdp === true;
   }
+  if (patch.cnyBlackoutByYear && typeof patch.cnyBlackoutByYear === "object") {
+    state.settings.cnyBlackoutByYear = state.settings.cnyBlackoutByYear || {};
+    Object.entries(patch.cnyBlackoutByYear).forEach(([year, entry]) => {
+      if (entry && entry.start && entry.end) {
+        state.settings.cnyBlackoutByYear[String(year)] = { start: entry.start, end: entry.end };
+      } else {
+        delete state.settings.cnyBlackoutByYear[String(year)];
+      }
+    });
+  }
   state.settings.lastUpdatedAt = new Date().toISOString();
 }
 
@@ -44,6 +54,7 @@ export function render(root) {
   const state = loadState();
   const settings = state.settings || {};
   const lead = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
+  const currentYear = new Date().getFullYear();
   const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "", defaultProductionLeadTime: "" };
 
   root.innerHTML = `
@@ -105,6 +116,25 @@ export function render(root) {
       </div>
     </section>
 
+    <section class="card">
+      <h3>CNY Blackout</h3>
+      <p class="muted">Produktionspause rund um das chinesische Neujahr. Pro Jahr hinterlegbar.</p>
+      <div class="grid three">
+        <label>
+          Jahr
+          <input id="cny-year" type="number" min="2000" step="1" value="${currentYear}">
+        </label>
+        <label>
+          CNY Start
+          <input id="cny-start" type="date" />
+        </label>
+        <label>
+          CNY Ende
+          <input id="cny-end" type="date" />
+        </label>
+      </div>
+    </section>
+
     <section class="card" id="settings-categories">
       <h3>Produktkategorien</h3>
       <div class="table-card-header">
@@ -136,6 +166,21 @@ export function render(root) {
     </section>
   `;
   $("#default-currency", root).value = settings.defaultCurrency || "EUR";
+  const cnyYearInput = $("#cny-year", root);
+  const cnyStartInput = $("#cny-start", root);
+  const cnyEndInput = $("#cny-end", root);
+
+  const loadCnyForYear = (yearValue) => {
+    const yearKey = String(yearValue || currentYear);
+    const entry = state.settings?.cnyBlackoutByYear?.[yearKey] || {};
+    if (cnyStartInput) cnyStartInput.value = entry.start || "";
+    if (cnyEndInput) cnyEndInput.value = entry.end || "";
+  };
+
+  if (cnyYearInput) {
+    loadCnyForYear(cnyYearInput.value || currentYear);
+    cnyYearInput.addEventListener("change", () => loadCnyForYear(cnyYearInput.value || currentYear));
+  }
 
   function renderHealthHints() {
     const issues = validateSettings(state.settings || {});
@@ -213,6 +258,9 @@ export function render(root) {
   $("#settings-save", root).addEventListener("click", () => {
     const { air, rail, sea, buffer, fxRate, defaultProductionLead, ok } = validate();
     if (!ok) return;
+    const cnyYear = cnyYearInput ? String(cnyYearInput.value || currentYear) : String(currentYear);
+    const cnyStart = cnyStartInput ? cnyStartInput.value : "";
+    const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
     const patch = {
       transportLeadTimesDays: { air, rail, sea },
       defaultBufferDays: buffer,
@@ -220,6 +268,9 @@ export function render(root) {
       fxRate: formatRate(fxRate),
       defaultProductionLeadTimeDays: defaultProductionLead,
       defaultDdp: $("#default-ddp", root).checked,
+      cnyBlackoutByYear: {
+        [cnyYear]: cnyStart && cnyEnd ? { start: cnyStart, end: cnyEnd } : null,
+      },
     };
     updateSettings(state, patch);
     saveState(state);

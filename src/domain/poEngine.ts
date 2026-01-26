@@ -35,6 +35,7 @@ export type Settings = {
   freightLagDays: number;
   vatRefundEnabled: boolean;
   vatRefundLagMonths: number;
+  cnyBlackoutByYear?: Record<string, { start: string; end: string }>;
 };
 
 export type EventRow = {
@@ -70,8 +71,51 @@ function parseDate(value: string): Date {
   return dt;
 }
 
+function parseDateOptional(value?: string | null): Date | null {
+  if (!value) return null;
+  const [y, m, d] = String(value).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
 function addDays(value: Date, days: number): Date {
   return new Date(value.getTime() + days * MILLIS_PER_DAY);
+}
+
+function getCnyWindow(settings: Settings, year: number): { start: Date; end: Date } | null {
+  const entry = settings?.cnyBlackoutByYear?.[String(year)];
+  if (!entry) return null;
+  const start = parseDateOptional(entry.start);
+  const end = parseDateOptional(entry.end);
+  if (!start || !end) return null;
+  if (end < start) return null;
+  return { start, end };
+}
+
+function applyCnyBlackout(orderDate: Date, prodDays: number, settings: Settings): { prodDone: Date; adjustmentDays: number } {
+  const remainingBase = Math.max(0, Number(prodDays || 0));
+  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
+    return { prodDone: addDays(orderDate, remainingBase), adjustmentDays: 0 };
+  }
+  let remaining = remainingBase;
+  let current = new Date(orderDate.getTime());
+  let adjustmentDays = 0;
+  while (remaining > 0) {
+    const window = getCnyWindow(settings, current.getUTCFullYear());
+    if (window) {
+      const endExclusive = addDays(window.end, 1);
+      if (current >= window.start && current < endExclusive) {
+        adjustmentDays += 1;
+        current = addDays(current, 1);
+        continue;
+      }
+    }
+    remaining -= 1;
+    current = addDays(current, 1);
+  }
+  return { prodDone: current, adjustmentDays };
 }
 
 function lastOfMonth(year: number, month: number): Date {
@@ -94,9 +138,9 @@ export function usdToEur(usd: number, fxRate: number, fxFeePct: number): number 
   return converted * feeFactor;
 }
 
-function computeAnchors(po: PO): Record<Anchor, Date> {
+function computeAnchors(po: PO, settings: Settings): Record<Anchor, Date> {
   const orderDate = parseDate(po.orderDate);
-  const prodDone = addDays(orderDate, po.prodDays ?? 0);
+  const prodDone = applyCnyBlackout(orderDate, po.prodDays ?? 0, settings).prodDone;
   const etd = prodDone;
   const eta = addDays(etd, po.transitDays ?? 0);
   return {
@@ -185,7 +229,7 @@ export function monthEnd(ym: string): string {
 }
 
 export function expandPO(po: PO, settings: Settings): EventRow[] {
-  const anchors = computeAnchors(po);
+  const anchors = computeAnchors(po, settings);
   const events: EventRow[] = [];
 
   for (const milestone of po.milestones ?? []) {
@@ -424,6 +468,66 @@ test("expandPO creates expected events", () => {
     "2025-07-05:FREIGHT",
     "2025-08-31:VAT_REFUND",
   ]);
+});
+
+test("CNY blackout extends production end date", () => {
+  const po: PO = {
+    id: "po-cny-1",
+    poNo: "CNY1",
+    orderDate: "2025-01-01",
+    goodsValueUsd: 1000,
+    prodDays: 10,
+    transport: "sea",
+    transitDays: 0,
+    ddp: false,
+    milestones: [
+      { id: "m1", label: "Balance", percent: 100, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+  };
+  const settings: Settings = {
+    fxRate: 1,
+    fxFeePct: 0,
+    eustRate: 0,
+    freightLagDays: 0,
+    vatRefundEnabled: false,
+    vatRefundLagMonths: 0,
+    cnyBlackoutByYear: {
+      "2025": { start: "2025-01-05", end: "2025-01-07" },
+    },
+  };
+  const events = expandPO(po, settings);
+  const prodEvent = events.find((evt) => evt.type === "PO");
+  assert.strictEqual(prodEvent?.date, "2025-01-14");
+});
+
+test("CNY blackout skips full holiday window before production resumes", () => {
+  const po: PO = {
+    id: "po-cny-2",
+    poNo: "CNY2",
+    orderDate: "2025-01-10",
+    goodsValueUsd: 1000,
+    prodDays: 5,
+    transport: "sea",
+    transitDays: 0,
+    ddp: false,
+    milestones: [
+      { id: "m1", label: "Balance", percent: 100, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+  };
+  const settings: Settings = {
+    fxRate: 1,
+    fxFeePct: 0,
+    eustRate: 0,
+    freightLagDays: 0,
+    vatRefundEnabled: false,
+    vatRefundLagMonths: 0,
+    cnyBlackoutByYear: {
+      "2025": { start: "2025-01-10", end: "2025-01-20" },
+    },
+  };
+  const events = expandPO(po, settings);
+  const prodEvent = events.find((evt) => evt.type === "PO");
+  assert.strictEqual(prodEvent?.date, "2025-01-26");
 });
 
 test("auto-events use goods + freight base and FX fee split", () => {

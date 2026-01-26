@@ -165,6 +165,43 @@ function addDays(date, days) {
   return copy;
 }
 
+function getCnyWindow(settings, year) {
+  const entry = settings?.cnyBlackoutByYear?.[String(year)];
+  if (!entry) return null;
+  const start = parseISODate(entry.start);
+  const end = parseISODate(entry.end);
+  if (!start || !end) return null;
+  if (end < start) return null;
+  return { start, end };
+}
+
+function applyCnyBlackout(orderDate, prodDays, settings) {
+  if (!(orderDate instanceof Date) || Number.isNaN(orderDate.getTime())) {
+    return { prodDone: orderDate, adjustmentDays: 0 };
+  }
+  const remainingBase = Math.max(0, Number(prodDays || 0));
+  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
+    return { prodDone: addDays(orderDate, remainingBase), adjustmentDays: 0 };
+  }
+  let remaining = remainingBase;
+  let current = new Date(orderDate.getTime());
+  let adjustmentDays = 0;
+  while (remaining > 0) {
+    const window = getCnyWindow(settings, current.getUTCFullYear());
+    if (window) {
+      const endExclusive = addDays(window.end, 1);
+      if (current >= window.start && current < endExclusive) {
+        adjustmentDays += 1;
+        current = addDays(current, 1);
+        continue;
+      }
+    }
+    remaining -= 1;
+    current = addDays(current, 1);
+  }
+  return { prodDone: current, adjustmentDays };
+}
+
 function getMonthEnd(monthKey) {
   if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return null;
   const [y, m] = monthKey.split("-").map(Number);
@@ -303,7 +340,7 @@ function buildCategoryGroups(items, categories = []) {
   return groups.filter(group => group.items.length);
 }
 
-function computePoEta(po) {
+function computePoEta(po, settings) {
   if (!po) return null;
   if (po.etaDate) return parseISODate(po.etaDate);
   if (po.eta) return parseISODate(po.eta);
@@ -311,7 +348,9 @@ function computePoEta(po) {
   if (!orderDate) return null;
   const prodDays = Number(po.prodDays || 0);
   const transitDays = Number(po.transitDays || 0);
-  return addDays(orderDate, prodDays + transitDays);
+  const adjusted = applyCnyBlackout(orderDate, prodDays, settings);
+  const prodDone = adjusted.prodDone ?? addDays(orderDate, prodDays);
+  return addDays(prodDone, transitDays);
 }
 
 function computeFoEta(fo) {
@@ -348,7 +387,7 @@ function buildSkuSignalMap(state, activeSkus, months) {
   pos.forEach(po => {
     if (!po || po.archived) return;
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
-    const etaDate = computePoEta(po);
+    const etaDate = computePoEta(po, settings);
     const etaMonth = etaDate ? toMonthKey(etaDate) : null;
     const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
     const paymentRows = buildPaymentRows(po, PO_CONFIG, settings, state?.payments || []);
