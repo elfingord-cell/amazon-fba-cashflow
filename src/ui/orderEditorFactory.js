@@ -151,6 +151,53 @@ function formatDateISO(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function getCnyWindow(settings, year) {
+  const entry = settings?.cnyBlackoutByYear?.[String(year)];
+  if (!entry) return null;
+  const start = parseISOToDate(entry.start);
+  const end = parseISOToDate(entry.end);
+  if (!(start instanceof Date) || Number.isNaN(start.getTime())) return null;
+  if (!(end instanceof Date) || Number.isNaN(end.getTime())) return null;
+  if (end < start) return null;
+  return { start, end };
+}
+
+function addDaysUtc(date, days) {
+  return addDays(date, days);
+}
+
+function applyCnyBlackout(orderDate, prodDays, settings) {
+  if (!(orderDate instanceof Date) || Number.isNaN(orderDate.getTime())) {
+    return { prodDone: orderDate, adjustmentDays: 0, cnyStart: null, cnyEnd: null };
+  }
+  const remainingBase = Math.max(0, Number(prodDays || 0));
+  if (!settings?.cnyBlackoutByYear || remainingBase === 0) {
+    return { prodDone: addDaysUtc(orderDate, remainingBase), adjustmentDays: 0, cnyStart: null, cnyEnd: null };
+  }
+  let remaining = remainingBase;
+  let current = new Date(orderDate.getTime());
+  let adjustmentDays = 0;
+  let usedStart = null;
+  let usedEnd = null;
+  while (remaining > 0) {
+    const year = current.getUTCFullYear();
+    const window = getCnyWindow(settings, year);
+    if (window) {
+      const endExclusive = addDaysUtc(window.end, 1);
+      if (current >= window.start && current < endExclusive) {
+        adjustmentDays += 1;
+        usedStart = !usedStart || window.start < usedStart ? window.start : usedStart;
+        usedEnd = !usedEnd || window.end > usedEnd ? window.end : usedEnd;
+        current = addDaysUtc(current, 1);
+        continue;
+      }
+    }
+    remaining -= 1;
+    current = addDaysUtc(current, 1);
+  }
+  return { prodDone: current, adjustmentDays, cnyStart: usedStart, cnyEnd: usedEnd };
+}
+
 const QUICKFILL_FIELD_MAP = [
   "units",
   "unitCostUsd",
@@ -798,6 +845,7 @@ function defaultRecord(config, settings = getSettings()) {
     transport: "sea",
     transitDays: 60,
     ddp: false,
+    cnyAdjustmentDays: 0,
     dutyRatePct: settings.dutyRatePct || 0,
     dutyIncludeFreight: settings.dutyIncludeFreight !== false,
     eustRatePct: settings.eustRatePct || 0,
@@ -816,15 +864,12 @@ function defaultRecord(config, settings = getSettings()) {
   return record;
 }
 
-function anchorDate(record, anchor) {
-  const order = new Date(record.orderDate);
-  const prodDone = addDays(order, Number(record.prodDays || 0));
-  const etd = prodDone;
-  const eta = addDays(etd, Number(record.transitDays || 0));
-  if (anchor === "ORDER_DATE") return order;
-  if (anchor === "PROD_DONE") return prodDone;
-  if (anchor === "ETD") return etd;
-  return eta;
+function anchorDate(schedule, anchor) {
+  if (!schedule) return null;
+  if (anchor === "ORDER_DATE") return schedule.order;
+  if (anchor === "PROD_DONE") return schedule.prodDone;
+  if (anchor === "ETD") return schedule.etd;
+  return schedule.eta;
 }
 
 function msSum100(ms) {
@@ -845,16 +890,11 @@ function orderEvents(record, config, settings) {
   const auto = ensureAutoEvents(record, settings, manual);
 
   const events = [];
-  const base = {
-    orderDate: record.orderDate,
-    prodDays: Number(record.prodDays || 0),
-    transport: record.transport,
-    transitDays: Number(record.transitDays || 0),
-  };
+  const schedule = computeTimeline(record, settings);
 
   const manualComputed = manual.map(m => {
     const pct = clampPct(m.percent);
-    const baseDate = anchorDate(base, m.anchor || "ORDER_DATE");
+    const baseDate = anchorDate(schedule, m.anchor || "ORDER_DATE");
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) return null;
     const due = addDays(baseDate, Number(m.lagDays || 0));
     const dueIso = isoDate(due);
@@ -894,7 +934,7 @@ function orderEvents(record, config, settings) {
   for (const autoEvt of auto) {
     if (!autoEvt || autoEvt.enabled === false) continue;
     const anchor = autoEvt.anchor || "ETA";
-    const baseDate = anchorDate(base, anchor);
+    const baseDate = anchorDate(schedule, anchor);
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) continue;
 
     if (autoEvt.type === "freight") {
@@ -1106,7 +1146,7 @@ function renderList(container, records, config, onEdit, onDelete, options = {}) 
         case "order":
           return fmtDateDE(rec.orderDate);
         case "timeline":
-          return formatTimelineSummary(rec);
+          return formatTimelineSummary(rec, settings);
         case "units":
           return Number(row.totals.units || 0).toLocaleString("de-DE");
         case "usd":
@@ -1298,7 +1338,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
   listRows.forEach(({ rec, totals }) => {
     const productSummary = formatSkuSummary(rec);
     const productTooltip = formatProductTooltip(rec);
-    const timeline = formatTimelineCompact(rec);
+    const timeline = formatTimelineCompact(rec, settings);
     const transport = `${rec.transport || "sea"} · ${rec.transitDays || 0}d`;
     const row = el("tr", {}, [
       el("td", { class: "cell-ellipsis", title: rec[config.numberField] || "—" }, [rec[config.numberField] || "—"]),
@@ -1397,16 +1437,17 @@ function renderItemsTable(container, record, onChange, dataListId) {
   container.append(table, dl);
 }
 
-function computeTimeline(record) {
+function computeTimeline(record, settings = getSettings()) {
   if (!record) return null;
   const order = parseISOToDate(record.orderDate) || null;
   if (!order) return null;
   const prodDays = Math.max(0, Number(record.prodDays || 0));
   const transitDays = Math.max(0, Number(record.transitDays || 0));
-  const prodDone = addDays(order, prodDays);
+  const blackout = applyCnyBlackout(order, prodDays, settings);
+  const prodDone = blackout.prodDone ?? addDays(order, prodDays);
   const etd = prodDone;
   const eta = addDays(etd, transitDays);
-  const totalDays = Math.max(prodDays + transitDays, 1);
+  const totalDays = Math.max(prodDays + transitDays + (blackout.adjustmentDays || 0), 1);
   return {
     order,
     prodDone,
@@ -1415,11 +1456,14 @@ function computeTimeline(record) {
     prodDays,
     transitDays,
     totalDays,
+    cnyAdjustmentDays: blackout.adjustmentDays || 0,
+    cnyStart: blackout.cnyStart,
+    cnyEnd: blackout.cnyEnd,
   };
 }
 
-function formatTimelineSummary(record) {
-  const timeline = computeTimeline(record);
+function formatTimelineSummary(record, settings) {
+  const timeline = computeTimeline(record, settings);
   if (!timeline) return "—";
   return [
     `Order ${fmtDateDE(timeline.order)}`,
@@ -1428,8 +1472,8 @@ function formatTimelineSummary(record) {
   ].join(" • ");
 }
 
-function formatTimelineCompact(record) {
-  const timeline = computeTimeline(record);
+function formatTimelineCompact(record, settings) {
+  const timeline = computeTimeline(record, settings);
   if (!timeline) return "—";
   return `ETD ${fmtDateDE(timeline.prodDone)} • ETA ${fmtDateDE(timeline.eta)}`;
 }
@@ -1457,11 +1501,15 @@ function transportIcon(transport) {
   return "🚢";
 }
 
-function renderTimeline(timelineNode, summaryNode, record) {
+function renderTimeline(timelineNode, summaryNode, record, settings, cnyBannerNode) {
   if (!timelineNode || !summaryNode) return;
-  const timeline = computeTimeline(record);
+  const timeline = computeTimeline(record, settings);
   summaryNode.innerHTML = "";
   timelineNode.innerHTML = "";
+  if (cnyBannerNode) {
+    cnyBannerNode.innerHTML = "";
+    cnyBannerNode.hidden = true;
+  }
 
   if (!timeline) {
     summaryNode.append(el("span", { class: "muted" }, ["Bitte gültiges Bestelldatum eingeben."]));
@@ -1474,6 +1522,12 @@ function renderTimeline(timelineNode, summaryNode, record) {
     el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["ETA"]), " ", fmtDateDE(timeline.eta)]),
   ]);
   summaryNode.append(summary);
+  if (cnyBannerNode && timeline.cnyAdjustmentDays > 0) {
+    const startText = timeline.cnyStart ? fmtDateDE(timeline.cnyStart) : "—";
+    const endText = timeline.cnyEnd ? fmtDateDE(timeline.cnyEnd) : "—";
+    cnyBannerNode.textContent = `CNY berücksichtigt: +${timeline.cnyAdjustmentDays} Tage Produktionspause. ETD/ETA angepasst. (${startText} – ${endText})`;
+    cnyBannerNode.hidden = false;
+  }
 
   const track = el("div", { class: "po-timeline-track" });
   track.append(el("div", { class: "po-timeline-base" }));
@@ -2091,6 +2145,7 @@ export function renderOrderModule(root, config) {
     ddp: `${config.slug}-ddp`,
     timeline: `${config.slug}-timeline`,
     timelineSummary: `${config.slug}-timeline-summary`,
+    cnyBanner: `${config.slug}-cny-banner`,
     msZone: `${config.slug}-ms-zone`,
     preview: `${config.slug}-preview`,
     save: `${config.slug}-save`,
@@ -2269,6 +2324,7 @@ export function renderOrderModule(root, config) {
             <h4>PO Timeline</h4>
             <div id="${ids.timelineSummary}" class="po-timeline-summary"></div>
           </div>
+          <div id="${ids.cnyBanner}" class="banner warning" hidden></div>
           <div id="${ids.timeline}" class="po-timeline-track-wrapper"></div>
         </div>
       </div>
@@ -2394,6 +2450,7 @@ export function renderOrderModule(root, config) {
   const ddpToggle = $(`#${ids.ddp}`, root);
   const timelineZone = $(`#${ids.timeline}`, root);
   const timelineSummary = $(`#${ids.timelineSummary}`, root);
+  const cnyBanner = $(`#${ids.cnyBanner}`, root);
   const msZone = $(`#${ids.msZone}`, root);
   const saveBtn = $(`#${ids.save}`, root);
   const cancelBtn = $(`#${ids.cancel}`, root);
@@ -3092,6 +3149,8 @@ export function renderOrderModule(root, config) {
     editing.vatRefundLagMonths = Number(vatLagInput.value || 0);
     editing.vatRefundEnabled = vatToggle.checked;
     editing.ddp = ddpToggle.checked;
+    const timeline = computeTimeline(editing, settings);
+    editing.cnyAdjustmentDays = timeline?.cnyAdjustmentDays || 0;
   }
 
   function persistEditing({ source, silent } = {}) {
@@ -3131,7 +3190,7 @@ export function renderOrderModule(root, config) {
     syncEditingFromForm(settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     ensurePaymentLog(editing);
-    renderTimeline(timelineZone, timelineSummary, editing);
+    renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
     renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
     updatePreview(settings);
     updateSaveEnabled();
@@ -3213,7 +3272,7 @@ export function renderOrderModule(root, config) {
     vatLagInput.value = String(editing.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0);
     vatToggle.checked = editing.vatRefundEnabled !== false;
     ddpToggle.checked = !!editing.ddp;
-    renderTimeline(timelineZone, timelineSummary, editing);
+    renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
     renderMsTable(msZone, editing, config, onAnyChange, null, settings);
     updatePreview(settings);
     updateSaveEnabled();
