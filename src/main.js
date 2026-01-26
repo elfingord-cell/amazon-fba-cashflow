@@ -108,14 +108,17 @@ function initSidebarToggle() {
 }
 
 // akzeptiert verschiedene Modul-Formen
-function pickRenderer(mod) {
-  if (!mod) return null;
-  if (typeof mod.default === 'function') return mod.default;
-  if (typeof mod.render === 'function') return mod.render;
-  if (mod.default && typeof mod.default.render === 'function') return mod.default.render;
-  if (typeof mod.mount === 'function') return mod.mount;
-  return null;
-}
+const pickRenderer = (mod) => (
+  typeof mod?.default === 'function'
+    ? mod.default
+    : typeof mod?.render === 'function'
+      ? mod.render
+      : (mod?.default && typeof mod.default.render === 'function')
+        ? mod.default.render
+        : typeof mod?.mount === 'function'
+          ? mod.mount
+          : null
+);
 
 function renderRoute(forcedHash) {
   const candidate = typeof forcedHash === 'string' ? forcedHash : location.hash;
