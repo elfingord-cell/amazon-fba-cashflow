@@ -6,6 +6,8 @@ import {
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
+import { validateAll } from "../lib/dataHealth.js";
+import { openBlockingModal } from "./dataHealthUi.js";
 
 function $(sel, root = document) {
   return root.querySelector(sel);
@@ -2013,9 +2015,37 @@ export default function render(root) {
       overlay.remove();
     });
 
+    function collectBlockingIssues() {
+      const { issues } = validateAll({
+        settings: state.settings,
+        products: state.products,
+        suppliers: state.suppliers,
+      });
+      return issues.filter(issue => {
+        if (!issue.blocking) return false;
+        if (issue.scope === "settings") {
+          return issue.field === "fxRate";
+        }
+        if (issue.scope === "product") {
+          return issue.entityId === baseForm.sku
+            && (issue.field === "currency" || issue.field === "unitPrice");
+        }
+        if (issue.scope === "supplier") {
+          return issue.entityId === baseForm.supplierId
+            && (issue.field === "paymentTerms" || issue.field === "productionLeadTime");
+        }
+        return false;
+      });
+    }
+
     saveBtn.addEventListener("click", () => {
       validateForm();
       if (saveBtn.disabled) return;
+      const blockingIssues = collectBlockingIssues();
+      if (blockingIssues.length) {
+        openBlockingModal(blockingIssues);
+        return;
+      }
       if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
         baseForm.dutyRatePct = 0;
         baseForm.eustRatePct = 0;
