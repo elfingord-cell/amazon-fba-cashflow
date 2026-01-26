@@ -46,6 +46,7 @@ const defaults = {
     defaultCurrency: "EUR",
     defaultDdp: false,
     lastUpdatedAt: null,
+    cnyBlackoutByYear: {},
     productsTableColumns: {
       list: [],
       grid: [],
@@ -186,6 +187,9 @@ function ensureGlobalSettings(state) {
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
   settings.defaultDdp = settings.defaultDdp === true;
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
+  if (!settings.cnyBlackoutByYear || typeof settings.cnyBlackoutByYear !== "object") {
+    settings.cnyBlackoutByYear = {};
+  }
   if (!settings.productsTableColumns || typeof settings.productsTableColumns !== "object") {
     settings.productsTableColumns = structuredClone(defaults.settings.productsTableColumns);
   } else {
