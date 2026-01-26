@@ -109,6 +109,59 @@ function normalizePaymentType({ label, eventType }) {
   return null;
 }
 
+function allocateByPlanned(total, events = []) {
+  const plannedValues = events.map(evt => Number(evt.plannedEur || 0));
+  const sumPlanned = plannedValues.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) return null;
+  const allocations = plannedValues.map((planned, index) => {
+    const share = planned / sumPlanned;
+    const raw = total * share;
+    return {
+      eventId: events[index].id,
+      planned,
+      raw,
+      actual: Math.round(raw * 100) / 100,
+    };
+  });
+  const roundedSum = allocations.reduce((sum, entry) => sum + entry.actual, 0);
+  const remainder = Math.round((total - roundedSum) * 100) / 100;
+  if (Math.abs(remainder) > 0) {
+    let target = allocations[allocations.length - 1];
+    if (allocations.length > 1) {
+      target = allocations.reduce((best, entry) => (entry.planned > best.planned ? entry : best), target);
+    }
+    target.actual = Math.round((target.actual + remainder) * 100) / 100;
+  }
+  return allocations;
+}
+
+function buildPaymentIndexes(payments = []) {
+  const byId = new Map();
+  const allocationByEvent = new Map();
+  (payments || []).forEach(payment => {
+    if (!payment?.id) return;
+    byId.set(payment.id, payment);
+    if (Array.isArray(payment.allocations)) {
+      payment.allocations.forEach(entry => {
+        if (!entry?.eventId) return;
+        allocationByEvent.set(entry.eventId, entry);
+      });
+    }
+  });
+  return { byId, allocationByEvent };
+}
+
+function resolveActualAllocation({ payment, paymentRow, paymentRows }) {
+  if (!payment || !paymentRow?.paymentId) return null;
+  const total = Number(payment.amountActualEurTotal);
+  if (!Number.isFinite(total)) return null;
+  const related = (paymentRows || []).filter(row => row.paymentId && row.paymentId === paymentRow.paymentId);
+  if (!related.length) return null;
+  const allocations = allocateByPlanned(total, related);
+  if (!allocations) return null;
+  return allocations.find(entry => entry.eventId === paymentRow.id) || null;
+}
+
 function getRowMonth(row) {
   const date = row.status === "PAID" ? row.paidDate : row.dueDate;
   return date ? date.slice(0, 7) : "";
@@ -138,16 +191,16 @@ function buildPaymentJournalRows({ month, scope }) {
       if (!paymentType) return;
       const paymentRecord = payment.paymentId ? paymentIndexes.byId.get(payment.paymentId) : null;
       const allocation = paymentIndexes.allocationByEvent.get(payment.id)
-        || resolveActualAllocation({ payment: paymentRecord, paymentRow: payment, paymentRows });
+        || resolveActualAllocation({ payment: paymentRecord, paymentRow: payment, paymentRows: payments });
+      const status = payment.status === "paid" || payment.status === "PAID" ? "PAID" : "OPEN";
       const dueDate = payment.dueDate || "";
       const paidDate = paymentRecord?.paidDate || payment.paidDate || "";
       const planned = Number.isFinite(Number(payment.plannedEur)) ? Number(payment.plannedEur) : null;
-      const actual = status === "PAID"
-        ? (Number.isFinite(Number(payment.paidEurActual)) ? Number(payment.paidEurActual) : null)
-        : null;
+      const actualFromRow = Number.isFinite(Number(payment.paidEurActual)) ? Number(payment.paidEurActual) : null;
+      const allocationActual = allocation && Number.isFinite(Number(allocation.actual)) ? Number(allocation.actual) : null;
+      const actual = status === "PAID" ? (actualFromRow ?? allocationActual ?? null) : null;
       const entityId = record.id || record.poNo || "";
       const rowId = `PO-${entityId}-${paymentType}-${dueDate || paidDate || ""}`;
-      const hasActualOrPaid = hasActual || Boolean(paidDate);
       rows.push({
         rowId,
         month: getRowMonth({ status, dueDate, paidDate }),
