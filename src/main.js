@@ -3,6 +3,8 @@
 // Toleranter Modul-Loader: akzeptiert default export FUNCTION, named export render FUNCTION,
 // oder default-Objekt mit .render FUNCTION.
 
+import { initDataHealthUI } from "./ui/dataHealthUi.js";
+
 const APP = document.getElementById('app');
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 
@@ -169,4 +171,5 @@ window.addEventListener('state:changed', (event) => {
 });
 
 initSidebarToggle();
+initDataHealthUI();
 renderRoute();

@@ -1,16 +1,12 @@
 // FBA-CF-0027 — Local Storage Layer (schlank, mit Listenern)
+import { parseDeNumber } from "../lib/dataHealth.js";
+
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 
 function parseEuro(value) {
   if (value == null) return 0;
-  const cleaned = String(value)
-    .trim()
-    .replace(/€/g, "")
-    .replace(/\s+/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : 0;
+  const parsed = parseDeNumber(String(value).replace(/€/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatEuro(value) {
@@ -425,12 +421,7 @@ function cleanAlias(alias, sku) {
 }
 
 function parseNumber(value) {
-  if (value == null || value === "") return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
-  if (!cleaned) return null;
-  const num = Number(cleaned);
-  return Number.isFinite(num) ? num : null;
+  return parseDeNumber(value);
 }
 
 function normaliseTemplate(template) {
@@ -467,7 +458,7 @@ function normaliseTemplate(template) {
     vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
     fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
     fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
-    ddp: rawFields.ddp === true,
+    ddp: Boolean(rawFields.ddp),
     currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
       ? String(currencyRaw).toUpperCase()
       : "USD",

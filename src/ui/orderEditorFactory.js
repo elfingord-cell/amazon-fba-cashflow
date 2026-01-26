@@ -7,6 +7,8 @@ import {
   upsertProduct,
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
+import { makeIssue, validateAll } from "../lib/dataHealth.js";
+import { openBlockingModal } from "./dataHealthUi.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -3319,6 +3321,30 @@ export function renderOrderModule(root, config) {
     const settings = getSettings();
     syncEditingFromForm(settings);
     normaliseArchiveFlag(editing);
+    const stateSnapshot = loadState();
+    const { issues } = validateAll({
+      settings: stateSnapshot.settings,
+      products: stateSnapshot.products,
+      suppliers: stateSnapshot.suppliers,
+    });
+    const blocking = issues.filter(issue => issue.blocking && issue.scope === "product"
+      && issue.entityId === editing.sku
+      && (issue.field === "currency" || issue.field === "unitPrice"));
+    if (!editing.supplier) {
+      blocking.push(makeIssue({
+        scope: "po",
+        entityId: editing.id || editing[config.numberField] || "po",
+        severity: "error",
+        field: "supplier",
+        message: "Supplier fehlt.",
+        hint: "Bitte einen Supplier hinterlegen.",
+        blocking: true,
+      }));
+    }
+    if (blocking.length) {
+      openBlockingModal(blocking);
+      return;
+    }
     const st = loadState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
     const idx = arr.findIndex(item => (item.id && item.id === editing.id)
