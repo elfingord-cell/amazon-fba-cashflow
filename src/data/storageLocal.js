@@ -424,6 +424,15 @@ function cleanAlias(alias, sku) {
   return fallback ? `Ohne Alias (${fallback})` : "Ohne Alias";
 }
 
+function parseNumber(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
+  if (!cleaned) return null;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
+}
+
 function normaliseTemplate(template) {
   if (!template || typeof template !== "object") return null;
   const next = {};
@@ -437,14 +446,6 @@ function normaliseTemplate(template) {
     : template;
   const transportRaw = rawFields.transportMode || rawFields.transport || "SEA";
   const currencyRaw = rawFields.currency || "USD";
-  const parseNumber = (value) => {
-    if (value == null || value === "") return null;
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    const cleaned = String(value).trim().replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
-    if (!cleaned) return null;
-    const num = Number(cleaned);
-    return Number.isFinite(num) ? num : null;
-  };
   const clamp = (value, min, max) => {
     if (!Number.isFinite(value)) return null;
     if (value < min) return min;
