@@ -6,7 +6,6 @@ import {
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
-import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
 import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 

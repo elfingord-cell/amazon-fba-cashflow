@@ -338,12 +338,6 @@ function buildHistoryTable(state, sku) {
       value: product.sellerboardMarginPct != null ? formatInputNumber(parseDeNumber(product.sellerboardMarginPct), 2) : "",
       inputmode: "decimal",
     });
-    const productionLeadTimeInput = createEl("input", {
-      value: product.productionLeadTimeDaysDefault != null
-        ? formatInputNumber(parseDeNumber(product.productionLeadTimeDaysDefault), 0)
-        : "",
-      inputmode: "decimal",
-    });
 
     const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
     if (!template.transportMode && template.transport) {
