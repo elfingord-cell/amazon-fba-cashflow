@@ -9,6 +9,7 @@ import {
 import { createDataTable } from "./components/dataTable.js";
 import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
+import { formatLocalizedNumber, parseLocalizedNumber } from "./utils/numberFormat.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
