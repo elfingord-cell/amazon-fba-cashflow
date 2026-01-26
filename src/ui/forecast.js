@@ -596,35 +596,6 @@ function renderTable(el, state, months, monthsAll, groups, view) {
     forecastView.collapsed[categoryId] = !forecastView.collapsed[categoryId];
     persistView();
     render(el);
-  }
-
-  function onKeydown(ev) {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      closeEditor({ commit: true });
-    } else if (ev.key === "Escape") {
-      ev.preventDefault();
-      closeEditor({ commit: false });
-    }
-  }
-
-  function onBlur() {
-    closeEditor({ commit: true });
-  }
-
-  tbody.addEventListener("click", ev => {
-    const cell = ev.target.closest("td[data-sku]");
-    if (!cell || activeInput) return;
-    const sku = cell.dataset.sku;
-    const month = cell.dataset.month;
-    if (!sku || !month) return;
-    const current = getEffectiveValue(state, sku, month);
-    cell.innerHTML = `<input class="forecast-input" type="text" inputmode="decimal" value="${current ?? ""}" />`;
-    activeInput = cell.querySelector("input");
-    activeInput.addEventListener("keydown", onKeydown);
-    activeInput.addEventListener("blur", onBlur);
-    activeInput.focus();
-    activeInput.select();
   });
 
   return table;
