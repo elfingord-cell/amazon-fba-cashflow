@@ -8,6 +8,8 @@ import {
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
+import { formatDeNumber, parseDeNumber, validateSuppliers } from "../lib/dataHealth.js";
+import { openDataHealthPanel } from "./dataHealthUi.js";
 
 function $(sel, root = document) { return root.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -41,10 +43,7 @@ function formatDate(iso) {
 }
 
 function formatNumber(value) {
-  if (value == null || value === "") return "—";
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "—";
-  return num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatDeNumber(value, 2);
 }
 
 function defaultPaymentTerms() {
@@ -68,12 +67,7 @@ function clampPercent(value) {
 }
 
 function parseNumber(value) {
-  if (value == null) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-  const cleaned = raw.replace(/\s+/g, "").replace(/\./g, "").replace(",", ".");
-  const num = Number(cleaned);
-  return Number.isFinite(num) ? num : null;
+  return parseDeNumber(value);
 }
 
 function uniqueName(list, name, excludeId) {
@@ -104,11 +98,47 @@ export function render(root) {
   const products = getProductsSnapshot();
   const productBySku = new Map(products.map(prod => [String(prod.sku || "").trim().toLowerCase(), prod]));
   const supplierLabelMap = buildSupplierLabelMap(state, products);
+  let supplierIssuesById = new Map();
 
   function productLabel(sku) {
     const key = String(sku || "").trim().toLowerCase();
     const product = productBySku.get(key);
     return product?.alias || product?.sku || sku || "—";
+  }
+
+  function getSupplierIssueTooltip(issues) {
+    if (!issues.length) return "";
+    const labels = issues.map((issue) => {
+      switch (issue.field) {
+        case "name":
+          return "Name";
+        case "currency":
+          return "Currency";
+        case "paymentTerms":
+          return "Payment Terms";
+        case "productionLeadTime":
+          return "Production Lead Time";
+        default:
+          return issue.field;
+      }
+    });
+    return `Fehlt: ${[...new Set(labels)].join(", ")}`;
+  }
+
+  function buildHealthDot(supplierId) {
+    const issues = supplierIssuesById.get(supplierId) || [];
+    if (!issues.length) return null;
+    const tooltip = getSupplierIssueTooltip(issues);
+    return el("button", {
+      class: "data-health-dot",
+      type: "button",
+      title: tooltip,
+      "aria-label": tooltip,
+      onclick: (event) => {
+        event.stopPropagation();
+        openDataHealthPanel({ scope: "supplier", entityId: supplierId });
+      },
+    });
   }
 
   root.innerHTML = `
@@ -124,7 +154,18 @@ export function render(root) {
 
   const tableHost = $("#supplier-table", root);
 
+  function refreshSupplierIssues() {
+    supplierIssuesById = new Map();
+    validateSuppliers(state.suppliers).forEach(issue => {
+      const key = String(issue.entityId || "").trim();
+      if (!key) return;
+      if (!supplierIssuesById.has(key)) supplierIssuesById.set(key, []);
+      supplierIssuesById.get(key).push(issue);
+    });
+  }
+
   function renderRows() {
+    refreshSupplierIssues();
     if (!state.suppliers.length) {
       tableHost.innerHTML = `<p class="muted">Keine Lieferanten vorhanden.</p>`;
       return;
@@ -135,7 +176,7 @@ export function render(root) {
     const columns = [
       { key: "name", label: "Supplier Name" },
       { key: "company", label: "Company" },
-      { key: "lead", label: "Production LT (days)", className: "num" },
+      { key: "lead", label: "Default Production Lead Time", className: "num" },
       { key: "incoterm", label: "Incoterm" },
       { key: "currency", label: "Currency" },
       { key: "terms", label: "Payment Terms" },
@@ -151,7 +192,10 @@ export function render(root) {
       renderCell: (supplier, col) => {
         switch (col.key) {
           case "name":
-            return supplier.name;
+            return el("span", { class: "data-health-inline" }, [
+              buildHealthDot(supplier.id),
+              supplier.name,
+            ]);
           case "company":
             return supplier.company_name || "—";
           case "lead":
@@ -203,7 +247,7 @@ export function render(root) {
           isActive: true,
           supplierSku: "",
           unitPrice: presetDefaults.unitPrice ?? "",
-          currency: presetDefaults.currency || supplier.currencyDefault || "USD",
+          currency: presetDefaults.currency || supplier.currencyDefault || (state.settings?.defaultCurrency || "EUR"),
           productionLeadTimeDays: presetDefaults.productionLeadTimeDays ?? supplier.productionLeadTimeDaysDefault ?? 0,
           incoterm: supplier.incotermDefault || "EXW",
           paymentTermsTemplate: null,
@@ -316,15 +360,15 @@ export function render(root) {
       el("label", { style: "margin-top:12px" }, ["Supplier SKU (optional)"]),
       el("input", { type: "text", id: "mapping-supplier-sku", value: base.supplierSku || "" }),
       el("label", { style: "margin-top:12px" }, ["Unit Price"]),
-      el("input", { type: "text", inputmode: "decimal", id: "mapping-unit-price", value: base.unitPrice ?? "" }),
+      el("input", { type: "text", inputmode: "decimal", id: "mapping-unit-price", value: base.unitPrice != null ? formatDeNumber(base.unitPrice, 2, { emptyValue: "", useGrouping: false }) : "" }),
       el("label", { style: "margin-top:12px" }, ["Currency"]),
       (() => {
         const select = el("select", { id: "mapping-currency", class: "wide-select" });
         CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
-        select.value = base.currency || supplier.currencyDefault || "USD";
+        select.value = base.currency || supplier.currencyDefault || (state.settings?.defaultCurrency || "EUR");
         return select;
       })(),
-      el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
+      el("label", { style: "margin-top:12px" }, ["Default Production Lead Time"]),
       el("input", { type: "number", min: "0", step: "1", id: "mapping-lead-time", value: base.productionLeadTimeDays ?? "" }),
       el("label", { style: "margin-top:12px" }, ["Incoterm"]),
       (() => {
@@ -376,6 +420,14 @@ export function render(root) {
       termsTable.style.display = "none";
       termsAdd.style.display = "none";
       warning.style.display = "none";
+    }
+
+    const unitPriceInput = $("#mapping-unit-price", content);
+    if (unitPriceInput) {
+      unitPriceInput.addEventListener("blur", () => {
+        const parsed = parseDeNumber(unitPriceInput.value);
+        unitPriceInput.value = parsed == null ? "" : formatDeNumber(parsed, 2, { emptyValue: "", useGrouping: false });
+      });
     }
 
     renderTerms();
@@ -503,6 +555,7 @@ export function render(root) {
   }
 
   function openSupplierModal(existing) {
+    const settings = state.settings || {};
     const supplier = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
@@ -511,7 +564,7 @@ export function render(root) {
           company_name: "",
           productionLeadTimeDaysDefault: 30,
           incotermDefault: "EXW",
-          currencyDefault: "EUR",
+          currencyDefault: settings.defaultCurrency || "EUR",
           paymentTermsDefault: defaultPaymentTerms(),
           updatedAt: null,
         };
@@ -661,7 +714,7 @@ export function render(root) {
       el("input", { type: "text", id: "supplier-name", value: supplier.name }),
       el("label", { style: "margin-top:12px" }, ["Company"]),
       el("input", { type: "text", id: "supplier-company", value: supplier.company_name || "" }),
-      el("label", { style: "margin-top:12px" }, ["Production Lead Time (days)"]),
+      el("label", { style: "margin-top:12px" }, ["Default Production Lead Time"]),
       el("input", { type: "number", min: "0", step: "1", id: "supplier-lt", value: supplier.productionLeadTimeDaysDefault }),
       el("label", { style: "margin-top:12px" }, ["Incoterm"]),
       (() => {
@@ -673,7 +726,7 @@ export function render(root) {
       (() => {
         const select = el("select", { id: "supplier-currency" });
         CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
-        select.value = supplier.currencyDefault || "EUR";
+        select.value = supplier.currencyDefault || settings.defaultCurrency || "EUR";
         return select;
       })(),
       el("h4", { style: "margin-top:16px" }, ["Payment Terms"]),
@@ -797,7 +850,10 @@ export function render(root) {
   if (focusRaw) {
     try {
       const focus = JSON.parse(focusRaw);
-      if (focus?.tab === "suppliers" && focus.sku) {
+      if (focus?.tab === "suppliers" && focus.supplierId) {
+        const target = state.suppliers.find(item => item.id === focus.supplierId);
+        if (target) openSupplierModal(target);
+      } else if (focus?.tab === "suppliers" && focus.sku) {
         openGlobalMappingModal(focus.sku);
       }
     } catch (err) {

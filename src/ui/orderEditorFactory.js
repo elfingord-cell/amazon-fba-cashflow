@@ -7,6 +7,8 @@ import {
   upsertProduct,
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
+import { formatLocalizedNumber, makeIssue, parseLocalizedNumber, validateAll } from "../lib/dataHealth.js";
+import { openBlockingModal } from "./dataHealthUi.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -54,19 +56,8 @@ function formatSkuSummary(record) {
 }
 
 function parseDE(value) {
-  if (value == null) return NaN;
-  const cleaned = String(value)
-    .trim()
-    .replace(/\s/g, "")
-    .replace(/[^0-9,.-]+/g, "");
-  if (!cleaned) return NaN;
-  const parts = cleaned.split(",");
-  let normalised = parts
-    .map((segment, idx) => (idx === parts.length - 1 ? segment : segment.replace(/\./g, "")))
-    .join(".");
-  normalised = normalised.replace(/\.(?=\d{3}(?:\.|$))/g, "");
-  const num = Number(normalised);
-  return Number.isFinite(num) ? num : NaN;
+  const parsed = parseLocalizedNumber(value);
+  return parsed == null ? NaN : parsed;
 }
 
 function fmtEUR(value) {
@@ -85,10 +76,7 @@ function fmtCurrencyInput(value) {
   const parsed = parseDE(raw);
   if (!raw.trim()) return "";
   if (!Number.isFinite(parsed)) return raw;
-  return Number(parsed).toLocaleString("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  return formatLocalizedNumber(parsed, 2, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtUSD(value) {
@@ -3319,6 +3307,30 @@ export function renderOrderModule(root, config) {
     const settings = getSettings();
     syncEditingFromForm(settings);
     normaliseArchiveFlag(editing);
+    const stateSnapshot = loadState();
+    const { issues } = validateAll({
+      settings: stateSnapshot.settings,
+      products: stateSnapshot.products,
+      suppliers: stateSnapshot.suppliers,
+    });
+    const blocking = issues.filter(issue => issue.blocking && issue.scope === "product"
+      && issue.entityId === editing.sku
+      && (issue.field === "currency" || issue.field === "unitPrice"));
+    if (!editing.supplier) {
+      blocking.push(makeIssue({
+        scope: "po",
+        entityId: editing.id || editing[config.numberField] || "po",
+        severity: "error",
+        field: "supplier",
+        message: "Supplier fehlt.",
+        hint: "Bitte einen Supplier hinterlegen.",
+        blocking: true,
+      }));
+    }
+    if (blocking.length) {
+      openBlockingModal(blocking);
+      return;
+    }
     const st = loadState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
     const idx = arr.findIndex(item => (item.id && item.id === editing.id)

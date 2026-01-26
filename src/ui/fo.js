@@ -6,6 +6,10 @@ import {
 } from "../data/storageLocal.js";
 import { createDataTable } from "./components/dataTable.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
+import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
+import { parseLocalizedNumber } from "../lib/dataHealth.js";
+import { validateAll } from "../lib/dataHealth.js";
+import { openBlockingModal } from "./dataHealthUi.js";
 
 function $(sel, root = document) {
   return root.querySelector(sel);
@@ -41,6 +45,11 @@ const STATUS_LABELS = {
   CANCELLED: "Cancelled",
 };
 
+function normaliseCurrency(value, fallback = "EUR") {
+  const upper = String(value || "").trim().toUpperCase();
+  return CURRENCIES.includes(upper) ? upper : fallback;
+}
+
 function defaultPaymentTerms() {
   return [
     { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
@@ -58,23 +67,7 @@ function formatDate(input) {
 }
 
 function parseLocaleNumber(value) {
-  if (value == null) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const cleaned = String(value).trim().replace(/[^0-9,.-]+/g, "");
-  if (!cleaned) return null;
-  const lastComma = cleaned.lastIndexOf(",");
-  const lastDot = cleaned.lastIndexOf(".");
-  const decimalIndex = Math.max(lastComma, lastDot);
-  let normalised = cleaned;
-  if (decimalIndex >= 0) {
-    const integer = cleaned.slice(0, decimalIndex).replace(/[.,]/g, "");
-    const fraction = cleaned.slice(decimalIndex + 1).replace(/[.,]/g, "");
-    normalised = `${integer}.${fraction}`;
-  } else {
-    normalised = cleaned.replace(/[.,]/g, "");
-  }
-  const num = Number(normalised);
-  return Number.isFinite(num) ? num : null;
+  return parseLocalizedNumber(value);
 }
 
 function parseNumber(value) {
@@ -294,9 +287,11 @@ function buildSuggestedFields(state, form) {
   const unitPriceSource = mapping?.unitPrice != null
     ? "Supplier/SKU Mapping"
     : (product?.defaultUnitPrice != null || product?.unitPrice != null ? "Produktdatenbank" : null);
-  const leadTimeSource = mapping?.productionLeadTimeDays != null
-    ? "Supplier/SKU Mapping"
-    : (supplier?.productionLeadTimeDaysDefault != null ? "Supplier Default" : null);
+  const leadTimeResolution = resolveProductionLeadTimeDays({
+    sku: form.sku,
+    supplierId,
+    state,
+  });
   const incotermSource = mapping?.incoterm ? "Supplier/SKU Mapping" : (product?.defaultIncoterm ? "Produktdatenbank" : "Supplier Default");
   const paymentTermsSource = mapping?.paymentTermsTemplate?.length
     ? "Supplier/SKU Mapping"
@@ -316,8 +311,8 @@ function buildSuggestedFields(state, form) {
     fxRateSource,
     supplierId,
     supplierSource: mapping?.supplierId ? "Supplier/SKU Mapping" : (product?.supplierId ? "Produktdatenbank" : null),
-    productionLeadTimeDays: mapping?.productionLeadTimeDays ?? supplier?.productionLeadTimeDaysDefault ?? 30,
-    productionLeadTimeSource: leadTimeSource,
+    productionLeadTimeDays: leadTimeResolution.value,
+    productionLeadTimeSource: leadTimeResolution.source,
     incotermSource,
     paymentTermsSource,
     preferredSupplier: Boolean(mapping?.isPreferred),
@@ -328,10 +323,10 @@ function buildSuggestedFields(state, form) {
 
 function buildSchedule(form) {
   const target = parseISODate(form.targetDeliveryDate);
-  const productionLeadTimeDays = Number(form.productionLeadTimeDays || 0);
+  const productionLeadTimeDays = parsePositive(form.productionLeadTimeDays);
   const logisticsLeadTimeDays = Number(form.logisticsLeadTimeDays || 0);
   const bufferDays = Number(form.bufferDays || 0);
-  if (!target) {
+  if (!target || productionLeadTimeDays == null || productionLeadTimeDays === 0) {
     return {
       orderDate: null,
       productionEndDate: null,
@@ -591,6 +586,10 @@ function openModal(title, content, actions = []) {
 
 function normalizeFoRecord(form, schedule, payments) {
   const now = new Date().toISOString();
+  const productionLeadTimeDaysManual = form.productionLeadTimeDaysManual != null
+    ? Number(form.productionLeadTimeDaysManual)
+    : null;
+  const productionLeadTimeDaysValue = parsePositive(form.productionLeadTimeDays);
   return {
     id: form.id,
     sku: form.sku,
@@ -601,13 +600,15 @@ function normalizeFoRecord(form, schedule, payments) {
     incoterm: form.incoterm,
     unitPrice: parseLocaleNumber(form.unitPrice) || 0,
     unitPriceIsOverridden: Boolean(form.unitPriceIsOverridden),
-    currency: form.currency || "USD",
+    currency: normaliseCurrency(form.currency, "EUR"),
     freight: parseLocaleNumber(form.freight) || 0,
-    freightCurrency: form.freightCurrency || "EUR",
+    freightCurrency: normaliseCurrency(form.freightCurrency, "EUR"),
     dutyRatePct: parseLocaleNumber(form.dutyRatePct) || 0,
     eustRatePct: parseLocaleNumber(form.eustRatePct) || 0,
     fxRate: parseLocaleNumber(form.fxRate) || 0,
-    productionLeadTimeDays: Number(form.productionLeadTimeDays || 0),
+    productionLeadTimeDays: Number.isFinite(productionLeadTimeDaysValue) ? productionLeadTimeDaysValue : null,
+    productionLeadTimeDaysManual: Number.isFinite(productionLeadTimeDaysManual) ? productionLeadTimeDaysManual : null,
+    productionLeadTimeSource: form.productionLeadTimeSource || null,
     logisticsLeadTimeDays: Number(form.logisticsLeadTimeDays || 0),
     bufferDays: Number(form.bufferDays || 0),
     orderDate: schedule.orderDate,
@@ -952,13 +953,15 @@ export default function render(root) {
           incoterm: "EXW",
           unitPrice: "",
           unitPriceIsOverridden: false,
-          currency: "USD",
+          currency: state.settings?.defaultCurrency || "EUR",
           freight: "",
           freightCurrency: "EUR",
           dutyRatePct: state.settings?.dutyRatePct ?? 0,
           eustRatePct: state.settings?.eustRatePct ?? 0,
           fxRate: state.settings?.fxRate ?? "",
           productionLeadTimeDays: "",
+          productionLeadTimeDaysManual: null,
+          productionLeadTimeSource: null,
           logisticsLeadTimeDays: "",
           bufferDays: state.settings?.defaultBufferDays ?? 0,
           payments: [],
@@ -985,7 +988,13 @@ export default function render(root) {
     if (baseForm.dutyRatePct == null) baseForm.dutyRatePct = state.settings?.dutyRatePct ?? 0;
     if (baseForm.eustRatePct == null) baseForm.eustRatePct = state.settings?.eustRatePct ?? 0;
     if (baseForm.fxRate == null) baseForm.fxRate = state.settings?.fxRate ?? "";
-    if (!baseForm.currency) baseForm.currency = "USD";
+    if (!baseForm.currency) baseForm.currency = state.settings?.defaultCurrency || "EUR";
+    if (typeof baseForm.productionLeadTimeDaysManual === "undefined") {
+      baseForm.productionLeadTimeDaysManual = null;
+    }
+    if (!baseForm.productionLeadTimeSource) {
+      baseForm.productionLeadTimeSource = null;
+    }
     if (Array.isArray(baseForm.payments)) {
       baseForm.payments = baseForm.payments.map(payment => ({
         ...payment,
@@ -1006,6 +1015,9 @@ export default function render(root) {
       logisticsLeadTimeDays: isExisting,
       bufferDays: isExisting,
     };
+    if (baseForm.productionLeadTimeDaysManual != null) {
+      overrides.productionLeadTimeDays = true;
+    }
     if (typeof baseForm.unitPriceIsOverridden !== "boolean") {
       baseForm.unitPriceIsOverridden = isExisting;
     }
@@ -1015,6 +1027,10 @@ export default function render(root) {
     function applySuggestedField(field, value) {
       baseForm[field] = value;
       overrides[field] = false;
+      if (field === "productionLeadTimeDays") {
+        baseForm.productionLeadTimeDaysManual = null;
+        baseForm.productionLeadTimeSource = suggested.productionLeadTimeSource || null;
+      }
       const input = $(`#fo-${field}`, content);
       if (input) {
         const formatted = (() => {
@@ -1091,7 +1107,9 @@ export default function render(root) {
       $("#suggested-dutyRatePct", content).textContent = `Suggested: ${suggested.dutyRatePct != null ? formatPercent(suggested.dutyRatePct) : "—"} %`;
       $("#suggested-eustRatePct", content).textContent = `Suggested: ${suggested.eustRatePct != null ? formatPercent(suggested.eustRatePct) : "—"} %`;
       $("#suggested-fxRate", content).textContent = `Suggested: ${suggested.fxRate != null ? formatNumber(suggested.fxRate) : "—"}`;
-      $("#suggested-productionLeadTimeDays", content).textContent = `Suggested: ${suggested.productionLeadTimeDays}`;
+      const leadTimeValue = suggested.productionLeadTimeDays != null ? suggested.productionLeadTimeDays : "—";
+      const leadTimeSource = suggested.productionLeadTimeSource ? ` (Quelle: ${suggested.productionLeadTimeSource})` : "";
+      $("#suggested-productionLeadTimeDays", content).textContent = `Vorschlag: ${leadTimeValue}${leadTimeSource}`;
       $("#suggested-logisticsLeadTimeDays", content).textContent = `Suggested: ${suggested.logisticsLeadTimeDays}`;
       $("#suggested-bufferDays", content).textContent = `Suggested: ${suggested.bufferDays}`;
       updateSuggestionInfo();
@@ -1105,7 +1123,7 @@ export default function render(root) {
         ? "Manual override"
         : (suggested.supplierSource || "—");
       const unitPriceSource = baseForm.unitPriceIsOverridden ? "Manual override" : (suggested.unitPriceSource || "—");
-      const leadTimeSource = overrides.productionLeadTimeDays ? "Manual override" : (suggested.productionLeadTimeSource || "—");
+      const leadTimeSource = overrides.productionLeadTimeDays ? "Manual override" : (suggested.productionLeadTimeSource || "missing");
       const incotermSource = overrides.incoterm ? "Manual override" : (suggested.incotermSource || "—");
       const paymentTermsSource = Array.isArray(baseForm.payments) && baseForm.payments.length ? (suggested.paymentTermsSource || "—") : "—";
       const fxSource = overrides.fxRate ? "Manual override" : (suggested.fxRateSource || "—");
@@ -1114,7 +1132,7 @@ export default function render(root) {
         el("li", {}, [`Preferred Supplier: ${suggested.preferredSupplier ? "Yes" : "No"}`]),
         el("li", {}, [`Supplier source: ${supplierSource}`]),
         el("li", {}, [`Price source: ${unitPriceSource}`]),
-        el("li", {}, [`Lead time source: ${leadTimeSource}`]),
+        el("li", {}, [`Production lead time source: ${leadTimeSource}`]),
         el("li", {}, [`Incoterm source: ${incotermSource}`]),
         el("li", {}, [`Payment terms source: ${paymentTermsSource}`]),
         el("li", {}, [`FX source: ${fxSource}`]),
@@ -1553,7 +1571,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Production LT (days)",
+              "Production Lead Time (used)",
               el("input", { type: "number", min: "0", step: "1", id: "fo-productionLeadTimeDays", value: baseForm.productionLeadTimeDays ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-productionLeadTimeDays" }, []),
@@ -1666,6 +1684,10 @@ export default function render(root) {
     function setFieldOverride(field, value) {
       baseForm[field] = value;
       overrides[field] = true;
+      if (field === "productionLeadTimeDays") {
+        baseForm.productionLeadTimeDaysManual = value;
+        baseForm.productionLeadTimeSource = "Manual override";
+      }
     }
 
     function validateForm() {
@@ -1888,7 +1910,12 @@ export default function render(root) {
     });
 
     $("#fo-productionLeadTimeDays", content).addEventListener("input", (e) => {
-      setFieldOverride("productionLeadTimeDays", parsePositive(e.target.value) ?? "");
+      const nextValue = parsePositive(e.target.value);
+      if (nextValue == null) {
+        applySuggestedField("productionLeadTimeDays", suggested.productionLeadTimeDays);
+      } else {
+        setFieldOverride("productionLeadTimeDays", nextValue);
+      }
       updateSuggestedLabels();
       scheduleRecompute();
     });
@@ -2013,9 +2040,37 @@ export default function render(root) {
       overlay.remove();
     });
 
+    function collectBlockingIssues() {
+      const { issues } = validateAll({
+        settings: state.settings,
+        products: state.products,
+        suppliers: state.suppliers,
+      });
+      return issues.filter(issue => {
+        if (!issue.blocking) return false;
+        if (issue.scope === "settings") {
+          return issue.field === "fxRate";
+        }
+        if (issue.scope === "product") {
+          return issue.entityId === baseForm.sku
+            && (issue.field === "currency" || issue.field === "unitPrice");
+        }
+        if (issue.scope === "supplier") {
+          return issue.entityId === baseForm.supplierId
+            && (issue.field === "paymentTerms" || issue.field === "productionLeadTime");
+        }
+        return false;
+      });
+    }
+
     saveBtn.addEventListener("click", () => {
       validateForm();
       if (saveBtn.disabled) return;
+      const blockingIssues = collectBlockingIssues();
+      if (blockingIssues.length) {
+        openBlockingModal(blockingIssues);
+        return;
+      }
       if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
         baseForm.dutyRatePct = 0;
         baseForm.eustRatePct = 0;

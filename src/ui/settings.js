@@ -1,4 +1,6 @@
 import { loadState, saveState } from "../data/storageLocal.js";
+import { formatDeNumber, parseDeNumber, validateAll, validateSettings } from "../lib/dataHealth.js";
+import { goToIssue } from "./dataHealthUi.js";
 
 const CURRENCIES = ["EUR", "USD", "CNY"];
 
@@ -10,31 +12,10 @@ function clampNonNegative(value) {
   return num;
 }
 
-function parseRate(value) {
-  if (value == null) return null;
-  const raw = String(value).trim().replace(/\s+/g, "");
-  if (!raw) return null;
-  const lastComma = raw.lastIndexOf(",");
-  const lastDot = raw.lastIndexOf(".");
-  const decimalIndex = Math.max(lastComma, lastDot);
-  let cleaned = raw;
-  if (decimalIndex >= 0) {
-    const intPart = raw.slice(0, decimalIndex).replace(/[.,]/g, "");
-    const fracPart = raw.slice(decimalIndex + 1).replace(/[.,]/g, "");
-    cleaned = `${intPart}.${fracPart}`;
-  } else {
-    cleaned = raw.replace(/[.,]/g, "");
-  }
-  if (!cleaned) return null;
-  const num = Number(cleaned);
-  if (!Number.isFinite(num) || num <= 0) return null;
-  return num;
-}
-
 function formatRate(value) {
-  const parsed = parseRate(value);
+  const parsed = parseDeNumber(value);
   if (parsed == null) return "";
-  return parsed.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return formatDeNumber(parsed, 2, { minimumFractionDigits: 2, maximumFractionDigits: 4, emptyValue: "", useGrouping: false });
 }
 
 function updateSettings(state, patch) {
@@ -50,6 +31,12 @@ function updateSettings(state, patch) {
   if (typeof patch.fxRate !== "undefined") {
     state.settings.fxRate = patch.fxRate;
   }
+  if (typeof patch.defaultProductionLeadTimeDays !== "undefined") {
+    state.settings.defaultProductionLeadTimeDays = patch.defaultProductionLeadTimeDays;
+  }
+  if (typeof patch.defaultDdp !== "undefined") {
+    state.settings.defaultDdp = patch.defaultDdp === true;
+  }
   state.settings.lastUpdatedAt = new Date().toISOString();
 }
 
@@ -57,7 +44,7 @@ export function render(root) {
   const state = loadState();
   const settings = state.settings || {};
   const lead = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
-  const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "" };
+  const errors = { air: "", rail: "", sea: "", buffer: "", fxRate: "", defaultProductionLeadTime: "" };
 
   root.innerHTML = `
     <section class="card">
@@ -75,16 +62,19 @@ export function render(root) {
           Air (days)
           <input id="lead-air" type="number" min="0" step="1" value="${lead.air ?? 10}">
           <small class="form-error" id="lead-air-error"></small>
+          <small class="health-hint" id="lead-air-health"></small>
         </label>
         <label>
           Rail (days)
           <input id="lead-rail" type="number" min="0" step="1" value="${lead.rail ?? 25}">
           <small class="form-error" id="lead-rail-error"></small>
+          <small class="health-hint" id="lead-rail-health"></small>
         </label>
         <label>
           Sea (days)
           <input id="lead-sea" type="number" min="0" step="1" value="${lead.sea ?? 45}">
           <small class="form-error" id="lead-sea-error"></small>
+          <small class="health-hint" id="lead-sea-health"></small>
         </label>
       </div>
     </section>
@@ -102,6 +92,7 @@ export function render(root) {
           <select id="default-currency">
             ${CURRENCIES.map(currency => `<option value="${currency}">${currency}</option>`).join("")}
           </select>
+          <small class="health-hint" id="default-currency-health"></small>
         </label>
       </div>
       <div class="grid two" style="margin-top: 12px;">
@@ -109,6 +100,18 @@ export function render(root) {
           FX-Kurs EUR/USD
           <input id="default-fx-rate" type="text" inputmode="decimal" placeholder="z. B. 1,08" value="${formatRate(settings.fxRate)}">
           <small class="form-error" id="fx-rate-error"></small>
+          <small class="health-hint" id="fx-rate-health"></small>
+        </label>
+        <label>
+          Default Production Lead Time
+          <input id="default-production-lead" type="text" inputmode="decimal" placeholder="z. B. 30" value="${settings.defaultProductionLeadTimeDays ?? ""}">
+          <small class="form-error" id="default-production-lead-error"></small>
+        </label>
+      </div>
+      <div class="grid two" style="margin-top: 12px;">
+        <label class="inline-checkbox">
+          <input id="default-ddp" type="checkbox" ${settings.defaultDdp ? "checked" : ""} />
+          Default DDP (falls Feld fehlt)
         </label>
       </div>
     </section>
@@ -145,93 +148,43 @@ export function render(root) {
   `;
   $("#default-currency", root).value = settings.defaultCurrency || "EUR";
 
-  function computeHealth() {
-    const mappings = Array.isArray(state.productSuppliers) ? state.productSuppliers : [];
-    const products = Array.isArray(state.products) ? state.products : [];
-    const suppliers = Array.isArray(state.suppliers) ? state.suppliers : [];
-    const supplierById = new Map(suppliers.map(s => [s.id, s]));
-
-    const missingMappings = products.filter(prod => {
-      const sku = String(prod.sku || "").trim().toLowerCase();
-      if (!sku) return false;
-      if (String(prod.supplierId || "").trim()) return false;
-      return !mappings.some(entry => String(entry.sku || "").trim().toLowerCase() === sku && entry.isActive !== false);
+  function renderHealthHints() {
+    const issues = validateSettings(state.settings || {});
+    const issueByField = new Map();
+    issues.forEach(issue => issueByField.set(issue.field, issue));
+    const mapping = [
+      { field: "transportLeadTimesDays.air", id: "#lead-air-health" },
+      { field: "transportLeadTimesDays.rail", id: "#lead-rail-health" },
+      { field: "transportLeadTimesDays.sea", id: "#lead-sea-health" },
+      { field: "defaultCurrency", id: "#default-currency-health" },
+      { field: "fxRate", id: "#fx-rate-health" },
+    ];
+    mapping.forEach(({ field, id }) => {
+      const el = $(id, root);
+      if (!el) return;
+      el.textContent = issueByField.get(field)?.message || "";
     });
-
-    const preferredBySku = new Map();
-    mappings.forEach(entry => {
-      if (!entry.isPreferred) return;
-      const sku = String(entry.sku || "").trim().toLowerCase();
-      preferredBySku.set(sku, (preferredBySku.get(sku) || 0) + 1);
-    });
-    const multiplePreferred = [...preferredBySku.entries()].filter(([, count]) => count > 1);
-
-    const incompleteMappings = mappings.filter(entry => {
-      const supplier = supplierById.get(entry.supplierId);
-      const hasTerms = Array.isArray(entry.paymentTermsTemplate) && entry.paymentTermsTemplate.length
-        ? true
-        : Boolean(supplier?.paymentTermsDefault?.length);
-      return entry.unitPrice == null || !entry.currency || entry.productionLeadTimeDays == null || !entry.incoterm || !hasTerms;
-    });
-
-    const productsMissingCosts = products.filter(prod => {
-      const templateFields = prod.template?.fields || {};
-      const hasFreight = prod.freight != null || prod.freightAir != null || prod.freightSea != null || prod.freightRail != null || templateFields.freightEur != null;
-      const hasDuty = prod.dutyRatePct != null || templateFields.dutyPct != null;
-      const hasEust = prod.eustRatePct != null || templateFields.vatImportPct != null;
-      return !hasFreight || !hasDuty || !hasEust;
-    });
-
-    const settingsMissing = !settings.fxRate || !settings.defaultCurrency;
-
-    return {
-      missingMappings,
-      multiplePreferred,
-      incompleteMappings,
-      productsMissingCosts,
-      settingsMissing,
-    };
   }
 
   function renderHealth() {
     const list = $("#health-list", root);
-    const health = computeHealth();
-    const items = [];
-
-    items.push({
-      label: `SKU ohne Supplier-Mapping (${health.missingMappings.length})`,
-      count: health.missingMappings.length,
-      tab: "suppliers",
-      sku: health.missingMappings[0]?.sku,
+    const { issues } = validateAll({
+      settings: state.settings,
+      products: state.products,
+      suppliers: state.suppliers,
     });
-    items.push({
-      label: `Mehrere Preferred Supplier für SKU (${health.multiplePreferred.length})`,
-      count: health.multiplePreferred.length,
-      tab: "suppliers",
-    });
-    items.push({
-      label: `Mappings ohne Pflichtfelder (${health.incompleteMappings.length})`,
-      count: health.incompleteMappings.length,
-      tab: "suppliers",
-    });
-    items.push({
-      label: `Produkte ohne Pflicht-Produktkosten (${health.productsMissingCosts.length})`,
-      count: health.productsMissingCosts.length,
-      tab: "produkte",
-      sku: health.productsMissingCosts[0]?.sku,
-    });
-    items.push({
-      label: `Settings ohne Exchange Rate/Currency (${health.settingsMissing ? 1 : 0})`,
-      count: health.settingsMissing ? 1 : 0,
-      tab: "settings",
-    });
-
-    list.innerHTML = items.map(item => `
-      <div class="health-item">
-        <span>${item.label}</span>
-        ${item.count ? `<button class="btn secondary" data-action="fix" data-tab="${item.tab}" data-sku="${item.sku || ""}">Fix now</button>` : `<span class="muted">OK</span>`}
-      </div>
-    `).join("");
+    if (!issues.length) {
+      list.innerHTML = `<p class="muted">Keine Issues gefunden.</p>`;
+      return;
+    }
+    list.innerHTML = issues
+      .map(issue => `
+        <div class="health-item">
+          <span>${issue.message}</span>
+          <button class="btn secondary" data-action="fix" data-issue="${issue.id}">Go to</button>
+        </div>
+      `)
+      .join("");
   }
 
   function validate() {
@@ -240,42 +193,52 @@ export function render(root) {
     errors.sea = "";
     errors.buffer = "";
     errors.fxRate = "";
+    errors.defaultProductionLeadTime = "";
     const air = clampNonNegative($("#lead-air", root).value);
     const rail = clampNonNegative($("#lead-rail", root).value);
     const sea = clampNonNegative($("#lead-sea", root).value);
     const buffer = clampNonNegative($("#default-buffer", root).value);
-    const fxRate = parseRate($("#default-fx-rate", root).value);
+    const fxRate = parseDeNumber($("#default-fx-rate", root).value);
+    const defaultProductionLead = parseDeNumber($("#default-production-lead", root).value);
     if (air == null) errors.air = "Wert muss ≥ 0 sein.";
     if (rail == null) errors.rail = "Wert muss ≥ 0 sein.";
     if (sea == null) errors.sea = "Wert muss ≥ 0 sein.";
     if (buffer == null) errors.buffer = "Wert muss ≥ 0 sein.";
-    if (fxRate == null) errors.fxRate = "Wert muss > 0 sein.";
+    if (fxRate == null || fxRate <= 0) errors.fxRate = "Wert muss > 0 sein.";
+    if (defaultProductionLead != null && defaultProductionLead <= 0) {
+      errors.defaultProductionLeadTime = "Wert muss > 0 sein.";
+    }
     $("#lead-air-error", root).textContent = errors.air;
     $("#lead-rail-error", root).textContent = errors.rail;
     $("#lead-sea-error", root).textContent = errors.sea;
     $("#buffer-error", root).textContent = errors.buffer;
     $("#fx-rate-error", root).textContent = errors.fxRate;
+    $("#default-production-lead-error", root).textContent = errors.defaultProductionLeadTime;
     return {
       air,
       rail,
       sea,
       buffer,
       fxRate,
-      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate
+      defaultProductionLead,
+      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.defaultProductionLeadTime
     };
   }
 
   $("#settings-save", root).addEventListener("click", () => {
-    const { air, rail, sea, buffer, fxRate, ok } = validate();
+    const { air, rail, sea, buffer, fxRate, defaultProductionLead, ok } = validate();
     if (!ok) return;
     const patch = {
       transportLeadTimesDays: { air, rail, sea },
       defaultBufferDays: buffer,
       defaultCurrency: ($("#default-currency", root).value || "EUR").trim() || "EUR",
       fxRate: formatRate(fxRate),
+      defaultProductionLeadTimeDays: defaultProductionLead,
+      defaultDdp: $("#default-ddp", root).checked,
     };
     updateSettings(state, patch);
     saveState(state);
+    renderHealthHints();
     renderHealth();
   });
 
@@ -285,8 +248,16 @@ export function render(root) {
   const fxInput = $("#default-fx-rate", root);
   if (fxInput) {
     fxInput.addEventListener("blur", () => {
-      const next = parseRate(fxInput.value);
+      const next = parseDeNumber(fxInput.value);
       fxInput.value = next ? formatRate(next) : "";
+      validate();
+    });
+  }
+  const productionLeadInput = $("#default-production-lead", root);
+  if (productionLeadInput) {
+    productionLeadInput.addEventListener("blur", () => {
+      const next = parseDeNumber(productionLeadInput.value);
+      productionLeadInput.value = next == null ? "" : formatDeNumber(next, 0, { emptyValue: "" });
       validate();
     });
   }
@@ -294,19 +265,42 @@ export function render(root) {
   root.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-action='fix']");
     if (!btn) return;
-    const tab = btn.dataset.tab;
-    const sku = btn.dataset.sku;
-    sessionStorage.setItem("healthFocus", JSON.stringify({ tab, sku }));
-    if (tab === "produkte") {
-      location.hash = "#produkte";
-    } else if (tab === "suppliers") {
-      location.hash = "#suppliers";
-    } else {
-      location.hash = "#settings";
-    }
+    const issueId = btn.dataset.issue;
+    const { issues } = validateAll({
+      settings: state.settings,
+      products: state.products,
+      suppliers: state.suppliers,
+    });
+    const issue = issues.find(item => item.id === issueId);
+    if (issue) goToIssue(issue);
   });
 
+  renderHealthHints();
   renderHealth();
+
+  const focusRaw = sessionStorage.getItem("healthFocus");
+  if (focusRaw) {
+    try {
+      const focus = JSON.parse(focusRaw);
+      if (focus?.tab === "settings" && focus.field) {
+        const fieldMap = {
+          fxRate: "#default-fx-rate",
+          defaultCurrency: "#default-currency",
+          "transportLeadTimesDays.air": "#lead-air",
+          "transportLeadTimesDays.rail": "#lead-rail",
+          "transportLeadTimesDays.sea": "#lead-sea",
+        };
+        const target = $(fieldMap[focus.field], root);
+        if (target) {
+          target.focus();
+          target.scrollIntoView({ block: "center" });
+        }
+      }
+    } catch (err) {
+      // ignore
+    }
+    sessionStorage.removeItem("healthFocus");
+  }
 
   const categoryTable = $("#category-table", root);
   const categoryNameInput = $("#category-name", root);
