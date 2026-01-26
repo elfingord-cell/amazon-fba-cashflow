@@ -342,6 +342,7 @@ function buildCategoryGroups(items, categories = []) {
 
 function computePoEta(po, settings) {
   if (!po) return null;
+  if (po.etaManual) return parseISODate(po.etaManual);
   if (po.etaDate) return parseISODate(po.etaDate);
   if (po.eta) return parseISODate(po.eta);
   const orderDate = parseISODate(po.orderDate);

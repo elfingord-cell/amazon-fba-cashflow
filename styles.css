@@ -333,6 +333,7 @@ td.num, th.num{text-align:right}
 .po-items-card-header{display:flex; justify-content:space-between; align-items:center; gap:12px;}
 .po-items-card-header h4{margin:0; font-size:14px; text-transform:uppercase; letter-spacing:.3px; color:var(--muted);}
 .po-items-table input{min-height:36px;}
+.po-items-table input.is-missing{border-color:rgba(226,82,82,0.7); background:#fff5f5;}
 .po-items-table td:last-child{width:64px; text-align:right;}
 .po-items-table th:last-child{text-align:right;}
 .po-quickfill{align-items:end; gap:16px; margin-bottom:12px;}
@@ -350,6 +351,11 @@ td.num, th.num{text-align:right}
 .po-timeline-summary{display:flex; flex:1; min-width:220px;}
 .po-timeline-summary-items{display:flex; flex-wrap:wrap; gap:12px 18px; font-size:13px; color:var(--ink);}
 .po-timeline-summary-item{display:flex; gap:4px; align-items:baseline; white-space:nowrap;}
+.po-timeline-dates{display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; align-items:end;}
+.po-timeline-date{display:flex; flex-direction:column; gap:6px; font-size:12px;}
+.po-timeline-date strong{font-size:13px;}
+.po-timeline-input-row{display:flex; gap:8px; align-items:center;}
+.po-timeline-input-row input{flex:1;}
 .po-timeline-track-wrapper{position:relative; min-height:82px;}
 .po-timeline-track{position:relative; height:82px;}
 .po-timeline-base{position:absolute; left:0; right:0; top:40px; height:6px; background:rgba(15,27,45,0.12); border-radius:999px;}

@@ -18,6 +18,8 @@ export type PO = {
   prodDays: number;
   transport: "sea" | "rail" | "air";
   transitDays: number;
+  etdManual?: string | null;
+  etaManual?: string | null;
   ddp: boolean;
   freightEur?: number;
   dutyRatePct?: number;
@@ -141,8 +143,12 @@ export function usdToEur(usd: number, fxRate: number, fxFeePct: number): number 
 function computeAnchors(po: PO, settings: Settings): Record<Anchor, Date> {
   const orderDate = parseDate(po.orderDate);
   const prodDone = applyCnyBlackout(orderDate, po.prodDays ?? 0, settings).prodDone;
-  const etd = prodDone;
-  const eta = addDays(etd, po.transitDays ?? 0);
+  const etdComputed = prodDone;
+  const etaComputed = addDays(etdComputed, po.transitDays ?? 0);
+  const etdManual = parseDateOptional(po.etdManual ?? null);
+  const etaManual = parseDateOptional(po.etaManual ?? null);
+  const etd = etdManual ?? etdComputed;
+  const eta = etaManual ?? etaComputed;
   return {
     ORDER_DATE: orderDate,
     PROD_DONE: prodDone,

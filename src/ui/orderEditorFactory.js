@@ -46,6 +46,19 @@ function productLabelForList(sku) {
   return `${match.alias || match.sku} (${match.sku})`;
 }
 
+function resolveProductUnitPrice(sku) {
+  if (!sku) return null;
+  const match = productCache.find(
+    prod => prod && prod.sku && prod.sku.trim().toLowerCase() === String(sku).trim().toLowerCase(),
+  );
+  if (!match) return null;
+  const template = match.template?.fields ? match.template.fields : match.template;
+  const raw = template?.unitPriceUsd ?? match.unitPriceUsd ?? null;
+  const parsed = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function formatSkuSummary(record) {
   const items = Array.isArray(record?.items) ? record.items.filter(Boolean) : [];
   if (!items.length) return productLabelForList(record?.sku);
@@ -413,6 +426,7 @@ function ensureItems(record) {
         unitCostUsd: record.unitCostUsd ?? "0,00",
         unitExtraUsd: record.unitExtraUsd ?? "0,00",
         extraFlatUsd: record.extraFlatUsd ?? "0,00",
+        unitCostManuallyEdited: false,
       },
     ];
   }
@@ -423,6 +437,7 @@ function ensureItems(record) {
     unitCostUsd: item.unitCostUsd ?? "0,00",
     unitExtraUsd: item.unitExtraUsd ?? "0,00",
     extraFlatUsd: item.extraFlatUsd ?? "0,00",
+    unitCostManuallyEdited: item.unitCostManuallyEdited === true,
   }));
   return record.items;
 }
@@ -492,6 +507,7 @@ function normaliseGoodsFields(record, settings = getSettings()) {
     unitExtraUsd: fmtCurrencyInput(item.unitExtraUsd ?? "0,00"),
     units: String(item.units ?? "0"),
     extraFlatUsd: fmtCurrencyInput(item.extraFlatUsd ?? "0,00"),
+    unitCostManuallyEdited: item.unitCostManuallyEdited === true,
   }));
   if (record.fxOverride != null && record.fxOverride !== "") {
     const override = typeof record.fxOverride === "number" ? record.fxOverride : parseDE(record.fxOverride);
@@ -834,6 +850,7 @@ function defaultRecord(config, settings = getSettings()) {
         unitCostUsd: "0,00",
         unitExtraUsd: "0,00",
         extraFlatUsd: "0,00",
+        unitCostManuallyEdited: false,
       },
     ],
     goodsEur: "0,00",
@@ -846,6 +863,8 @@ function defaultRecord(config, settings = getSettings()) {
     transitDays: 60,
     ddp: false,
     cnyAdjustmentDays: 0,
+    etdManual: null,
+    etaManual: null,
     dutyRatePct: settings.dutyRatePct || 0,
     dutyIncludeFreight: settings.dutyIncludeFreight !== false,
     eustRatePct: settings.eustRatePct || 0,
@@ -1375,6 +1394,33 @@ function renderItemsTable(container, record, onChange, dataListId) {
   refreshProductCache();
   ensureItems(record);
   container.innerHTML = "";
+  const updateMissingIndicator = (input, missing) => {
+    if (!input) return;
+    input.classList.toggle("is-missing", missing);
+    input.title = missing ? "Stückpreis fehlt im Produktstamm" : "";
+  };
+  const applyAutoUnitCost = (item, input, { force } = {}) => {
+    if (!item || !input) return;
+    if (item.unitCostManuallyEdited) return;
+    const current = parseDE(item.unitCostUsd);
+    const hasExisting = Number.isFinite(current) && current > 0;
+    if (hasExisting && !force) {
+      updateMissingIndicator(input, false);
+      return;
+    }
+    const price = resolveProductUnitPrice(item.sku);
+    if (price != null) {
+      item.unitCostUsd = fmtCurrencyInput(price);
+      input.value = item.unitCostUsd;
+      updateMissingIndicator(input, false);
+    } else if (item.sku) {
+      item.unitCostUsd = "";
+      input.value = "";
+      updateMissingIndicator(input, true);
+    } else {
+      updateMissingIndicator(input, false);
+    }
+  };
   const header = el("thead", {}, [
     el("tr", {}, [
       el("th", {}, ["SKU"]),
@@ -1392,19 +1438,43 @@ function renderItemsTable(container, record, onChange, dataListId) {
   });
 
   record.items.forEach(item => {
-    const row = el("tr", { dataset: { itemId: item.id } });
+    const row = el("tr", { dataset: { itemId: item.id, unitCostManual: item.unitCostManuallyEdited ? "true" : "false" } });
     const skuAttrs = item.type === "misc"
       ? { value: item.sku || "", placeholder: "Freie Position" }
       : { list: dataListId, value: item.sku || "", placeholder: "SKU" };
     const skuInput = el("input", skuAttrs);
-    skuInput.addEventListener("input", () => { item.sku = skuInput.value.trim(); onChange(); });
 
     const unitsInput = el("input", { type: "number", min: "0", step: "1", value: item.units || "0" });
     unitsInput.addEventListener("input", () => { item.units = unitsInput.value; onChange(); });
 
     const unitCostInput = el("input", { inputmode: "decimal", value: fmtCurrencyInput(item.unitCostUsd ?? "0,00"), placeholder: "0,00" });
-    unitCostInput.addEventListener("blur", () => { item.unitCostUsd = fmtCurrencyInput(unitCostInput.value); unitCostInput.value = item.unitCostUsd; onChange(); });
-    unitCostInput.addEventListener("input", () => { item.unitCostUsd = unitCostInput.value; });
+    applyAutoUnitCost(item, unitCostInput, { force: false });
+    unitCostInput.addEventListener("blur", () => {
+      item.unitCostUsd = fmtCurrencyInput(unitCostInput.value);
+      unitCostInput.value = item.unitCostUsd;
+      item.unitCostManuallyEdited = unitCostInput.value !== "";
+      row.dataset.unitCostManual = item.unitCostManuallyEdited ? "true" : "false";
+      updateMissingIndicator(unitCostInput, false);
+      onChange();
+    });
+    unitCostInput.addEventListener("input", () => {
+      item.unitCostUsd = unitCostInput.value;
+      item.unitCostManuallyEdited = true;
+      row.dataset.unitCostManual = "true";
+      updateMissingIndicator(unitCostInput, false);
+    });
+
+    skuInput.addEventListener("input", () => { item.sku = skuInput.value.trim(); onChange(); });
+    skuInput.addEventListener("change", () => {
+      item.sku = skuInput.value.trim();
+      applyAutoUnitCost(item, unitCostInput, { force: true });
+      onChange();
+    });
+    skuInput.addEventListener("blur", () => {
+      item.sku = skuInput.value.trim();
+      applyAutoUnitCost(item, unitCostInput, { force: true });
+      onChange();
+    });
 
     const unitExtraInput = el("input", { inputmode: "decimal", value: fmtCurrencyInput(item.unitExtraUsd ?? "0,00"), placeholder: "0,00" });
     unitExtraInput.addEventListener("blur", () => { item.unitExtraUsd = fmtCurrencyInput(unitExtraInput.value); unitExtraInput.value = item.unitExtraUsd; onChange(); });
@@ -1445,14 +1515,22 @@ function computeTimeline(record, settings = getSettings()) {
   const transitDays = Math.max(0, Number(record.transitDays || 0));
   const blackout = applyCnyBlackout(order, prodDays, settings);
   const prodDone = blackout.prodDone ?? addDays(order, prodDays);
-  const etd = prodDone;
-  const eta = addDays(etd, transitDays);
+  const etdComputed = prodDone;
+  const etaComputed = addDays(etdComputed, transitDays);
+  const etdManual = parseISOToDate(record.etdManual);
+  const etaManual = parseISOToDate(record.etaManual);
+  const etd = etdManual || etdComputed;
+  const eta = etaManual || etaComputed;
   const totalDays = Math.max(prodDays + transitDays + (blackout.adjustmentDays || 0), 1);
   return {
     order,
     prodDone,
     etd,
     eta,
+    etdComputed,
+    etaComputed,
+    etdManual,
+    etaManual,
     prodDays,
     transitDays,
     totalDays,
@@ -1467,7 +1545,7 @@ function formatTimelineSummary(record, settings) {
   if (!timeline) return "—";
   return [
     `Order ${fmtDateDE(timeline.order)}`,
-    `Prod done/ETD ${fmtDateDE(timeline.prodDone)}`,
+    `ETD ${fmtDateDE(timeline.etd)}`,
     `ETA ${fmtDateDE(timeline.eta)}`,
   ].join(" • ");
 }
@@ -1475,7 +1553,7 @@ function formatTimelineSummary(record, settings) {
 function formatTimelineCompact(record, settings) {
   const timeline = computeTimeline(record, settings);
   if (!timeline) return "—";
-  return `ETD ${fmtDateDE(timeline.prodDone)} • ETA ${fmtDateDE(timeline.eta)}`;
+  return `ETD ${fmtDateDE(timeline.etd)} • ETA ${fmtDateDE(timeline.eta)}`;
 }
 
 function formatProductTooltip(record) {
@@ -1518,7 +1596,7 @@ function renderTimeline(timelineNode, summaryNode, record, settings, cnyBannerNo
 
   const summary = el("div", { class: "po-timeline-summary-items" }, [
     el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["Order"]), " ", fmtDateDE(timeline.order)]),
-    el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["Prod done/ETD"]), " ", fmtDateDE(timeline.prodDone)]),
+    el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["ETD"]), " ", fmtDateDE(timeline.etd)]),
     el("span", { class: "po-timeline-summary-item" }, [el("strong", {}, ["ETA"]), " ", fmtDateDE(timeline.eta)]),
   ]);
   summaryNode.append(summary);
@@ -1579,7 +1657,7 @@ function renderTimeline(timelineNode, summaryNode, record, settings, cnyBannerNo
 
   addMarker("Order", timeline.order, 0, "start");
   const middleAlign = prodPct <= 10 ? "start" : (prodPct >= 90 ? "end" : "center");
-  addMarker("Prod done/ETD", timeline.prodDone, prodPct, middleAlign);
+  addMarker("ETD", timeline.etd, prodPct, middleAlign);
   addMarker("ETA", timeline.eta, 100, "end");
 
   const now = new Date();
@@ -2146,6 +2224,12 @@ export function renderOrderModule(root, config) {
     timeline: `${config.slug}-timeline`,
     timelineSummary: `${config.slug}-timeline-summary`,
     cnyBanner: `${config.slug}-cny-banner`,
+    etdComputed: `${config.slug}-etd-computed`,
+    etaComputed: `${config.slug}-eta-computed`,
+    etdManual: `${config.slug}-etd-manual`,
+    etaManual: `${config.slug}-eta-manual`,
+    etdReset: `${config.slug}-etd-reset`,
+    etaReset: `${config.slug}-eta-reset`,
     msZone: `${config.slug}-ms-zone`,
     preview: `${config.slug}-preview`,
     save: `${config.slug}-save`,
@@ -2324,6 +2408,30 @@ export function renderOrderModule(root, config) {
             <h4>PO Timeline</h4>
             <div id="${ids.timelineSummary}" class="po-timeline-summary"></div>
           </div>
+          <div class="po-timeline-dates">
+            <div class="po-timeline-date">
+              <span class="muted">Berechnet ETD</span>
+              <strong id="${ids.etdComputed}">—</strong>
+            </div>
+            <div class="po-timeline-date">
+              <span class="muted">Berechnet ETA</span>
+              <strong id="${ids.etaComputed}">—</strong>
+            </div>
+            <div class="po-timeline-date">
+              <label>ETD Override</label>
+              <div class="po-timeline-input-row">
+                <input id="${ids.etdManual}" type="date" />
+                <button class="btn sm" type="button" id="${ids.etdReset}">Reset</button>
+              </div>
+            </div>
+            <div class="po-timeline-date">
+              <label>ETA Override</label>
+              <div class="po-timeline-input-row">
+                <input id="${ids.etaManual}" type="date" />
+                <button class="btn sm" type="button" id="${ids.etaReset}">Reset</button>
+              </div>
+            </div>
+          </div>
           <div id="${ids.cnyBanner}" class="banner warning" hidden></div>
           <div id="${ids.timeline}" class="po-timeline-track-wrapper"></div>
         </div>
@@ -2411,6 +2519,7 @@ export function renderOrderModule(root, config) {
   const poArchiveToggle = poMode ? $(`#${ids.archiveToggle}`, root) : null;
   const poNewButton = poMode ? $(`#${ids.newButton}`, root) : null;
   const poModal = poMode ? $(`#${ids.modal}`, root) : null;
+  const poModalPanel = poMode && poModal ? poModal.querySelector(".po-form-modal-panel") : null;
   const poModalClose = poMode ? $(`#${ids.modalClose}`, root) : null;
   const poStatus = poMode ? $(`#${ids.status}`, root) : null;
   const poMeta = poMode ? $(`#${ids.meta}`, root) : null;
@@ -2451,6 +2560,12 @@ export function renderOrderModule(root, config) {
   const timelineZone = $(`#${ids.timeline}`, root);
   const timelineSummary = $(`#${ids.timelineSummary}`, root);
   const cnyBanner = $(`#${ids.cnyBanner}`, root);
+  const etdComputed = $(`#${ids.etdComputed}`, root);
+  const etaComputed = $(`#${ids.etaComputed}`, root);
+  const etdManualInput = $(`#${ids.etdManual}`, root);
+  const etaManualInput = $(`#${ids.etaManual}`, root);
+  const etdResetBtn = $(`#${ids.etdReset}`, root);
+  const etaResetBtn = $(`#${ids.etaReset}`, root);
   const msZone = $(`#${ids.msZone}`, root);
   const saveBtn = $(`#${ids.save}`, root);
   const cancelBtn = $(`#${ids.cancel}`, root);
@@ -2461,6 +2576,7 @@ export function renderOrderModule(root, config) {
 
   let editing = defaultRecord(config, getSettings());
   let lastLoaded = JSON.parse(JSON.stringify(editing));
+  let isDirty = false;
   const poListState = poMode ? { searchTerm: "", showArchived: false, sortKey: null, sortDir: null } : null;
 
   function formatProductOption(product) {
@@ -2556,6 +2672,41 @@ export function renderOrderModule(root, config) {
     setTimeout(() => { toast.hidden = true; }, 2000);
   }
 
+  function hasUnsavedChanges() {
+    const settings = getSettings();
+    syncEditingFromForm(settings);
+    const current = JSON.stringify(editing);
+    const baseline = JSON.stringify(lastLoaded || {});
+    isDirty = current !== baseline;
+    return isDirty;
+  }
+
+  function confirmDiscard(onConfirm) {
+    const content = el("p", {}, ["Änderungen verwerfen?"]);
+    const overlay = buildModal({
+      title: "Änderungen verwerfen?",
+      content,
+      actions: [
+        el("button", {
+          class: "btn",
+          type: "button",
+          dataset: { action: "cancel" },
+          onclick: () => closeModal(overlay),
+        }, ["Abbrechen"]),
+        el("button", {
+          class: "btn danger",
+          type: "button",
+          onclick: () => {
+            closeModal(overlay);
+            if (typeof onConfirm === "function") onConfirm();
+          },
+        }, ["Verwerfen"]),
+      ],
+    });
+    const cancelBtn = overlay.querySelector("button[data-action='cancel']");
+    if (cancelBtn) cancelBtn.focus();
+  }
+
   function openFormModal() {
     if (!poMode || !poModal) return;
     poModal.classList.add("is-open");
@@ -2568,6 +2719,32 @@ export function renderOrderModule(root, config) {
     if (!poMode || !poModal) return;
     poModal.classList.remove("is-open");
     poModal.setAttribute("aria-hidden", "true");
+  }
+
+  function attemptCloseForm({ reset } = {}) {
+    if (!poMode) return;
+    const dirty = hasUnsavedChanges();
+    if (!dirty) {
+      if (reset) loadForm(lastLoaded || editing);
+      closeFormModal();
+      return;
+    }
+    confirmDiscard(() => {
+      if (reset) loadForm(lastLoaded || editing);
+      isDirty = false;
+      closeFormModal();
+    });
+  }
+
+  let suppressBackdropClose = false;
+  if (poModalPanel) {
+    poModalPanel.addEventListener("mousedown", () => {
+      suppressBackdropClose = true;
+    });
+    window.addEventListener("mouseup", () => {
+      if (!suppressBackdropClose) return;
+      setTimeout(() => { suppressBackdropClose = false; }, 0);
+    });
   }
 
   function getCurrentState() {
@@ -3074,6 +3251,13 @@ export function renderOrderModule(root, config) {
     preview.append(buildEventList(events, editing.paymentLog, loadState().payments));
   }
 
+  function updateTimelineOverrides(timeline) {
+    if (etdComputed) etdComputed.textContent = fmtDateDE(timeline?.etdComputed);
+    if (etaComputed) etaComputed.textContent = fmtDateDE(timeline?.etaComputed);
+    if (etdResetBtn) etdResetBtn.disabled = !editing.etdManual;
+    if (etaResetBtn) etaResetBtn.disabled = !editing.etaManual;
+  }
+
   function updateSaveEnabled() {
     const sum = (editing.milestones || []).reduce((acc, row) => acc + clampPct(row.percent || 0), 0);
     const hasSku = (!quickfillEnabled || (skuInput && skuInput.value.trim() !== "")) || (editing.items || []).some(it => it.sku);
@@ -3125,6 +3309,7 @@ export function renderOrderModule(root, config) {
         unitCostUsd: fmtCurrencyInput(unitCostEl?.value || "0,00"),
         unitExtraUsd: fmtCurrencyInput(unitExtraEl?.value || "0,00"),
         extraFlatUsd: fmtCurrencyInput(flatEl?.value || "0,00"),
+        unitCostManuallyEdited: row.dataset.unitCostManual === "true",
       });
     });
     if (nextItems.length) {
@@ -3149,6 +3334,12 @@ export function renderOrderModule(root, config) {
     editing.vatRefundLagMonths = Number(vatLagInput.value || 0);
     editing.vatRefundEnabled = vatToggle.checked;
     editing.ddp = ddpToggle.checked;
+    if (etdManualInput) {
+      editing.etdManual = etdManualInput.value || null;
+    }
+    if (etaManualInput) {
+      editing.etaManual = etaManualInput.value || null;
+    }
     const timeline = computeTimeline(editing, settings);
     editing.cnyAdjustmentDays = timeline?.cnyAdjustmentDays || 0;
   }
@@ -3191,9 +3382,11 @@ export function renderOrderModule(root, config) {
     ensureAutoEvents(editing, settings, editing.milestones);
     ensurePaymentLog(editing);
     renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
+    updateTimelineOverrides(computeTimeline(editing, settings));
     renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
     updatePreview(settings);
     updateSaveEnabled();
+    isDirty = true;
     if (opts.persist) {
       persistEditing({ source: opts.source, silent: false });
     }
@@ -3272,10 +3465,15 @@ export function renderOrderModule(root, config) {
     vatLagInput.value = String(editing.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0);
     vatToggle.checked = editing.vatRefundEnabled !== false;
     ddpToggle.checked = !!editing.ddp;
+    if (etdManualInput) etdManualInput.value = editing.etdManual || "";
+    if (etaManualInput) etaManualInput.value = editing.etaManual || "";
+    const timeline = computeTimeline(editing, settings);
     renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
+    updateTimelineOverrides(timeline);
     renderMsTable(msZone, editing, config, onAnyChange, null, settings);
     updatePreview(settings);
     updateSaveEnabled();
+    isDirty = false;
   }
 
   function saveRecord() {
@@ -3326,6 +3524,8 @@ export function renderOrderModule(root, config) {
     }
     window.dispatchEvent(new Event("state:changed"));
     showToast(`${config.entityLabel || "PO"} gespeichert`);
+    lastLoaded = JSON.parse(JSON.stringify(editing));
+    isDirty = false;
     if (poMode) closeFormModal();
   }
 
@@ -3407,6 +3607,7 @@ export function renderOrderModule(root, config) {
         unitCostUsd: "0,00",
         unitExtraUsd: "0,00",
         extraFlatUsd: "0,00",
+        unitCostManuallyEdited: false,
       });
       renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
       onAnyChange();
@@ -3422,6 +3623,7 @@ export function renderOrderModule(root, config) {
         unitCostUsd: "0,00",
         unitExtraUsd: "0,00",
         extraFlatUsd: "0,00",
+        unitCostManuallyEdited: false,
         type: "misc",
       });
       renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
@@ -3497,6 +3699,22 @@ export function renderOrderModule(root, config) {
   vatLagInput.addEventListener("input", onAnyChange);
   vatToggle.addEventListener("change", onAnyChange);
   ddpToggle.addEventListener("change", onAnyChange);
+  if (etdManualInput) etdManualInput.addEventListener("change", onAnyChange);
+  if (etaManualInput) etaManualInput.addEventListener("change", onAnyChange);
+  if (etdResetBtn) {
+    etdResetBtn.addEventListener("click", () => {
+      if (etdManualInput) etdManualInput.value = "";
+      editing.etdManual = null;
+      onAnyChange();
+    });
+  }
+  if (etaResetBtn) {
+    etaResetBtn.addEventListener("click", () => {
+      if (etaManualInput) etaManualInput.value = "";
+      editing.etaManual = null;
+      onAnyChange();
+    });
+  }
   prodInput.addEventListener("input", (e) => { editing.prodDays = Number(e.target.value || 0); onAnyChange(); });
   transportSelect.addEventListener("change", (e) => {
     editing.transport = e.target.value;
@@ -3599,14 +3817,17 @@ export function renderOrderModule(root, config) {
     });
   }
   if (poModalClose) {
-    poModalClose.addEventListener("click", closeFormModal);
+    poModalClose.addEventListener("click", () => attemptCloseForm({ reset: true }));
   }
   if (poSaveHeader) {
     poSaveHeader.addEventListener("click", saveRecord);
   }
   if (poModal) {
     poModal.addEventListener("click", (event) => {
-      if (event.target === poModal) closeFormModal();
+      if (event.target === poModal) {
+        if (suppressBackdropClose) return;
+        attemptCloseForm({ reset: true });
+      }
     });
   }
   numberInput.addEventListener("input", onAnyChange);
@@ -3615,8 +3836,7 @@ export function renderOrderModule(root, config) {
   saveBtn.addEventListener("click", saveRecord);
   if (cancelBtn) {
     cancelBtn.addEventListener("click", () => {
-      loadForm(lastLoaded || editing);
-      if (poMode) closeFormModal();
+      attemptCloseForm({ reset: true });
     });
   }
   createBtn.addEventListener("click", () => loadForm(defaultRecord(config, getSettings())));
@@ -3627,6 +3847,10 @@ export function renderOrderModule(root, config) {
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
       ev.preventDefault();
       saveRecord();
+    }
+    if (ev.key === "Escape" && poMode && poModal?.classList.contains("is-open")) {
+      ev.preventDefault();
+      attemptCloseForm({ reset: true });
     }
   };
   window.addEventListener("keydown", shortcutHandler);
