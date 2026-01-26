@@ -447,10 +447,15 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-payment-debug{font-size:12px;}
 .po-filename-block{display:flex; flex-direction:column; gap:6px; padding:10px 12px; border-radius:12px; border:1px dashed rgba(15,27,45,0.2); background:#f8fafc;}
 .po-filename-copy{justify-content:flex-start; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%;}
-.payments-export-filters{display:flex; gap:12px; flex-wrap:wrap; margin:12px 0;}
-.payments-export-filters label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);}
-.payments-export-filters select{min-width:160px; padding:6px 8px; border-radius:8px; border:1px solid rgba(15,27,45,0.2);}
-.payments-export-actions{display:flex; gap:10px; margin-bottom:12px;}
+.payments-export-toolbar{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; justify-content:space-between; margin:16px 0;}
+.payments-export-filters{display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end;}
+.payments-export-field{display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted);}
+.payments-export-field input[type="month"]{min-width:160px; padding:6px 8px; border-radius:8px; border:1px solid rgba(15,27,45,0.2); font:inherit; color:var(--ink); background:#fff;}
+.payments-export-actions{display:flex; gap:8px; flex-wrap:wrap;}
+.segment-control{display:inline-flex; background:#f1f5f9; border-radius:999px; padding:4px; gap:4px; border:1px solid rgba(15,27,45,0.12);}
+.segment-control input{position:absolute; opacity:0; pointer-events:none;}
+.segment-control label{padding:6px 12px; border-radius:999px; font-size:12px; font-weight:600; color:var(--ink); cursor:pointer; transition:background-color .12s ease, color .12s ease;}
+.segment-control input:checked + label{background:var(--mint-500); color:#fff;}
 .payments-export-table td{font-variant-numeric:tabular-nums;}
 .products-grid{display:flex; flex-direction:column; gap:12px;}
 .products-grid-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; background:#f8fafc; border-radius:12px; padding:10px 12px;}
