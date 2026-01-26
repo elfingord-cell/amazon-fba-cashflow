@@ -1292,14 +1292,7 @@ function buildDashboardHTML(state) {
       </tr>
     `;
 
-  const coverageNotice = coverageNoticeNeeded
-    ? `
-      <div class="dashboard-coverage-notice">
-        <span>Planungsstand unvollständig – Ausgaben können fehlen.</span>
-        <button type="button" class="btn ghost" id="dashboard-coverage-link">Details anzeigen</button>
-      </div>
-    `
-    : "";
+  const coverageNotice = "";
 
   return `
     <section class="dashboard">
@@ -1347,25 +1340,6 @@ function buildDashboardHTML(state) {
             `}
           </tbody>
         </table>
-      </div>
-      <div class="dashboard-coverage" id="dashboard-coverage-panel">
-        <div class="dashboard-coverage-header">
-          <h3>SKU-Planungsübersicht</h3>
-          <p class="muted">✓ = Planung vorhanden, — = keine Planung für den Monat.</p>
-        </div>
-        <div class="dashboard-coverage-wrap">
-          <table class="table-compact dashboard-coverage-table" role="table">
-            <thead>
-              <tr>
-                <th scope="col" class="coverage-header">Kategorie / SKU</th>
-                ${nonEmptyMonths.map((month, idx) => `<th scope="col" class="${monthColumnClass(idx)}">${escapeHtml(month)}</th>`).join("")}
-              </tr>
-            </thead>
-            <tbody>
-              ${coverageRows}
-            </tbody>
-          </table>
-        </div>
       </div>
     </section>
   `;
@@ -1468,6 +1442,19 @@ function attachDashboardHandlers(root, state) {
 
   const table = root.querySelector(".dashboard-tree-table");
   if (table) {
+    table.addEventListener("click", (event) => {
+      const toggle = event.target.closest("button.tree-toggle[data-row-id]");
+      if (!toggle) return;
+      const rowId = toggle.getAttribute("data-row-id");
+      if (!rowId) return;
+      if (dashboardState.expanded.has(rowId)) {
+        dashboardState.expanded.delete(rowId);
+      } else {
+        dashboardState.expanded.add(rowId);
+      }
+      render(root);
+    });
+
     const navigate = (payload) => {
       if (!payload || !payload.route) return;
       const params = new URLSearchParams();
@@ -1550,6 +1537,14 @@ function attachDashboardHandlers(root, state) {
       ev.preventDefault();
       const panel = root.querySelector("#dashboard-coverage-panel");
       if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  const rangeSelect = root.querySelector("#dashboard-range");
+  if (rangeSelect) {
+    rangeSelect.addEventListener("change", () => {
+      dashboardState.range = rangeSelect.value;
+      render(root);
     });
   }
 }
