@@ -443,6 +443,11 @@ function normaliseTemplate(template) {
     if (value > max) return max;
     return value;
   };
+  const parseBoolean = (value) => {
+    if (value === true || value === 1 || value === "true") return true;
+    if (value === false || value === 0 || value === "false") return false;
+    return false;
+  };
   const normalizedFields = {
     unitPriceUsd: clamp(parseNumber(rawFields.unitPriceUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
     extraPerUnitUsd: clamp(parseNumber(rawFields.extraPerUnitUsd ?? 0) ?? 0, 0, Number.POSITIVE_INFINITY),
