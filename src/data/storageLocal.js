@@ -92,6 +92,7 @@ const defaults = {
   monthlyActuals: {},
   suppliers: [],
   productSuppliers: [],
+  payments: [],
 };
 
 function ensureFixcostContainers(state) {
@@ -133,6 +134,11 @@ function ensureProductCategories(state) {
         updatedAt: entry.updatedAt || now,
       };
     });
+}
+
+function ensurePayments(state) {
+  if (!state) return;
+  if (!Array.isArray(state.payments)) state.payments = [];
 }
 
 function ensureVatData(state) {
@@ -710,6 +716,7 @@ export function createEmptyState(){
   ensureGlobalSettings(clone);
   ensureSuppliers(clone);
   ensureProductSuppliers(clone);
+  ensurePayments(clone);
   ensureFos(clone);
   return clone;
 }
@@ -734,6 +741,7 @@ export function loadState(){
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
   ensureProductSuppliers(_state);
+  ensurePayments(_state);
   ensureFos(_state);
   migrateLegacyOutgoings(_state);
   migrateProducts(_state);
@@ -754,6 +762,7 @@ export function saveState(s){
   ensureGlobalSettings(_state);
   ensureSuppliers(_state);
   ensureProductSuppliers(_state);
+  ensurePayments(_state);
   ensureFos(_state);
   try {
     const { _computed, ...clean } = _state;
@@ -798,6 +807,7 @@ export function importStateFile(file, cb){
       ensureGlobalSettings(json);
       ensureSuppliers(json);
       ensureProductSuppliers(json);
+      ensurePayments(json);
       ensureFos(json);
       migrateLegacyOutgoings(json);
       cb(json);

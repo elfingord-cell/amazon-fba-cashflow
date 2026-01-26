@@ -1,5 +1,6 @@
 import { loadState, getProductsSnapshot } from "../data/storageLocal.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
+import { formatMoneyDE } from "./utils/numberFormat.js";
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -35,7 +36,7 @@ function fmtEurPlain(value) {
   if (value == null || value === "") return "—";
   const num = Number(value);
   return Number.isFinite(num)
-    ? `${num.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR`
+    ? `${formatMoneyDE(num, 2)} EUR`
     : "—";
 }
 
@@ -43,7 +44,7 @@ function formatCsvNumber(value) {
   if (value == null || value === "") return "";
   const num = Number(value);
   if (!Number.isFinite(num)) return "";
-  return num.toFixed(2);
+  return formatMoneyDE(num, 2);
 }
 
 function toCsv(rows, headers) {
@@ -55,14 +56,6 @@ function toCsv(rows, headers) {
   const head = headers.map(h => escapeCell(h.label)).join(",");
   const body = rows.map(row => headers.map(h => escapeCell(row[h.key])).join(",")).join("\n");
   return `${head}\n${body}`;
-}
-
-function normalizeTransactionId(value) {
-  if (!value) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-  const normalized = raw.replace(/^(tx-?)+/i, "");
-  return `tx-${normalized}`;
 }
 
 function buildSupplierNameMap(state) {
@@ -137,16 +130,8 @@ function buildPaymentJournalRows({ month, scope }) {
     if (!record) return;
     const supplierName = resolveSupplierName(record, supplierNameMap);
     const skuAliases = resolveSkuAliases(record, skuAliasMap);
-    const transactions = Array.isArray(record.paymentTransactions) ? record.paymentTransactions : [];
-    const txMap = new Map();
-    transactions.forEach(tx => {
-      if (!tx) return;
-      if (tx.id) txMap.set(String(tx.id), tx);
-      const normalized = normalizeTransactionId(tx.id);
-      if (normalized) txMap.set(normalized, tx);
-    });
     const snapshot = JSON.parse(JSON.stringify(record));
-    const payments = buildPaymentRows(snapshot, poConfig, settings);
+    const payments = buildPaymentRows(snapshot, poConfig, settings, state.payments || []);
     payments.forEach(payment => {
       const paymentType = normalizePaymentType({ label: payment.typeLabel || payment.label, eventType: payment.eventType });
       if (!paymentType) return;
@@ -155,9 +140,8 @@ function buildPaymentJournalRows({ month, scope }) {
       const paidDate = payment.paidDate || "";
       const planned = Number.isFinite(Number(payment.plannedEur)) ? Number(payment.plannedEur) : null;
       const actual = status === "PAID"
-        ? (Number.isFinite(Number(payment.paidEurActual)) ? Number(payment.paidEurActual) : planned)
+        ? (Number.isFinite(Number(payment.paidEurActual)) ? Number(payment.paidEurActual) : null)
         : null;
-      const tx = payment.transactionId ? txMap.get(payment.transactionId) : null;
       const entityId = record.id || record.poNo || "";
       const rowId = `PO-${entityId}-${paymentType}-${dueDate || paidDate || ""}`;
       rows.push({
@@ -172,12 +156,12 @@ function buildPaymentJournalRows({ month, scope }) {
         status,
         dueDate,
         paidDate,
+        paymentId: payment.paymentId || "",
         amountPlannedEur: planned,
         amountActualEur: actual,
-        payer: payment.paidBy || tx?.paidBy || "",
-        paymentMethod: payment.method || tx?.method || "",
-        driveLink: tx?.driveInvoiceLink || "",
-        note: tx?.note || payment.note || "",
+        payer: payment.paidBy || "",
+        paymentMethod: payment.method || "",
+        note: payment.note || "",
         internalId: record.id || rowId,
       });
     });
@@ -214,11 +198,11 @@ function buildPaymentJournalRows({ month, scope }) {
         status: "OPEN",
         dueDate,
         paidDate: "",
+        paymentId: "",
         amountPlannedEur: planned,
         amountActualEur: null,
         payer: "",
         paymentMethod: "",
-        driveLink: "",
         note: "",
         internalId: record.id || rowId,
       });
@@ -262,9 +246,9 @@ function buildCsvRows(rows) {
     paidDate: row.paidDate,
     amountPlannedEur: formatCsvNumber(row.amountPlannedEur),
     amountActualEur: row.status === "PAID" ? formatCsvNumber(row.amountActualEur) : "",
+    paymentId: row.paymentId || "",
     payer: row.payer,
     paymentMethod: row.paymentMethod,
-    driveLink: row.driveLink,
     note: row.note,
     internalId: row.internalId,
   }));
@@ -291,9 +275,9 @@ function openPrintView(rows, { month, scope }) {
       <td>${row.dueDate || ""}</td>
       <td>${row.paidDate || ""}</td>
       <td>${row.status === "PAID" ? formatCsvNumber(row.amountActualEur) : ""}</td>
+      <td>${row.paymentId || ""}</td>
       <td>${row.paymentMethod || ""}</td>
       <td>${row.payer || ""}</td>
-      <td>${row.driveLink || ""}</td>
     </tr>
   `).join("");
 
@@ -334,9 +318,9 @@ function openPrintView(rows, { month, scope }) {
         <th>DueDate</th>
         <th>PaidDate</th>
         <th>Ist EUR</th>
+        <th>PaymentId</th>
         <th>Methode</th>
         <th>Zahler</th>
-        <th>DriveLink</th>
       </tr>
     </thead>
     <tbody>
@@ -395,9 +379,9 @@ export function render(root) {
       el("th", {}, ["Bezahlt"]),
       el("th", {}, ["Soll EUR"]),
       el("th", {}, ["Ist EUR"]),
+      el("th", {}, ["Payment ID"]),
       el("th", {}, ["Zahler"]),
       el("th", {}, ["Methode"]),
-      el("th", {}, ["Drive Link"]),
       el("th", {}, ["Notiz"]),
     ]),
   ]);
@@ -440,9 +424,9 @@ export function render(root) {
         el("td", {}, [fmtDate(row.paidDate)]),
         el("td", {}, [fmtEurPlain(row.amountPlannedEur)]),
         el("td", {}, [row.status === "PAID" ? fmtEurPlain(row.amountActualEur) : "—"]),
+        el("td", {}, [row.paymentId || "—"]),
         el("td", {}, [row.payer || "—"]),
         el("td", {}, [row.paymentMethod || "—"]),
-        el("td", {}, [row.driveLink || "—"]),
         el("td", {}, [row.note || "—"]),
       ]));
     });
@@ -479,9 +463,9 @@ export function render(root) {
       { key: "paidDate", label: "paidDate" },
       { key: "amountPlannedEur", label: "amountPlannedEur" },
       { key: "amountActualEur", label: "amountActualEur" },
+      { key: "paymentId", label: "paymentId" },
       { key: "payer", label: "payer" },
       { key: "paymentMethod", label: "paymentMethod" },
-      { key: "driveLink", label: "driveLink" },
       { key: "note", label: "note" },
       { key: "internalId", label: "internalId" },
     ];
