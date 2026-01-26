@@ -3,10 +3,32 @@ import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
+const RANGE_STORAGE_KEY = "dashboard_month_range";
+const RANGE_DEFAULT = "NEXT_12";
+const RANGE_OPTIONS = [
+  { value: "NEXT_6", label: "Nächste 6 Monate", count: 6 },
+  { value: "NEXT_12", label: "Nächste 12 Monate", count: 12 },
+  { value: "NEXT_24", label: "Nächste 24 Monate", count: 24 },
+  { value: "ALL", label: "Alles", count: null },
+];
+
+function isValidRange(value) {
+  return RANGE_OPTIONS.some(option => option.value === value);
+}
+
+function loadRangePreference() {
+  try {
+    const stored = localStorage.getItem(RANGE_STORAGE_KEY);
+    return isValidRange(stored) ? stored : RANGE_DEFAULT;
+  } catch {
+    return RANGE_DEFAULT;
+  }
+}
+
 const dashboardState = {
   expanded: new Set(["inflows", "outflows", "po-payments", "fo-payments"]),
   coverageCollapsed: new Set(),
-  range: "next12",
+  range: loadRangePreference(),
   hideEmptyMonths: true,
   limitBalanceToGreen: false,
 };
@@ -103,23 +125,16 @@ function getMonthlyBuckets(startMonth, endMonth) {
   return months;
 }
 
-function getRangeOptions(months) {
-  const options = [];
-  const length = months.length;
-  const candidates = [12, 18, 24];
-  candidates.forEach(count => {
-    if (length >= count) options.push({ value: `next${count}`, label: `Nächste ${count}` });
-  });
-  if (length > 0) options.push({ value: "all", label: "Alle" });
-  return options;
-}
-
-function applyRange(months, range) {
-  if (!months.length) return [];
-  if (range === "all") return months.slice();
-  const count = Number(String(range).replace("next", "")) || 0;
-  if (!Number.isFinite(count) || count <= 0) return months.slice();
-  return months.slice(0, count);
+function getVisibleMonths(allMonths, range, nowMonth) {
+  if (!Array.isArray(allMonths) || !allMonths.length) return [];
+  const sortedMonths = allMonths.slice().sort();
+  if (range === "ALL") return sortedMonths;
+  const option = RANGE_OPTIONS.find(item => item.value === range);
+  const count = option && Number.isFinite(option.count) ? option.count : 0;
+  if (!count) return sortedMonths;
+  const startIndex = sortedMonths.findIndex(month => month >= nowMonth);
+  if (startIndex === -1) return [];
+  return sortedMonths.slice(startIndex, startIndex + count);
 }
 
 function getDisplayLabel(plannedTotal, actualTotal) {
@@ -217,6 +232,55 @@ function getActiveSkus(state) {
       };
     })
     .filter(item => item.sku);
+}
+
+function normalizeSku(value) {
+  return String(value || "").trim();
+}
+
+function buildSkuAliasMap(state) {
+  const products = state && Array.isArray(state.products) ? state.products : [];
+  const map = new Map();
+  products.forEach(product => {
+    const sku = normalizeSku(product && product.sku).toLowerCase();
+    if (!sku) return;
+    const alias = normalizeSku(product && product.alias);
+    if (alias) {
+      map.set(sku, alias);
+    }
+  });
+  return map;
+}
+
+function getPoAliasInfo(record, aliasMap) {
+  const skus = new Set();
+  if (Array.isArray(record && record.items)) {
+    record.items.forEach(item => {
+      const sku = normalizeSku(item && item.sku);
+      if (sku) skus.add(sku);
+    });
+  }
+  if (!skus.size) {
+    const sku = normalizeSku(record && record.sku);
+    if (sku) skus.add(sku);
+  }
+  const aliases = Array.from(skus)
+    .map(sku => aliasMap.get(sku.toLowerCase()))
+    .filter(Boolean);
+  const uniqueAliases = Array.from(new Set(aliases));
+  return { aliases: uniqueAliases, hasSku: skus.size > 0 };
+}
+
+function formatAliasTooltip(info) {
+  if (!info) return null;
+  const { aliases, hasSku } = info;
+  if (!aliases.length) {
+    return hasSku ? "Alias: —" : null;
+  }
+  const limited = aliases.slice(0, 3);
+  const suffix = aliases.length > limited.length ? " …" : "";
+  const label = aliases.length > 1 ? "Aliases" : "Alias";
+  return `${label}: ${limited.join(", ")}${suffix}`;
 }
 
 function buildCategoryGroups(items, categories = []) {
@@ -785,6 +849,7 @@ function buildDashboardRows(state, months, options = {}) {
     paid: false,
   }));
 
+  const skuAliasMap = buildSkuAliasMap(state);
   const poData = buildPoData(state);
   const foData = buildFoData(state);
 
@@ -825,10 +890,12 @@ function buildDashboardRows(state, months, options = {}) {
     const poLabel = poNo ? `PO ${poNo}` : "PO";
     const depositPaid = po.events.some(evt => /deposit/i.test(evt.typeLabel || "") && evt.paid);
     const balancePaid = po.events.some(evt => /balance/i.test(evt.typeLabel || "") && evt.paid);
+    const aliasLine = formatAliasTooltip(getPoAliasInfo(po.record, skuAliasMap));
     const tooltipParts = [
       `PO: ${poNo || "—"}`,
       `Supplier: ${po.supplier || "—"}`,
       `Units: ${po.units || 0}`,
+      aliasLine,
       `Deposit: ${depositPaid ? "bezahlt" : "offen"}`,
       `Balance: ${balancePaid ? "bezahlt" : "offen"}`,
     ];
@@ -837,6 +904,7 @@ function buildDashboardRows(state, months, options = {}) {
         `Typ: ${evt.typeLabel || "Zahlung"}`,
         `Datum: ${evt.dueDate || "—"}`,
         `Ist EUR: ${formatEur0(evt.actualEur || 0)}`,
+        aliasLine,
         evt.currency ? `Währung: ${evt.currency}` : null,
         evt.paidBy ? `Paid by: ${evt.paidBy}` : null,
       ]
@@ -1087,14 +1155,10 @@ function buildDashboardHTML(state) {
   const endMonth = addMonths(startMonth, horizon - 1);
   const allMonths = getMonthlyBuckets(startMonth, endMonth);
   const currentMonth = currentMonthKey();
-  const months = allMonths.filter(month => month >= currentMonth);
-  const rangeOptions = getRangeOptions(months);
-  if (rangeOptions.length && !rangeOptions.some(option => option.value === dashboardState.range)) {
-    dashboardState.range = rangeOptions[0].value;
+  if (!isValidRange(dashboardState.range)) {
+    dashboardState.range = RANGE_DEFAULT;
   }
-  const baseMonths = rangeOptions.length
-    ? applyRange(months, dashboardState.range)
-    : months.slice();
+  const baseMonths = getVisibleMonths(allMonths, dashboardState.range, currentMonth);
   const skuCoverage = computeSkuCoverage(state, baseMonths);
 
   const rowsBoth = buildDashboardRows(state, baseMonths, {
@@ -1122,16 +1186,14 @@ function buildDashboardHTML(state) {
   const coverageNoticeNeeded = skuCoverage.activeSkus.length > 0
     && nonEmptyMonths.some(month => skuCoverage.coverage.get(month) !== "green");
 
-  const rangeSelect = rangeOptions.length
-    ? `
+  const rangeSelect = `
       <label class="dashboard-range">
-        <span>Monatsbereich</span>
+        <span>Zeitraum</span>
         <select id="dashboard-range">
-          ${rangeOptions.map(option => `<option value="${option.value}" ${option.value === dashboardState.range ? "selected" : ""}>${option.label}</option>`).join("")}
+          ${RANGE_OPTIONS.map(option => `<option value="${option.value}" ${option.value === dashboardState.range ? "selected" : ""}>${option.label}</option>`).join("")}
         </select>
       </label>
-    `
-    : "";
+    `;
 
   const headerCells = nonEmptyMonths
     .map((month, idx) => {
@@ -1325,21 +1387,23 @@ function buildDashboardHTML(state) {
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">
-        <table class="table-compact dashboard-tree-table" role="table">
-          <thead>
-            <tr>
-              <th scope="col" class="tree-header">Kategorie / Zeile</th>
-              ${headerCells}
-            </tr>
-          </thead>
-          <tbody>
-            ${bodyRows || `
+        <div class="dashboard-table-scroll">
+          <table class="table-compact dashboard-tree-table" role="table">
+            <thead>
               <tr>
-                <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+                <th scope="col" class="tree-header">Kategorie / Zeile</th>
+                ${headerCells}
               </tr>
-            `}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${bodyRows || `
+                <tr>
+                  <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   `;
@@ -1378,8 +1442,8 @@ function attachDashboardHandlers(root, state) {
       const horizon = Number((state && state.settings && state.settings.horizonMonths) || 12) || 12;
       const endMonth = addMonths(startMonth, horizon - 1);
       const currentMonth = currentMonthKey();
-      const months = getMonthlyBuckets(startMonth, endMonth).filter(month => month >= currentMonth);
-      const baseMonths = applyRange(months, dashboardState.range);
+      const months = getMonthlyBuckets(startMonth, endMonth);
+      const baseMonths = getVisibleMonths(months, dashboardState.range, currentMonth);
       const skuCoverage = computeSkuCoverage(state, baseMonths);
       const rowsBoth = buildDashboardRows(state, baseMonths, {
         limitBalanceToGreen: dashboardState.limitBalanceToGreen,
@@ -1491,7 +1555,7 @@ function attachDashboardHandlers(root, state) {
   }
 
   const coverageWrap = root.querySelector(".dashboard-coverage-wrap");
-  const tableWrap = root.querySelector(".dashboard-table-wrap");
+  const tableWrap = root.querySelector(".dashboard-table-scroll");
   if (coverageWrap && tableWrap) {
     let syncing = false;
     const syncScroll = (source, target) => {
@@ -1544,6 +1608,11 @@ function attachDashboardHandlers(root, state) {
   if (rangeSelect) {
     rangeSelect.addEventListener("change", () => {
       dashboardState.range = rangeSelect.value;
+      try {
+        if (isValidRange(dashboardState.range)) {
+          localStorage.setItem(RANGE_STORAGE_KEY, dashboardState.range);
+        }
+      } catch {}
       render(root);
     });
   }
