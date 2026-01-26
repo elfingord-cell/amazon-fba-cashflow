@@ -463,7 +463,7 @@ function normaliseTemplate(template) {
     vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
     fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
     fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
-    ddp: parseBoolean(rawFields.ddp),
+    ddp: Boolean(rawFields.ddp),
     currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
       ? String(currencyRaw).toUpperCase()
       : "USD",
