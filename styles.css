@@ -339,6 +339,11 @@ td.num, th.num{text-align:right}
 .fo-convert-preview{margin-top:12px; padding:10px 12px; border-radius:10px; background:#f8fafc; border:1px solid rgba(15,27,45,0.08);}
 .fo-date-list{display:flex; flex-direction:column; gap:10px;}
 .fo-date-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 10px; border-radius:10px; background:#f8fafc;}
+.fo-recommendation-card{margin-top:12px; padding:12px; border-radius:12px; background:#f8fafc; border:1px solid rgba(15,27,45,0.08); display:flex; flex-direction:column; gap:6px;}
+.fo-recommendation-rows{display:flex; flex-direction:column; gap:8px; margin-top:4px;}
+.fo-recommendation-row{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 8px; border-radius:8px; background:#fff; border:1px solid rgba(15,27,45,0.06);}
+.fo-recommendation-issues{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;}
+.badge.fo-recommendation-badge{background:rgba(245,158,11,0.2); color:#92400e;}
 .fo-payments-footer{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;}
 .fo-banner-actions{display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;}
 .fo-banner-actions input{min-width:200px;}

@@ -1,4 +1,8 @@
-import { computeFoSuggestion } from "./foSuggestion.js";
+import {
+  buildSkuProjection,
+  computeFoRecommendation,
+  getLatestClosingSnapshotMonth,
+} from "./foSuggestion.js";
 
 /**
  * Example API handler for GET /api/fo/suggestion?sku=SKU123
@@ -13,23 +17,31 @@ export function handleFoSuggestionRequest({ query, dataAccess, today = new Date(
     return { status: 400, body: { error: "Missing sku parameter." } };
   }
 
-  const operationalCoverageDays =
-    query?.operationalCoverageDays != null
-      ? Number(query.operationalCoverageDays)
-      : undefined;
-  const etaDate = query?.etaDate ?? undefined;
-
-  const suggestion = computeFoSuggestion({
+  const baselineMonth =
+    dataAccess?.latestSnapshotMonth
+    || getLatestClosingSnapshotMonth(dataAccess?.snapshots || []);
+  const safetyDays = Number(dataAccess?.settings?.minSafetyDays ?? 60);
+  const leadTimeDays = Number(dataAccess?.settings?.leadTimeDays ?? 0);
+  const stock0 = dataAccess?.closingStockBySku?.[sku]?.[baselineMonth] ?? 0;
+  const projection = baselineMonth
+    ? buildSkuProjection({
+        sku,
+        baselineMonth,
+        stock0,
+        forecastByMonth: dataAccess?.plannedSalesBySku?.[sku] || {},
+        inboundByMonth: dataAccess?.inboundBySku?.[sku] || {},
+        horizonMonths: Number(dataAccess?.settings?.horizonMonths ?? 12),
+      })
+    : null;
+  const suggestion = computeFoRecommendation({
     sku,
-    today,
-    operationalCoverageDays: Number.isFinite(operationalCoverageDays)
-      ? operationalCoverageDays
-      : undefined,
-    etaDate,
-    policyOverrides: dataAccess.policyOverridesBySku,
-    policyDefaults: dataAccess.policyDefaults,
-    plannedSalesBySku: dataAccess.plannedSalesBySku,
-    closingStockBySku: dataAccess.closingStockBySku,
+    baselineMonth,
+    projection,
+    minSafetyDays: safetyDays,
+    leadTimeDays,
+    extraBufferDays: Number(dataAccess?.settings?.extraBufferDays ?? 30),
+    cnyPeriod: dataAccess?.settings?.cny,
+    inboundWithoutEtaCount: Number(dataAccess?.inboundWithoutEtaCount ?? 0),
   });
 
   return { status: 200, body: suggestion };
@@ -37,24 +49,15 @@ export function handleFoSuggestionRequest({ query, dataAccess, today = new Date(
 
 export const sampleFoSuggestionResponse = {
   sku: "SKU123",
-  etaDate: "2025-05-12",
-  suggestedUnits: 500,
-  confidence: "high",
-  rationale: {
-    dailyRateToday: 10,
-    dailyRateEta: 10,
-    safetyStockDays: 60,
-    leadTimeDays: 20,
-    operationalCoverageDays: 120,
-    targetCoverageTotalDays: 180,
-    projectedInventoryAtEta: 250,
-    demandUnits: 1200,
-    dohToday: 55,
-    dohEta: 25,
-    dohEndOfMonth: 20,
-    requiredUnits: 1200,
-    netNeeded: 950,
-  },
-  warnings: [],
-  orderNeededFlag: true,
+  status: "ok",
+  baselineMonth: "2026-01",
+  criticalMonth: "2026-03",
+  requiredArrivalDate: "2026-03-01",
+  orderDate: "2026-01-01",
+  orderDateAdjusted: "2025-12-20",
+  overlapDays: 12,
+  recommendedUnits: 500,
+  stockAtArrival: 200,
+  avgDailyDemand: 8,
+  issues: [{ code: "MISSING_FORECAST", count: 2 }],
 };

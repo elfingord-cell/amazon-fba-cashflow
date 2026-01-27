@@ -10,7 +10,12 @@ import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
 import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
-import { computeFoSuggestion, findEtaForMinDoh } from "../domain/foSuggestion.js";
+import {
+  buildSkuProjection,
+  computeFoRecommendation,
+  getLatestClosingSnapshotMonth,
+  foSuggestionUtils,
+} from "../domain/foSuggestion.js";
 
 function $(sel, root = document) {
   return root.querySelector(sel);
@@ -175,6 +180,84 @@ function buildClosingStockBySku(state) {
     });
   });
   return result;
+}
+
+function resolveInboundArrivalDate(record) {
+  const raw =
+    record?.arrivalDateDe
+    || record?.arrivalDate
+    || record?.etaDate
+    || record?.etaManual
+    || record?.eta;
+  if (raw) {
+    return parseISODate(raw);
+  }
+  const orderDate = parseISODate(record?.orderDate);
+  if (!orderDate) return null;
+  const prodDays = Number(record?.prodDays ?? record?.productionLeadTimeDays ?? 0);
+  const transitDays = Number(record?.transitDays ?? record?.logisticsLeadTimeDays ?? 0);
+  return addDays(orderDate, prodDays + transitDays);
+}
+
+function extractInboundItems(record) {
+  if (Array.isArray(record?.items) && record.items.length > 0) {
+    return record.items.map(item => ({
+      sku: String(item?.sku || "").trim(),
+      units: parseLocaleNumber(item?.units),
+    }));
+  }
+  if (record?.sku) {
+    return [{
+      sku: String(record.sku || "").trim(),
+      units: parseLocaleNumber(record?.units),
+    }];
+  }
+  return [];
+}
+
+function buildInboundBySku(state) {
+  const inboundBySku = {};
+  let inboundWithoutEtaCount = 0;
+  const monthKey = foSuggestionUtils.monthKey;
+
+  const pos = Array.isArray(state?.pos) ? state.pos : [];
+  pos.forEach(po => {
+    if (po?.archived) return;
+    const arrivalDate = resolveInboundArrivalDate(po);
+    if (!arrivalDate) {
+      inboundWithoutEtaCount += 1;
+      return;
+    }
+    const month = monthKey(arrivalDate);
+    extractInboundItems(po).forEach(item => {
+      if (!item.sku) return;
+      const units = Number(item.units || 0);
+      if (!Number.isFinite(units) || units <= 0) return;
+      if (!inboundBySku[item.sku]) inboundBySku[item.sku] = {};
+      inboundBySku[item.sku][month] = (inboundBySku[item.sku][month] || 0) + units;
+    });
+  });
+
+  const fos = Array.isArray(state?.fos) ? state.fos : [];
+  fos.forEach(fo => {
+    const status = String(fo?.status || "").toUpperCase();
+    if (status === "CANCELLED" || status === "CONVERTED") return;
+    const arrivalDate = resolveInboundArrivalDate(fo);
+    if (!arrivalDate) {
+      inboundWithoutEtaCount += 1;
+      return;
+    }
+    const month = monthKey(arrivalDate);
+    extractInboundItems(fo).forEach(item => {
+      if (!item.sku) return;
+      const units = Number(item.units || 0);
+      if (!Number.isFinite(units) || units <= 0) return;
+      if (!inboundBySku[item.sku]) inboundBySku[item.sku] = {};
+      inboundBySku[item.sku][month] = (inboundBySku[item.sku][month] || 0) + units;
+    });
+  });
+
+  return { inboundBySku, inboundWithoutEtaCount };
 }
 
 function convertToEur(amount, currency, fxRate) {
@@ -962,6 +1045,7 @@ export default function render(root) {
     const isConverted = String(existing?.status || "").toUpperCase() === "CONVERTED";
     const plannedSalesBySku = buildPlannedSalesBySku(state);
     const closingStockBySku = buildClosingStockBySku(state);
+    const inboundSummary = buildInboundBySku(state);
     const baseForm = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
@@ -1183,53 +1267,86 @@ export default function render(root) {
 
     function updateFoRecommendation() {
       const box = $("#fo-recommendation", content);
-      const text = $("#fo-recommendation-text", content);
-      const warningsList = $("#fo-recommendation-warnings", content);
-      if (!box || !text || !warningsList) return;
-      warningsList.innerHTML = "";
+      const summary = $("#fo-recommendation-summary", content);
+      const details = $("#fo-recommendation-details", content);
+      const baselineNode = $("#fo-recommendation-baseline", content);
+      const criticalNode = $("#fo-recommendation-critical", content);
+      const arrivalNode = $("#fo-recommendation-arrival", content);
+      const orderNode = $("#fo-recommendation-order", content);
+      const unitsNode = $("#fo-recommendation-units", content);
+      const issuesNode = $("#fo-recommendation-issues", content);
+      const notesNode = $("#fo-recommendation-notes", content);
+      if (!box || !summary || !details || !baselineNode || !criticalNode || !arrivalNode || !orderNode || !unitsNode || !issuesNode || !notesNode) {
+        return;
+      }
+      issuesNode.innerHTML = "";
+      notesNode.textContent = "";
       const sku = String(baseForm.sku || "").trim();
       if (!sku) {
-        text.textContent = "SKU auswählen, um Empfehlung zu sehen.";
+        summary.textContent = "SKU auswählen, um Empfehlung zu sehen.";
+        details.style.display = "none";
+        return;
+      }
+      const baselineMonth = getLatestClosingSnapshotMonth(state?.inventory?.snapshots || []);
+      if (!baselineMonth) {
+        summary.textContent = "Keine Empfehlung möglich: letzter Monats-Snapshot fehlt.";
+        details.style.display = "none";
         return;
       }
       const safetyDays = Number(state.inventory?.settings?.safetyDays ?? 60);
-      const etaResult = findEtaForMinDoh({
-        sku,
-        today: new Date(),
-        minimumDohDays: safetyDays,
-        plannedSalesBySku,
-        closingStockBySku,
-      });
       const leadTimeDays =
         Number(baseForm.productionLeadTimeDays || 0)
         + Number(baseForm.logisticsLeadTimeDays || 0)
         + Number(baseForm.bufferDays || 0);
-      const suggestion = computeFoSuggestion({
+      const stock0 = closingStockBySku?.[sku]?.[baselineMonth] ?? 0;
+      const projection = buildSkuProjection({
         sku,
-        today: new Date(),
-        etaDate: etaResult.etaDate || undefined,
-        policyDefaults: {
-          safetyStockDaysTotalDe: safetyDays,
-          minimumStockDaysTotalDe: safetyDays,
-          leadTimeDaysTotal: leadTimeDays,
-          moqUnits: 0,
-          operationalCoverageDaysDefault: 120,
-        },
-        plannedSalesBySku,
-        closingStockBySku,
+        baselineMonth,
+        stock0,
+        forecastByMonth: plannedSalesBySku?.[sku] || {},
+        inboundByMonth: inboundSummary.inboundBySku?.[sku] || {},
+        horizonMonths: 12,
       });
-      const etaLabel = etaResult.etaDate ? formatDate(etaResult.etaDate) : "—";
-      if (etaResult.status === "insufficient_inventory_snapshot") {
-        text.textContent = "Keine ETA-Empfehlung möglich (Bestandssnapshots fehlen).";
-      } else if (!etaResult.etaDate) {
-        text.textContent = "Keine ETA-Empfehlung verfügbar (DOH-Schwelle nicht erreicht).";
-      } else if (suggestion.suggestedUnits <= 0) {
-        text.textContent = `Empfehlung: keine Bestellung nötig. ETA ${etaLabel} bleibt oberhalb Minimum-DOH.`;
+      const recommendation = computeFoRecommendation({
+        sku,
+        baselineMonth,
+        projection,
+        minSafetyDays: safetyDays,
+        leadTimeDays,
+        extraBufferDays: 30,
+        cnyPeriod: state?.settings?.cny,
+        inboundWithoutEtaCount: inboundSummary.inboundWithoutEtaCount,
+      });
+
+      baselineNode.textContent = `Closing Snapshot ${baselineMonth}`;
+      details.style.display = "flex";
+      if (recommendation.status === "no_fo_needed") {
+        summary.textContent = "Keine FO innerhalb des Horizons erforderlich.";
+        criticalNode.textContent = "—";
+        arrivalNode.textContent = "—";
+        orderNode.textContent = "—";
+        unitsNode.textContent = "—";
+      } else if (recommendation.status === "ok") {
+        summary.textContent = "Empfehlung basierend auf dem letzten Closing Snapshot.";
+        criticalNode.textContent = recommendation.criticalMonth || "—";
+        arrivalNode.textContent = recommendation.requiredArrivalDate
+          ? formatDate(recommendation.requiredArrivalDate)
+          : "—";
+        orderNode.textContent = recommendation.orderDateAdjusted
+          ? formatDate(recommendation.orderDateAdjusted)
+          : "—";
+        unitsNode.textContent = `SKU ${sku}: ${formatUnits(recommendation.recommendedUnits)}`;
+        if (recommendation.overlapDays > 0) {
+          notesNode.textContent = `CNY berücksichtigt: +${recommendation.overlapDays} Tage`;
+        }
       } else {
-        text.textContent = `Empfehlung: ${formatUnits(suggestion.suggestedUnits)} Einheiten, geliefert (ETA) am ${etaLabel}.`;
+        summary.textContent = "Keine Empfehlung möglich: letzter Monats-Snapshot fehlt.";
+        details.style.display = "none";
       }
-      [...(etaResult.warnings || []), ...(suggestion.warnings || [])].forEach(warning => {
-        warningsList.append(el("li", {}, [warning]));
+
+      (recommendation.issues || []).forEach(issue => {
+        const label = issue.count ? `${issue.code} (${issue.count})` : issue.code;
+        issuesNode.append(el("span", { class: "badge fo-recommendation-badge" }, [label]));
       });
     }
 
@@ -1673,11 +1790,6 @@ export default function render(root) {
               el("strong", { id: "fo-landed-cost" }, ["—"]),
             ]),
           ]),
-          el("div", { class: "banner info", id: "fo-recommendation" }, [
-            el("strong", {}, ["FO Empfehlung"]),
-            el("p", { class: "muted", id: "fo-recommendation-text" }, ["—"]),
-            el("ul", { class: "fo-recommendation-warnings", id: "fo-recommendation-warnings" }, []),
-          ]),
           el("div", { class: "banner info", id: "fo-suggestion-info" }, [
             el("strong", {}, ["Why this suggestion"]),
             el("ul", { class: "fo-suggestion-list" }, []),
@@ -1706,6 +1818,34 @@ export default function render(root) {
             el("div", { class: "fo-date-row" }, [el("span", {}, ["ETA"]), el("strong", { id: "fo-preview-eta" }, ["—"])]),
           ]),
           el("p", { class: "muted", id: "fo-date-warning", style: "display:none; margin-top:10px" }, []),
+          el("div", { class: "fo-recommendation-card", id: "fo-recommendation" }, [
+            el("strong", {}, ["FO Empfehlung"]),
+            el("p", { class: "muted", id: "fo-recommendation-summary" }, ["—"]),
+            el("div", { class: "fo-recommendation-rows", id: "fo-recommendation-details" }, [
+              el("div", { class: "fo-recommendation-row" }, [
+                el("span", { class: "muted" }, ["Baseline"]),
+                el("strong", { id: "fo-recommendation-baseline" }, ["—"]),
+              ]),
+              el("div", { class: "fo-recommendation-row" }, [
+                el("span", { class: "muted" }, ["First month below safety DOH"]),
+                el("strong", { id: "fo-recommendation-critical" }, ["—"]),
+              ]),
+              el("div", { class: "fo-recommendation-row" }, [
+                el("span", { class: "muted" }, ["Required arrival (DE)"]),
+                el("strong", { id: "fo-recommendation-arrival" }, ["—"]),
+              ]),
+              el("div", { class: "fo-recommendation-row" }, [
+                el("span", { class: "muted" }, ["Recommended order date"]),
+                el("strong", { id: "fo-recommendation-order" }, ["—"]),
+              ]),
+              el("div", { class: "fo-recommendation-row" }, [
+                el("span", { class: "muted" }, ["Recommended units"]),
+                el("strong", { id: "fo-recommendation-units" }, ["—"]),
+              ]),
+            ]),
+            el("div", { class: "fo-recommendation-issues", id: "fo-recommendation-issues" }, []),
+            el("p", { class: "muted", id: "fo-recommendation-notes" }, []),
+          ]),
         ]),
       ]),
       el("section", { class: "card" }, [

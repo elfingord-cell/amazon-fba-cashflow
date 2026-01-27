@@ -33,6 +33,26 @@ function parseMonthKey(value) {
   return { year, month: month - 1 };
 }
 
+function compareMonthKeys(a, b) {
+  const parsedA = parseMonthKey(a);
+  const parsedB = parseMonthKey(b);
+  const scoreA = parsedA.year * 12 + parsedA.month;
+  const scoreB = parsedB.year * 12 + parsedB.month;
+  return scoreA - scoreB;
+}
+
+function addMonthsToKey(monthKeyValue, offset) {
+  const { year, month } = parseMonthKey(monthKeyValue);
+  const date = new Date(Date.UTC(year, month, 1));
+  date.setUTCMonth(date.getUTCMonth() + offset);
+  return monthKey(date);
+}
+
+function monthKeyToDate(monthKeyValue) {
+  const { year, month } = parseMonthKey(monthKeyValue);
+  return new Date(Date.UTC(year, month, 1));
+}
+
 function daysInMonth(year, monthIndex) {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 }
@@ -91,7 +111,7 @@ function estimateInventoryOnDate({ snapshotsBySku, plansBySku, sku, date, fallba
   const month = monthKey(date);
   const closingStockUnits = getClosingStockForMonth(snapshotsBySku, sku, month);
   if (closingStockUnits == null) {
-    warnings.push(`Closing stock snapshot missing for ${month}.`);
+    warnings.push("Latest closing stock snapshot missing.");
     return { inventoryUnits: null, missingSnapshot: true, missingForecast: false };
   }
 
@@ -155,6 +175,151 @@ function computeDoh(inventoryUnits, dailyRate) {
 function clampNonNegative(value) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, value);
+}
+
+function countOverlapDays(windowStart, windowEnd, blackoutStart, blackoutEnd) {
+  if (!windowStart || !windowEnd || !blackoutStart || !blackoutEnd) return 0;
+  const windowStartUtc = parseIsoDate(windowStart);
+  const windowEndUtc = parseIsoDate(windowEnd);
+  const blackoutStartUtc = parseIsoDate(blackoutStart);
+  const blackoutEndUtc = parseIsoDate(blackoutEnd);
+  if (!windowStartUtc || !windowEndUtc || !blackoutStartUtc || !blackoutEndUtc) return 0;
+  const overlapStart = windowStartUtc > blackoutStartUtc ? windowStartUtc : blackoutStartUtc;
+  const blackoutEndExclusive = addDays(blackoutEndUtc, 1);
+  const overlapEnd = windowEndUtc < blackoutEndExclusive ? windowEndUtc : blackoutEndExclusive;
+  const diffMs = overlapEnd.getTime() - overlapStart.getTime();
+  if (diffMs <= 0) return 0;
+  return Math.ceil(diffMs / MILLIS_PER_DAY);
+}
+
+export function getLatestClosingSnapshotMonth(snapshots = []) {
+  let latest = null;
+  snapshots.forEach(snapshot => {
+    const month = snapshot?.month;
+    if (!month) return;
+    if (!latest || compareMonthKeys(month, latest) > 0) {
+      latest = month;
+    }
+  });
+  return latest;
+}
+
+export function buildSkuProjection({
+  sku,
+  baselineMonth,
+  stock0 = 0,
+  forecastByMonth = {},
+  inboundByMonth = {},
+  horizonMonths = 12,
+}) {
+  const months = [];
+  const missingForecastMonths = [];
+  let startStock = Number(stock0 || 0);
+
+  for (let idx = 1; idx <= horizonMonths; idx += 1) {
+    const month = addMonthsToKey(baselineMonth, idx);
+    const demandRaw = forecastByMonth?.[month];
+    const demand = Number.isFinite(Number(demandRaw)) ? Number(demandRaw) : 0;
+    if (demandRaw == null) {
+      missingForecastMonths.push(month);
+    }
+    const inbound = Number(inboundByMonth?.[month] || 0);
+    const { year, month: monthIndex } = parseMonthKey(month);
+    const days = daysInMonth(year, monthIndex);
+    const avgDailyDemand = demand === 0 ? 0 : demand / days;
+    const doh = avgDailyDemand === 0 ? Number.POSITIVE_INFINITY : startStock / avgDailyDemand;
+    const endStock = startStock + inbound - demand;
+    months.push({
+      month,
+      startStock,
+      inbound,
+      demand,
+      endStock,
+      avgDailyDemand,
+      doh,
+    });
+    startStock = endStock;
+  }
+
+  return {
+    sku,
+    baselineMonth,
+    months,
+    missingForecastMonths,
+  };
+}
+
+export function computeFoRecommendation({
+  sku,
+  baselineMonth,
+  projection,
+  minSafetyDays = 60,
+  leadTimeDays = 0,
+  extraBufferDays = 30,
+  cnyPeriod,
+  inboundWithoutEtaCount = 0,
+}) {
+  if (!baselineMonth) {
+    return {
+      sku,
+      status: "no_snapshot",
+      issues: [],
+    };
+  }
+
+  const firstRisk = projection?.months?.find(entry =>
+    Number.isFinite(entry.doh) && entry.doh < minSafetyDays);
+  if (!firstRisk) {
+    return {
+      sku,
+      status: "no_fo_needed",
+      baselineMonth,
+      issues: buildIssueList(projection, inboundWithoutEtaCount),
+    };
+  }
+
+  const requiredArrivalDate = monthKeyToDate(firstRisk.month);
+  const orderDate = addDays(requiredArrivalDate, -Number(leadTimeDays || 0));
+  const overlapDays = countOverlapDays(
+    orderDate,
+    requiredArrivalDate,
+    cnyPeriod?.start,
+    cnyPeriod?.end,
+  );
+  const orderDateAdjusted = overlapDays > 0
+    ? addDays(orderDate, -overlapDays)
+    : orderDate;
+  const coverageDays = Number(minSafetyDays || 0) + Number(extraBufferDays || 0);
+  const targetUnits = firstRisk.avgDailyDemand * coverageDays;
+  const stockAtArrival = firstRisk.startStock;
+  const recommendedUnits = Math.max(0, Math.ceil(targetUnits - stockAtArrival));
+
+  return {
+    sku,
+    status: "ok",
+    baselineMonth,
+    criticalMonth: firstRisk.month,
+    requiredArrivalDate: formatIsoDate(requiredArrivalDate),
+    orderDate: formatIsoDate(orderDate),
+    orderDateAdjusted: formatIsoDate(orderDateAdjusted),
+    overlapDays,
+    recommendedUnits,
+    stockAtArrival,
+    avgDailyDemand: firstRisk.avgDailyDemand,
+    issues: buildIssueList(projection, inboundWithoutEtaCount),
+  };
+}
+
+function buildIssueList(projection, inboundWithoutEtaCount) {
+  const issues = [];
+  const missingForecastCount = projection?.missingForecastMonths?.length || 0;
+  if (missingForecastCount > 0) {
+    issues.push({ code: "MISSING_FORECAST", count: missingForecastCount });
+  }
+  if (inboundWithoutEtaCount > 0) {
+    issues.push({ code: "INBOUND_WITHOUT_ETA", count: inboundWithoutEtaCount });
+  }
+  return issues;
 }
 
 export function computeFoSuggestion({
@@ -376,6 +541,9 @@ export const foSuggestionUtils = {
   parseIsoDate,
   formatIsoDate,
   monthKey,
+  addMonthsToKey,
+  monthKeyToDate,
+  compareMonthKeys,
   daysInMonth,
   addDays,
   getDailyRateForDate,
