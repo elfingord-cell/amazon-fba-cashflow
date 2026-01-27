@@ -3323,6 +3323,79 @@ export function renderOrderModule(root, config) {
     freightPerUnitInput.disabled = mode !== "per_unit";
   }
 
+  function applyProductDefaultsFromProduct(product) {
+    if (!product) return false;
+    const template = product.template?.fields ? product.template.fields : product.template;
+    if (!template || typeof template !== "object") return false;
+    const settings = getSettings();
+    const next = JSON.parse(JSON.stringify(editing));
+    const parseNum = (value) => {
+      const parsed = typeof value === "number" ? value : parseDE(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const setMoney = (key, value) => {
+      const parsed = parseNum(value);
+      if (parsed == null) return;
+      next[key] = fmtCurrencyInput(parsed);
+    };
+    const setNumber = (key, value) => {
+      const parsed = parseNum(value);
+      if (parsed == null) return;
+      next[key] = parsed;
+    };
+
+    setMoney("unitCostUsd", template.unitPriceUsd ?? product.unitPriceUsd);
+    setMoney("unitExtraUsd", template.extraPerUnitUsd);
+    setMoney("extraFlatUsd", template.extraFlatUsd);
+    setNumber("fxOverride", template.fxRate ?? settings.fxRate);
+    setNumber("fxFeePct", template.fxFeePct ?? settings.fxFeePct);
+    const transportMode = template.transportMode || template.transport;
+    if (transportMode) {
+      next.transport = String(transportMode).toLowerCase();
+    }
+    setNumber("prodDays", template.productionDays ?? product.productionLeadTimeDaysDefault);
+    setNumber("transitDays", template.transitDays);
+    const freightPerUnit = parseNum(template.freightEur);
+    if (freightPerUnit != null) {
+      next.freightMode = "per_unit";
+      next.freightPerUnitEur = fmtCurrencyInput(freightPerUnit);
+      next.freightEur = fmtCurrencyInput(0);
+    }
+    setNumber("dutyRatePct", template.dutyPct ?? settings.dutyRatePct);
+    if (typeof template.dutyIncludesFreight === "boolean") {
+      next.dutyIncludeFreight = template.dutyIncludesFreight;
+    }
+    setNumber("eustRatePct", template.vatImportPct ?? settings.eustRatePct);
+    if (typeof template.vatRefundActive === "boolean") {
+      next.vatRefundEnabled = template.vatRefundActive;
+    }
+    setNumber("vatRefundLagMonths", template.vatRefundLag ?? settings.vatRefundLagMonths);
+    if (typeof template.ddp === "boolean") {
+      next.ddp = template.ddp;
+    }
+
+    if (Array.isArray(next.items)) {
+      next.items = next.items.map(item => {
+        if (!item || (item.sku && item.sku !== product.sku)) return item;
+        const updated = { ...item };
+        if (template.unitPriceUsd != null || product.unitPriceUsd != null) {
+          updated.unitCostUsd = fmtCurrencyInput(template.unitPriceUsd ?? product.unitPriceUsd);
+          updated.unitCostManuallyEdited = false;
+        }
+        if (template.extraPerUnitUsd != null) {
+          updated.unitExtraUsd = fmtCurrencyInput(template.extraPerUnitUsd);
+        }
+        if (template.extraFlatUsd != null) {
+          updated.extraFlatUsd = fmtCurrencyInput(template.extraFlatUsd);
+        }
+        return updated;
+      });
+    }
+
+    loadForm(next);
+    return true;
+  }
+
   function syncEditingFromForm(settings = getSettings()) {
     if (quickfillEnabled) {
       editing.sku = skuInput ? parseSkuInputValue(skuInput.value) : "";
@@ -3768,6 +3841,8 @@ export function renderOrderModule(root, config) {
         setSkuField(product);
         editing.sku = product.sku;
         recordRecentProduct(product.sku);
+        const applied = applyProductDefaultsFromProduct(product);
+        if (applied) return;
       } else {
         editing.sku = skuInput.value.trim();
       }

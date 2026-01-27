@@ -314,6 +314,64 @@ export function computeFoSuggestion({
   };
 }
 
+export function findEtaForMinDoh({
+  sku,
+  today = new Date(),
+  minimumDohDays,
+  plannedSalesBySku,
+  closingStockBySku,
+  maxHorizonDays = 365,
+}) {
+  const warnings = [];
+  if (!Number.isFinite(minimumDohDays)) {
+    warnings.push("Minimum DOH threshold missing.");
+    return { etaDate: null, warnings, status: "missing_minimum_doh" };
+  }
+  const todayDate = parseIsoDate(today);
+  const horizonEnd = addDays(todayDate, maxHorizonDays);
+  const demandInfo = integrateDemand({
+    plansBySku: plannedSalesBySku,
+    sku,
+    startDate: todayDate,
+    endDate: horizonEnd,
+    warnings,
+  });
+  if (demandInfo.missingForecast) {
+    warnings.push("Forecast is incomplete; ETA is estimated from partial data.");
+  }
+
+  for (let offset = 0; offset <= maxHorizonDays; offset += 1) {
+    const currentDate = addDays(todayDate, offset);
+    const inventoryInfo = estimateInventoryOnDate({
+      snapshotsBySku: closingStockBySku,
+      plansBySku: plannedSalesBySku,
+      sku,
+      date: currentDate,
+      fallbackDailyRate: demandInfo.fallbackDailyRate,
+      warnings,
+    });
+    if (inventoryInfo.missingSnapshot) {
+      return { etaDate: null, warnings, status: "insufficient_inventory_snapshot" };
+    }
+    let inventory = inventoryInfo.inventoryUnits ?? 0;
+    if (inventory < 0) inventory = 0;
+    const dailyRate = getDailyRateForDate({
+      plansBySku: plannedSalesBySku,
+      sku,
+      date: currentDate,
+      fallbackDailyRate: demandInfo.fallbackDailyRate,
+      warnings,
+    });
+    const doh = computeDoh(inventory, dailyRate);
+    if (Number.isFinite(doh) && doh < minimumDohDays) {
+      return { etaDate: formatIsoDate(currentDate), warnings, status: "ok" };
+    }
+  }
+
+  warnings.push("DOH threshold not reached within horizon.");
+  return { etaDate: null, warnings, status: "not_reached" };
+}
+
 export const foSuggestionUtils = {
   parseIsoDate,
   formatIsoDate,
