@@ -625,6 +625,9 @@ function migrateProducts(state) {
         sellerboardMarginPct: Number.isFinite(Number(prod.sellerboardMarginPct))
           ? clampPercent(Number(prod.sellerboardMarginPct))
           : (Number.isFinite(Number(base.sellerboardMarginPct)) ? clampPercent(Number(base.sellerboardMarginPct)) : null),
+        moqUnits: Number.isFinite(Number(prod.moqUnits))
+          ? Math.max(0, Math.round(Number(prod.moqUnits)))
+          : (Number.isFinite(Number(base.moqUnits)) ? Math.max(0, Math.round(Number(base.moqUnits))) : null),
         productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
           ? Number(prod.productionLeadTimeDaysDefault)
           : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
@@ -654,6 +657,7 @@ function migrateProducts(state) {
         template: null,
         avgSellingPriceGrossEUR: null,
         sellerboardMarginPct: null,
+        moqUnits: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -737,6 +741,8 @@ function normaliseProductInput(input) {
   const returnsRate = Number(String(input.returnsRate ?? "0").replace(",", ".")) || 0;
   const vatExempt = input.vatExempt === true;
   const productionLeadTimeDaysDefault = parseNumber(input.productionLeadTimeDaysDefault ?? null);
+  const moqUnitsRaw = parseNumber(input.moqUnits ?? input.moq ?? null);
+  const moqUnits = Number.isFinite(moqUnitsRaw) ? Math.max(0, Math.round(moqUnitsRaw)) : null;
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
@@ -752,6 +758,7 @@ function normaliseProductInput(input) {
     jurisdiction,
     returnsRate,
     vatExempt,
+    moqUnits,
     productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
     sellerboardMarginPct,
@@ -1074,6 +1081,7 @@ export function upsertProduct(input){
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
+      moqUnits: normalised.moqUnits,
       productionLeadTimeDaysDefault: normalised.productionLeadTimeDaysDefault,
       avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
       sellerboardMarginPct: normalised.sellerboardMarginPct,
@@ -1088,6 +1096,7 @@ export function upsertProduct(input){
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;
+    target.moqUnits = normalised.moqUnits;
     target.productionLeadTimeDaysDefault = normalised.productionLeadTimeDaysDefault;
     target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
     target.sellerboardMarginPct = normalised.sellerboardMarginPct;
