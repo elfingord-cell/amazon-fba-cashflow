@@ -138,13 +138,13 @@ export function render(root) {
       </div>
       <div class="grid two" style="margin-top: 12px;">
         <label>
-          FX-Kurs EUR/USD
+          FX-Kurs (USD je EUR)
           <input id="default-fx-rate" type="text" inputmode="decimal" placeholder="z. B. 1,08" value="${formatRate(settings.fxRate)}">
           <small class="form-error" id="fx-rate-error"></small>
           <small class="health-hint" id="fx-rate-health"></small>
         </label>
         <label>
-          FX-Kurs EUR/USD (EUR pro USD)
+          FX-Kurs (EUR je USD)
           <input id="default-eur-usd-rate" type="text" inputmode="decimal" placeholder="z. B. 0,92" value="${formatRate(settings.eurUsdRate)}">
           <small class="form-error" id="eur-usd-rate-error"></small>
           <small class="health-hint" id="eur-usd-rate-health"></small>

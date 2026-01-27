@@ -10,6 +10,7 @@ import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
 import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
+import { computeFreightPerUnitEur } from "../utils/costing.js";
 import {
   buildSkuProjection,
   computeFoRecommendation,
@@ -372,7 +373,7 @@ function resolveDefault(field, context) {
     const key = transportMode ? `freight${String(transportMode).toUpperCase()}` : null;
     if (key && product?.[key] != null) return parseLocaleNumber(product[key]);
     if (product?.freight != null) return parseLocaleNumber(product.freight);
-    return parseLocaleNumber(settings?.freightDefault ?? 0);
+    return null;
   }
   if (field === "dutyRatePct") {
     if (incotermValue === "DDP") return 0;
@@ -417,13 +418,35 @@ function buildSuggestedFields(state, form) {
   const incotermSource = product?.defaultIncoterm ? "Produktdatenbank" : "Supplier Default";
   const paymentTermsSource = supplier?.paymentTermsDefault?.length ? "Supplier Default" : "System Default";
   const fxRateSource = settings?.fxRate ? "Settings" : null;
+  const baseCurrency = String(form.currency || resolveDefault("currency", context) || "USD").toUpperCase();
+  const formUnitPrice = parseLocaleNumber(form.unitPrice);
+  const fallbackUnitUsd = parseLocaleNumber(templateFields.unitPriceUsd ?? product?.unitPriceUsd ?? product?.defaultUnitPrice ?? product?.unitPrice);
+  const unitPriceUsd = baseCurrency === "USD"
+    ? (Number.isFinite(formUnitPrice) && formUnitPrice > 0 ? formUnitPrice : fallbackUnitUsd)
+    : fallbackUnitUsd;
+  const extraPerUnitUsd = parseLocaleNumber(templateFields.extraPerUnitUsd ?? product?.extraPerUnitUsd) || 0;
+  const fxUsdPerEur = Number.isFinite(parseLocaleNumber(form.fxRate)) && parseLocaleNumber(form.fxRate) > 0
+    ? parseLocaleNumber(form.fxRate)
+    : parseLocaleNumber(product?.fxUsdPerEur ?? templateFields.fxRate ?? settings?.fxRate);
+  const storedFreight = parseLocaleNumber(product?.freightPerUnitEur);
+  const freightSuggestion = !product || !form.sku
+    ? { value: null, missingFields: [] }
+    : (Number.isFinite(storedFreight) && storedFreight > 0
+      ? { value: storedFreight, missingFields: [] }
+      : computeFreightPerUnitEur({
+        unitPriceUsd: unitPriceUsd != null ? unitPriceUsd + extraPerUnitUsd : unitPriceUsd,
+        landedCostEur: parseLocaleNumber(product?.landedUnitCostEur),
+        fxUsdPerEur,
+      }));
+
   return {
     transportMode: transport,
     incoterm: resolveDefault("incoterm", context),
     unitPrice,
     unitPriceSource,
     currency: resolveDefault("currency", context),
-    freight: resolveDefault("freight", context),
+    freight: freightSuggestion.value,
+    freightMissingFields: freightSuggestion.missingFields || [],
     freightCurrency: resolveDefault("freightCurrency", context),
     dutyRatePct: resolveDefault("dutyRatePct", context),
     eustRatePct: resolveDefault("eustRatePct", context),
@@ -476,9 +499,10 @@ function buildCostValues(form) {
   const fxRate = parseLocaleNumber(form.fxRate) || 0;
   const baseCurrency = form.currency || "USD";
   const supplierCostEur = convertToEur(supplierCost, baseCurrency, fxRate);
-  const freight = parseLocaleNumber(form.freight) || 0;
+  const freightPerUnit = parseLocaleNumber(form.freight) || 0;
+  const freightTotal = freightPerUnit * units;
   const freightCurrency = form.freightCurrency || "EUR";
-  const freightEur = convertToEur(freight, freightCurrency, fxRate);
+  const freightEur = convertToEur(freightTotal, freightCurrency, fxRate);
   const dutyRatePct = parseLocaleNumber(form.dutyRatePct) || 0;
   const dutyAmount = dutyRatePct > 0 ? supplierCostEur * (dutyRatePct / 100) : 0;
   const eustRatePct = parseLocaleNumber(form.eustRatePct) || 0;
@@ -489,7 +513,8 @@ function buildCostValues(form) {
     units,
     supplierCost,
     supplierCostEur,
-    freight,
+    freightPerUnit,
+    freightTotal,
     freightCurrency,
     freightEur,
     dutyRatePct,
@@ -499,35 +524,45 @@ function buildCostValues(form) {
   };
 }
 
+function formatFreightMissingFields(fields) {
+  if (!fields || !fields.length) return "";
+  const labels = fields.map((field) => {
+    if (field === "landedCostEur") return "Einstandspreis";
+    if (field === "unitPriceUsd") return "Unit Price";
+    if (field === "fxUsdPerEur") return "FX";
+    return field;
+  });
+  return `Fracht nicht berechenbar – ${labels.join(", ")} fehlt`;
+}
+
 function computeEstimatedFreight({ product, units, unitPrice, currency, fxRate }) {
   const missing = [];
   const landedUnitCostEur = parseLocaleNumber(product?.landedUnitCostEur);
-  if (!Number.isFinite(landedUnitCostEur) || landedUnitCostEur <= 0) {
-    missing.push("Einstandspreis (EUR) fehlt (Produkt)");
-  }
   const baseCurrency = String(currency || "USD").toUpperCase();
   const templateFields = getTemplateFields(product);
   const fallbackUnitUsd = parseLocaleNumber(templateFields.unitPriceUsd ?? product?.unitPriceUsd ?? product?.defaultUnitPrice ?? product?.unitPrice);
   const unitPriceUsd = baseCurrency === "USD"
     ? (parseLocaleNumber(unitPrice) ?? fallbackUnitUsd)
     : fallbackUnitUsd;
-  if (!Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) {
-    missing.push("Stückpreis USD fehlt (Produkt/FO)");
-  }
   const extraPerUnitUsd = parseLocaleNumber(templateFields.extraPerUnitUsd ?? product?.extraPerUnitUsd) || 0;
-  const fxEurUsd = parseLocaleNumber(fxRate);
-  if (!Number.isFinite(fxEurUsd) || fxEurUsd <= 0) {
-    missing.push("FX EUR/USD fehlt (Settings)");
-  }
-  if (missing.length) {
+  const fxUsdPerEur = parseLocaleNumber(fxRate);
+  const computed = computeFreightPerUnitEur({
+    unitPriceUsd: unitPriceUsd != null ? unitPriceUsd + extraPerUnitUsd : unitPriceUsd,
+    landedCostEur: landedUnitCostEur,
+    fxUsdPerEur,
+  });
+  if (computed.missingFields.length) {
+    computed.missingFields.forEach(field => {
+      if (field === "landedCostEur") missing.push("Einstandspreis (EUR) fehlt (Produkt)");
+      if (field === "unitPriceUsd") missing.push("Stückpreis USD fehlt (Produkt/FO)");
+      if (field === "fxUsdPerEur") missing.push("FX (USD je EUR) fehlt (FO/Settings)");
+    });
     return { total: null, perUnit: null, warning: false, missing: true, missingFields: missing };
   }
-  const goodsValuePerUnitEur = (unitPriceUsd + extraPerUnitUsd) * (1 / fxEurUsd);
-  const rawFreight = landedUnitCostEur - goodsValuePerUnitEur;
-  const warning = rawFreight < 0;
-  const perUnit = round2(Math.max(0, rawFreight));
+  const warning = computed.warning;
+  const perUnit = computed.value != null ? round2(computed.value) : null;
   const unitCount = Number(units || 0);
-  const total = unitCount > 0 ? round2(perUnit * unitCount) : null;
+  const total = perUnit != null && unitCount > 0 ? round2(perUnit * unitCount) : null;
   return { total, perUnit, warning, missing: false, missingFields: [] };
 }
 
@@ -1289,7 +1324,7 @@ export default function render(root) {
           baseValue,
           currency: baseForm.currency,
           schedule,
-          freight: costs.freight,
+          freight: costs.freightTotal,
           freightCurrency: costs.freightCurrency,
           dutyRatePct: costs.dutyRatePct,
           eustRatePct: costs.eustRatePct,
@@ -1312,6 +1347,12 @@ export default function render(root) {
       }
       $("#suggested-currency", content).textContent = `Suggested: ${suggested.currency || "USD"}`;
       $("#suggested-freight", content).textContent = `Suggested: ${suggested.freight != null ? formatNumber(suggested.freight) : "—"}`;
+      const freightWarning = $("#fo-freight-warning", content);
+      if (freightWarning) {
+        freightWarning.textContent = suggested.freightMissingFields?.length
+          ? formatFreightMissingFields(suggested.freightMissingFields)
+          : "";
+      }
       $("#suggested-freightCurrency", content).textContent = `Suggested: ${suggested.freightCurrency || "EUR"}`;
       $("#suggested-dutyRatePct", content).textContent = `Suggested: ${suggested.dutyRatePct != null ? formatPercent(suggested.dutyRatePct) : "—"} %`;
       $("#suggested-eustRatePct", content).textContent = `Suggested: ${suggested.eustRatePct != null ? formatPercent(suggested.eustRatePct) : "—"} %`;
@@ -1781,7 +1822,7 @@ export default function render(root) {
                   baseValue,
                   currency: baseForm.currency,
                   schedule,
-                  freight: costs.freight,
+                  freight: costs.freightTotal,
                   freightCurrency: costs.freightCurrency,
                   dutyRatePct: costs.dutyRatePct,
                   eustRatePct: costs.eustRatePct,
@@ -1906,12 +1947,13 @@ export default function render(root) {
               el("small", { class: "form-error", id: "fo-currency-error" }, []),
             ]),
             el("label", {}, [
-              "Fracht",
+              "Fracht (€/Stück)",
               el("input", { type: "text", inputmode: "decimal", id: "fo-freight", value: baseForm.freight ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-freight" }, []),
                 el("button", { class: "btn ghost", type: "button", id: "reset-freight" }, ["Reset"]),
               ]),
+              el("small", { class: "form-error", id: "fo-freight-warning" }, []),
             ]),
             el("label", {}, [
               "Fracht-Währung",
@@ -1943,7 +1985,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "FX EUR/USD",
+              "FX (USD je EUR)",
               el("input", { type: "text", inputmode: "decimal", id: "fo-fxRate", value: baseForm.fxRate ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-fxRate" }, []),
@@ -2265,7 +2307,7 @@ export default function render(root) {
           baseValue,
           currency: baseForm.currency,
           schedule,
-          freight: costs.freight,
+          freight: costs.freightTotal,
           freightCurrency: costs.freightCurrency,
           dutyRatePct: costs.dutyRatePct,
           eustRatePct: costs.eustRatePct,
@@ -2527,7 +2569,7 @@ export default function render(root) {
         baseValue,
         currency: baseForm.currency,
         schedule,
-        freight: costs.freight,
+        freight: costs.freightTotal,
         freightCurrency: costs.freightCurrency,
         dutyRatePct: costs.dutyRatePct,
         eustRatePct: costs.eustRatePct,

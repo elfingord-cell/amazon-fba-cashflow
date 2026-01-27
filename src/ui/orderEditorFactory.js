@@ -13,6 +13,7 @@ import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMon
 import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUtil } from "../lib/dateUtils.js";
 import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
 import { computeFreightEstimate } from "../domain/costing/freightEstimate.js";
+import { computeFreightPerUnitEur } from "../utils/costing.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -76,12 +77,12 @@ function ensureTimeline(record, settings = getSettings()) {
   if (record.timeline.includeFreight == null) record.timeline.includeFreight = true;
   record.timeline.freightInputMode = resolveFreightInputMode(record);
   const fxRate = Number(record.fxOverride || settings.fxRate || 0);
-  const fxUsdToEur = Number(record.timeline.fxUsdToEur || 0);
-  if (!Number.isFinite(fxUsdToEur) || fxUsdToEur <= 0) {
+  const fxUsdPerEur = Number(record.timeline.fxUsdPerEur || 0);
+  if (!Number.isFinite(fxUsdPerEur) || fxUsdPerEur <= 0) {
     if (Number.isFinite(fxRate) && fxRate > 0) {
-      record.timeline.fxUsdToEur = 1 / fxRate;
-    } else if (Number.isFinite(settings.eurUsdRate) && settings.eurUsdRate > 0) {
-      record.timeline.fxUsdToEur = settings.eurUsdRate;
+      record.timeline.fxUsdPerEur = fxRate;
+    } else if (Number.isFinite(settings.fxRate) && settings.fxRate > 0) {
+      record.timeline.fxUsdPerEur = settings.fxRate;
     }
   }
   return record.timeline;
@@ -167,6 +168,17 @@ function resolveProductUnitPrice(sku) {
   const parsed = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return parsed;
+}
+
+function formatFreightMissingFields(fields) {
+  if (!fields || !fields.length) return "";
+  const labels = fields.map((field) => {
+    if (field === "landedCostEur") return "Einstandspreis";
+    if (field === "unitPriceUsd") return "Unit Price";
+    if (field === "fxUsdPerEur") return "FX";
+    return field;
+  });
+  return `Fracht nicht berechenbar – ${labels.join(", ")} fehlt`;
 }
 
 function formatSkuSummary(record) {
@@ -1043,7 +1055,7 @@ function defaultRecord(config, settings = getSettings()) {
     goodsEur: "0,00",
     fxOverride: settings.fxRate || null,
     timeline: {
-      fxUsdToEur: settings.eurUsdRate || null,
+      fxUsdPerEur: settings.fxRate || null,
       includeFreight: true,
       freightInputMode: "TOTAL_EUR",
       freightTotalEur: 0,
@@ -2654,6 +2666,9 @@ export function renderOrderModule(root, config) {
     freightMode: `${config.slug}-freight-mode`,
     freightModeHint: `${config.slug}-freight-mode-hint`,
     freightPerUnit: `${config.slug}-freight-per-unit`,
+    freightPerUnitSuggested: `${config.slug}-freight-per-unit-suggested`,
+    freightPerUnitReset: `${config.slug}-freight-per-unit-reset`,
+    freightPerUnitWarning: `${config.slug}-freight-per-unit-warning`,
     prod: `${config.slug}-prod`,
     transport: `${config.slug}-transport`,
     transit: `${config.slug}-transit`,
@@ -2786,7 +2801,7 @@ export function renderOrderModule(root, config) {
         </div>
         <div class="grid two" style="margin-top:12px">
         <div>
-          <label>FX-Kurs (USD → EUR)</label>
+          <label>FX-Kurs (USD je EUR)</label>
           <input id="${ids.fxRate}" placeholder="z. B. 1,08" inputmode="decimal" />
         </div>
         </div>
@@ -2798,7 +2813,7 @@ export function renderOrderModule(root, config) {
             <option value="PER_UNIT_EUR">Pro Stück (€)</option>
             <option value="AUTO_FROM_LANDED">Auto (aus Einstandskosten)</option>
           </select>
-          <p class="muted" id="${ids.freightModeHint}" hidden>Berechnung: Einstandskosten (EUR/Stk) − Warenwert (USD×FX). Fehlende Einstandskosten werden markiert.</p>
+          <p class="muted" id="${ids.freightModeHint}" hidden>Berechnung: Einstandskosten (EUR/Stk) − Warenwert (USD ÷ FX). Fehlende Einstandskosten werden markiert.</p>
         </div>
         <div>
           <label>Fracht gesamt (€)</label>
@@ -2807,6 +2822,11 @@ export function renderOrderModule(root, config) {
         <div>
           <label>Fracht pro Stück (€)</label>
           <input id="${ids.freightPerUnit}" placeholder="z. B. 1,25" />
+          <div class="po-suggested-row">
+            <span class="muted" id="${ids.freightPerUnitSuggested}"></span>
+            <button class="btn ghost" type="button" id="${ids.freightPerUnitReset}">Reset</button>
+          </div>
+          <small class="form-error" id="${ids.freightPerUnitWarning}"></small>
         </div>
         <div>
           <label>Produktionstage</label>
@@ -2993,6 +3013,9 @@ export function renderOrderModule(root, config) {
   const freightModeHint = $(`#${ids.freightModeHint}`, root);
   const freightInput = $(`#${ids.freight}`, root);
   const freightPerUnitInput = $(`#${ids.freightPerUnit}`, root);
+  const freightPerUnitSuggested = $(`#${ids.freightPerUnitSuggested}`, root);
+  const freightPerUnitReset = $(`#${ids.freightPerUnitReset}`, root);
+  const freightPerUnitWarning = $(`#${ids.freightPerUnitWarning}`, root);
   const prodInput = $(`#${ids.prod}`, root);
   const transportSelect = $(`#${ids.transport}`, root);
   const transitInput = $(`#${ids.transit}`, root);
@@ -3023,6 +3046,7 @@ export function renderOrderModule(root, config) {
   let editing = defaultRecord(config, getSettings());
   let lastLoaded = JSON.parse(JSON.stringify(editing));
   let isDirty = false;
+  let freightPerUnitOverridden = false;
   const poListState = poMode ? { searchTerm: "", showArchived: false, sortKey: null, sortDir: null } : null;
 
   function formatProductOption(product) {
@@ -3089,6 +3113,8 @@ export function renderOrderModule(root, config) {
           setSkuField(prod);
           editing.sku = prod.sku;
           refreshQuickfillControls();
+          freightPerUnitOverridden = false;
+          updateFreightPerUnitSuggestion(prod);
           updateSaveEnabled();
         },
       }, [prod.alias ? `${prod.alias} (${prod.sku})` : prod.sku]);
@@ -3740,6 +3766,64 @@ export function renderOrderModule(root, config) {
     if (freightModeHint) freightModeHint.hidden = !isAuto;
   }
 
+  function resolveFreightFxUsdPerEur(product, settings) {
+    const fxFromForm = parseDE(fxRateInput?.value ?? "");
+    if (Number.isFinite(fxFromForm) && fxFromForm > 0) return fxFromForm;
+    const template = product?.template?.fields ? product.template.fields : product?.template;
+    const productFx = parseDE(product?.fxUsdPerEur ?? template?.fxRate ?? "");
+    if (Number.isFinite(productFx) && productFx > 0) return productFx;
+    const settingsFx = typeof settings.fxRate === "number" ? settings.fxRate : parseDE(settings.fxRate);
+    if (Number.isFinite(settingsFx) && settingsFx > 0) return settingsFx;
+    return null;
+  }
+
+  function resolveFreightPerUnitSuggestion(product, settings) {
+    if (!product) return { value: null, warning: false, missingFields: [] };
+    const stored = parseDE(product.freightPerUnitEur);
+    if (Number.isFinite(stored) && stored > 0) {
+      return { value: stored, warning: false, missingFields: [] };
+    }
+    const template = product.template?.fields ? product.template.fields : product.template;
+    const unitPriceUsd = parseDE(template?.unitPriceUsd ?? product.unitPriceUsd ?? "");
+    const landedCostEur = parseDE(product.landedUnitCostEur ?? product.landedCostEur ?? "");
+    const fxUsdPerEur = resolveFreightFxUsdPerEur(product, settings);
+    return computeFreightPerUnitEur({
+      unitPriceUsd,
+      landedCostEur,
+      fxUsdPerEur,
+    });
+  }
+
+  function updateFreightPerUnitSuggestion(product, { force = false } = {}) {
+    if (!freightPerUnitInput) return;
+    if (!product) {
+      if (freightPerUnitSuggested) freightPerUnitSuggested.textContent = "";
+      if (freightPerUnitWarning) freightPerUnitWarning.textContent = "";
+      return;
+    }
+    const settings = getSettings();
+    const suggestion = resolveFreightPerUnitSuggestion(product, settings);
+    if (freightPerUnitSuggested) {
+      freightPerUnitSuggested.textContent = suggestion.value != null
+        ? `Vorschlag: ${fmtEURPlain(suggestion.value)}`
+        : "Vorschlag: —";
+    }
+    if (freightPerUnitWarning) {
+      freightPerUnitWarning.textContent = suggestion.missingFields.length
+        ? formatFreightMissingFields(suggestion.missingFields)
+        : "";
+    }
+    const currentValue = parseDE(freightPerUnitInput.value);
+    const hasValue = Number.isFinite(currentValue) && currentValue > 0;
+    if (!freightPerUnitOverridden && (force || !hasValue)) {
+      if (suggestion.value != null) {
+        freightPerUnitInput.value = fmtCurrencyInput(suggestion.value);
+      } else if (force || !hasValue) {
+        freightPerUnitInput.value = "";
+      }
+    }
+  }
+
   function applyProductDefaultsFromProduct(product) {
     if (!product) return false;
     const template = product.template?.fields ? product.template.fields : product.template;
@@ -3845,9 +3929,9 @@ export function renderOrderModule(root, config) {
     const fxOverrideValue = parseDE(fxRateInput?.value ?? "");
     editing.fxOverride = Number.isFinite(fxOverrideValue) && fxOverrideValue > 0 ? fxOverrideValue : null;
     editing.timeline = editing.timeline || {};
-    editing.timeline.fxUsdToEur = editing.fxOverride
-      ? 1 / editing.fxOverride
-      : (Number.isFinite(settings.eurUsdRate) && settings.eurUsdRate > 0 ? settings.eurUsdRate : null);
+    editing.timeline.fxUsdPerEur = editing.fxOverride
+      ? editing.fxOverride
+      : (Number.isFinite(settings.fxRate) && settings.fxRate > 0 ? settings.fxRate : null);
     normaliseGoodsFields(editing, settings);
     const totals = computeGoodsTotals(editing, settings);
     const selectedMode = freightModeSelect?.value || "TOTAL_EUR";
@@ -3991,6 +4075,11 @@ export function renderOrderModule(root, config) {
     if (freightModeSelect) freightModeSelect.value = resolveFreightInputMode(editing);
     freightInput.value = fmtCurrencyInput(editing.freightEur ?? "0,00");
     if (freightPerUnitInput) freightPerUnitInput.value = fmtCurrencyInput(editing.freightPerUnitEur ?? "0,00");
+    freightPerUnitOverridden = Number.isFinite(parseDE(editing.freightPerUnitEur)) && parseDE(editing.freightPerUnitEur) > 0;
+    if (freightPerUnitInput) {
+      const product = productCache.find(prod => prod && prod.sku && prod.sku.trim().toLowerCase() === String(editing.sku || "").trim().toLowerCase());
+      updateFreightPerUnitSuggestion(product);
+    }
     updateFreightModeUI();
     prodInput.value = String(editing.prodDays ?? 60);
     transportSelect.value = editing.transport || "sea";
@@ -4200,9 +4289,20 @@ export function renderOrderModule(root, config) {
     onAnyChange();
   });
   if (freightPerUnitInput) {
-    freightPerUnitInput.addEventListener("input", onAnyChange);
+    freightPerUnitInput.addEventListener("input", () => {
+      freightPerUnitOverridden = true;
+      onAnyChange();
+    });
     freightPerUnitInput.addEventListener("blur", () => {
       freightPerUnitInput.value = fmtCurrencyInput(freightPerUnitInput.value);
+      onAnyChange();
+    });
+  }
+  if (freightPerUnitReset) {
+    freightPerUnitReset.addEventListener("click", () => {
+      freightPerUnitOverridden = false;
+      const product = resolveProductFromInput(skuInput?.value || editing.sku || "");
+      updateFreightPerUnitSuggestion(product, { force: true });
       onAnyChange();
     });
   }
@@ -4226,11 +4326,17 @@ export function renderOrderModule(root, config) {
     onAnyChange();
   });
   if (fxRateInput) {
-    fxRateInput.addEventListener("input", onAnyChange);
+    fxRateInput.addEventListener("input", () => {
+      onAnyChange();
+      const product = resolveProductFromInput(skuInput?.value || editing.sku || "");
+      updateFreightPerUnitSuggestion(product);
+    });
     fxRateInput.addEventListener("blur", () => {
       const parsed = parseDE(fxRateInput.value);
       fxRateInput.value = parsed > 0 ? fmtFxRate(parsed) : "";
       onAnyChange();
+      const product = resolveProductFromInput(skuInput?.value || editing.sku || "");
+      updateFreightPerUnitSuggestion(product);
     });
   }
   vatLagInput.addEventListener("input", onAnyChange);
@@ -4270,9 +4376,12 @@ export function renderOrderModule(root, config) {
         editing.sku = product.sku;
         recordRecentProduct(product.sku);
         const applied = applyProductDefaultsFromProduct(product);
+        freightPerUnitOverridden = false;
+        updateFreightPerUnitSuggestion(product);
         if (applied) return;
       } else {
         editing.sku = skuInput.value.trim();
+        updateFreightPerUnitSuggestion(null);
       }
       setQuickStatus("");
       refreshQuickfillControls();

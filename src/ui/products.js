@@ -10,7 +10,7 @@ import {
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { formatDeNumber, parseDeNumber, validateProducts } from "../lib/dataHealth.js";
 import { openDataHealthPanel } from "./dataHealthUi.js";
-import { deriveShippingPerUnitEur } from "../domain/costing/shipping.js";
+import { computeFreightPerUnitEur } from "../utils/costing.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -106,7 +106,7 @@ function showToast(message) {
 
 function openModal({ title, content, actions = [], onClose }) {
   const overlay = createEl("div", { class: "po-modal-backdrop" });
-  const modal = createEl("div", { class: "po-modal" });
+  const modal = createEl("div", { class: "po-modal product-modal-frame" });
   const header = createEl("div", { class: "po-modal-header" }, [
     createEl("h3", {}, [title]),
     createEl("button", {
@@ -383,7 +383,6 @@ function buildHistoryTable(state, sku) {
     const safetyStockDefault = Number(settings.safetyStockDohDefault ?? 60);
     const foCoverageDefault = Number(settings.foCoverageDohDefault ?? 90);
     const moqDefaultUnits = Number(settings.moqDefaultUnits ?? 500);
-    const eurUsdRate = parseDeNumber(settings.eurUsdRate);
     const fxRateDefault = parseDeNumber(settings.fxRate) ?? parseDeNumber(settings.fxRate) ?? null;
     const templateDefaults = {
       unitPriceUsd: 0,
@@ -644,20 +643,28 @@ function buildHistoryTable(state, sku) {
       if (shippingDerived) {
         const unitCostUsd = parseDeNumber(templateInputs.unitPriceUsd?.value);
         const landedUnitCostEur = parseDeNumber(landedUnitCostInput.value);
-        const derived = deriveShippingPerUnitEur({
-          unitCostUsd,
-          landedUnitCostEur,
-          fxEurUsd: eurUsdRate,
+        const fxUsdPerEur = parseDeNumber(templateInputs.fxRate?.value) ?? fxRateDefault;
+        const derived = computeFreightPerUnitEur({
+          unitPriceUsd: unitCostUsd,
+          landedCostEur: landedUnitCostEur,
+          fxUsdPerEur,
         });
         shippingDerived.innerHTML = "";
         const label = derived.value == null
           ? "Fracht €/Stück (berechnet): —"
           : `Fracht €/Stück (berechnet): ${formatDeNumber(derived.value, 2)} €`;
         shippingDerived.append(document.createTextNode(label));
+        const missingLabels = derived.missingFields.map((field) => {
+          if (field === "landedCostEur") return "Einstandspreis (EUR)";
+          if (field === "unitPriceUsd") return "Stückpreis USD";
+          if (field === "fxUsdPerEur") return "FX (USD je EUR)";
+          return field;
+        });
         shippingDerived.append(createEl("span", { class: "tooltip" }, [
           createEl("button", { class: "tooltip-trigger", type: "button", "aria-label": "Formel" }, ["ℹ️"]),
           createEl("span", { class: "tooltip-content" }, [
-            "Formel: Einstandspreis (EUR) – (EK USD × EUR/USD). Negative Werte werden auf 0 gesetzt.",
+            "Formel: Einstandspreis (EUR) – (Stückpreis USD ÷ FX). Negative Werte werden auf 0 gesetzt.",
+            missingLabels.length ? ` Fehlend: ${missingLabels.join(", ")}.` : "",
           ]),
         ]));
         if (derived.warning) {
@@ -837,6 +844,14 @@ function buildHistoryTable(state, sku) {
       } else {
         payload.template = null;
       }
+      const fxUsdPerEur = templateObj.fxRate ?? fxRateDefault;
+      const derivedFreight = computeFreightPerUnitEur({
+        unitPriceUsd: templateObj.unitPriceUsd ?? null,
+        landedCostEur: payload.landedUnitCostEur,
+        fxUsdPerEur,
+      });
+      payload.fxUsdPerEur = fxUsdPerEur ?? null;
+      payload.freightPerUnitEur = derivedFreight.value;
       try {
         upsertProduct(payload);
         dialog.overlay.remove();

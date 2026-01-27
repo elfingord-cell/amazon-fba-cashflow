@@ -647,9 +647,15 @@ function migrateProducts(state) {
         moqOverrideUnits: Number.isFinite(Number(prod.moqOverrideUnits))
           ? Math.max(0, Math.round(Number(prod.moqOverrideUnits)))
           : (Number.isFinite(Number(base.moqOverrideUnits)) ? Math.max(0, Math.round(Number(base.moqOverrideUnits))) : null),
+        fxUsdPerEur: Number.isFinite(Number(prod.fxUsdPerEur))
+          ? Math.max(0, Number(prod.fxUsdPerEur))
+          : (Number.isFinite(Number(base.fxUsdPerEur)) ? Math.max(0, Number(base.fxUsdPerEur)) : null),
         landedUnitCostEur: Number.isFinite(Number(prod.landedUnitCostEur))
           ? Math.max(0, Number(prod.landedUnitCostEur))
           : (Number.isFinite(Number(base.landedUnitCostEur)) ? Math.max(0, Number(base.landedUnitCostEur)) : null),
+        freightPerUnitEur: Number.isFinite(Number(prod.freightPerUnitEur))
+          ? Math.max(0, Number(prod.freightPerUnitEur))
+          : (Number.isFinite(Number(base.freightPerUnitEur)) ? Math.max(0, Number(base.freightPerUnitEur)) : null),
         productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
           ? Number(prod.productionLeadTimeDaysDefault)
           : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
@@ -772,7 +778,9 @@ function normaliseProductInput(input) {
   const safetyStockDohOverrideRaw = parseNumber(input.safetyStockDohOverride ?? null);
   const foCoverageDohOverrideRaw = parseNumber(input.foCoverageDohOverride ?? null);
   const moqOverrideUnitsRaw = parseNumber(input.moqOverrideUnits ?? null);
+  const fxUsdPerEurRaw = parseNumber(input.fxUsdPerEur ?? null);
   const landedUnitCostEurRaw = parseNumber(input.landedUnitCostEur ?? input.landedUnitCostEUR ?? null);
+  const freightPerUnitEurRaw = parseNumber(input.freightPerUnitEur ?? null);
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
@@ -792,7 +800,9 @@ function normaliseProductInput(input) {
     safetyStockDohOverride: Number.isFinite(safetyStockDohOverrideRaw) ? Math.max(0, Math.round(safetyStockDohOverrideRaw)) : null,
     foCoverageDohOverride: Number.isFinite(foCoverageDohOverrideRaw) ? Math.max(0, Math.round(foCoverageDohOverrideRaw)) : null,
     moqOverrideUnits: Number.isFinite(moqOverrideUnitsRaw) ? Math.max(0, Math.round(moqOverrideUnitsRaw)) : null,
+    fxUsdPerEur: Number.isFinite(fxUsdPerEurRaw) ? Math.max(0, fxUsdPerEurRaw) : null,
     landedUnitCostEur: Number.isFinite(landedUnitCostEurRaw) ? Math.max(0, landedUnitCostEurRaw) : null,
+    freightPerUnitEur: Number.isFinite(freightPerUnitEurRaw) ? Math.max(0, freightPerUnitEurRaw) : null,
     productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
     sellerboardMarginPct,
@@ -1119,7 +1129,9 @@ export function upsertProduct(input){
       safetyStockDohOverride: normalised.safetyStockDohOverride,
       foCoverageDohOverride: normalised.foCoverageDohOverride,
       moqOverrideUnits: normalised.moqOverrideUnits,
+      fxUsdPerEur: normalised.fxUsdPerEur,
       landedUnitCostEur: normalised.landedUnitCostEur,
+      freightPerUnitEur: normalised.freightPerUnitEur,
       productionLeadTimeDaysDefault: normalised.productionLeadTimeDaysDefault,
       avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
       sellerboardMarginPct: normalised.sellerboardMarginPct,
@@ -1138,7 +1150,9 @@ export function upsertProduct(input){
     target.safetyStockDohOverride = normalised.safetyStockDohOverride;
     target.foCoverageDohOverride = normalised.foCoverageDohOverride;
     target.moqOverrideUnits = normalised.moqOverrideUnits;
+    target.fxUsdPerEur = normalised.fxUsdPerEur;
     target.landedUnitCostEur = normalised.landedUnitCostEur;
+    target.freightPerUnitEur = normalised.freightPerUnitEur;
     target.productionLeadTimeDaysDefault = normalised.productionLeadTimeDaysDefault;
     target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
     target.sellerboardMarginPct = normalised.sellerboardMarginPct;
