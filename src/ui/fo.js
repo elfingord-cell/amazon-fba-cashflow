@@ -10,7 +10,6 @@ import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
 import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
-import { calculateLineShippingEur, deriveShippingPerUnitEur } from "../domain/costing/shipping.js";
 import {
   buildSkuProjection,
   computeFoRecommendation,
@@ -43,7 +42,7 @@ function el(tag, attrs = {}, children = []) {
 
 const TRANSPORT_MODES = ["SEA", "RAIL", "AIR"];
 const INCOTERMS = ["EXW", "DDP"];
-const PAYMENT_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
+const PAYMENT_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA", "DELIVERY"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
 const STATUS_LABELS = {
   DRAFT: "Draft",
@@ -135,6 +134,10 @@ function formatUnits(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "—";
   return Math.round(amount).toLocaleString("de-DE", { maximumFractionDigits: 0 });
+}
+
+function round2(value) {
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
 }
 
 function buildPlannedSalesBySku(state) {
@@ -496,23 +499,36 @@ function buildCostValues(form) {
   };
 }
 
-function computeEstimatedShipping({ product, units, unitPrice, currency, settings }) {
-  const landedUnitCostEur = product?.landedUnitCostEur ?? null;
+function computeEstimatedFreight({ product, units, unitPrice, currency, fxRate }) {
+  const missing = [];
+  const landedUnitCostEur = parseLocaleNumber(product?.landedUnitCostEur);
+  if (!Number.isFinite(landedUnitCostEur) || landedUnitCostEur <= 0) {
+    missing.push("Einstandspreis (EUR) fehlt (Produkt)");
+  }
   const baseCurrency = String(currency || "USD").toUpperCase();
   const templateFields = getTemplateFields(product);
-  const unitCostUsd = baseCurrency === "USD"
-    ? parseLocaleNumber(unitPrice)
-    : parseLocaleNumber(templateFields.unitPriceUsd ?? product?.unitPriceUsd);
-  const derived = deriveShippingPerUnitEur({
-    unitCostUsd,
-    landedUnitCostEur,
-    fxEurUsd: parseLocaleNumber(settings?.eurUsdRate),
-  });
-  if (derived.value == null) {
-    return { total: 0, perUnit: null, warning: derived.warning, missing: true };
+  const fallbackUnitUsd = parseLocaleNumber(templateFields.unitPriceUsd ?? product?.unitPriceUsd ?? product?.defaultUnitPrice ?? product?.unitPrice);
+  const unitPriceUsd = baseCurrency === "USD"
+    ? (parseLocaleNumber(unitPrice) ?? fallbackUnitUsd)
+    : fallbackUnitUsd;
+  if (!Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0) {
+    missing.push("Stückpreis USD fehlt (Produkt/FO)");
   }
-  const total = calculateLineShippingEur({ units, shippingPerUnitEur: derived.value });
-  return { total, perUnit: derived.value, warning: derived.warning, missing: false };
+  const extraPerUnitUsd = parseLocaleNumber(templateFields.extraPerUnitUsd ?? product?.extraPerUnitUsd) || 0;
+  const fxEurUsd = parseLocaleNumber(fxRate);
+  if (!Number.isFinite(fxEurUsd) || fxEurUsd <= 0) {
+    missing.push("FX EUR/USD fehlt (Settings)");
+  }
+  if (missing.length) {
+    return { total: null, perUnit: null, warning: false, missing: true, missingFields: missing };
+  }
+  const goodsValuePerUnitEur = (unitPriceUsd + extraPerUnitUsd) * (1 / fxEurUsd);
+  const rawFreight = landedUnitCostEur - goodsValuePerUnitEur;
+  const warning = rawFreight < 0;
+  const perUnit = round2(Math.max(0, rawFreight));
+  const unitCount = Number(units || 0);
+  const total = unitCount > 0 ? round2(perUnit * unitCount) : null;
+  return { total, perUnit, warning, missing: false, missingFields: [] };
 }
 
 function buildScheduleFromOrderDate(orderDateIso, productionDays, bufferDays, transitDays) {
@@ -537,26 +553,32 @@ function buildScheduleFromOrderDate(orderDateIso, productionDays, bufferDays, tr
   };
 }
 
+function buildPaymentSchedule(schedule, targetDeliveryDate) {
+  const normalized = {
+    ORDER_DATE: schedule?.orderDate ? parseISODate(schedule.orderDate) : null,
+    PRODUCTION_END: schedule?.productionEndDate ? parseISODate(schedule.productionEndDate) : null,
+    ETD: schedule?.etdDate ? parseISODate(schedule.etdDate) : null,
+    ETA: schedule?.etaDate ? parseISODate(schedule.etaDate) : null,
+    DELIVERY: schedule?.deliveryDate ? parseISODate(schedule.deliveryDate) : (targetDeliveryDate ? parseISODate(targetDeliveryDate) : null),
+  };
+  if (!normalized.ETD && normalized.ETA && Number.isFinite(Number(schedule?.logisticsLeadTimeDays))) {
+    normalized.ETD = addDays(normalized.ETA, -Number(schedule.logisticsLeadTimeDays || 0));
+  }
+  return normalized;
+}
+
+function resolvePaymentBaseDate(triggerEvent, scheduleDates) {
+  const trigger = PAYMENT_EVENTS.includes(triggerEvent) ? triggerEvent : "ORDER_DATE";
+  return scheduleDates?.[trigger] || null;
+}
+
 function recomputePaymentDueDates(payments, schedule) {
-  const parseScheduleDate = (value) => {
-    if (!value) return null;
-    if (value instanceof Date) return value;
-    return parseISODate(value);
-  };
-  const resolveBaseDate = (triggerEvent) => {
-    const direct = schedule[triggerEvent];
-    if (direct) return parseScheduleDate(direct);
-    if (triggerEvent === "ETD" && schedule?.etaDate && Number.isFinite(Number(schedule.logisticsLeadTimeDays))) {
-      const eta = parseScheduleDate(schedule.etaDate);
-      return eta ? addDays(eta, -Number(schedule.logisticsLeadTimeDays || 0)) : null;
-    }
-    return null;
-  };
+  const scheduleDates = buildPaymentSchedule(schedule || {}, schedule?.deliveryDate);
   return payments.map(payment => {
     const triggerEvent = PAYMENT_EVENTS.includes(payment.triggerEvent) ? payment.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(payment.offsetDays || 0);
     const offsetMonths = Number(payment.offsetMonths || 0);
-    const baseDate = resolveBaseDate(triggerEvent);
+    const baseDate = resolvePaymentBaseDate(triggerEvent, scheduleDates);
     let dueDate = payment.dueDate;
     const manualDate = payment.dueDateManuallySet === true
       || Boolean(payment.paidDate)
@@ -582,19 +604,17 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
   const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
     ? supplier.paymentTermsDefault
     : defaultPaymentTerms();
-  const etdFallback = schedule?.etdDate
-    ? parseISODate(schedule.etdDate)
-    : (schedule?.etaDate && Number.isFinite(Number(schedule.logisticsLeadTimeDays))
-      ? addDays(parseISODate(schedule.etaDate), -Number(schedule.logisticsLeadTimeDays || 0))
-      : null);
+  const scheduleDates = buildPaymentSchedule(schedule || {}, schedule?.deliveryDate);
   const supplierRows = terms.map(term => {
     const triggerEvent = PAYMENT_EVENTS.includes(term.triggerEvent) ? term.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(term.offsetDays || 0);
+    const offsetMonths = Number(term.offsetMonths || 0);
     const amount = baseValue * (Number(term.percent || 0) / 100);
-    const baseDate = schedule[triggerEvent]
-      ? parseISODate(schedule[triggerEvent])
-      : (triggerEvent === "ETD" ? etdFallback : null);
-    const dueDate = baseDate ? toISO(addDays(baseDate, offsetDays)) : null;
+    const baseDate = resolvePaymentBaseDate(triggerEvent, scheduleDates);
+    let dueDate = baseDate ? toISO(addDays(baseDate, offsetDays)) : null;
+    if (dueDate && offsetMonths) {
+      dueDate = toISO(addMonthsDate(parseISODate(dueDate), offsetMonths));
+    }
     return {
       id: `pay-${Math.random().toString(36).slice(2, 9)}`,
       label: term.label || "Milestone",
@@ -603,6 +623,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       currency: currency || "EUR",
       triggerEvent,
       offsetDays,
+      offsetMonths,
       dueDate,
       isOverridden: false,
       dueDateManuallySet: false,
@@ -613,16 +634,16 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
   const extraRows = [];
   const incotermValue = String(incoterm || "").toUpperCase();
   const freightAmount = Number(freight || 0);
-  if (freightAmount > 0) {
+  if (incotermValue !== "DDP" && freightAmount > 0) {
     extraRows.push({
       id: `freight-${Math.random().toString(36).slice(2, 9)}`,
-      label: "Freight",
+      label: "Fracht",
       percent: 0,
       amount: freightAmount,
       currency: freightCurrency || "EUR",
       triggerEvent: "ETD",
       offsetDays: 0,
-      dueDate: schedule.etdDate || (etdFallback ? toISO(etdFallback) : null),
+      dueDate: scheduleDates.ETD ? toISO(scheduleDates.ETD) : null,
       isOverridden: false,
       dueDateManuallySet: false,
       category: "freight",
@@ -640,7 +661,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       currency: "EUR",
       triggerEvent: "ETA",
       offsetDays: 0,
-      dueDate: schedule.etaDate || null,
+      dueDate: scheduleDates.ETA ? toISO(scheduleDates.ETA) : null,
       isOverridden: false,
       dueDateManuallySet: false,
       category: "duty",
@@ -661,7 +682,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       currency: "EUR",
       triggerEvent: "ETA",
       offsetDays: 0,
-      dueDate: schedule.etaDate || null,
+      dueDate: scheduleDates.ETA ? toISO(scheduleDates.ETA) : null,
       isOverridden: false,
       dueDateManuallySet: false,
       category: "eust",
@@ -675,7 +696,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       triggerEvent: "ETA",
       offsetDays: 0,
       offsetMonths: 2,
-      dueDate: schedule.etaDate ? toISO(addMonthsDate(parseISODate(schedule.etaDate), 2)) : null,
+      dueDate: scheduleDates.ETA ? toISO(addMonthsDate(scheduleDates.ETA, 2)) : null,
       isOverridden: false,
       dueDateManuallySet: false,
       category: "eust_refund",
@@ -694,6 +715,7 @@ function recomputePayments(payments, values) {
   const dutyAmount = dutyRate > 0 ? supplierCostEur * (dutyRate / 100) : 0;
   const eustBase = supplierCostEur + dutyAmount + freightEur;
   const incotermValue = String(incoterm || "").toUpperCase();
+  const scheduleDates = buildPaymentSchedule(schedule || {}, schedule?.deliveryDate);
   return payments.map(payment => {
     const triggerEvent = PAYMENT_EVENTS.includes(payment.triggerEvent) ? payment.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(payment.offsetDays || 0);
@@ -716,11 +738,7 @@ function recomputePayments(payments, values) {
       || Boolean(payment.paidDate)
       || (payment.dueDate && typeof payment.dueDateManuallySet === "undefined");
     if (!manualDate) {
-      const baseDate = schedule[triggerEvent]
-        ? parseISODate(schedule[triggerEvent])
-        : (triggerEvent === "ETD" && schedule.etaDate && Number.isFinite(Number(schedule.logisticsLeadTimeDays))
-          ? addDays(parseISODate(schedule.etaDate), -Number(schedule.logisticsLeadTimeDays || 0))
-          : null);
+      const baseDate = resolvePaymentBaseDate(triggerEvent, scheduleDates);
       let nextDate = baseDate ? addDays(baseDate, offsetDays) : null;
       if (nextDate && offsetMonths) {
         nextDate = addMonthsDate(nextDate, offsetMonths);
@@ -739,6 +757,12 @@ function recomputePayments(payments, values) {
       dueDate,
     };
   });
+}
+
+function pruneFreightPaymentsForDdp(payments, incoterm) {
+  const incotermValue = String(incoterm || "").toUpperCase();
+  if (incotermValue !== "DDP") return payments;
+  return payments.filter(payment => payment.category !== "freight");
 }
 
 function openModal(title, content, actions = []) {
@@ -895,12 +919,12 @@ export default function render(root) {
       const product = getProductBySku(products, fo.sku);
       const schedule = buildSchedule(fo);
       const costValues = buildCostValues(fo);
-      const shippingEstimate = computeEstimatedShipping({
+      const freightEstimate = computeEstimatedFreight({
         product,
         units: Number(fo.units || 0),
         unitPrice: fo.unitPrice,
         currency: fo.currency,
-        settings: state.settings,
+        fxRate: fo.fxRate || state.settings?.fxRate,
       });
       const paymentsSummary = formatPaymentsSummary(fo.payments);
       const paymentsTotal = paymentSummaryTotal(fo.payments, fo.fxRate);
@@ -913,7 +937,7 @@ export default function render(root) {
         skuLabel: fo.sku || "—",
         schedule,
         costValues,
-        shippingEstimate,
+        freightEstimate,
         paymentsSummary,
         paymentsTotal,
         paymentsTooltip,
@@ -931,7 +955,7 @@ export default function render(root) {
       { key: "order", label: "Order Date" },
       { key: "timeline", label: "ETD / ETA" },
       { key: "total", label: "Total Value (EUR)", className: "num" },
-      { key: "shipping", label: "Estimated Shipping (EUR)", className: "num" },
+      { key: "freight", label: "Geschätzte Fracht (EUR)", className: "num" },
       { key: "payments", label: "Payments" },
       { key: "status", label: "Status" },
       { key: "actions", label: "Actions" },
@@ -967,10 +991,11 @@ export default function render(root) {
             ]);
           case "total":
             return formatCurrency(row.costValues.landedCostEur, "EUR");
-          case "shipping": {
-            const value = row.shippingEstimate?.total || 0;
-            const note = row.shippingEstimate?.missing ? "Shipping data missing" : "";
-            return el("span", { title: note }, [formatCurrency(value, "EUR")]);
+          case "freight": {
+            const value = row.freightEstimate?.total;
+            const missingFields = row.freightEstimate?.missingFields || [];
+            const note = missingFields.length ? `Fehlend: ${missingFields.join(", ")}` : "";
+            return el("span", { title: note }, [value == null ? "—" : formatCurrency(value, "EUR")]);
           }
           case "payments":
             return el("div", { title: row.paymentsTooltip }, [
@@ -1100,12 +1125,7 @@ export default function render(root) {
       fo.productionEndDate = updatedSchedule.productionEndDate;
       fo.etdDate = updatedSchedule.etdDate;
       fo.etaDate = updatedSchedule.etaDate;
-      fo.payments = recomputePaymentDueDates(fo.payments || [], {
-        ORDER_DATE: parseISODate(updatedSchedule.orderDate),
-        PRODUCTION_END: parseISODate(updatedSchedule.productionEndDate),
-        ETD: parseISODate(updatedSchedule.etdDate),
-        ETA: parseISODate(updatedSchedule.etaDate),
-      });
+      fo.payments = recomputePaymentDueDates(fo.payments || [], updatedSchedule);
       const po = buildPoFromFo(fo, poInput.value, updatedSchedule.orderDate);
       if (!Array.isArray(state.pos)) state.pos = [];
       state.pos.push(po);
@@ -1277,6 +1297,7 @@ export default function render(root) {
           supplierCostEur: costs.supplierCostEur,
           incoterm: baseForm.incoterm,
         });
+        baseForm.payments = pruneFreightPaymentsForDdp(baseForm.payments, baseForm.incoterm);
       }
     }
 
@@ -1315,6 +1336,17 @@ export default function render(root) {
       const incotermSource = overrides.incoterm ? "Manual override" : (suggested.incotermSource || "—");
       const paymentTermsSource = Array.isArray(baseForm.payments) && baseForm.payments.length ? (suggested.paymentTermsSource || "—") : "—";
       const fxSource = overrides.fxRate ? "Manual override" : (suggested.fxRateSource || "—");
+      const product = getProductBySku(products, baseForm.sku);
+      const freightEstimate = computeEstimatedFreight({
+        product,
+        units: Number(baseForm.units || 0),
+        unitPrice: baseForm.unitPrice,
+        currency: baseForm.currency,
+        fxRate: baseForm.fxRate || state.settings?.fxRate,
+      });
+      const freightMissing = freightEstimate?.missingFields?.length
+        ? ` Fehlend: ${freightEstimate.missingFields.join(", ")}`
+        : "";
 
       list.append(
         el("li", {}, [`Supplier source: ${supplierSource}`]),
@@ -1323,6 +1355,7 @@ export default function render(root) {
         el("li", {}, [`Incoterm source: ${incotermSource}`]),
         el("li", {}, [`Payment terms source: ${paymentTermsSource}`]),
         el("li", {}, [`FX source: ${fxSource}`]),
+        el("li", {}, [`Frachtquelle: Einstandspreis (Produkt) + FX (Settings) + Stückpreis USD (Produkt/FO).${freightMissing}`]),
       );
     }
 
@@ -1339,7 +1372,7 @@ export default function render(root) {
         const hasEust = product.eustRatePct != null || templateFields.vatImportPct != null;
         if (!hasFreight || !hasDuty || !hasEust) {
           warningList.append(el("li", {}, [
-            "Produktkosten fehlen (Freight/Zoll/EUSt).",
+            "Produktkosten fehlen (Fracht/Zoll/EUSt).",
             " ",
             el("button", { class: "btn ghost fo-fix-now", type: "button", dataset: { sku: product.sku, tab: "produkte" } }, ["Fix now"]),
           ]));
@@ -1506,10 +1539,12 @@ export default function render(root) {
         supplierCostEur: values.supplierCostEur,
         incoterm: baseForm.incoterm,
       });
+      baseForm.payments = pruneFreightPaymentsForDdp(baseForm.payments, baseForm.incoterm);
       renderPaymentsTable();
       updatePaymentTotals();
       updateSchedulePreview(schedule);
       updateCostSummary(values);
+      updateDdpPaymentNote();
     }
 
     function updateSchedulePreview(schedule) {
@@ -1518,6 +1553,21 @@ export default function render(root) {
       $("#fo-preview-etd", content).textContent = formatDate(schedule.etdDate);
       $("#fo-preview-eta", content).textContent = formatDate(schedule.etaDate);
       $("#fo-preview-target", content).textContent = formatDate(baseForm.targetDeliveryDate);
+      const missingFields = [];
+      if (!baseForm.targetDeliveryDate) missingFields.push("Zieltermin");
+      if (!Number.isFinite(Number(baseForm.productionLeadTimeDays)) || Number(baseForm.productionLeadTimeDays) <= 0) {
+        missingFields.push("Produktionszeit");
+      }
+      if (!Number.isFinite(Number(baseForm.logisticsLeadTimeDays)) || Number(baseForm.logisticsLeadTimeDays) <= 0) {
+        missingFields.push("Frachtlaufzeit");
+      }
+      const missingBox = $("#fo-schedule-missing", content);
+      const missingList = $("#fo-schedule-missing-list", content);
+      if (missingBox && missingList) {
+        missingList.innerHTML = "";
+        missingFields.forEach(field => missingList.append(el("li", {}, [field])));
+        missingBox.style.display = missingFields.length ? "block" : "none";
+      }
       const etaDate = parseISODate(schedule.etaDate);
       const targetDate = parseISODate(baseForm.targetDeliveryDate);
       const warning = $("#fo-date-warning", content);
@@ -1544,24 +1594,33 @@ export default function render(root) {
       }
     }
 
+    function updateDdpPaymentNote() {
+      const note = $("#fo-ddp-note", content);
+      if (!note) return;
+      const isDdp = String(baseForm.incoterm || "").toUpperCase() === "DDP";
+      note.style.display = isDdp ? "block" : "none";
+    }
+
     function updateCostSummary(values) {
       const product = getProductBySku(products, baseForm.sku);
-      const shippingEstimate = computeEstimatedShipping({
+      const freightEstimate = computeEstimatedFreight({
         product,
         units: Number(baseForm.units || 0),
         unitPrice: baseForm.unitPrice,
         currency: baseForm.currency,
-        settings: state.settings,
+        fxRate: baseForm.fxRate || state.settings?.fxRate,
       });
       $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, baseForm.currency || "USD");
       $("#fo-landed-cost", content).textContent = formatCurrency(values.landedCostEur, "EUR");
-      $("#fo-shipping-estimate", content).textContent = formatCurrency(shippingEstimate.total || 0, "EUR");
+      $("#fo-shipping-estimate", content).textContent = freightEstimate.total == null
+        ? "—"
+        : formatCurrency(freightEstimate.total, "EUR");
       const shippingNote = $("#fo-shipping-note", content);
       if (shippingNote) {
-        if (shippingEstimate.missing) {
-          shippingNote.textContent = "Shipping data missing (Einstandspreis/Fx/EK prüfen).";
-        } else if (shippingEstimate.warning) {
-          shippingNote.textContent = "Check landed cost / FX.";
+        if (freightEstimate.missing) {
+          shippingNote.textContent = `Fehlend: ${freightEstimate.missingFields.join(", ")}`;
+        } else if (freightEstimate.warning) {
+          shippingNote.textContent = "Hinweis: Einstandspreis liegt unter Warenwert.";
         } else {
           shippingNote.textContent = "";
         }
@@ -1590,9 +1649,22 @@ export default function render(root) {
     function renderPaymentsTable() {
       const body = $("#fo-payments-body", content);
       body.innerHTML = "";
+      const scheduleDates = buildPaymentSchedule(buildSchedule(baseForm), baseForm.targetDeliveryDate);
+      const triggerLabels = {
+        ORDER_DATE: "Order Date",
+        PRODUCTION_END: "Production End",
+        ETD: "ETD",
+        ETA: "ETA",
+        DELIVERY: "Target Delivery",
+      };
       baseForm.payments.forEach((row, idx) => {
         const isSupplier = row.category === "supplier";
         const amountValue = Number.isFinite(Number(row.amount)) ? formatNumber(Number(row.amount)) : "0,00";
+        const triggerEvent = PAYMENT_EVENTS.includes(row.triggerEvent) ? row.triggerEvent : "ORDER_DATE";
+        const baseDate = resolvePaymentBaseDate(triggerEvent, scheduleDates);
+        const dueDateWarning = (!baseDate && !row.dueDate)
+          ? `Due Date kann nicht berechnet werden: ${triggerLabels[triggerEvent] || triggerEvent} fehlt.`
+          : "";
         const tr = el("tr", {}, [
           el("td", {}, [
             el("input", {
@@ -1687,6 +1759,9 @@ export default function render(root) {
                 updatePaymentsPreview();
               },
             }),
+            dueDateWarning
+              ? el("span", { class: "fo-due-date-warning", title: dueDateWarning }, ["⚠️"])
+              : null,
           ]),
           el("td", {}, [
             el("button", {
@@ -1831,7 +1906,7 @@ export default function render(root) {
               el("small", { class: "form-error", id: "fo-currency-error" }, []),
             ]),
             el("label", {}, [
-              "Freight",
+              "Fracht",
               el("input", { type: "text", inputmode: "decimal", id: "fo-freight", value: baseForm.freight ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-freight" }, []),
@@ -1839,7 +1914,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Freight Currency",
+              "Fracht-Währung",
               (() => {
                 const select = el("select", { id: "fo-freightCurrency" });
                 CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
@@ -1884,7 +1959,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Logistics LT (days)",
+              "Fracht-LT (Tage)",
               el("input", { type: "number", min: "0", step: "1", id: "fo-logisticsLeadTimeDays", value: baseForm.logisticsLeadTimeDays ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-logisticsLeadTimeDays" }, []),
@@ -1918,7 +1993,7 @@ export default function render(root) {
               el("strong", { id: "fo-landed-cost" }, ["—"]),
             ]),
             el("div", { class: "fo-cost-row" }, [
-              el("span", { class: "muted" }, ["Estimated Shipping (EUR)"]),
+              el("span", { class: "muted" }, ["Geschätzte Fracht (EUR)"]),
               el("strong", { id: "fo-shipping-estimate" }, ["—"]),
             ]),
             el("small", { class: "muted", id: "fo-shipping-note" }, []),
@@ -1949,6 +2024,10 @@ export default function render(root) {
             el("div", { class: "fo-date-row" }, [el("span", {}, ["Production End"]), el("strong", { id: "fo-preview-production" }, ["—"])]),
             el("div", { class: "fo-date-row" }, [el("span", {}, ["ETD"]), el("strong", { id: "fo-preview-etd" }, ["—"])]),
             el("div", { class: "fo-date-row" }, [el("span", {}, ["ETA"]), el("strong", { id: "fo-preview-eta" }, ["—"])]),
+          ]),
+          el("div", { class: "fo-schedule-missing", id: "fo-schedule-missing", style: "display:none;" }, [
+            el("strong", {}, ["Fehlende Daten"]),
+            el("ul", { class: "fo-schedule-missing-list", id: "fo-schedule-missing-list" }, []),
           ]),
           el("p", { class: "muted", id: "fo-date-warning", style: "display:none; margin-top:10px" }, []),
           el("div", { class: "fo-recommendation-card", id: "fo-recommendation" }, [
@@ -1998,6 +2077,9 @@ export default function render(root) {
             ]),
             el("tbody", { id: "fo-payments-body" }, []),
           ]),
+        ]),
+        el("p", { class: "muted fo-ddp-note", id: "fo-ddp-note", style: "display:none;" }, [
+          "Bei DDP ist Fracht typischerweise in Deposit/Balance enthalten.",
         ]),
         el("div", { class: "fo-payments-footer" }, [
           el("p", { class: "muted", id: "fo-payment-total" }, ["Summe: 100%"]),
@@ -2089,7 +2171,9 @@ export default function render(root) {
           eustRatePct: values.eustRatePct,
           fxRate: values.fxRate,
           supplierCostEur: values.supplierCostEur,
+          incoterm: baseForm.incoterm,
         });
+        baseForm.payments = pruneFreightPaymentsForDdp(baseForm.payments, baseForm.incoterm);
         updateSchedulePreview(schedule);
         updatePaymentTotals();
         validateForm();
@@ -2097,6 +2181,7 @@ export default function render(root) {
         updateFoRecommendation();
         renderPaymentsTable();
         updateCostSummary(values);
+        updateDdpPaymentNote();
       }, 300);
     }
 
@@ -2186,7 +2271,9 @@ export default function render(root) {
           eustRatePct: costs.eustRatePct,
           fxRate: costs.fxRate,
           supplierCostEur: costs.supplierCostEur,
+          incoterm: baseForm.incoterm,
         });
+        baseForm.payments = pruneFreightPaymentsForDdp(baseForm.payments, baseForm.incoterm);
       }
       scheduleRecompute();
     });
@@ -2448,6 +2535,7 @@ export default function render(root) {
         supplierCostEur: costs.supplierCostEur,
         incoterm: baseForm.incoterm,
       });
+      baseForm.payments = pruneFreightPaymentsForDdp(baseForm.payments, baseForm.incoterm);
     }
 
     updateSuggestedFields();

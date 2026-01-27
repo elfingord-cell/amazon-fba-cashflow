@@ -142,7 +142,7 @@ function formatAutoFreightTooltip(line) {
     `Alias: ${alias || "—"}`,
     `Einstand (EUR/Stk): ${line.landedUnitCostEur != null ? fmtEURPlain(line.landedUnitCostEur) : "—"}`,
     `Warenwert (EUR/Stk): ${line.goodsPerUnitEur != null ? fmtEURPlain(line.goodsPerUnitEur) : "—"}`,
-    `Logistik (EUR/Stk): ${line.derivedLogisticsPerUnitEur != null ? fmtEURPlain(line.derivedLogisticsPerUnitEur) : "—"}`,
+    `Fracht (EUR/Stk): ${line.derivedLogisticsPerUnitEur != null ? fmtEURPlain(line.derivedLogisticsPerUnitEur) : "—"}`,
   ];
   if (line.issues?.includes("MISSING_LANDED_COST")) {
     rows.push("Einstandskosten fehlen");
@@ -385,7 +385,7 @@ const TEMPLATE_FIELD_OPTIONS = [
   { key: "freightMode", label: "Fracht-Modus" },
   { key: "freightPerUnitEur", label: "Fracht pro Stück (€)" },
   { key: "dutyRatePct", label: "Zoll (%)" },
-  { key: "dutyIncludeFreight", label: "Freight einbeziehen" },
+  { key: "dutyIncludeFreight", label: "Fracht einbeziehen" },
   { key: "eustRatePct", label: "EUSt (%)" },
   { key: "vatRefundEnabled", label: "EUSt-Erstattung aktiv" },
   { key: "vatRefundLagMonths", label: "EUSt-Lag (Monate)" },
@@ -456,7 +456,7 @@ function diffFields(current, incoming) {
     freightMode: "Fracht-Modus",
     freightPerUnitEur: "Fracht pro Stück (€)",
     dutyRatePct: "Zoll (%)",
-    dutyIncludeFreight: "Freight einbeziehen",
+    dutyIncludeFreight: "Fracht einbeziehen",
     eustRatePct: "EUSt (%)",
     vatRefundEnabled: "EUSt-Erstattung aktiv",
     vatRefundLagMonths: "EUSt-Lag (Monate)",
@@ -641,7 +641,7 @@ function resolveFreightTotal(record, totals = computeGoodsTotals(record, getSett
   return Number.isFinite(total) ? Math.round(total * 100) / 100 : 0;
 }
 
-function computeEstimatedShippingTotals(record, settings = getSettings()) {
+function computeEstimatedFreightTotals(record, settings = getSettings()) {
   if (!record) return { total: 0, missing: 0, used: [], estimate: null };
   const estimate = updateDerivedFreight(record, settings);
   return {
@@ -882,14 +882,14 @@ function suggestedInvoiceFilename(record, paidDate) {
 }
 
 function mapPaymentType(evt, milestone) {
-  if (evt.type === "freight") return "Shipping";
+  if (evt.type === "freight") return "Fracht";
   if (evt.type === "eust") return "EUSt";
   if (evt.type === "duty") return "Other";
   if (evt.type === "fx_fee") return "Other";
   const label = String(milestone?.label || evt.label || "").toLowerCase();
   if (label.includes("deposit") || label.includes("anzahlung")) return "Deposit";
   if (label.includes("balance") || label.includes("rest")) return "Balance";
-  if (label.includes("shipping") || label.includes("fracht")) return "Shipping";
+  if (label.includes("shipping") || label.includes("fracht")) return "Fracht";
   return "Other";
 }
 
@@ -907,7 +907,7 @@ function buildInvoiceKeyEvents(selectedEvents) {
   if (hasDeposit && hasFx) return "Deposit+FX";
   if (hasDeposit) return "Deposit";
   if (hasBalance) return hasFx ? "Balance+FX" : "Balance";
-  if (hasShipping) return "Shipping";
+  if (hasShipping) return "Fracht";
   if (hasEust) return "EUSt";
   if (hasFx && lowered.length === 1) return "FX";
   if (labels.length <= 1) return labels[0] || "Payment";
@@ -1418,7 +1418,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
   const listRows = filtered.map(rec => ({
     rec,
     totals: computeGoodsTotals(rec, settings),
-    shipping: computeEstimatedShippingTotals(rec, settings),
+    freightEstimate: computeEstimatedFreightTotals(rec, settings),
   }));
   const sortKey = options.sortKey;
   const sortDir = options.sortDir;
@@ -1439,8 +1439,8 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
             return Number(a.totals.usd || 0);
           case "freight":
             return Number(resolveFreightTotal(recA, a.totals) || 0);
-          case "estShipping":
-            return Number(a.shipping?.total || 0);
+          case "estFreight":
+            return Number(a.freightEstimate?.total || 0);
           case "payments":
             return (recA.milestones || []).length;
           case "transport":
@@ -1461,8 +1461,8 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
             return Number(b.totals.usd || 0);
           case "freight":
             return Number(resolveFreightTotal(recB, b.totals) || 0);
-          case "estShipping":
-            return Number(b.shipping?.total || 0);
+          case "estFreight":
+            return Number(b.freightEstimate?.total || 0);
           case "payments":
             return (recB.milestones || []).length;
           case "transport":
@@ -1511,7 +1511,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
         el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("freight") }, ["Fracht (€) ", sortIcon("freight")]),
       ]),
       el("th", { style: "width:140px", class: "num" }, [
-        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("estShipping") }, ["Estimated Shipping (€) ", sortIcon("estShipping")]),
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("estFreight") }, ["Geschätzte Fracht (€) ", sortIcon("estFreight")]),
       ]),
       el("th", { style: "width:120px" }, [
         el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("payments") }, ["Zahlungen ", sortIcon("payments")]),
@@ -1563,7 +1563,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
     return;
   }
 
-  listRows.forEach(({ rec, totals, shipping }) => {
+  listRows.forEach(({ rec, totals, freightEstimate }) => {
     const productSummary = formatSkuSummary(rec);
     const productTooltip = formatProductTooltip(rec);
     const timeline = formatTimelineCompact(rec, settings);
@@ -1577,8 +1577,8 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
       el("td", { class: "cell-ellipsis num", title: String(totals.units || 0) }, [Number(totals.units || 0).toLocaleString("de-DE")]),
       el("td", { class: "cell-ellipsis num", title: fmtUSD(totals.usd) }, [fmtUSD(totals.usd)]),
       el("td", { class: "cell-ellipsis num", title: fmtEUR(resolveFreightTotal(rec, totals)) }, [fmtEUR(resolveFreightTotal(rec, totals))]),
-      el("td", { class: "cell-ellipsis num", title: fmtEUR(shipping?.total || 0) }, [
-        fmtEUR(shipping?.total || 0),
+      el("td", { class: "cell-ellipsis num", title: fmtEUR(freightEstimate?.total || 0) }, [
+        fmtEUR(freightEstimate?.total || 0),
       ]),
       el("td", { class: "cell-ellipsis", title: "Zahlungen" }, [renderPaymentBadges(rec)]),
       el("td", { class: "cell-ellipsis", title: transport }, [transport]),
@@ -1646,7 +1646,7 @@ function renderItemsTable(container, record, onChange, dataListId) {
       el("th", {}, ["Stückkosten (USD)"]),
       el("th", {}, ["Zusatz/ Stück (USD)"]),
       el("th", {}, ["Pauschal (USD)"]),
-      el("th", {}, ["Logistik / Stk (EUR)"]),
+      el("th", {}, ["Fracht / Stk (EUR)"]),
       el("th", {}, [""])
     ])
   ]);
@@ -1735,7 +1735,7 @@ function buildLogisticsCell(line) {
   const logisticsDisplay = logisticsValue != null ? fmtEURPlain(logisticsValue) : "—";
   const tooltipRows = formatAutoFreightTooltip(line);
   const logisticsTooltip = el("span", { class: "tooltip" }, [
-    el("button", { class: "tooltip-trigger", type: "button", "aria-label": "Logistik Details" }, ["ℹ️"]),
+    el("button", { class: "tooltip-trigger", type: "button", "aria-label": "Fracht Details" }, ["ℹ️"]),
     el("span", { class: "tooltip-content" }, tooltipRows.map(row => el("div", {}, [row]))),
   ]);
   const hasMissing = line?.issues?.includes("MISSING_LANDED_COST");
@@ -2829,7 +2829,7 @@ export function renderOrderModule(root, config) {
         <div>
           <label>Zollsatz (%)</label>
           <input id="${ids.dutyRate}" placeholder="z. B. 6,5" />
-          <label class="inline-checkbox"><input type="checkbox" id="${ids.dutyInclude}" /> Freight einbeziehen</label>
+          <label class="inline-checkbox"><input type="checkbox" id="${ids.dutyInclude}" /> Fracht einbeziehen</label>
         </div>
         <div>
           <label>EUSt (%)</label>
@@ -3722,13 +3722,13 @@ export function renderOrderModule(root, config) {
     const usdText = fmtUSD(totals.usd || 0);
     const fxText = fmtFxRate(totals.fxRate);
     const derived = estimate || updateDerivedFreight(editing, getSettings());
-    const shippingText = fmtEUR(derived?.estimatedFreightEur || 0);
-    const shippingSuffix = derived?.mode === "AUTO_FROM_LANDED" && derived?.missingLandedCount
+    const freightText = fmtEUR(derived?.estimatedFreightEur || 0);
+    const freightSuffix = derived?.mode === "AUTO_FROM_LANDED" && derived?.missingLandedCount
       ? ` · Einstandskosten fehlen (${derived.missingLandedCount})`
       : "";
     goodsSummary.textContent = fxText
-      ? `Summe Warenwert: ${eurText} (${usdText} ÷ FX ${fxText}) · Estimated Shipping (EUR): ${shippingText}${shippingSuffix}`
-      : `Summe Warenwert: ${eurText} (${usdText}) · Estimated Shipping (EUR): ${shippingText}${shippingSuffix}`;
+      ? `Summe Warenwert: ${eurText} (${usdText} ÷ FX ${fxText}) · Geschätzte Fracht (EUR): ${freightText}${freightSuffix}`
+      : `Summe Warenwert: ${eurText} (${usdText}) · Geschätzte Fracht (EUR): ${freightText}${freightSuffix}`;
   }
 
   function updateFreightModeUI() {

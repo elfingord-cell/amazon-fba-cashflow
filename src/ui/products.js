@@ -411,7 +411,7 @@ function buildHistoryTable(state, sku) {
       { key: "transitDays", label: "Transit-Tage", valueType: "number", decimals: 0 },
       { key: "freightEur", label: "Fracht (€ / Stück)", valueType: "number", decimals: 2 },
       { key: "dutyPct", label: "Zoll %", valueType: "number", decimals: 2 },
-      { key: "dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox" },
+      { key: "dutyIncludesFreight", label: "Fracht einbeziehen", type: "checkbox" },
       { key: "vatImportPct", label: "EUSt %", valueType: "number", decimals: 2 },
       { key: "vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox" },
       { key: "vatRefundLag", label: "EUSt-Lag (Monate)", valueType: "number", decimals: 0 },
@@ -651,8 +651,8 @@ function buildHistoryTable(state, sku) {
         });
         shippingDerived.innerHTML = "";
         const label = derived.value == null
-          ? "Shipping €/Stück (berechnet): —"
-          : `Shipping €/Stück (berechnet): ${formatDeNumber(derived.value, 2)} €`;
+          ? "Fracht €/Stück (berechnet): —"
+          : `Fracht €/Stück (berechnet): ${formatDeNumber(derived.value, 2)} €`;
         shippingDerived.append(document.createTextNode(label));
         shippingDerived.append(createEl("span", { class: "tooltip" }, [
           createEl("button", { class: "tooltip-trigger", type: "button", "aria-label": "Formel" }, ["ℹ️"]),
@@ -1112,7 +1112,7 @@ function buildHistoryTable(state, sku) {
       { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "120px", className: "col-days col-group-end" },
       { key: "template.freightEur", label: "Fracht (€ / Stück)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.dutyPct", label: "Zoll %", type: "number", decimals: 2, width: "90px", className: "col-short" },
-      { key: "template.dutyIncludesFreight", label: "Freight einbeziehen", type: "checkbox", width: "56px", className: "col-check" },
+      { key: "template.dutyIncludesFreight", label: "Fracht einbeziehen", type: "checkbox", width: "56px", className: "col-check" },
       { key: "template.vatImportPct", label: "EUSt %", type: "number", decimals: 2, width: "90px", className: "col-short" },
       { key: "template.vatRefundActive", label: "EUSt-Erstattung aktiv", type: "checkbox", width: "56px", className: "col-check" },
       { key: "template.vatRefundLag", label: "EUSt-Lag", type: "number", decimals: 0, width: "80px", className: "col-short col-group-end" },
