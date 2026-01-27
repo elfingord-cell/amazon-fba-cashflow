@@ -101,7 +101,7 @@ function resolveSkuAliases(record, skuAliasMap) {
 function normalizePaymentType({ label, eventType }) {
   const lowered = String(label || "").toLowerCase();
   if (eventType === "fx_fee" || lowered.includes("fx")) return null;
-  if (eventType === "freight" || lowered.includes("shipping") || lowered.includes("fracht")) return "Shipping";
+  if (eventType === "freight" || lowered.includes("shipping") || lowered.includes("fracht")) return "Fracht";
   if (eventType === "eust" || lowered.includes("eust")) return "EUSt";
   if (lowered.includes("balance2") || lowered.includes("balance 2") || lowered.includes("second balance")) return "Balance2";
   if (lowered.includes("balance") || lowered.includes("rest")) return "Balance";

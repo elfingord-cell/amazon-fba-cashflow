@@ -70,12 +70,12 @@ function resolveMainSku(po, products = []) {
 function normalizePaymentType(typeLabel, eventType) {
   const label = String(typeLabel || "").toLowerCase();
   const event = String(eventType || "").toLowerCase();
-  if (event === "freight") return "Shipping";
+  if (event === "freight") return "Fracht";
   if (event === "eust") return "EUSt";
   if (event === "duty") return "Zoll";
   if (label.includes("deposit") || label.includes("anzahlung")) return "Deposit";
   if (label.includes("balance") || label.includes("rest")) return "Balance";
-  if (label.includes("shipping") || label.includes("fracht")) return "Shipping";
+  if (label.includes("shipping") || label.includes("fracht")) return "Fracht";
   if (label.includes("eust")) return "EUSt";
   if (label.includes("zoll") || label.includes("duty")) return "Zoll";
   if (label.includes("other") || label.includes("sonst")) return "Other";
