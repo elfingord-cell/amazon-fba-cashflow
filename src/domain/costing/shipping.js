@@ -1,3 +1,5 @@
+import { computeFreightPerUnitEur } from "../../utils/costing.js";
+
 function toNumber(value) {
   if (value == null || value === "") return null;
   const num = typeof value === "number" ? value : Number(String(value).replace(",", "."));
@@ -5,17 +7,12 @@ function toNumber(value) {
 }
 
 export function deriveShippingPerUnitEur({ unitCostUsd, landedUnitCostEur, fxEurUsd }) {
-  const unitUsd = toNumber(unitCostUsd);
-  const landedEur = toNumber(landedUnitCostEur);
-  const fxRate = toNumber(fxEurUsd);
-  if (unitUsd == null || landedEur == null || fxRate == null) {
-    return { value: null, warning: false, goodsCostEur: null };
-  }
-  const goodsCostEur = unitUsd * fxRate;
-  const raw = landedEur - goodsCostEur;
-  const warning = raw < 0;
-  const value = Number.isFinite(raw) ? Math.max(0, Math.round(raw * 100) / 100) : null;
-  return { value, warning, goodsCostEur: Math.round(goodsCostEur * 100) / 100 };
+  const derived = computeFreightPerUnitEur({
+    unitPriceUsd: unitCostUsd,
+    landedCostEur: landedUnitCostEur,
+    fxUsdPerEur: fxEurUsd,
+  });
+  return { value: derived.value, warning: derived.warning, goodsCostEur: derived.goodsCostEur };
 }
 
 export function calculateLineShippingEur({ units, shippingPerUnitEur }) {

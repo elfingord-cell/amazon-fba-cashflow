@@ -1,4 +1,5 @@
 import { calculateLineShippingEur } from "./shipping.js";
+import { computeFreightPerUnitEur } from "../../utils/costing.js";
 
 const VALID_FREIGHT_MODES = new Set(["TOTAL_EUR", "PER_UNIT_EUR", "AUTO_FROM_LANDED"]);
 
@@ -38,11 +39,11 @@ function resolveFreightMode(po) {
   return po?.freightMode === "per_unit" ? "PER_UNIT_EUR" : "TOTAL_EUR";
 }
 
-function resolveFxUsdToEur(po) {
-  const direct = toNumber(po?.timeline?.fxUsdToEur);
+function resolveFxUsdPerEur(po) {
+  const direct = toNumber(po?.timeline?.fxUsdPerEur);
   if (direct != null && direct > 0) return direct;
   const override = toNumber(po?.fxOverride);
-  if (override != null && override > 0) return 1 / override;
+  if (override != null && override > 0) return override;
   return null;
 }
 
@@ -50,8 +51,8 @@ export function computeFreightEstimate(po, productsBySku) {
   const issues = new Set();
   const lines = [];
   const items = Array.isArray(po?.items) ? po.items : [];
-  const fxUsdToEur = resolveFxUsdToEur(po);
-  const fxOk = fxUsdToEur != null && fxUsdToEur > 0;
+  const fxUsdPerEur = resolveFxUsdPerEur(po);
+  const fxOk = fxUsdPerEur != null && fxUsdPerEur > 0;
   if (!fxOk) issues.add("MISSING_FX");
 
   let autoTotal = 0;
@@ -76,14 +77,18 @@ export function computeFreightEstimate(po, productsBySku) {
       missingLandedCount += 1;
     }
     if (fxOk && unitCostUsd != null && landedUnitCostEur != null) {
-      goodsPerUnitEur = unitCostUsd * fxUsdToEur;
-      const raw = landedUnitCostEur - goodsPerUnitEur;
-      if (Number.isFinite(raw)) {
-        if (raw < 0) {
+      const computed = computeFreightPerUnitEur({
+        unitPriceUsd: unitCostUsd,
+        landedCostEur: landedUnitCostEur,
+        fxUsdPerEur,
+      });
+      goodsPerUnitEur = computed.goodsCostEur;
+      if (computed.value != null) {
+        if (computed.warning) {
           lineIssues.push("NEGATIVE_DERIVED_LOGISTICS");
           negativeCount += 1;
         }
-        derived = round2(Math.max(0, raw));
+        derived = round2(computed.value);
         autoTotal += calculateLineShippingEur({
           units,
           shippingPerUnitEur: derived,
@@ -127,6 +132,6 @@ export function computeFreightEstimate(po, productsBySku) {
     lines,
     missingLandedCount,
     negativeCount,
-    fxUsdToEur,
+    fxUsdPerEur,
   };
 }

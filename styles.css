@@ -457,9 +457,11 @@ td.num, th.num{text-align:right}
 .po-modal-backdrop{position:fixed; inset:0; background:rgba(15,27,45,0.45); display:flex; align-items:center; justify-content:center; z-index:80; padding:20px;}
 .po-modal{background:#fff; border-radius:16px; box-shadow:var(--shadow); width:min(720px, 94vw); max-height:90vh; display:flex; flex-direction:column;}
 .po-modal.fo-modal-frame{width:min(1400px, 94vw);}
+.po-modal.product-modal-frame{width:min(1400px, 94vw);}
 .po-modal-header{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 20px; border-bottom:1px solid rgba(15,27,45,0.08);}
 .po-modal-body{padding:16px 20px; overflow:auto;}
 .po-modal-actions{padding:12px 20px 18px; border-top:1px solid rgba(15,27,45,0.08); display:flex; justify-content:flex-end; gap:10px;}
+.po-modal .po-suggested-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; font-size:11px;}
 .products-header{display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:16px;}
 .products-actions{display:flex; gap:12px; flex-wrap:wrap;}
 .products-actions input{min-height:44px; padding:8px 12px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; min-width:240px;}
