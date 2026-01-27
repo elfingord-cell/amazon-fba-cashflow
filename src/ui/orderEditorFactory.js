@@ -1462,7 +1462,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
     return;
   }
 
-  listRows.forEach(({ rec, totals }) => {
+  listRows.forEach(({ rec, totals, shipping }) => {
     const productSummary = formatSkuSummary(rec);
     const productTooltip = formatProductTooltip(rec);
     const timeline = formatTimelineCompact(rec, settings);
@@ -1476,8 +1476,8 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
       el("td", { class: "cell-ellipsis num", title: String(totals.units || 0) }, [Number(totals.units || 0).toLocaleString("de-DE")]),
       el("td", { class: "cell-ellipsis num", title: fmtUSD(totals.usd) }, [fmtUSD(totals.usd)]),
       el("td", { class: "cell-ellipsis num", title: fmtEUR(resolveFreightTotal(rec, totals)) }, [fmtEUR(resolveFreightTotal(rec, totals))]),
-      el("td", { class: "cell-ellipsis num", title: fmtEUR(row.shipping?.total || 0) }, [
-        fmtEUR(row.shipping?.total || 0),
+      el("td", { class: "cell-ellipsis num", title: fmtEUR(shipping?.total || 0) }, [
+        fmtEUR(shipping?.total || 0),
       ]),
       el("td", { class: "cell-ellipsis", title: "Zahlungen" }, [renderPaymentBadges(rec)]),
       el("td", { class: "cell-ellipsis", title: transport }, [transport]),
