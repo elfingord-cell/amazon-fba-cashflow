@@ -45,6 +45,10 @@ const defaults = {
     defaultBufferDays: 0,
     defaultCurrency: "EUR",
     defaultDdp: false,
+    safetyStockDohDefault: 60,
+    foCoverageDohDefault: 90,
+    moqDefaultUnits: 500,
+    eurUsdRate: "0,92",
     lastUpdatedAt: null,
     cny: {
       start: "",
@@ -197,6 +201,12 @@ function ensureGlobalSettings(state) {
   settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
   settings.defaultDdp = settings.defaultDdp === true;
+  settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
+  settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
+  settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
+  if (settings.eurUsdRate == null || String(settings.eurUsdRate).trim() === "") {
+    settings.eurUsdRate = defaults.settings.eurUsdRate;
+  }
   settings.lastUpdatedAt = settings.lastUpdatedAt || null;
   if (!settings.cny || typeof settings.cny !== "object") {
     settings.cny = structuredClone(defaults.settings.cny);
@@ -628,6 +638,18 @@ function migrateProducts(state) {
         moqUnits: Number.isFinite(Number(prod.moqUnits))
           ? Math.max(0, Math.round(Number(prod.moqUnits)))
           : (Number.isFinite(Number(base.moqUnits)) ? Math.max(0, Math.round(Number(base.moqUnits))) : null),
+        safetyStockDohOverride: Number.isFinite(Number(prod.safetyStockDohOverride))
+          ? Math.max(0, Math.round(Number(prod.safetyStockDohOverride)))
+          : (Number.isFinite(Number(base.safetyStockDohOverride)) ? Math.max(0, Math.round(Number(base.safetyStockDohOverride))) : null),
+        foCoverageDohOverride: Number.isFinite(Number(prod.foCoverageDohOverride))
+          ? Math.max(0, Math.round(Number(prod.foCoverageDohOverride)))
+          : (Number.isFinite(Number(base.foCoverageDohOverride)) ? Math.max(0, Math.round(Number(base.foCoverageDohOverride))) : null),
+        moqOverrideUnits: Number.isFinite(Number(prod.moqOverrideUnits))
+          ? Math.max(0, Math.round(Number(prod.moqOverrideUnits)))
+          : (Number.isFinite(Number(base.moqOverrideUnits)) ? Math.max(0, Math.round(Number(base.moqOverrideUnits))) : null),
+        landedUnitCostEur: Number.isFinite(Number(prod.landedUnitCostEur))
+          ? Math.max(0, Number(prod.landedUnitCostEur))
+          : (Number.isFinite(Number(base.landedUnitCostEur)) ? Math.max(0, Number(base.landedUnitCostEur)) : null),
         productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
           ? Number(prod.productionLeadTimeDaysDefault)
           : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
@@ -658,6 +680,10 @@ function migrateProducts(state) {
         avgSellingPriceGrossEUR: null,
         sellerboardMarginPct: null,
         moqUnits: null,
+        safetyStockDohOverride: null,
+        foCoverageDohOverride: null,
+        moqOverrideUnits: null,
+        landedUnitCostEur: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -743,6 +769,10 @@ function normaliseProductInput(input) {
   const productionLeadTimeDaysDefault = parseNumber(input.productionLeadTimeDaysDefault ?? null);
   const moqUnitsRaw = parseNumber(input.moqUnits ?? input.moq ?? null);
   const moqUnits = Number.isFinite(moqUnitsRaw) ? Math.max(0, Math.round(moqUnitsRaw)) : null;
+  const safetyStockDohOverrideRaw = parseNumber(input.safetyStockDohOverride ?? null);
+  const foCoverageDohOverrideRaw = parseNumber(input.foCoverageDohOverride ?? null);
+  const moqOverrideUnitsRaw = parseNumber(input.moqOverrideUnits ?? null);
+  const landedUnitCostEurRaw = parseNumber(input.landedUnitCostEur ?? input.landedUnitCostEUR ?? null);
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
@@ -759,6 +789,10 @@ function normaliseProductInput(input) {
     returnsRate,
     vatExempt,
     moqUnits,
+    safetyStockDohOverride: Number.isFinite(safetyStockDohOverrideRaw) ? Math.max(0, Math.round(safetyStockDohOverrideRaw)) : null,
+    foCoverageDohOverride: Number.isFinite(foCoverageDohOverrideRaw) ? Math.max(0, Math.round(foCoverageDohOverrideRaw)) : null,
+    moqOverrideUnits: Number.isFinite(moqOverrideUnitsRaw) ? Math.max(0, Math.round(moqOverrideUnitsRaw)) : null,
+    landedUnitCostEur: Number.isFinite(landedUnitCostEurRaw) ? Math.max(0, landedUnitCostEurRaw) : null,
     productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
     sellerboardMarginPct,
@@ -1082,6 +1116,10 @@ export function upsertProduct(input){
       tags: normalised.tags,
       template: normalised.template,
       moqUnits: normalised.moqUnits,
+      safetyStockDohOverride: normalised.safetyStockDohOverride,
+      foCoverageDohOverride: normalised.foCoverageDohOverride,
+      moqOverrideUnits: normalised.moqOverrideUnits,
+      landedUnitCostEur: normalised.landedUnitCostEur,
       productionLeadTimeDaysDefault: normalised.productionLeadTimeDaysDefault,
       avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
       sellerboardMarginPct: normalised.sellerboardMarginPct,
@@ -1097,6 +1135,10 @@ export function upsertProduct(input){
     target.tags = normalised.tags;
     target.template = normalised.template;
     target.moqUnits = normalised.moqUnits;
+    target.safetyStockDohOverride = normalised.safetyStockDohOverride;
+    target.foCoverageDohOverride = normalised.foCoverageDohOverride;
+    target.moqOverrideUnits = normalised.moqOverrideUnits;
+    target.landedUnitCostEur = normalised.landedUnitCostEur;
     target.productionLeadTimeDaysDefault = normalised.productionLeadTimeDaysDefault;
     target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
     target.sellerboardMarginPct = normalised.sellerboardMarginPct;

@@ -13,7 +13,8 @@ test("no snapshot blocks recommendation", () => {
     sku: "SKU-1",
     baselineMonth,
     projection: null,
-    minSafetyDays: 60,
+    safetyStockDays: 60,
+    coverageDays: 90,
     leadTimeDays: 30,
   });
 
@@ -35,7 +36,8 @@ test("snapshot exists and demand triggers critical month", () => {
     sku: "SKU-2",
     baselineMonth: "2025-01",
     projection,
-    minSafetyDays: 60,
+    safetyStockDays: 60,
+    coverageDays: 90,
     leadTimeDays: 30,
   });
 
@@ -58,7 +60,8 @@ test("CNY overlap extends lead time and shifts order date", () => {
     sku: "SKU-3",
     baselineMonth: "2025-01",
     projection,
-    minSafetyDays: 60,
+    safetyStockDays: 60,
+    coverageDays: 90,
     leadTimeDays: 40,
     cnyPeriod: { start: "2025-01-20", end: "2025-02-10" },
   });
@@ -82,7 +85,8 @@ test("no demand leads to no FO needed", () => {
     sku: "SKU-4",
     baselineMonth: "2025-01",
     projection,
-    minSafetyDays: 60,
+    safetyStockDays: 60,
+    coverageDays: 90,
     leadTimeDays: 20,
   });
 

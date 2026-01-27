@@ -12,6 +12,7 @@ import { openBlockingModal } from "./dataHealthUi.js";
 import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMoneyDE } from "./utils/numberFormat.js";
 import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUtil } from "../lib/dateUtils.js";
 import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
+import { calculateLineShippingEur, deriveShippingPerUnitEur } from "../domain/costing/shipping.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -530,6 +531,41 @@ function resolveFreightTotal(record, totals = computeGoodsTotals(record, getSett
   return Number.isFinite(total) ? Math.round(total * 100) / 100 : 0;
 }
 
+function computeEstimatedShippingTotals(record, settings = getSettings()) {
+  const items = ensureItems(record);
+  let total = 0;
+  let missing = 0;
+  const used = [];
+  items.forEach(item => {
+    const sku = String(item?.sku || "").trim();
+    if (!sku) return;
+    const product = productCache.find(
+      prod => prod?.sku?.trim().toLowerCase() === sku.toLowerCase(),
+    );
+    const landedUnitCostEur = product?.landedUnitCostEur ?? null;
+    const unitCostUsd = parseDE(item.unitCostUsd);
+    const derived = deriveShippingPerUnitEur({
+      unitCostUsd,
+      landedUnitCostEur,
+      fxEurUsd: settings.eurUsdRate,
+    });
+    if (derived.value == null) {
+      missing += 1;
+      return;
+    }
+    total += calculateLineShippingEur({
+      units: parseDE(item.units),
+      shippingPerUnitEur: derived.value,
+    });
+    used.push(sku);
+  });
+  return {
+    total: Math.round(total * 100) / 100,
+    missing,
+    used,
+  };
+}
+
 function normaliseGoodsFields(record, settings = getSettings()) {
   if (!record) return;
   ensureItems(record);
@@ -569,6 +605,7 @@ function getSettings() {
   return {
     fxRate: parseDE(raw.fxRate ?? 0) || 0,
     fxFeePct: parseDE(raw.fxFeePct ?? 0) || 0,
+    eurUsdRate: parseDE(raw.eurUsdRate ?? 0) || 0,
     dutyRatePct: parseDE(raw.dutyRatePct ?? 0) || 0,
     dutyIncludeFreight: raw.dutyIncludeFreight !== false,
     eustRatePct: parseDE(raw.eustRatePct ?? 0) || 0,
@@ -1277,7 +1314,11 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
     ].filter(Boolean).join(" ").toLowerCase();
     return haystack.includes(searchTerm);
   });
-  const listRows = filtered.map(rec => ({ rec, totals: computeGoodsTotals(rec, settings) }));
+  const listRows = filtered.map(rec => ({
+    rec,
+    totals: computeGoodsTotals(rec, settings),
+    shipping: computeEstimatedShippingTotals(rec, settings),
+  }));
   const sortKey = options.sortKey;
   const sortDir = options.sortDir;
   if (sortKey && sortDir) {
@@ -1297,6 +1338,8 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
             return Number(a.totals.usd || 0);
           case "freight":
             return Number(resolveFreightTotal(recA, a.totals) || 0);
+          case "estShipping":
+            return Number(a.shipping?.total || 0);
           case "payments":
             return (recA.milestones || []).length;
           case "transport":
@@ -1317,6 +1360,8 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
             return Number(b.totals.usd || 0);
           case "freight":
             return Number(resolveFreightTotal(recB, b.totals) || 0);
+          case "estShipping":
+            return Number(b.shipping?.total || 0);
           case "payments":
             return (recB.milestones || []).length;
           case "transport":
@@ -1364,6 +1409,9 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
       el("th", { style: "width:110px", class: "num" }, [
         el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("freight") }, ["Fracht (€) ", sortIcon("freight")]),
       ]),
+      el("th", { style: "width:140px", class: "num" }, [
+        el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("estShipping") }, ["Estimated Shipping (€) ", sortIcon("estShipping")]),
+      ]),
       el("th", { style: "width:120px" }, [
         el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("payments") }, ["Zahlungen ", sortIcon("payments")]),
       ]),
@@ -1408,7 +1456,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
 
   if (!listRows.length) {
     tbody.append(el("tr", {}, [
-      el("td", { colspan: "11", class: "muted" }, ["Keine Bestellungen gefunden."]),
+      el("td", { colspan: "12", class: "muted" }, ["Keine Bestellungen gefunden."]),
     ]));
     container.append(table);
     return;
@@ -1428,6 +1476,9 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
       el("td", { class: "cell-ellipsis num", title: String(totals.units || 0) }, [Number(totals.units || 0).toLocaleString("de-DE")]),
       el("td", { class: "cell-ellipsis num", title: fmtUSD(totals.usd) }, [fmtUSD(totals.usd)]),
       el("td", { class: "cell-ellipsis num", title: fmtEUR(resolveFreightTotal(rec, totals)) }, [fmtEUR(resolveFreightTotal(rec, totals))]),
+      el("td", { class: "cell-ellipsis num", title: fmtEUR(row.shipping?.total || 0) }, [
+        fmtEUR(row.shipping?.total || 0),
+      ]),
       el("td", { class: "cell-ellipsis", title: "Zahlungen" }, [renderPaymentBadges(rec)]),
       el("td", { class: "cell-ellipsis", title: transport }, [transport]),
       el("td", { class: "cell-ellipsis" }, [
@@ -3513,9 +3564,14 @@ export function renderOrderModule(root, config) {
     const eurText = fmtEUR(totals.eur || 0);
     const usdText = fmtUSD(totals.usd || 0);
     const fxText = fmtFxRate(totals.fxRate);
+    const shippingTotals = computeEstimatedShippingTotals(editing, getSettings());
+    const shippingText = fmtEUR(shippingTotals.total || 0);
+    const shippingSuffix = shippingTotals.missing
+      ? ` · Versanddaten fehlen (${shippingTotals.missing})`
+      : "";
     goodsSummary.textContent = fxText
-      ? `Summe Warenwert: ${eurText} (${usdText} ÷ FX ${fxText})`
-      : `Summe Warenwert: ${eurText} (${usdText})`;
+      ? `Summe Warenwert: ${eurText} (${usdText} ÷ FX ${fxText}) · Estimated Shipping (EUR): ${shippingText}${shippingSuffix}`
+      : `Summe Warenwert: ${eurText} (${usdText}) · Estimated Shipping (EUR): ${shippingText}${shippingSuffix}`;
   }
 
   function updateFreightModeUI() {

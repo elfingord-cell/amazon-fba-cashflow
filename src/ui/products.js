@@ -10,6 +10,7 @@ import {
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { formatDeNumber, parseDeNumber, validateProducts } from "../lib/dataHealth.js";
 import { openDataHealthPanel } from "./dataHealthUi.js";
+import { deriveShippingPerUnitEur } from "../domain/costing/shipping.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -349,12 +350,40 @@ function buildHistoryTable(state, sku) {
         : "",
       inputmode: "decimal",
     });
+    const safetyStockOverrideInput = createEl("input", {
+      value: product.safetyStockDohOverride != null
+        ? formatInputNumber(parseDeNumber(product.safetyStockDohOverride), 0)
+        : "",
+      inputmode: "decimal",
+    });
+    const foCoverageOverrideInput = createEl("input", {
+      value: product.foCoverageDohOverride != null
+        ? formatInputNumber(parseDeNumber(product.foCoverageDohOverride), 0)
+        : "",
+      inputmode: "decimal",
+    });
+    const moqOverrideInput = createEl("input", {
+      value: product.moqOverrideUnits != null
+        ? formatInputNumber(parseDeNumber(product.moqOverrideUnits), 0)
+        : "",
+      inputmode: "decimal",
+    });
+    const landedUnitCostInput = createEl("input", {
+      value: product.landedUnitCostEur != null
+        ? formatInputNumber(parseDeNumber(product.landedUnitCostEur), 2)
+        : "",
+      inputmode: "decimal",
+    });
 
     const template = product.template?.fields ? { ...product.template.fields } : (product.template || {});
     if (!template.transportMode && template.transport) {
       template.transportMode = template.transport;
     }
     const settings = state.settings || {};
+    const safetyStockDefault = Number(settings.safetyStockDohDefault ?? 60);
+    const foCoverageDefault = Number(settings.foCoverageDohDefault ?? 90);
+    const moqDefaultUnits = Number(settings.moqDefaultUnits ?? 500);
+    const eurUsdRate = parseDeNumber(settings.eurUsdRate);
     const fxRateDefault = parseDeNumber(settings.fxRate) ?? parseDeNumber(settings.fxRate) ?? null;
     const templateDefaults = {
       unitPriceUsd: 0,
@@ -409,6 +438,28 @@ function buildHistoryTable(state, sku) {
       createEl("label", {}, ["Default Production Lead Time (Fallback)", productionLeadTimeInput]),
       createEl("label", {}, ["MOQ (Einheiten)", moqInput]),
       createEl("hr"),
+      createEl("h4", {}, ["Inventory Planning Overrides"]),
+      createEl("label", {}, [
+        "Safety Stock DOH Override (optional)",
+        safetyStockOverrideInput,
+        createEl("small", { class: "muted", id: "safety-stock-effective" }, []),
+      ]),
+      createEl("label", {}, [
+        "FO Coverage DOH Override (optional)",
+        foCoverageOverrideInput,
+        createEl("small", { class: "muted", id: "fo-coverage-effective" }, []),
+      ]),
+      createEl("label", {}, [
+        "MOQ Override (optional)",
+        moqOverrideInput,
+        createEl("small", { class: "muted", id: "moq-effective" }, []),
+      ]),
+      createEl("label", {}, [
+        "Einstandspreis (EUR)",
+        landedUnitCostInput,
+        createEl("small", { class: "muted", id: "shipping-derived" }, []),
+      ]),
+      createEl("hr"),
       templateHeader
     );
 
@@ -417,11 +468,19 @@ function buildHistoryTable(state, sku) {
       { input: sellerboardMarginInput, decimals: 2 },
       { input: productionLeadTimeInput, decimals: 0 },
       { input: moqInput, decimals: 0 },
+      { input: safetyStockOverrideInput, decimals: 0 },
+      { input: foCoverageOverrideInput, decimals: 0 },
+      { input: moqOverrideInput, decimals: 0 },
+      { input: landedUnitCostInput, decimals: 2 },
     ];
     numericFields.forEach(({ input, decimals }) => {
       input.addEventListener("blur", () => {
         const parsed = parseDeNumber(input.value);
         input.value = parsed == null ? "" : formatInputNumber(parsed, decimals);
+        updateEffectiveValues();
+      });
+      input.addEventListener("input", () => {
+        updateEffectiveValues();
       });
     });
 
@@ -538,10 +597,12 @@ function buildHistoryTable(state, sku) {
           input.value = nextValue == null ? "" : formatInputNumber(nextValue, decimals);
           validateField(field.key);
           updateSaveState();
+          if (field.key === "unitPriceUsd") updateEffectiveValues();
         });
         input.addEventListener("input", () => {
           validateField(field.key);
           updateSaveState();
+          if (field.key === "unitPriceUsd") updateEffectiveValues();
         });
         templateInputs[field.key] = input;
         const error = createEl("small", { class: "form-error" }, []);
@@ -558,6 +619,52 @@ function buildHistoryTable(state, sku) {
       }
     });
     form.append(templateContainer);
+
+    const safetyStockEffective = $("#safety-stock-effective", form);
+    const foCoverageEffective = $("#fo-coverage-effective", form);
+    const moqEffective = $("#moq-effective", form);
+    const shippingDerived = $("#shipping-derived", form);
+
+    function updateEffectiveValues() {
+      const safetyOverride = parseDeNumber(safetyStockOverrideInput.value);
+      const coverageOverride = parseDeNumber(foCoverageOverrideInput.value);
+      const moqOverride = parseDeNumber(moqOverrideInput.value);
+      const effectiveSafety = safetyOverride != null ? safetyOverride : safetyStockDefault;
+      const effectiveCoverage = coverageOverride != null ? coverageOverride : foCoverageDefault;
+      const effectiveMoq = moqOverride != null ? moqOverride : moqDefaultUnits;
+      if (safetyStockEffective) {
+        safetyStockEffective.textContent = `Effektiv: ${formatDeNumber(effectiveSafety, 0)} Tage (Default: ${formatDeNumber(safetyStockDefault, 0)})`;
+      }
+      if (foCoverageEffective) {
+        foCoverageEffective.textContent = `Effektiv: ${formatDeNumber(effectiveCoverage, 0)} Tage (Default: ${formatDeNumber(foCoverageDefault, 0)})`;
+      }
+      if (moqEffective) {
+        moqEffective.textContent = `Effektiv: ${formatDeNumber(effectiveMoq, 0)} Einheiten (Default: ${formatDeNumber(moqDefaultUnits, 0)})`;
+      }
+      if (shippingDerived) {
+        const unitCostUsd = parseDeNumber(templateInputs.unitPriceUsd?.value);
+        const landedUnitCostEur = parseDeNumber(landedUnitCostInput.value);
+        const derived = deriveShippingPerUnitEur({
+          unitCostUsd,
+          landedUnitCostEur,
+          fxEurUsd: eurUsdRate,
+        });
+        shippingDerived.innerHTML = "";
+        const label = derived.value == null
+          ? "Shipping €/Stück (berechnet): —"
+          : `Shipping €/Stück (berechnet): ${formatDeNumber(derived.value, 2)} €`;
+        shippingDerived.append(document.createTextNode(label));
+        shippingDerived.append(createEl("span", { class: "tooltip" }, [
+          createEl("button", { class: "tooltip-trigger", type: "button", "aria-label": "Formel" }, ["ℹ️"]),
+          createEl("span", { class: "tooltip-content" }, [
+            "Formel: Einstandspreis (EUR) – (EK USD × EUR/USD). Negative Werte werden auf 0 gesetzt.",
+          ]),
+        ]));
+        if (derived.warning) {
+          shippingDerived.append(createEl("span", { class: "badge fo-recommendation-badge" }, ["Check landed cost / FX"]));
+        }
+      }
+    }
 
     function setFieldValue(key, value) {
       const input = templateInputs[key];
@@ -606,6 +713,7 @@ function buildHistoryTable(state, sku) {
       setFieldValue("ddp", latestPo.ddp === true);
       setFieldValue("currency", "USD");
       updateSaveState();
+      updateEffectiveValues();
       showToast("Letzte PO Werte übernommen.");
     }
 
@@ -648,6 +756,7 @@ function buildHistoryTable(state, sku) {
     }
     Object.keys(fieldRules).forEach(key => validateField(key));
     updateSaveState();
+    updateEffectiveValues();
 
     form.addEventListener("submit", ev => {
       ev.preventDefault();
@@ -669,6 +778,10 @@ function buildHistoryTable(state, sku) {
         sellerboardMarginPct: parseDeNumber(sellerboardMarginInput.value.trim()),
         productionLeadTimeDaysDefault: parseDeNumber(productionLeadTimeInput.value.trim()),
         moqUnits: parseDeNumber(moqInput.value.trim()),
+        safetyStockDohOverride: parseDeNumber(safetyStockOverrideInput.value.trim()),
+        foCoverageDohOverride: parseDeNumber(foCoverageOverrideInput.value.trim()),
+        moqOverrideUnits: parseDeNumber(moqOverrideInput.value.trim()),
+        landedUnitCostEur: parseDeNumber(landedUnitCostInput.value.trim()),
       };
       if (existing?.sku) {
         payload.originalSku = existing.sku;

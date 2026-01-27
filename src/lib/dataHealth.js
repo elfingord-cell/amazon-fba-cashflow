@@ -80,6 +80,17 @@ export function validateSettings(settings = {}) {
       blocking: true,
     }));
   }
+  if (!hasPositiveNumber(settings.eurUsdRate)) {
+    issues.push(makeIssue({
+      scope: "settings",
+      entityId: "settings",
+      severity: "warning",
+      field: "eurUsdRate",
+      message: "FX-Kurs (EUR/USD) prüfen.",
+      hint: "Bitte den EUR/USD Kurs prüfen (z. B. 0,92).",
+      blocking: false,
+    }));
+  }
   if (!isValidCurrency(settings.defaultCurrency)) {
     issues.push(makeIssue({
       scope: "settings",

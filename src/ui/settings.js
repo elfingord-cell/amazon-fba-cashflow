@@ -32,11 +32,23 @@ function updateSettings(state, patch) {
   if (typeof patch.fxRate !== "undefined") {
     state.settings.fxRate = patch.fxRate;
   }
+  if (typeof patch.eurUsdRate !== "undefined") {
+    state.settings.eurUsdRate = patch.eurUsdRate;
+  }
   if (typeof patch.defaultProductionLeadTimeDays !== "undefined") {
     state.settings.defaultProductionLeadTimeDays = patch.defaultProductionLeadTimeDays;
   }
   if (typeof patch.defaultDdp !== "undefined") {
     state.settings.defaultDdp = patch.defaultDdp === true;
+  }
+  if (typeof patch.safetyStockDohDefault !== "undefined") {
+    state.settings.safetyStockDohDefault = patch.safetyStockDohDefault;
+  }
+  if (typeof patch.foCoverageDohDefault !== "undefined") {
+    state.settings.foCoverageDohDefault = patch.foCoverageDohDefault;
+  }
+  if (typeof patch.moqDefaultUnits !== "undefined") {
+    state.settings.moqDefaultUnits = patch.moqDefaultUnits;
   }
   if (patch.cny && typeof patch.cny === "object") {
     state.settings.cny = {
@@ -67,8 +79,12 @@ export function render(root) {
     sea: "",
     buffer: "",
     fxRate: "",
+    eurUsdRate: "",
     defaultProductionLeadTime: "",
     cny: "",
+    safetyStockDohDefault: "",
+    foCoverageDohDefault: "",
+    moqDefaultUnits: "",
   };
 
   root.innerHTML = `
@@ -126,6 +142,33 @@ export function render(root) {
           <input id="default-fx-rate" type="text" inputmode="decimal" placeholder="z. B. 1,08" value="${formatRate(settings.fxRate)}">
           <small class="form-error" id="fx-rate-error"></small>
           <small class="health-hint" id="fx-rate-health"></small>
+        </label>
+        <label>
+          FX-Kurs EUR/USD (EUR pro USD)
+          <input id="default-eur-usd-rate" type="text" inputmode="decimal" placeholder="z. B. 0,92" value="${formatRate(settings.eurUsdRate)}">
+          <small class="form-error" id="eur-usd-rate-error"></small>
+          <small class="health-hint" id="eur-usd-rate-health"></small>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Inventory Planning Defaults</h3>
+      <div class="grid three">
+        <label>
+          Safety Stock DOH (Tage)
+          <input id="default-safety-stock" type="number" min="0" step="1" value="${settings.safetyStockDohDefault ?? 60}">
+          <small class="form-error" id="safety-stock-error"></small>
+        </label>
+        <label>
+          FO Coverage DOH (Tage)
+          <input id="default-fo-coverage" type="number" min="0" step="1" value="${settings.foCoverageDohDefault ?? 90}">
+          <small class="form-error" id="fo-coverage-error"></small>
+        </label>
+        <label>
+          MOQ Default (Einheiten)
+          <input id="default-moq-units" type="number" min="0" step="1" value="${settings.moqDefaultUnits ?? 500}">
+          <small class="form-error" id="moq-default-error"></small>
         </label>
       </div>
     </section>
@@ -192,6 +235,7 @@ export function render(root) {
       { field: "transportLeadTimesDays.sea", id: "#lead-sea-health" },
       { field: "defaultCurrency", id: "#default-currency-health" },
       { field: "fxRate", id: "#fx-rate-health" },
+      { field: "eurUsdRate", id: "#eur-usd-rate-health" },
     ];
     mapping.forEach(({ field, id }) => {
       const el = $(id, root);
@@ -227,12 +271,20 @@ export function render(root) {
     errors.sea = "";
     errors.buffer = "";
     errors.fxRate = "";
+    errors.eurUsdRate = "";
     errors.defaultProductionLeadTime = "";
+    errors.safetyStockDohDefault = "";
+    errors.foCoverageDohDefault = "";
+    errors.moqDefaultUnits = "";
     const air = clampNonNegative($("#lead-air", root).value);
     const rail = clampNonNegative($("#lead-rail", root).value);
     const sea = clampNonNegative($("#lead-sea", root).value);
     const buffer = clampNonNegative($("#default-buffer", root).value);
     const fxRate = parseDeNumber($("#default-fx-rate", root).value);
+    const eurUsdRate = parseDeNumber($("#default-eur-usd-rate", root).value);
+    const safetyStockDohDefault = clampNonNegative($("#default-safety-stock", root).value);
+    const foCoverageDohDefault = clampNonNegative($("#default-fo-coverage", root).value);
+    const moqDefaultUnits = clampNonNegative($("#default-moq-units", root).value);
     const productionLeadInput = $("#default-production-lead", root);
     const productionLeadRaw = productionLeadInput ? parseDeNumber(productionLeadInput.value) : null;
     const defaultProductionLead = productionLeadRaw == null ? null : Math.max(0, Math.round(productionLeadRaw));
@@ -245,6 +297,10 @@ export function render(root) {
     if (sea == null) errors.sea = "Wert muss ≥ 0 sein.";
     if (buffer == null) errors.buffer = "Wert muss ≥ 0 sein.";
     if (fxRate == null || fxRate <= 0) errors.fxRate = "Wert muss > 0 sein.";
+    if (eurUsdRate == null || eurUsdRate <= 0) errors.eurUsdRate = "Wert muss > 0 sein.";
+    if (safetyStockDohDefault == null) errors.safetyStockDohDefault = "Wert muss ≥ 0 sein.";
+    if (foCoverageDohDefault == null) errors.foCoverageDohDefault = "Wert muss ≥ 0 sein.";
+    if (moqDefaultUnits == null) errors.moqDefaultUnits = "Wert muss ≥ 0 sein.";
     if ((cnyStart && !cnyEnd) || (!cnyStart && cnyEnd)) {
       errors.cny = "Bitte Start und Ende setzen.";
     } else if (cnyStartDate && cnyEndDate && cnyStartDate > cnyEndDate) {
@@ -257,6 +313,10 @@ export function render(root) {
     $("#lead-sea-error", root).textContent = errors.sea;
     $("#buffer-error", root).textContent = errors.buffer;
     $("#fx-rate-error", root).textContent = errors.fxRate;
+    $("#eur-usd-rate-error", root).textContent = errors.eurUsdRate;
+    $("#safety-stock-error", root).textContent = errors.safetyStockDohDefault;
+    $("#fo-coverage-error", root).textContent = errors.foCoverageDohDefault;
+    $("#moq-default-error", root).textContent = errors.moqDefaultUnits;
     const cnyError = $("#cny-error", root);
     if (cnyError) cnyError.textContent = errors.cny;
     const defaultLeadError = $("#default-production-lead-error", root);
@@ -267,13 +327,29 @@ export function render(root) {
       sea,
       buffer,
       fxRate,
+      eurUsdRate,
+      safetyStockDohDefault,
+      foCoverageDohDefault,
+      moqDefaultUnits,
       defaultProductionLead,
-      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.defaultProductionLeadTime && !errors.cny
+      ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.eurUsdRate && !errors.defaultProductionLeadTime && !errors.cny && !errors.safetyStockDohDefault && !errors.foCoverageDohDefault && !errors.moqDefaultUnits
     };
   }
 
   $("#settings-save", root).addEventListener("click", () => {
-    const { air, rail, sea, buffer, fxRate, defaultProductionLead, ok } = validate();
+    const {
+      air,
+      rail,
+      sea,
+      buffer,
+      fxRate,
+      eurUsdRate,
+      safetyStockDohDefault,
+      foCoverageDohDefault,
+      moqDefaultUnits,
+      defaultProductionLead,
+      ok,
+    } = validate();
     if (!ok) return;
     const cnyStart = cnyStartInput ? cnyStartInput.value : "";
     const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
@@ -284,6 +360,10 @@ export function render(root) {
       defaultBufferDays: buffer,
       defaultCurrency: ($("#default-currency", root).value || "EUR").trim() || "EUR",
       fxRate: formatRate(fxRate),
+      eurUsdRate: formatRate(eurUsdRate),
+      safetyStockDohDefault,
+      foCoverageDohDefault,
+      moqDefaultUnits,
       cny: {
         start: cnyStart || "",
         end: cnyEnd || "",
@@ -322,6 +402,14 @@ export function render(root) {
       validate();
     });
   }
+  const eurUsdInput = $("#default-eur-usd-rate", root);
+  if (eurUsdInput) {
+    eurUsdInput.addEventListener("blur", () => {
+      const next = parseDeNumber(eurUsdInput.value);
+      eurUsdInput.value = next ? formatRate(next) : "";
+      validate();
+    });
+  }
   const productionLeadInput = $("#default-production-lead", root);
   if (productionLeadInput) {
     productionLeadInput.addEventListener("blur", () => {
@@ -354,6 +442,7 @@ export function render(root) {
       if (focus?.tab === "settings" && focus.field) {
         const fieldMap = {
           fxRate: "#default-fx-rate",
+          eurUsdRate: "#default-eur-usd-rate",
           defaultCurrency: "#default-currency",
           "transportLeadTimesDays.air": "#lead-air",
           "transportLeadTimesDays.rail": "#lead-rail",
