@@ -277,18 +277,24 @@ export function render(root) {
     if (!ok) return;
     const cnyStart = cnyStartInput ? cnyStartInput.value : "";
     const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
+    const productionLeadInput = $("#default-production-lead", root);
+    const defaultDdpInput = $("#default-ddp", root);
     const patch = {
       transportLeadTimesDays: { air, rail, sea },
       defaultBufferDays: buffer,
       defaultCurrency: ($("#default-currency", root).value || "EUR").trim() || "EUR",
       fxRate: formatRate(fxRate),
-      defaultProductionLeadTimeDays: defaultProductionLead,
-      defaultDdp: $("#default-ddp", root).checked,
       cny: {
         start: cnyStart || "",
         end: cnyEnd || "",
       },
     };
+    if (productionLeadInput) {
+      patch.defaultProductionLeadTimeDays = defaultProductionLead;
+    }
+    if (defaultDdpInput) {
+      patch.defaultDdp = defaultDdpInput.checked;
+    }
     updateSettings(state, patch);
     saveState(state);
     let toast = document.getElementById("settings-toast");
