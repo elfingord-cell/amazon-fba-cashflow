@@ -10,6 +10,7 @@ import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
 import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
+import { calculateLineShippingEur, deriveShippingPerUnitEur } from "../domain/costing/shipping.js";
 import {
   buildSkuProjection,
   computeFoRecommendation,
@@ -461,6 +462,7 @@ function buildSchedule(form) {
     etdDate: toISO(etdDate),
     etaDate: toISO(etaDate),
     deliveryDate: toISO(target),
+    logisticsLeadTimeDays,
   };
 }
 
@@ -494,6 +496,25 @@ function buildCostValues(form) {
   };
 }
 
+function computeEstimatedShipping({ product, units, unitPrice, currency, settings }) {
+  const landedUnitCostEur = product?.landedUnitCostEur ?? null;
+  const baseCurrency = String(currency || "USD").toUpperCase();
+  const templateFields = getTemplateFields(product);
+  const unitCostUsd = baseCurrency === "USD"
+    ? parseLocaleNumber(unitPrice)
+    : parseLocaleNumber(templateFields.unitPriceUsd ?? product?.unitPriceUsd);
+  const derived = deriveShippingPerUnitEur({
+    unitCostUsd,
+    landedUnitCostEur,
+    fxEurUsd: parseLocaleNumber(settings?.eurUsdRate),
+  });
+  if (derived.value == null) {
+    return { total: 0, perUnit: null, warning: derived.warning, missing: true };
+  }
+  const total = calculateLineShippingEur({ units, shippingPerUnitEur: derived.value });
+  return { total, perUnit: derived.value, warning: derived.warning, missing: false };
+}
+
 function buildScheduleFromOrderDate(orderDateIso, productionDays, bufferDays, transitDays) {
   const orderDate = parseISODate(orderDateIso);
   if (!orderDate) {
@@ -512,17 +533,35 @@ function buildScheduleFromOrderDate(orderDateIso, productionDays, bufferDays, tr
     productionEndDate: toISO(productionEndDate),
     etdDate: toISO(etdDate),
     etaDate: toISO(etaDate),
+    logisticsLeadTimeDays: Number(transitDays || 0),
   };
 }
 
 function recomputePaymentDueDates(payments, schedule) {
+  const parseScheduleDate = (value) => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    return parseISODate(value);
+  };
+  const resolveBaseDate = (triggerEvent) => {
+    const direct = schedule[triggerEvent];
+    if (direct) return parseScheduleDate(direct);
+    if (triggerEvent === "ETD" && schedule?.etaDate && Number.isFinite(Number(schedule.logisticsLeadTimeDays))) {
+      const eta = parseScheduleDate(schedule.etaDate);
+      return eta ? addDays(eta, -Number(schedule.logisticsLeadTimeDays || 0)) : null;
+    }
+    return null;
+  };
   return payments.map(payment => {
     const triggerEvent = PAYMENT_EVENTS.includes(payment.triggerEvent) ? payment.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(payment.offsetDays || 0);
     const offsetMonths = Number(payment.offsetMonths || 0);
-    const baseDate = schedule[triggerEvent] ? parseISODate(schedule[triggerEvent]) : null;
+    const baseDate = resolveBaseDate(triggerEvent);
     let dueDate = payment.dueDate;
-    if (!payment.isOverridden) {
+    const manualDate = payment.dueDateManuallySet === true
+      || Boolean(payment.paidDate)
+      || (payment.dueDate && typeof payment.dueDateManuallySet === "undefined");
+    if (!manualDate) {
       let nextDate = baseDate ? addDays(baseDate, offsetDays) : null;
       if (nextDate && offsetMonths) {
         nextDate = addMonthsDate(nextDate, offsetMonths);
@@ -543,11 +582,18 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
   const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
     ? supplier.paymentTermsDefault
     : defaultPaymentTerms();
+  const etdFallback = schedule?.etdDate
+    ? parseISODate(schedule.etdDate)
+    : (schedule?.etaDate && Number.isFinite(Number(schedule.logisticsLeadTimeDays))
+      ? addDays(parseISODate(schedule.etaDate), -Number(schedule.logisticsLeadTimeDays || 0))
+      : null);
   const supplierRows = terms.map(term => {
     const triggerEvent = PAYMENT_EVENTS.includes(term.triggerEvent) ? term.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(term.offsetDays || 0);
     const amount = baseValue * (Number(term.percent || 0) / 100);
-    const baseDate = schedule[triggerEvent] ? parseISODate(schedule[triggerEvent]) : null;
+    const baseDate = schedule[triggerEvent]
+      ? parseISODate(schedule[triggerEvent])
+      : (triggerEvent === "ETD" ? etdFallback : null);
     const dueDate = baseDate ? toISO(addDays(baseDate, offsetDays)) : null;
     return {
       id: `pay-${Math.random().toString(36).slice(2, 9)}`,
@@ -559,6 +605,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       offsetDays,
       dueDate,
       isOverridden: false,
+      dueDateManuallySet: false,
       category: "supplier",
     };
   });
@@ -573,10 +620,11 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       percent: 0,
       amount: freightAmount,
       currency: freightCurrency || "EUR",
-      triggerEvent: "ETA",
+      triggerEvent: "ETD",
       offsetDays: 0,
-      dueDate: schedule.etaDate || null,
+      dueDate: schedule.etdDate || (etdFallback ? toISO(etdFallback) : null),
       isOverridden: false,
+      dueDateManuallySet: false,
       category: "freight",
     });
   }
@@ -594,6 +642,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       offsetDays: 0,
       dueDate: schedule.etaDate || null,
       isOverridden: false,
+      dueDateManuallySet: false,
       category: "duty",
     });
   }
@@ -614,6 +663,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       offsetDays: 0,
       dueDate: schedule.etaDate || null,
       isOverridden: false,
+      dueDateManuallySet: false,
       category: "eust",
     });
     extraRows.push({
@@ -627,6 +677,7 @@ function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freig
       offsetMonths: 2,
       dueDate: schedule.etaDate ? toISO(addMonthsDate(parseISODate(schedule.etaDate), 2)) : null,
       isOverridden: false,
+      dueDateManuallySet: false,
       category: "eust_refund",
     });
   }
@@ -661,8 +712,15 @@ function recomputePayments(payments, values) {
       amount = -amount;
     }
     let dueDate = payment.dueDate;
-    if (!payment.isOverridden) {
-      const baseDate = schedule[triggerEvent] ? parseISODate(schedule[triggerEvent]) : null;
+    const manualDate = payment.dueDateManuallySet === true
+      || Boolean(payment.paidDate)
+      || (payment.dueDate && typeof payment.dueDateManuallySet === "undefined");
+    if (!manualDate) {
+      const baseDate = schedule[triggerEvent]
+        ? parseISODate(schedule[triggerEvent])
+        : (triggerEvent === "ETD" && schedule.etaDate && Number.isFinite(Number(schedule.logisticsLeadTimeDays))
+          ? addDays(parseISODate(schedule.etaDate), -Number(schedule.logisticsLeadTimeDays || 0))
+          : null);
       let nextDate = baseDate ? addDays(baseDate, offsetDays) : null;
       if (nextDate && offsetMonths) {
         nextDate = addMonthsDate(nextDate, offsetMonths);
@@ -837,6 +895,13 @@ export default function render(root) {
       const product = getProductBySku(products, fo.sku);
       const schedule = buildSchedule(fo);
       const costValues = buildCostValues(fo);
+      const shippingEstimate = computeEstimatedShipping({
+        product,
+        units: Number(fo.units || 0),
+        unitPrice: fo.unitPrice,
+        currency: fo.currency,
+        settings: state.settings,
+      });
       const paymentsSummary = formatPaymentsSummary(fo.payments);
       const paymentsTotal = paymentSummaryTotal(fo.payments, fo.fxRate);
       const paymentsTooltip = formatPaymentTooltip(fo.payments, fo.fxRate);
@@ -848,6 +913,7 @@ export default function render(root) {
         skuLabel: fo.sku || "—",
         schedule,
         costValues,
+        shippingEstimate,
         paymentsSummary,
         paymentsTotal,
         paymentsTooltip,
@@ -865,6 +931,7 @@ export default function render(root) {
       { key: "order", label: "Order Date" },
       { key: "timeline", label: "ETD / ETA" },
       { key: "total", label: "Total Value (EUR)", className: "num" },
+      { key: "shipping", label: "Estimated Shipping (EUR)", className: "num" },
       { key: "payments", label: "Payments" },
       { key: "status", label: "Status" },
       { key: "actions", label: "Actions" },
@@ -900,6 +967,11 @@ export default function render(root) {
             ]);
           case "total":
             return formatCurrency(row.costValues.landedCostEur, "EUR");
+          case "shipping": {
+            const value = row.shippingEstimate?.total || 0;
+            const note = row.shippingEstimate?.missing ? "Shipping data missing" : "";
+            return el("span", { title: note }, [formatCurrency(value, "EUR")]);
+          }
           case "payments":
             return el("div", { title: row.paymentsTooltip }, [
               row.paymentsSummary,
@@ -1304,7 +1376,17 @@ export default function render(root) {
         details.style.display = "none";
         return;
       }
-      const safetyDays = Number(state.inventory?.settings?.safetyDays ?? 60);
+      const product = getProductBySku(products, sku);
+      const safetyDays = Number(
+        product?.safetyStockDohOverride
+          ?? state.settings?.safetyStockDohDefault
+          ?? 60,
+      );
+      const coverageDays = Number(
+        product?.foCoverageDohOverride
+          ?? state.settings?.foCoverageDohDefault
+          ?? 90,
+      );
       const leadTimeDays =
         Number(baseForm.productionLeadTimeDays || 0)
         + Number(baseForm.logisticsLeadTimeDays || 0)
@@ -1322,12 +1404,17 @@ export default function render(root) {
         sku,
         baselineMonth,
         projection,
-        minSafetyDays: safetyDays,
+        safetyStockDays: safetyDays,
+        coverageDays,
         leadTimeDays,
-        extraBufferDays: 30,
         cnyPeriod: state?.settings?.cny,
         inboundWithoutEtaCount: inboundSummary.inboundWithoutEtaCount,
-        moqUnits: Number(getProductBySku(products, sku)?.moqUnits || 0),
+        moqUnits: Number(
+          product?.moqOverrideUnits
+            ?? product?.moqUnits
+            ?? state.settings?.moqDefaultUnits
+            ?? 0,
+        ),
       });
 
       baselineNode.textContent = `Closing Snapshot ${baselineMonth}`;
@@ -1352,6 +1439,7 @@ export default function render(root) {
         if (recommendation.overlapDays > 0) {
           notes.push(`CNY berücksichtigt: +${recommendation.overlapDays} Tage`);
         }
+        notes.push(`Safety DOH: ${formatUnits(recommendation.safetyStockDays)} · Coverage DOH: ${formatUnits(recommendation.coverageDays)}`);
         if (recommendation.moqApplied) {
           notes.push(`MOQ berücksichtigt: ${formatUnits(recommendation.moqUnits)} Einheiten`);
         }
@@ -1457,8 +1545,27 @@ export default function render(root) {
     }
 
     function updateCostSummary(values) {
+      const product = getProductBySku(products, baseForm.sku);
+      const shippingEstimate = computeEstimatedShipping({
+        product,
+        units: Number(baseForm.units || 0),
+        unitPrice: baseForm.unitPrice,
+        currency: baseForm.currency,
+        settings: state.settings,
+      });
       $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, baseForm.currency || "USD");
       $("#fo-landed-cost", content).textContent = formatCurrency(values.landedCostEur, "EUR");
+      $("#fo-shipping-estimate", content).textContent = formatCurrency(shippingEstimate.total || 0, "EUR");
+      const shippingNote = $("#fo-shipping-note", content);
+      if (shippingNote) {
+        if (shippingEstimate.missing) {
+          shippingNote.textContent = "Shipping data missing (Einstandspreis/Fx/EK prüfen).";
+        } else if (shippingEstimate.warning) {
+          shippingNote.textContent = "Check landed cost / FX.";
+        } else {
+          shippingNote.textContent = "";
+        }
+      }
     }
 
     function computeBaseValue() {
@@ -1544,6 +1651,7 @@ export default function render(root) {
                 onchange: (e) => {
                   row.triggerEvent = e.target.value;
                   row.isOverridden = false;
+                  row.dueDateManuallySet = false;
                   paymentsDirty = true;
                   updatePaymentsPreview();
                 },
@@ -1561,6 +1669,7 @@ export default function render(root) {
               oninput: (e) => {
                 row.offsetDays = parseNumber(e.target.value) ?? 0;
                 row.isOverridden = false;
+                row.dueDateManuallySet = false;
                 paymentsDirty = true;
                 updatePaymentsPreview();
               },
@@ -1573,6 +1682,7 @@ export default function render(root) {
               oninput: (e) => {
                 row.dueDate = e.target.value || null;
                 row.isOverridden = true;
+                row.dueDateManuallySet = true;
                 paymentsDirty = true;
                 updatePaymentsPreview();
               },
@@ -1607,6 +1717,7 @@ export default function render(root) {
                 const suggestedRow = suggestedPayments[idx];
                 if (suggestedRow) {
                   baseForm.payments[idx] = { ...suggestedRow, id: row.id || suggestedRow.id };
+                  baseForm.payments[idx].dueDateManuallySet = false;
                   paymentsDirty = true;
                   updatePaymentsPreview();
                 }
@@ -1806,6 +1917,11 @@ export default function render(root) {
               el("span", { class: "muted" }, ["Landed Cost (EUR)"]),
               el("strong", { id: "fo-landed-cost" }, ["—"]),
             ]),
+            el("div", { class: "fo-cost-row" }, [
+              el("span", { class: "muted" }, ["Estimated Shipping (EUR)"]),
+              el("strong", { id: "fo-shipping-estimate" }, ["—"]),
+            ]),
+            el("small", { class: "muted", id: "fo-shipping-note" }, []),
           ]),
           el("div", { class: "banner info", id: "fo-suggestion-info" }, [
             el("strong", {}, ["Why this suggestion"]),

@@ -255,9 +255,9 @@ export function computeFoRecommendation({
   sku,
   baselineMonth,
   projection,
-  minSafetyDays = 60,
+  safetyStockDays = 60,
+  coverageDays = 90,
   leadTimeDays = 0,
-  extraBufferDays = 30,
   cnyPeriod,
   inboundWithoutEtaCount = 0,
   moqUnits = 0,
@@ -271,7 +271,7 @@ export function computeFoRecommendation({
   }
 
   const firstRisk = projection?.months?.find(entry =>
-    Number.isFinite(entry.doh) && entry.doh < minSafetyDays);
+    Number.isFinite(entry.doh) && entry.doh < safetyStockDays);
   if (!firstRisk) {
     return {
       sku,
@@ -292,8 +292,8 @@ export function computeFoRecommendation({
   const orderDateAdjusted = overlapDays > 0
     ? addDays(orderDate, -overlapDays)
     : orderDate;
-  const coverageDays = Number(minSafetyDays || 0) + Number(extraBufferDays || 0);
-  const targetUnits = firstRisk.avgDailyDemand * coverageDays;
+  const targetCoverageDays = Number(safetyStockDays || 0) + Number(coverageDays || 0);
+  const targetUnits = firstRisk.avgDailyDemand * targetCoverageDays;
   const stockAtArrival = firstRisk.startStock;
   let recommendedUnits = Math.max(0, Math.ceil(targetUnits - stockAtArrival));
   let moqApplied = false;
@@ -312,6 +312,8 @@ export function computeFoRecommendation({
     orderDateAdjusted: formatIsoDate(orderDateAdjusted),
     overlapDays,
     recommendedUnits,
+    safetyStockDays,
+    coverageDays,
     moqUnits,
     moqApplied,
     stockAtArrival,

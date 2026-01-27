@@ -20,7 +20,8 @@ export function handleFoSuggestionRequest({ query, dataAccess, today = new Date(
   const baselineMonth =
     dataAccess?.latestSnapshotMonth
     || getLatestClosingSnapshotMonth(dataAccess?.snapshots || []);
-  const safetyDays = Number(dataAccess?.settings?.minSafetyDays ?? 60);
+  const safetyDays = Number(dataAccess?.settings?.safetyStockDohDefault ?? 60);
+  const coverageDays = Number(dataAccess?.settings?.foCoverageDohDefault ?? 90);
   const leadTimeDays = Number(dataAccess?.settings?.leadTimeDays ?? 0);
   const stock0 = dataAccess?.closingStockBySku?.[sku]?.[baselineMonth] ?? 0;
   const projection = baselineMonth
@@ -37,9 +38,9 @@ export function handleFoSuggestionRequest({ query, dataAccess, today = new Date(
     sku,
     baselineMonth,
     projection,
-    minSafetyDays: safetyDays,
+    safetyStockDays: safetyDays,
+    coverageDays,
     leadTimeDays,
-    extraBufferDays: Number(dataAccess?.settings?.extraBufferDays ?? 30),
     cnyPeriod: dataAccess?.settings?.cny,
     inboundWithoutEtaCount: Number(dataAccess?.inboundWithoutEtaCount ?? 0),
   });
