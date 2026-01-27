@@ -11,6 +11,7 @@ import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMoneyDE } from "./utils/numberFormat.js";
 import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUtil } from "../lib/dateUtils.js";
+import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -136,6 +137,30 @@ function fmtDateDE(input) {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
+  });
+}
+
+function copyToClipboard(text) {
+  if (!text) return Promise.resolve(false);
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
+  }
+  return new Promise((resolve) => {
+    const temp = document.createElement("textarea");
+    temp.value = text;
+    temp.setAttribute("readonly", "");
+    temp.style.position = "absolute";
+    temp.style.left = "-9999px";
+    document.body.append(temp);
+    temp.select();
+    try {
+      const success = document.execCommand("copy");
+      temp.remove();
+      resolve(success);
+    } catch (error) {
+      temp.remove();
+      resolve(false);
+    }
   });
 }
 
@@ -1943,6 +1968,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         el("th", {}, ["Methode"]),
         el("th", {}, ["Paid by"]),
         el("th", {}, ["Transfer"]),
+        el("th", {}, ["Dateiname (Vorschlag)"]),
         el("th", {}, ["Aktion"]),
       ]),
     ]),
@@ -2307,6 +2333,34 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     const delta = payment.paidEurActual != null
       ? `Δ ${fmtEURPlain(payment.paidEurActual - payment.plannedEur)} EUR`
       : null;
+    const suggestedFilename = getSuggestedInvoiceFilename(record, {
+      status: payment.status,
+      paidDate: payment.paidDate,
+      dueDate: payment.dueDate,
+      typeLabel: payment.typeLabel,
+      eventType: payment.eventType,
+      amountActualEur: payment.paidEurActual,
+      amountPlannedEur: payment.plannedEur,
+    }, {
+      poNumber: record?.[config.numberField],
+      products: productCache,
+    });
+    const copyButton = el("button", {
+      class: "btn secondary sm",
+      type: "button",
+      onclick: async () => {
+        const success = await copyToClipboard(suggestedFilename);
+        if (!success) {
+          alert("Konnte den Dateinamen nicht kopieren.");
+          return;
+        }
+        const original = copyButton.textContent;
+        copyButton.textContent = "Copied";
+        setTimeout(() => {
+          copyButton.textContent = original;
+        }, 1200);
+      },
+    }, ["Copy"]);
     const row = el("tr", { dataset: { paymentId: payment.id, paymentType: payment.typeLabel, paymentEventType: payment.eventType || "" } }, [
       el("td", {}, [payment.typeLabel]),
       el("td", {}, [fmtDateDE(payment.dueDate)]),
@@ -2317,6 +2371,12 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("td", {}, [payment.method || "—"]),
       el("td", {}, [payment.paidBy || "—"]),
       el("td", {}, [payment.paymentId ? el("span", { class: "po-transaction-pill" }, [payment.paymentId]) : "—"]),
+      el("td", {}, [
+        el("div", { class: "po-payment-filename" }, [
+          el("div", { class: "po-filename-suggestion" }, [suggestedFilename || "—"]),
+          copyButton,
+        ]),
+      ]),
       el("td", {}, [
         el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;" }, [
           el("button", {
@@ -2348,7 +2408,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
   if (!payments.length) {
     paymentBody.append(el("tr", {}, [
-      el("td", { colspan: "10", class: "muted" }, ["Keine Zahlungen verfügbar."]),
+      el("td", { colspan: "11", class: "muted" }, ["Keine Zahlungen verfügbar."]),
     ]));
   }
 
