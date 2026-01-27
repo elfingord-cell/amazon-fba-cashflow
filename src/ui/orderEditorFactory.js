@@ -682,6 +682,15 @@ function buildPaymentId() {
   return normalizePaymentId(`pay-${Math.random().toString(36).slice(2, 9)}`);
 }
 
+function normalizeUrl(value) {
+  return String(value || "").trim();
+}
+
+function isHttpUrl(value) {
+  if (!value) return false;
+  return /^https?:\/\//i.test(value);
+}
+
 function buildPaymentMap(payments = []) {
   const map = new Map();
   (payments || []).forEach(payment => {
@@ -810,6 +819,8 @@ function buildPaymentRows(record, config, settings, paymentRecords = []) {
         paidBy: payment?.payer || log.payer || null,
         paymentId: payment?.id || log.paymentId || null,
         note: log.note || "",
+        invoiceDriveUrl: payment?.invoiceDriveUrl || "",
+        invoiceFolderDriveUrl: payment?.invoiceFolderDriveUrl || "",
         eventType: evt.type || null,
       };
     });
@@ -1942,12 +1953,21 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   function openPaymentModal(payment) {
     const allPayments = buildPaymentRows(record, config, settings, loadState().payments);
     const existingLog = payment ? (record.paymentLog?.[payment.id] || {}) : {};
+    const stateSnapshot = loadState();
+    const initialPaymentId = existingLog.paymentId || payment?.paymentId || null;
+    const paymentRecord = initialPaymentId
+      ? (stateSnapshot.payments || []).find(entry => entry?.id === initialPaymentId) || null
+      : null;
+    const currentPaymentId = paymentRecord?.id || initialPaymentId || null;
     const selectedIds = new Set();
 
-    const paidDate = existingLog.paidDate || new Date().toISOString().slice(0, 10);
-    const methodValue = existingLog.method || "";
-    const paidByValue = existingLog.payer || "";
-    const noteValue = existingLog.note || "";
+    const paidDate = paymentRecord?.paidDate || existingLog.paidDate || new Date().toISOString().slice(0, 10);
+    const methodValue = paymentRecord?.method || existingLog.method || "";
+    const paidByValue = paymentRecord?.payer || existingLog.payer || "";
+    const noteValue = paymentRecord?.note || existingLog.note || "";
+    const transferValue = paymentRecord?.id || existingLog.paymentId || "";
+    const invoiceUrlValue = paymentRecord?.invoiceDriveUrl || "";
+    const folderUrlValue = paymentRecord?.invoiceFolderDriveUrl || "";
 
     const paidDateInput = el("input", { type: "date", value: paidDate });
     const methodSelect = el("select", {}, [
@@ -1959,6 +1979,9 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("option", { value: "Credit Card" }, ["Credit Card"]),
       el("option", { value: "Other" }, ["Other"]),
     ]);
+    if (methodValue && !Array.from(methodSelect.options).some(option => option.value === methodValue)) {
+      methodSelect.append(el("option", { value: methodValue }, [methodValue]));
+    }
     methodSelect.value = methodValue;
 
     const paidBySelect = el("select", {}, [
@@ -1966,10 +1989,26 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("option", { value: "Pierre" }, ["Pierre"]),
       el("option", { value: "Patrick" }, ["Patrick"]),
     ]);
+    if (paidByValue && !Array.from(paidBySelect.options).some(option => option.value === paidByValue)) {
+      paidBySelect.append(el("option", { value: paidByValue }, [paidByValue]));
+    }
     paidBySelect.value = paidByValue;
 
     const actualInput = el("input", { type: "text", inputmode: "decimal", placeholder: "0,00" });
+    if (Number.isFinite(Number(paymentRecord?.amountActualEurTotal))) {
+      actualInput.value = formatMoneyDE(Number(paymentRecord.amountActualEurTotal), 2);
+    } else if (Number.isFinite(Number(payment?.paidEurActual))) {
+      actualInput.value = formatMoneyDE(Number(payment.paidEurActual), 2);
+    }
     const noteInput = el("textarea", { rows: "2", placeholder: "Notiz (optional)" }, [noteValue]);
+    const paymentIdInput = el("input", { type: "text", placeholder: "pay-..." });
+    paymentIdInput.value = transferValue;
+    const invoiceUrlInput = el("input", { type: "url", placeholder: "https://drive.google.com/..." });
+    invoiceUrlInput.value = invoiceUrlValue;
+    const folderUrlInput = el("input", { type: "url", placeholder: "https://drive.google.com/..." });
+    folderUrlInput.value = folderUrlValue;
+    const invoiceBtn = el("a", { class: "btn secondary sm", target: "_blank", rel: "noopener noreferrer" }, ["Open Invoice"]);
+    const folderBtn = el("a", { class: "btn secondary sm", target: "_blank", rel: "noopener noreferrer" }, ["Open Folder"]);
 
     const selectedSummary = el("div", { class: "po-payment-summary muted" });
     const allocationTable = el("table", { class: "table po-payment-allocation" }, [
@@ -2016,6 +2055,17 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
     const eventList = el("div", { class: "po-payment-event-list" });
     const selectableEvents = allPayments;
+    if (Array.isArray(paymentRecord?.coveredEventIds)) {
+      paymentRecord.coveredEventIds.forEach(id => {
+        if (id) selectedIds.add(id);
+      });
+    }
+    if (currentPaymentId) {
+      Object.entries(record.paymentLog || {}).forEach(([eventId, log]) => {
+        if (log?.paymentId === currentPaymentId) selectedIds.add(eventId);
+      });
+    }
+    if (!selectedIds.size && payment?.id) selectedIds.add(payment.id);
     const toggleSelection = (evtId, force) => {
       if (force === true) selectedIds.add(evtId);
       else if (force === false) selectedIds.delete(evtId);
@@ -2024,7 +2074,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       updateSummary();
     };
     selectableEvents.forEach(evt => {
-      const disabled = evt.status === "paid";
+      const disabled = evt.status === "paid" && evt.paymentId !== currentPaymentId;
       const checkbox = el("input", { type: "checkbox", checked: selectedIds.has(evt.id), disabled });
       checkbox.addEventListener("change", () => {
         if (disabled) return;
@@ -2062,7 +2112,20 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     });
 
     actualInput.addEventListener("input", renderAllocation);
+    const updateLinkButtons = () => {
+      const invoiceUrl = normalizeUrl(invoiceUrlInput.value);
+      const folderUrl = normalizeUrl(folderUrlInput.value);
+      const invoiceValid = invoiceUrl && isHttpUrl(invoiceUrl);
+      const folderValid = folderUrl && isHttpUrl(folderUrl);
+      invoiceBtn.href = invoiceValid ? invoiceUrl : "#";
+      folderBtn.href = folderValid ? folderUrl : "#";
+      invoiceBtn.style.display = invoiceValid ? "inline-flex" : "none";
+      folderBtn.style.display = folderValid ? "inline-flex" : "none";
+    };
+    invoiceUrlInput.addEventListener("input", updateLinkButtons);
+    folderUrlInput.addEventListener("input", updateLinkButtons);
     updateSummary();
+    updateLinkButtons();
 
     const form = el("div", { class: "po-payment-form" }, [
       el("div", { class: "po-payment-debug muted" }, ["Status: bereit"]),
@@ -2077,6 +2140,12 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       paidBySelect,
       el("label", {}, ["Ist bezahlt (EUR)"]),
       actualInput,
+      el("label", {}, ["Transfer / Payment-ID"]),
+      paymentIdInput,
+      el("label", {}, ["Invoice (GDrive URL)"]),
+      el("div", { style: "display:flex;gap:8px;align-items:center;" }, [invoiceUrlInput, invoiceBtn]),
+      el("label", {}, ["Invoice Folder (GDrive URL)"]),
+      el("div", { style: "display:flex;gap:8px;align-items:center;" }, [folderUrlInput, folderBtn]),
       el("label", {}, ["Aufteilung (Preview)"]),
       allocationTable,
       el("label", {}, ["Notiz"]),
@@ -2084,7 +2153,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     ]);
 
     const modal = buildModal({
-      title: "Zahlungen als bezahlt markieren",
+      title: paymentRecord || initialPaymentId ? "Zahlung bearbeiten" : "Zahlungen als bezahlt markieren",
       content: form,
       actions: [
         el("button", { class: "btn secondary", type: "button", onclick: () => closeModal(modal) }, ["Abbrechen"]),
@@ -2137,9 +2206,30 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               return;
             }
 
-            const paymentId = buildPaymentId();
-            const paymentRecord = {
-              id: paymentId,
+            const invoiceUrl = normalizeUrl(invoiceUrlInput.value);
+            if (invoiceUrl && !isHttpUrl(invoiceUrl)) {
+              alert("Invoice URL muss mit http:// oder https:// beginnen.");
+              return;
+            }
+            const folderUrl = normalizeUrl(folderUrlInput.value);
+            if (folderUrl && !isHttpUrl(folderUrl)) {
+              alert("Folder URL muss mit http:// oder https:// beginnen.");
+              return;
+            }
+
+            const state = loadState();
+            if (!Array.isArray(state.payments)) state.payments = [];
+            const requestedPaymentId = normalizePaymentId(paymentIdInput.value) || (paymentRecord?.id || buildPaymentId());
+            if (paymentRecord?.id && requestedPaymentId !== paymentRecord.id) {
+              const duplicate = state.payments.find(entry => entry?.id === requestedPaymentId);
+              if (duplicate) {
+                alert("Diese Payment-ID ist bereits vergeben.");
+                return;
+              }
+            }
+
+            const paymentPayload = {
+              id: requestedPaymentId,
               paidDate: paidDateInput.value || null,
               method: methodSelect.value || null,
               payer: paidBySelect.value,
@@ -2147,12 +2237,44 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               amountActualEurTotal: parsedActual,
               coveredEventIds: allocations.map(entry => entry.eventId),
               note: noteInput.value.trim() || null,
+              invoiceDriveUrl: invoiceUrl || "",
+              invoiceFolderDriveUrl: folderUrl || "",
             };
 
-            const state = loadState();
-            if (!Array.isArray(state.payments)) state.payments = [];
-            state.payments.push(paymentRecord);
+            let storedPayment = state.payments.find(entry => entry?.id === initialPaymentId) || null;
+            if (storedPayment) {
+              if (storedPayment.id !== paymentPayload.id) {
+                storedPayment.id = paymentPayload.id;
+              }
+              Object.assign(storedPayment, paymentPayload);
+            } else {
+              storedPayment = paymentPayload;
+              state.payments.push(storedPayment);
+            }
             saveState(state);
+
+            const currentLog = record.paymentLog || {};
+            const removedIds = new Set();
+            if (initialPaymentId) {
+              Object.entries(currentLog).forEach(([eventId, log]) => {
+                if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
+                  removedIds.add(eventId);
+                }
+              });
+            }
+            removedIds.forEach(eventId => {
+              const log = record.paymentLog?.[eventId] || {};
+              record.paymentLog[eventId] = {
+                ...log,
+                status: "open",
+                paidDate: null,
+                paymentId: null,
+                amountActualEur: null,
+                method: null,
+                payer: null,
+                note: null,
+              };
+            });
 
             allocations.forEach(entry => {
               const log = record.paymentLog?.[entry.eventId] || {};
@@ -2161,12 +2283,12 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
                 ...log,
                 paymentInternalId,
                 status: "paid",
-                paidDate: paymentRecord.paidDate,
-                paymentId: paymentRecord.id,
+                paidDate: paymentPayload.paidDate,
+                paymentId: paymentPayload.id,
                 amountActualEur: entry.actual,
-                method: paymentRecord.method,
-                payer: paymentRecord.payer,
-                note: paymentRecord.note,
+                method: paymentPayload.method,
+                payer: paymentPayload.payer,
+                note: paymentPayload.note,
               };
             });
 
@@ -2196,12 +2318,29 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("td", {}, [payment.paidBy || "—"]),
       el("td", {}, [payment.paymentId ? el("span", { class: "po-transaction-pill" }, [payment.paymentId]) : "—"]),
       el("td", {}, [
-        el("button", {
-          class: "btn secondary sm",
-          type: "button",
-          onclick: () => openPaymentModal(payment),
-          disabled: payment.status === "paid",
-        }, [payment.status === "paid" ? "Bezahlt" : "Mark as paid"]),
+        el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;" }, [
+          el("button", {
+            class: "btn secondary sm",
+            type: "button",
+            onclick: () => openPaymentModal(payment),
+          }, [payment.status === "paid" ? "Edit" : "Mark as paid"]),
+          isHttpUrl(normalizeUrl(payment.invoiceDriveUrl))
+            ? el("a", {
+              class: "btn secondary sm",
+              href: normalizeUrl(payment.invoiceDriveUrl),
+              target: "_blank",
+              rel: "noopener noreferrer",
+            }, ["Open Invoice"])
+            : null,
+          isHttpUrl(normalizeUrl(payment.invoiceFolderDriveUrl))
+            ? el("a", {
+              class: "btn secondary sm",
+              href: normalizeUrl(payment.invoiceFolderDriveUrl),
+              target: "_blank",
+              rel: "noopener noreferrer",
+            }, ["Open Folder"])
+            : null,
+        ]),
       ]),
     ]);
     paymentBody.append(row);
