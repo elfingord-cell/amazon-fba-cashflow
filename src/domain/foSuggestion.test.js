@@ -1,96 +1,90 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeFoSuggestion } from "./foSuggestion.js";
+import {
+  buildSkuProjection,
+  computeFoRecommendation,
+  getLatestClosingSnapshotMonth,
+} from "./foSuggestion.js";
 
-const baseDefaults = {
-  safetyStockDaysTotalDe: 60,
-  minimumStockDaysTotalDe: 20,
-  leadTimeDaysTotal: 0,
-  moqUnits: 0,
-  operationalCoverageDaysDefault: 10,
-};
-
-test("single-month horizon returns zero when inventory covers demand", () => {
-  const result = computeFoSuggestion({
+test("no snapshot blocks recommendation", () => {
+  const baselineMonth = getLatestClosingSnapshotMonth([]);
+  const recommendation = computeFoRecommendation({
     sku: "SKU-1",
-    today: "2025-04-10",
-    policyDefaults: baseDefaults,
-    plannedSalesBySku: { "SKU-1": { "2025-04": 300 } },
-    closingStockBySku: { "SKU-1": { "2025-04": 100 } },
+    baselineMonth,
+    projection: null,
+    minSafetyDays: 60,
+    leadTimeDays: 30,
   });
 
-  assert.strictEqual(result.suggestedUnits, 0);
-  assert.strictEqual(result.status, "ok");
-  assert.ok(result.rationale.projectedInventoryAtEta > result.rationale.requiredUnits);
+  assert.equal(baselineMonth, null);
+  assert.strictEqual(recommendation.status, "no_snapshot");
 });
 
-test("multi-month horizon integrates demand across month boundary", () => {
-  const result = computeFoSuggestion({
+test("snapshot exists and demand triggers critical month", () => {
+  const projection = buildSkuProjection({
     sku: "SKU-2",
-    today: "2025-04-25",
-    policyDefaults: {
-      ...baseDefaults,
-      leadTimeDaysTotal: 5,
-      operationalCoverageDaysDefault: 15,
-    },
-    plannedSalesBySku: {
-      "SKU-2": { "2025-04": 300, "2025-05": 310 },
-    },
-    closingStockBySku: {
-      "SKU-2": { "2025-04": 100, "2025-05": 50 },
-    },
+    baselineMonth: "2025-01",
+    stock0: 100,
+    forecastByMonth: { "2025-02": 300 },
+    inboundByMonth: {},
+    horizonMonths: 3,
   });
 
-  assert.strictEqual(result.rationale.requiredUnits, 150);
-  assert.strictEqual(result.suggestedUnits, 40);
+  const recommendation = computeFoRecommendation({
+    sku: "SKU-2",
+    baselineMonth: "2025-01",
+    projection,
+    minSafetyDays: 60,
+    leadTimeDays: 30,
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.strictEqual(recommendation.criticalMonth, "2025-02");
+  assert.strictEqual(recommendation.requiredArrivalDate, "2025-02-01");
 });
 
-test("MOQ is applied when suggestion is below threshold", () => {
-  const result = computeFoSuggestion({
+test("CNY overlap extends lead time and shifts order date", () => {
+  const projection = buildSkuProjection({
     sku: "SKU-3",
-    today: "2025-04-25",
-    policyDefaults: {
-      ...baseDefaults,
-      leadTimeDaysTotal: 5,
-      operationalCoverageDaysDefault: 15,
-      moqUnits: 100,
-    },
-    plannedSalesBySku: {
-      "SKU-3": { "2025-04": 300, "2025-05": 310 },
-    },
-    closingStockBySku: {
-      "SKU-3": { "2025-04": 100, "2025-05": 50 },
-    },
+    baselineMonth: "2025-01",
+    stock0: 80,
+    forecastByMonth: { "2025-02": 200 },
+    inboundByMonth: {},
+    horizonMonths: 2,
   });
 
-  assert.strictEqual(result.suggestedUnits, 100);
-  assert.ok(result.warnings.some(warning => warning.includes("MOQ applied")));
+  const recommendation = computeFoRecommendation({
+    sku: "SKU-3",
+    baselineMonth: "2025-01",
+    projection,
+    minSafetyDays: 60,
+    leadTimeDays: 40,
+    cnyPeriod: { start: "2025-01-20", end: "2025-02-10" },
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.ok(recommendation.overlapDays > 0);
+  assert.ok(new Date(recommendation.orderDateAdjusted) < new Date(recommendation.orderDate));
 });
 
-test("missing forecast uses fallback daily rate and reports status", () => {
-  const result = computeFoSuggestion({
+test("no demand leads to no FO needed", () => {
+  const projection = buildSkuProjection({
     sku: "SKU-4",
-    today: "2025-04-10",
-    policyDefaults: baseDefaults,
-    plannedSalesBySku: { "SKU-4": { "2025-03": 310 } },
-    closingStockBySku: { "SKU-4": { "2025-04": 100 } },
+    baselineMonth: "2025-01",
+    stock0: 200,
+    forecastByMonth: {},
+    inboundByMonth: {},
+    horizonMonths: 4,
   });
 
-  assert.strictEqual(result.status, "insufficient_forecast");
-  assert.ok(result.warnings.some(warning => warning.includes("Forecast missing")));
-});
-
-test("missing snapshot returns low confidence and demand-only suggestion", () => {
-  const result = computeFoSuggestion({
-    sku: "SKU-5",
-    today: "2025-04-10",
-    policyDefaults: baseDefaults,
-    plannedSalesBySku: { "SKU-5": { "2025-04": 300 } },
-    closingStockBySku: { "SKU-5": {} },
+  const recommendation = computeFoRecommendation({
+    sku: "SKU-4",
+    baselineMonth: "2025-01",
+    projection,
+    minSafetyDays: 60,
+    leadTimeDays: 20,
   });
 
-  assert.strictEqual(result.status, "insufficient_inventory_snapshot");
-  assert.strictEqual(result.confidence, "low");
-  assert.strictEqual(result.suggestedUnits, result.rationale.requiredUnits);
+  assert.strictEqual(recommendation.status, "no_fo_needed");
 });
