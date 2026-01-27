@@ -12,7 +12,7 @@ import { openBlockingModal } from "./dataHealthUi.js";
 import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMoneyDE } from "./utils/numberFormat.js";
 import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUtil } from "../lib/dateUtils.js";
 import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
-import { calculateLineShippingEur, deriveShippingPerUnitEur } from "../domain/costing/shipping.js";
+import { computeFreightEstimate } from "../domain/costing/freightEstimate.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -50,6 +50,110 @@ function productLabelForList(sku) {
   );
   if (!match) return sku;
   return `${match.alias || match.sku} (${match.sku})`;
+}
+
+function getProductsBySku() {
+  refreshProductCache();
+  const map = new Map();
+  productCache.forEach(prod => {
+    if (!prod?.sku) return;
+    const key = prod.sku.trim().toLowerCase();
+    map.set(key, prod);
+    map.set(prod.sku.trim(), prod);
+  });
+  return map;
+}
+
+function resolveFreightInputMode(record) {
+  const mode = record?.timeline?.freightInputMode;
+  if (mode === "TOTAL_EUR" || mode === "PER_UNIT_EUR" || mode === "AUTO_FROM_LANDED") return mode;
+  return record?.freightMode === "per_unit" ? "PER_UNIT_EUR" : "TOTAL_EUR";
+}
+
+function ensureTimeline(record, settings = getSettings()) {
+  if (!record) return {};
+  if (!record.timeline || typeof record.timeline !== "object") record.timeline = {};
+  if (record.timeline.includeFreight == null) record.timeline.includeFreight = true;
+  record.timeline.freightInputMode = resolveFreightInputMode(record);
+  const fxRate = Number(record.fxOverride || settings.fxRate || 0);
+  const fxUsdToEur = Number(record.timeline.fxUsdToEur || 0);
+  if (!Number.isFinite(fxUsdToEur) || fxUsdToEur <= 0) {
+    if (Number.isFinite(fxRate) && fxRate > 0) {
+      record.timeline.fxUsdToEur = 1 / fxRate;
+    } else if (Number.isFinite(settings.eurUsdRate) && settings.eurUsdRate > 0) {
+      record.timeline.fxUsdToEur = settings.eurUsdRate;
+    }
+  }
+  return record.timeline;
+}
+
+function updateDerivedFreight(record, settings = getSettings()) {
+  if (!record) return null;
+  const timeline = ensureTimeline(record, settings);
+  const freightTotal = parseDE(record.freightEur);
+  const freightPerUnit = parseDE(record.freightPerUnitEur);
+  timeline.freightTotalEur = Number.isFinite(freightTotal) ? freightTotal : 0;
+  timeline.freightPerUnitEur = Number.isFinite(freightPerUnit) ? freightPerUnit : 0;
+  const estimate = computeFreightEstimate({
+    ...record,
+    timeline,
+  }, getProductsBySku());
+  const issueSet = new Set(estimate.issues || []);
+  const freightAutoEvent = Array.isArray(record.autoEvents)
+    ? record.autoEvents.find(evt => evt?.type === "freight")
+    : null;
+  if (freightAutoEvent?.id) {
+    const log = record.paymentLog?.[freightAutoEvent.id] || {};
+    if (log.status === "paid" && !Number.isFinite(Number(log.amountActualEur))) {
+      issueSet.add("MISSING_PAYMENT_MAPPING");
+    }
+  }
+  estimate.issues = Array.from(issueSet);
+  record.derived = {
+    ...(record.derived || {}),
+    estimatedFreightEur: estimate.estimatedFreightEur,
+    freightIssues: estimate.issues,
+  };
+  const lineMap = new Map();
+  estimate.lines.forEach(line => {
+    if (line.id) lineMap.set(line.id, line);
+    if (line.sku) lineMap.set(`sku:${String(line.sku).toLowerCase()}`, line);
+  });
+  if (Array.isArray(record.items)) {
+    record.items = record.items.map(item => {
+      const line = lineMap.get(item.id) || lineMap.get(`sku:${String(item.sku || "").toLowerCase()}`) || null;
+      return {
+        ...item,
+        derivedLogisticsPerUnitEur: line?.derivedLogisticsPerUnitEur ?? null,
+        derivedIssues: line?.issues ?? [],
+      };
+    });
+  }
+  return estimate;
+}
+
+function formatAutoFreightTooltip(line) {
+  if (!line) return [];
+  const alias = productCache.find(
+    prod => prod?.sku?.trim().toLowerCase() === String(line.sku || "").trim().toLowerCase(),
+  )?.alias;
+  const rows = [
+    `SKU: ${line.sku || "—"}`,
+    `Alias: ${alias || "—"}`,
+    `Einstand (EUR/Stk): ${line.landedUnitCostEur != null ? fmtEURPlain(line.landedUnitCostEur) : "—"}`,
+    `Warenwert (EUR/Stk): ${line.goodsPerUnitEur != null ? fmtEURPlain(line.goodsPerUnitEur) : "—"}`,
+    `Logistik (EUR/Stk): ${line.derivedLogisticsPerUnitEur != null ? fmtEURPlain(line.derivedLogisticsPerUnitEur) : "—"}`,
+  ];
+  if (line.issues?.includes("MISSING_LANDED_COST")) {
+    rows.push("Einstandskosten fehlen");
+  }
+  if (line.issues?.includes("NEGATIVE_DERIVED_LOGISTICS")) {
+    rows.push("Einstand < Warenwert (FX/EK prüfen)");
+  }
+  if (line.issues?.includes("MISSING_FX")) {
+    rows.push("FX fehlt");
+  }
+  return rows;
 }
 
 function resolveProductUnitPrice(sku) {
@@ -520,8 +624,14 @@ function computeGoodsTotals(record, settings = getSettings()) {
 }
 
 function resolveFreightTotal(record, totals = computeGoodsTotals(record, getSettings())) {
-  const mode = record?.freightMode === "per_unit" ? "per_unit" : "total";
-  if (mode === "per_unit") {
+  if (!record) return 0;
+  const mode = resolveFreightInputMode(record);
+  const includeFreight = record?.timeline?.includeFreight !== false;
+  if (mode === "AUTO_FROM_LANDED") {
+    const estimate = record?.derived?.estimatedFreightEur ?? updateDerivedFreight(record)?.estimatedFreightEur ?? 0;
+    return includeFreight ? Math.round(estimate * 100) / 100 : 0;
+  }
+  if (mode === "PER_UNIT_EUR") {
     const perUnit = parseDE(record?.freightPerUnitEur);
     const units = Number(totals?.units || 0);
     const total = perUnit * units;
@@ -532,37 +642,13 @@ function resolveFreightTotal(record, totals = computeGoodsTotals(record, getSett
 }
 
 function computeEstimatedShippingTotals(record, settings = getSettings()) {
-  const items = ensureItems(record);
-  let total = 0;
-  let missing = 0;
-  const used = [];
-  items.forEach(item => {
-    const sku = String(item?.sku || "").trim();
-    if (!sku) return;
-    const product = productCache.find(
-      prod => prod?.sku?.trim().toLowerCase() === sku.toLowerCase(),
-    );
-    const landedUnitCostEur = product?.landedUnitCostEur ?? null;
-    const unitCostUsd = parseDE(item.unitCostUsd);
-    const derived = deriveShippingPerUnitEur({
-      unitCostUsd,
-      landedUnitCostEur,
-      fxEurUsd: settings.eurUsdRate,
-    });
-    if (derived.value == null) {
-      missing += 1;
-      return;
-    }
-    total += calculateLineShippingEur({
-      units: parseDE(item.units),
-      shippingPerUnitEur: derived.value,
-    });
-    used.push(sku);
-  });
+  if (!record) return { total: 0, missing: 0, used: [], estimate: null };
+  const estimate = updateDerivedFreight(record, settings);
   return {
-    total: Math.round(total * 100) / 100,
-    missing,
-    used,
+    total: Math.round((estimate?.estimatedFreightEur || 0) * 100) / 100,
+    missing: estimate?.missingLandedCount || 0,
+    used: estimate?.lines?.map(line => line.sku).filter(Boolean) || [],
+    estimate,
   };
 }
 
@@ -594,6 +680,10 @@ function normaliseGoodsFields(record, settings = getSettings()) {
   record.freightMode = record.freightMode === "per_unit" ? "per_unit" : "total";
   record.freightEur = fmtCurrencyInput(record.freightEur ?? "0,00");
   record.freightPerUnitEur = fmtCurrencyInput(record.freightPerUnitEur ?? "0,00");
+  ensureTimeline(record, settings);
+  if (!record.derived || typeof record.derived !== "object") {
+    record.derived = { estimatedFreightEur: 0, freightIssues: [] };
+  }
   if (!record.sku && record.items[0]?.sku) {
     record.sku = record.items[0].sku;
   }
@@ -952,6 +1042,13 @@ function defaultRecord(config, settings = getSettings()) {
     ],
     goodsEur: "0,00",
     fxOverride: settings.fxRate || null,
+    timeline: {
+      fxUsdToEur: settings.eurUsdRate || null,
+      includeFreight: true,
+      freightInputMode: "TOTAL_EUR",
+      freightTotalEur: 0,
+      freightPerUnitEur: 0,
+    },
     freightEur: "0,00",
     freightMode: "total",
     freightPerUnitEur: "0,00",
@@ -973,6 +1070,10 @@ function defaultRecord(config, settings = getSettings()) {
       { id: Math.random().toString(36).slice(2, 9), label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
     ],
     paymentLog: {},
+    derived: {
+      estimatedFreightEur: 0,
+      freightIssues: [],
+    },
     archived: false,
   };
   ensureAutoEvents(record, settings, record.milestones);
@@ -1504,6 +1605,12 @@ function renderItemsTable(container, record, onChange, dataListId) {
   if (!container) return;
   refreshProductCache();
   ensureItems(record);
+  const estimate = updateDerivedFreight(record, getSettings());
+  const lineMap = new Map();
+  estimate?.lines?.forEach(line => {
+    if (line.id) lineMap.set(line.id, line);
+    if (line.sku) lineMap.set(`sku:${String(line.sku).toLowerCase()}`, line);
+  });
   container.innerHTML = "";
   const updateMissingIndicator = (input, missing) => {
     if (!input) return;
@@ -1539,6 +1646,7 @@ function renderItemsTable(container, record, onChange, dataListId) {
       el("th", {}, ["Stückkosten (USD)"]),
       el("th", {}, ["Zusatz/ Stück (USD)"]),
       el("th", {}, ["Pauschal (USD)"]),
+      el("th", {}, ["Logistik / Stk (EUR)"]),
       el("th", {}, [""])
     ])
   ]);
@@ -1595,6 +1703,9 @@ function renderItemsTable(container, record, onChange, dataListId) {
     flatInput.addEventListener("blur", () => { item.extraFlatUsd = fmtCurrencyInput(flatInput.value); flatInput.value = item.extraFlatUsd; onChange(); });
     flatInput.addEventListener("input", () => { item.extraFlatUsd = flatInput.value; });
 
+    const line = lineMap.get(item.id) || lineMap.get(`sku:${String(item.sku || "").toLowerCase()}`) || null;
+    const logisticsCell = buildLogisticsCell(line);
+
     const removeBtn = el("button", { class: "btn danger", type: "button" }, ["✕"]);
     removeBtn.addEventListener("click", () => {
       if ((record.items || []).length <= 1) return;
@@ -1609,6 +1720,7 @@ function renderItemsTable(container, record, onChange, dataListId) {
       el("td", {}, [unitCostInput]),
       el("td", {}, [unitExtraInput]),
       el("td", {}, [flatInput]),
+      el("td", { dataset: { logisticsCell: "true" } }, [logisticsCell]),
       el("td", {}, [removeBtn]),
     );
     body.append(row);
@@ -1616,6 +1728,47 @@ function renderItemsTable(container, record, onChange, dataListId) {
 
   const table = el("table", { class: "po-items-table" }, [header, body]);
   container.append(table, dl);
+}
+
+function buildLogisticsCell(line) {
+  const logisticsValue = line?.derivedLogisticsPerUnitEur;
+  const logisticsDisplay = logisticsValue != null ? fmtEURPlain(logisticsValue) : "—";
+  const tooltipRows = formatAutoFreightTooltip(line);
+  const logisticsTooltip = el("span", { class: "tooltip" }, [
+    el("button", { class: "tooltip-trigger", type: "button", "aria-label": "Logistik Details" }, ["ℹ️"]),
+    el("span", { class: "tooltip-content" }, tooltipRows.map(row => el("div", {}, [row]))),
+  ]);
+  const hasMissing = line?.issues?.includes("MISSING_LANDED_COST");
+  const hasNegative = line?.issues?.includes("NEGATIVE_DERIVED_LOGISTICS");
+  const warningText = hasMissing
+    ? "Einstandskosten fehlen"
+    : (hasNegative ? "Einstand < Warenwert (FX/EK prüfen)" : "");
+  const warningIcon = warningText ? el("span", { class: "cell-warning", title: warningText }, ["⚠︎"]) : null;
+  return el("div", { class: "po-logistics-cell" }, [
+    el("span", { class: "num" }, [logisticsDisplay]),
+    warningIcon,
+    logisticsTooltip,
+  ]);
+}
+
+function updateLogisticsCells(container, estimate) {
+  if (!container || !estimate) return;
+  const lineMap = new Map();
+  estimate?.lines?.forEach(line => {
+    if (line.id) lineMap.set(line.id, line);
+    if (line.sku) lineMap.set(`sku:${String(line.sku).toLowerCase()}`, line);
+  });
+  const rows = Array.from(container.querySelectorAll("[data-item-id]"));
+  rows.forEach(row => {
+    const cell = row.querySelector("[data-logistics-cell]");
+    if (!cell) return;
+    const itemId = row.dataset.itemId;
+    const skuInput = row.querySelector("input");
+    const skuValue = skuInput?.value?.trim() || "";
+    const line = lineMap.get(itemId) || lineMap.get(`sku:${skuValue.toLowerCase()}`) || null;
+    cell.innerHTML = "";
+    cell.append(buildLogisticsCell(line));
+  });
 }
 
 function computeTimeline(record, settings = getSettings()) {
@@ -2499,6 +2652,7 @@ export function renderOrderModule(root, config) {
     fxRate: `${config.slug}-fx-rate`,
     freight: `${config.slug}-freight`,
     freightMode: `${config.slug}-freight-mode`,
+    freightModeHint: `${config.slug}-freight-mode-hint`,
     freightPerUnit: `${config.slug}-freight-per-unit`,
     prod: `${config.slug}-prod`,
     transport: `${config.slug}-transport`,
@@ -2640,9 +2794,11 @@ export function renderOrderModule(root, config) {
         <div>
           <label>Fracht (Eingabeart)</label>
           <select id="${ids.freightMode}">
-            <option value="total">Gesamtbetrag (€)</option>
-            <option value="per_unit">Pro Stück (€)</option>
+            <option value="TOTAL_EUR">Gesamtbetrag (€)</option>
+            <option value="PER_UNIT_EUR">Pro Stück (€)</option>
+            <option value="AUTO_FROM_LANDED">Auto (aus Einstandskosten)</option>
           </select>
+          <p class="muted" id="${ids.freightModeHint}" hidden>Berechnung: Einstandskosten (EUR/Stk) − Warenwert (USD×FX). Fehlende Einstandskosten werden markiert.</p>
         </div>
         <div>
           <label>Fracht gesamt (€)</label>
@@ -2834,6 +2990,7 @@ export function renderOrderModule(root, config) {
   const goodsSummary = $(`#${ids.goodsSummary}`, root);
   const fxRateInput = $(`#${ids.fxRate}`, root);
   const freightModeSelect = $(`#${ids.freightMode}`, root);
+  const freightModeHint = $(`#${ids.freightModeHint}`, root);
   const freightInput = $(`#${ids.freight}`, root);
   const freightPerUnitInput = $(`#${ids.freightPerUnit}`, root);
   const prodInput = $(`#${ids.prod}`, root);
@@ -3559,15 +3716,15 @@ export function renderOrderModule(root, config) {
     if (convertBtn) convertBtn.disabled = !ok;
   }
 
-  function updateGoodsSummary(totals) {
+  function updateGoodsSummary(totals, estimate) {
     if (!goodsSummary) return;
     const eurText = fmtEUR(totals.eur || 0);
     const usdText = fmtUSD(totals.usd || 0);
     const fxText = fmtFxRate(totals.fxRate);
-    const shippingTotals = computeEstimatedShippingTotals(editing, getSettings());
-    const shippingText = fmtEUR(shippingTotals.total || 0);
-    const shippingSuffix = shippingTotals.missing
-      ? ` · Versanddaten fehlen (${shippingTotals.missing})`
+    const derived = estimate || updateDerivedFreight(editing, getSettings());
+    const shippingText = fmtEUR(derived?.estimatedFreightEur || 0);
+    const shippingSuffix = derived?.mode === "AUTO_FROM_LANDED" && derived?.missingLandedCount
+      ? ` · Einstandskosten fehlen (${derived.missingLandedCount})`
       : "";
     goodsSummary.textContent = fxText
       ? `Summe Warenwert: ${eurText} (${usdText} ÷ FX ${fxText}) · Estimated Shipping (EUR): ${shippingText}${shippingSuffix}`
@@ -3576,9 +3733,11 @@ export function renderOrderModule(root, config) {
 
   function updateFreightModeUI() {
     if (!freightModeSelect || !freightInput || !freightPerUnitInput) return;
-    const mode = freightModeSelect.value === "per_unit" ? "per_unit" : "total";
-    freightInput.disabled = mode === "per_unit";
-    freightPerUnitInput.disabled = mode !== "per_unit";
+    const mode = freightModeSelect.value || "TOTAL_EUR";
+    const isAuto = mode === "AUTO_FROM_LANDED";
+    freightInput.disabled = mode === "PER_UNIT_EUR" || isAuto;
+    freightPerUnitInput.disabled = mode !== "PER_UNIT_EUR" || isAuto;
+    if (freightModeHint) freightModeHint.hidden = !isAuto;
   }
 
   function applyProductDefaultsFromProduct(product) {
@@ -3685,12 +3844,20 @@ export function renderOrderModule(root, config) {
     ensureItems(editing);
     const fxOverrideValue = parseDE(fxRateInput?.value ?? "");
     editing.fxOverride = Number.isFinite(fxOverrideValue) && fxOverrideValue > 0 ? fxOverrideValue : null;
+    editing.timeline = editing.timeline || {};
+    editing.timeline.fxUsdToEur = editing.fxOverride
+      ? 1 / editing.fxOverride
+      : (Number.isFinite(settings.eurUsdRate) && settings.eurUsdRate > 0 ? settings.eurUsdRate : null);
     normaliseGoodsFields(editing, settings);
     const totals = computeGoodsTotals(editing, settings);
-    updateGoodsSummary(totals);
-    editing.freightMode = freightModeSelect?.value === "per_unit" ? "per_unit" : "total";
+    const selectedMode = freightModeSelect?.value || "TOTAL_EUR";
+    editing.timeline = editing.timeline || {};
+    editing.timeline.freightInputMode = selectedMode;
+    editing.freightMode = selectedMode === "PER_UNIT_EUR" ? "per_unit" : "total";
     editing.freightEur = fmtCurrencyInput(freightInput.value);
     editing.freightPerUnitEur = fmtCurrencyInput(freightPerUnitInput?.value || "");
+    const estimate = updateDerivedFreight(editing, settings);
+    updateGoodsSummary(totals, estimate);
     editing.prodDays = Number(prodInput.value || 0);
     editing.transport = transportSelect.value;
     editing.transitDays = Number(transitInput.value || 0);
@@ -3709,6 +3876,7 @@ export function renderOrderModule(root, config) {
     }
     const timeline = computeTimeline(editing, settings);
     editing.cnyAdjustmentDays = timeline?.cnyAdjustmentDays || 0;
+    return estimate;
   }
 
   function persistEditing({ source, silent } = {}) {
@@ -3741,17 +3909,18 @@ export function renderOrderModule(root, config) {
       }
     }
     const settings = getSettings();
-    syncEditingFromForm(settings);
+    let estimate = syncEditingFromForm(settings);
     if (!transitInput.value) {
       transitInput.value = editing.transport === "air" ? "10" : (editing.transport === "rail" ? "30" : "60");
     }
-    syncEditingFromForm(settings);
+    estimate = syncEditingFromForm(settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     ensurePaymentLog(editing);
     renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
     updateTimelineOverrides(computeTimeline(editing, settings));
     renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
     updatePreview(settings);
+    updateLogisticsCells(itemsZone, estimate);
     updateSaveEnabled();
     isDirty = true;
     if (opts.persist) {
@@ -3817,8 +3986,9 @@ export function renderOrderModule(root, config) {
     updateOrderDateFields(editing.orderDate || new Date().toISOString().slice(0, 10));
     const fxBase = editing.fxOverride ?? settings.fxRate ?? 0;
     if (fxRateInput) fxRateInput.value = fxBase ? fmtFxRate(fxBase) : "";
-    updateGoodsSummary(computeGoodsTotals(editing, settings));
-    if (freightModeSelect) freightModeSelect.value = editing.freightMode === "per_unit" ? "per_unit" : "total";
+    const estimate = updateDerivedFreight(editing, settings);
+    updateGoodsSummary(computeGoodsTotals(editing, settings), estimate);
+    if (freightModeSelect) freightModeSelect.value = resolveFreightInputMode(editing);
     freightInput.value = fmtCurrencyInput(editing.freightEur ?? "0,00");
     if (freightPerUnitInput) freightPerUnitInput.value = fmtCurrencyInput(editing.freightPerUnitEur ?? "0,00");
     updateFreightModeUI();
