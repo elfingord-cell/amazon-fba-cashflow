@@ -363,6 +363,8 @@ td.num, th.num{text-align:right}
 .tooltip-trigger:focus{outline:none; box-shadow:0 0 0 3px var(--ring);}
 .tooltip-content{position:absolute; left:0; top:28px; min-width:240px; max-width:320px; background:#0f1b2d; color:#fff; font-size:12px; padding:8px 10px; border-radius:8px; box-shadow:var(--shadow); opacity:0; pointer-events:none; transform:translateY(-4px); transition:opacity .12s ease, transform .12s ease; z-index:12;}
 .tooltip:focus-within .tooltip-content,.tooltip:hover .tooltip-content{opacity:1; pointer-events:auto; transform:translateY(0);}
+.po-logistics-cell{display:flex; align-items:center; gap:6px;}
+.po-logistics-cell .tooltip-trigger{width:18px; height:18px; font-size:11px;}
 .fo-payments-table{table-layout:fixed; width:100%;}
 .fo-payments-table th,.fo-payments-table td{min-width:120px;}
 .fo-payments-table th:first-child,.fo-payments-table td:first-child{min-width:160px;}
