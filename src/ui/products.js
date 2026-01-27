@@ -5,7 +5,6 @@ import {
   upsertProduct,
   deleteProductBySku,
   setProductStatus,
-  setPreferredProductSupplier,
   setProductsTableColumns,
 } from "../data/storageLocal.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
@@ -615,58 +614,10 @@ function buildHistoryTable(state, sku) {
       buildHistoryTable(state, product.sku),
     ]);
 
-    const suppliersSection = (() => {
-      const mappings = (state.productSuppliers || []).filter(entry => String(entry.sku || "").trim().toLowerCase() === String(product.sku || "").trim().toLowerCase());
-      const supplierById = new Map((state.suppliers || []).map(s => [s.id, s]));
-      if (!mappings.length) {
-        return createEl("div", { class: "product-suppliers" }, [
-          createEl("h4", {}, ["Suppliers"]),
-          createEl("p", { class: "muted" }, ["Keine Supplier-Mappings vorhanden."]),
-        ]);
-      }
-      const table = createEl("table", { class: "table" });
-      table.append(
-        createEl("thead", {}, [
-          createEl("tr", {}, [
-            createEl("th", {}, ["Supplier"]),
-            createEl("th", { class: "num" }, ["Unit Price"]),
-            createEl("th", {}, ["Currency"]),
-            createEl("th", { class: "num" }, ["Prod LT"]),
-            createEl("th", {}, ["Incoterm"]),
-            createEl("th", {}, ["Preferred"]),
-            createEl("th", {}, ["Actions"]),
-          ]),
-        ]),
-        createEl("tbody", {}, mappings.map(mapping => {
-          const supplier = supplierById.get(mapping.supplierId);
-          const priceText = mapping.unitPrice != null
-            ? Number(mapping.unitPrice).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-            : "—";
-          return createEl("tr", {}, [
-            createEl("td", {}, [supplier?.name || mapping.supplierId || "—"]),
-            createEl("td", { class: "num" }, [priceText]),
-            createEl("td", {}, [mapping.currency || "—"]),
-            createEl("td", { class: "num" }, [mapping.productionLeadTimeDays ?? "—"]),
-            createEl("td", {}, [mapping.incoterm || "—"]),
-            createEl("td", {}, [mapping.isPreferred ? "✓" : "—"]),
-            createEl("td", {}, [
-              createEl("button", {
-                class: "btn secondary",
-                type: "button",
-                onclick: () => {
-                  setPreferredProductSupplier(mapping.id);
-                  renderProducts(root);
-                },
-              }, ["Set preferred"]),
-            ]),
-          ]);
-        })),
-      );
-      return createEl("div", { class: "product-suppliers" }, [
-        createEl("h4", {}, ["Suppliers"]),
-        createEl("div", { class: "table-wrap" }, [table]),
-      ]);
-    })();
+    const suppliersSection = createEl("div", { class: "product-suppliers" }, [
+      createEl("h4", {}, ["Suppliers"]),
+      createEl("p", { class: "muted" }, ["SKU-Mappings wurden entfernt. Lieferanten und Preise werden direkt im Produktstamm gepflegt."]),
+    ]);
 
     const saveBtn = createEl("button", { class: "btn", type: "submit" }, ["Speichern"]);
     const cancelBtn = createEl("button", { class: "btn secondary", type: "button" }, ["Abbrechen"]);

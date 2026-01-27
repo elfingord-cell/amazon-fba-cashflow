@@ -9,6 +9,8 @@ import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
+import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
+import { computeFoSuggestion, findEtaForMinDoh } from "../domain/foSuggestion.js";
 
 function $(sel, root = document) {
   return root.querySelector(sel);
@@ -123,6 +125,58 @@ function formatPercent(value) {
   return amount.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
+function formatUnits(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  return Math.round(amount).toLocaleString("de-DE", { maximumFractionDigits: 0 });
+}
+
+function buildPlannedSalesBySku(state) {
+  const manual = state?.forecast?.forecastManual || {};
+  const imported = state?.forecast?.forecastImport || {};
+  const result = {};
+  const mergeSku = (sku) => {
+    const skuKey = String(sku || "").trim();
+    if (!skuKey) return;
+    if (!result[skuKey]) result[skuKey] = {};
+    const manualMonths = manual[skuKey] || {};
+    const importMonths = imported[skuKey] || {};
+    const months = new Set([...Object.keys(importMonths), ...Object.keys(manualMonths)]);
+    months.forEach(month => {
+      const manualValue = parseLocaleNumber(manualMonths[month]);
+      if (Number.isFinite(manualValue)) {
+        result[skuKey][month] = manualValue;
+        return;
+      }
+      const importValue = parseLocaleNumber(importMonths[month]?.units);
+      if (Number.isFinite(importValue)) {
+        result[skuKey][month] = importValue;
+      }
+    });
+  };
+  Object.keys(imported || {}).forEach(mergeSku);
+  Object.keys(manual || {}).forEach(mergeSku);
+  return result;
+}
+
+function buildClosingStockBySku(state) {
+  const result = {};
+  const snapshots = state?.inventory?.snapshots || [];
+  snapshots.forEach(snapshot => {
+    const month = snapshot?.month;
+    if (!month) return;
+    (snapshot.items || []).forEach(item => {
+      const sku = String(item?.sku || "").trim();
+      if (!sku) return;
+      if (!result[sku]) result[sku] = {};
+      const amazonUnits = Number(item?.amazonUnits || 0);
+      const threePlUnits = Number(item?.threePLUnits || 0);
+      result[sku][month] = amazonUnits + threePlUnits;
+    });
+  });
+  return result;
+}
+
 function convertToEur(amount, currency, fxRate) {
   const value = Number(amount || 0);
   if (!Number.isFinite(value)) return 0;
@@ -177,32 +231,6 @@ function mapPaymentAnchor(trigger) {
   return trigger || "ORDER_DATE";
 }
 
-function findProductSupplier(state, sku, supplierId) {
-  if (!sku || !supplierId) return null;
-  const keySku = String(sku).trim().toLowerCase();
-  const keySup = String(supplierId).trim();
-  return (state.productSuppliers || []).find(
-    entry => String(entry.sku || "").trim().toLowerCase() === keySku
-      && String(entry.supplierId || "").trim() === keySup
-      && entry.isActive !== false,
-  ) || null;
-}
-
-function listActiveMappings(state, sku) {
-  const keySku = String(sku || "").trim().toLowerCase();
-  return (state.productSuppliers || [])
-    .filter(entry => String(entry.sku || "").trim().toLowerCase() === keySku)
-    .filter(entry => entry.isActive !== false);
-}
-
-function findPreferredMapping(state, sku) {
-  const list = listActiveMappings(state, sku);
-  const preferred = list.find(entry => entry.isPreferred);
-  if (preferred) return preferred;
-  if (list.length === 1) return list[0];
-  return null;
-}
-
 function getProductBySku(products, sku) {
   if (!sku) return null;
   const key = String(sku).trim().toLowerCase();
@@ -232,15 +260,14 @@ function listProductsForSelect(products) {
 }
 
 function resolveDefault(field, context) {
-  const { product, supplier, mapping, settings, transportMode, incoterm } = context;
+  const { product, supplier, settings, transportMode, incoterm } = context;
   const incotermValue = String(incoterm || "").toUpperCase();
-  if (field === "supplierId") return mapping?.supplierId || product?.supplierId || "";
+  if (field === "supplierId") return product?.supplierId || "";
   if (field === "transportMode") return product?.defaultTransportMode || "SEA";
-  if (field === "incoterm") return mapping?.incoterm || product?.defaultIncoterm || supplier?.incotermDefault || "EXW";
-  if (field === "currency") return mapping?.currency || supplier?.currencyDefault || "USD";
+  if (field === "incoterm") return product?.defaultIncoterm || supplier?.incotermDefault || "EXW";
+  if (field === "currency") return supplier?.currencyDefault || "USD";
   if (field === "freightCurrency") return incotermValue === "DDP" ? "USD" : (product?.freightCurrency || "EUR");
   if (field === "unitPrice") {
-    if (mapping?.unitPrice != null) return parseLocaleNumber(mapping.unitPrice);
     if (product?.defaultUnitPrice != null || product?.unitPrice != null) {
       return parseLocaleNumber(product.defaultUnitPrice ?? product.unitPrice);
     }
@@ -271,30 +298,26 @@ function resolveDefault(field, context) {
 
 function buildSuggestedFields(state, form) {
   const settings = state.settings || {};
-  const suggestedMapping = form.sku ? findPreferredMapping(state, form.sku) : null;
-  const supplierId = form.supplierId || suggestedMapping?.supplierId || "";
-  const supplier = (state.suppliers || []).find(item => item.id === supplierId) || null;
-  const mapping = findProductSupplier(state, form.sku, supplierId) || suggestedMapping;
   const product = getProductBySku(state.products || [], form.sku);
-  const baseContext = { product, supplier, mapping, settings, transportMode: form.transportMode, incoterm: form.incoterm };
+  const supplierId = form.supplierId || product?.supplierId || "";
+  const supplier = (state.suppliers || []).find(item => item.id === supplierId) || null;
+  const baseContext = { product, supplier, settings, transportMode: form.transportMode, incoterm: form.incoterm };
   const resolvedTransport = resolveDefault("transportMode", baseContext);
   const transport = String(form.transportMode || resolvedTransport || "SEA").toUpperCase();
   const leadTimes = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
   const context = { ...baseContext, transportMode: transport };
   const logisticsLeadTimeDays = Number(leadTimes[transport.toLowerCase()] ?? 0);
   const unitPrice = resolveDefault("unitPrice", context);
-  const unitPriceSource = mapping?.unitPrice != null
-    ? "Supplier/SKU Mapping"
-    : (product?.defaultUnitPrice != null || product?.unitPrice != null ? "Produktdatenbank" : null);
+  const unitPriceSource = product?.defaultUnitPrice != null || product?.unitPrice != null
+    ? "Produktdatenbank"
+    : null;
   const leadTimeResolution = resolveProductionLeadTimeDays({
     sku: form.sku,
     supplierId,
     state,
   });
-  const incotermSource = mapping?.incoterm ? "Supplier/SKU Mapping" : (product?.defaultIncoterm ? "Produktdatenbank" : "Supplier Default");
-  const paymentTermsSource = mapping?.paymentTermsTemplate?.length
-    ? "Supplier/SKU Mapping"
-    : (supplier?.paymentTermsDefault?.length ? "Supplier Default" : "System Default");
+  const incotermSource = product?.defaultIncoterm ? "Produktdatenbank" : "Supplier Default";
+  const paymentTermsSource = supplier?.paymentTermsDefault?.length ? "Supplier Default" : "System Default";
   const fxRateSource = settings?.fxRate ? "Settings" : null;
   return {
     transportMode: transport,
@@ -309,12 +332,12 @@ function buildSuggestedFields(state, form) {
     fxRate: resolveDefault("fxRate", context),
     fxRateSource,
     supplierId,
-    supplierSource: mapping?.supplierId ? "Supplier/SKU Mapping" : (product?.supplierId ? "Produktdatenbank" : null),
+    supplierSource: product?.supplierId ? "Produktdatenbank" : null,
     productionLeadTimeDays: leadTimeResolution.value,
     productionLeadTimeSource: leadTimeResolution.source,
     incotermSource,
     paymentTermsSource,
-    preferredSupplier: Boolean(mapping?.isPreferred),
+    preferredSupplier: false,
     logisticsLeadTimeDays: Number.isFinite(logisticsLeadTimeDays) ? logisticsLeadTimeDays : 0,
     bufferDays: settings.defaultBufferDays ?? 0,
   };
@@ -422,12 +445,10 @@ function recomputePaymentDueDates(payments, schedule) {
   });
 }
 
-function buildSuggestedPayments({ supplier, mapping, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
-  const terms = Array.isArray(mapping?.paymentTermsTemplate) && mapping.paymentTermsTemplate.length
-    ? mapping.paymentTermsTemplate
-    : (Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
-      ? supplier.paymentTermsDefault
-      : defaultPaymentTerms());
+function buildSuggestedPayments({ supplier, baseValue, currency, schedule, freight, freightCurrency, dutyRatePct, eustRatePct, fxRate, supplierCostEur, incoterm }) {
+  const terms = Array.isArray(supplier?.paymentTermsDefault) && supplier.paymentTermsDefault.length
+    ? supplier.paymentTermsDefault
+    : defaultPaymentTerms();
   const supplierRows = terms.map(term => {
     const triggerEvent = PAYMENT_EVENTS.includes(term.triggerEvent) ? term.triggerEvent : "ORDER_DATE";
     const offsetDays = Number(term.offsetDays || 0);
@@ -628,7 +649,6 @@ export default function render(root) {
   const state = loadState();
   if (!Array.isArray(state.fos)) state.fos = [];
   if (!Array.isArray(state.suppliers)) state.suppliers = [];
-  if (!Array.isArray(state.productSuppliers)) state.productSuppliers = [];
   const products = getProductsSnapshot();
   const supplierLabelMap = buildSupplierLabelMap(state, products);
 
@@ -940,6 +960,8 @@ export default function render(root) {
     const productOptions = listProductsForSelect(products);
     const isExisting = Boolean(existing);
     const isConverted = String(existing?.status || "").toUpperCase() === "CONVERTED";
+    const plannedSalesBySku = buildPlannedSalesBySku(state);
+    const closingStockBySku = buildClosingStockBySku(state);
     const baseForm = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
@@ -1065,6 +1087,7 @@ export default function render(root) {
       updateSuggestedLabels();
       updateIncotermState();
       updateWarnings();
+      updateFoRecommendation();
       if (!paymentsDirty && baseForm.supplierId && baseForm.supplierId !== previousSupplier) {
         const schedule = buildSchedule(baseForm);
         const baseValue = computeBaseValue();
@@ -1076,7 +1099,6 @@ export default function render(root) {
         }
         baseForm.payments = buildSuggestedPayments({
           supplier,
-          mapping: findProductSupplier(state, baseForm.sku, baseForm.supplierId),
           baseValue,
           currency: baseForm.currency,
           schedule,
@@ -1128,7 +1150,6 @@ export default function render(root) {
       const fxSource = overrides.fxRate ? "Manual override" : (suggested.fxRateSource || "—");
 
       list.append(
-        el("li", {}, [`Preferred Supplier: ${suggested.preferredSupplier ? "Yes" : "No"}`]),
         el("li", {}, [`Supplier source: ${supplierSource}`]),
         el("li", {}, [`Price source: ${unitPriceSource}`]),
         el("li", {}, [`Production lead time source: ${leadTimeSource}`]),
@@ -1143,17 +1164,6 @@ export default function render(root) {
       const warningList = $(".fo-warning-list", content);
       if (!warningBox || !warningList) return;
       warningList.innerHTML = "";
-      const sku = String(baseForm.sku || "").trim();
-      if (sku) {
-        const mappingCount = listActiveMappings(state, sku).length;
-        if (mappingCount === 0) {
-          warningList.append(el("li", {}, [
-            "Kein Supplier-SKU Mapping gefunden.",
-            " ",
-            el("button", { class: "btn ghost fo-fix-now", type: "button", dataset: { sku, tab: "suppliers" } }, ["Fix now"]),
-          ]));
-        }
-      }
       const product = getProductBySku(products, baseForm.sku);
       if (product) {
         const templateFields = product.template?.fields || {};
@@ -1169,6 +1179,58 @@ export default function render(root) {
         }
       }
       warningBox.style.display = warningList.childElementCount ? "block" : "none";
+    }
+
+    function updateFoRecommendation() {
+      const box = $("#fo-recommendation", content);
+      const text = $("#fo-recommendation-text", content);
+      const warningsList = $("#fo-recommendation-warnings", content);
+      if (!box || !text || !warningsList) return;
+      warningsList.innerHTML = "";
+      const sku = String(baseForm.sku || "").trim();
+      if (!sku) {
+        text.textContent = "SKU auswählen, um Empfehlung zu sehen.";
+        return;
+      }
+      const safetyDays = Number(state.inventory?.settings?.safetyDays ?? 60);
+      const etaResult = findEtaForMinDoh({
+        sku,
+        today: new Date(),
+        minimumDohDays: safetyDays,
+        plannedSalesBySku,
+        closingStockBySku,
+      });
+      const leadTimeDays =
+        Number(baseForm.productionLeadTimeDays || 0)
+        + Number(baseForm.logisticsLeadTimeDays || 0)
+        + Number(baseForm.bufferDays || 0);
+      const suggestion = computeFoSuggestion({
+        sku,
+        today: new Date(),
+        etaDate: etaResult.etaDate || undefined,
+        policyDefaults: {
+          safetyStockDaysTotalDe: safetyDays,
+          minimumStockDaysTotalDe: safetyDays,
+          leadTimeDaysTotal: leadTimeDays,
+          moqUnits: 0,
+          operationalCoverageDaysDefault: 120,
+        },
+        plannedSalesBySku,
+        closingStockBySku,
+      });
+      const etaLabel = etaResult.etaDate ? formatDate(etaResult.etaDate) : "—";
+      if (etaResult.status === "insufficient_inventory_snapshot") {
+        text.textContent = "Keine ETA-Empfehlung möglich (Bestandssnapshots fehlen).";
+      } else if (!etaResult.etaDate) {
+        text.textContent = "Keine ETA-Empfehlung verfügbar (DOH-Schwelle nicht erreicht).";
+      } else if (suggestion.suggestedUnits <= 0) {
+        text.textContent = `Empfehlung: keine Bestellung nötig. ETA ${etaLabel} bleibt oberhalb Minimum-DOH.`;
+      } else {
+        text.textContent = `Empfehlung: ${formatUnits(suggestion.suggestedUnits)} Einheiten, geliefert (ETA) am ${etaLabel}.`;
+      }
+      [...(etaResult.warnings || []), ...(suggestion.warnings || [])].forEach(warning => {
+        warningsList.append(el("li", {}, [warning]));
+      });
     }
 
     function updateIncotermState() {
@@ -1397,7 +1459,6 @@ export default function render(root) {
                 }
                 const suggestedPayments = buildSuggestedPayments({
                   supplier,
-                  mapping: findProductSupplier(state, baseForm.sku, baseForm.supplierId),
                   baseValue,
                   currency: baseForm.currency,
                   schedule,
@@ -1612,6 +1673,11 @@ export default function render(root) {
               el("strong", { id: "fo-landed-cost" }, ["—"]),
             ]),
           ]),
+          el("div", { class: "banner info", id: "fo-recommendation" }, [
+            el("strong", {}, ["FO Empfehlung"]),
+            el("p", { class: "muted", id: "fo-recommendation-text" }, ["—"]),
+            el("ul", { class: "fo-recommendation-warnings", id: "fo-recommendation-warnings" }, []),
+          ]),
           el("div", { class: "banner info", id: "fo-suggestion-info" }, [
             el("strong", {}, ["Why this suggestion"]),
             el("ul", { class: "fo-suggestion-list" }, []),
@@ -1755,6 +1821,7 @@ export default function render(root) {
         updatePaymentTotals();
         validateForm();
         updateWarnings();
+        updateFoRecommendation();
         renderPaymentsTable();
         updateCostSummary(values);
       }, 300);
@@ -2097,7 +2164,6 @@ export default function render(root) {
       }
       baseForm.payments = buildSuggestedPayments({
         supplier,
-        mapping: findProductSupplier(state, baseForm.sku, baseForm.supplierId),
         baseValue,
         currency: baseForm.currency,
         schedule,
