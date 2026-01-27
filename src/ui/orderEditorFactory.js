@@ -19,6 +19,9 @@ function el(tag, attrs = {}, children = []) {
     if (key === "class") node.className = value;
     else if (key === "dataset") {
       for (const [dk, dv] of Object.entries(value)) node.dataset[dk] = dv;
+    } else if (typeof value === "boolean") {
+      node[key] = value;
+      if (value) node.setAttribute(key, "");
     } else if (key.startsWith("on") && typeof value === "function") {
       node.addEventListener(key.slice(2), value);
     } else {
