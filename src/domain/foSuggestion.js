@@ -227,8 +227,10 @@ export function buildSkuProjection({
     const { year, month: monthIndex } = parseMonthKey(month);
     const days = daysInMonth(year, monthIndex);
     const avgDailyDemand = demand === 0 ? 0 : demand / days;
-    const doh = avgDailyDemand === 0 ? Number.POSITIVE_INFINITY : startStock / avgDailyDemand;
     const endStock = startStock + inbound - demand;
+    const doh = avgDailyDemand === 0
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, endStock / avgDailyDemand);
     months.push({
       month,
       startStock,
@@ -258,6 +260,7 @@ export function computeFoRecommendation({
   extraBufferDays = 30,
   cnyPeriod,
   inboundWithoutEtaCount = 0,
+  moqUnits = 0,
 }) {
   if (!baselineMonth) {
     return {
@@ -292,7 +295,12 @@ export function computeFoRecommendation({
   const coverageDays = Number(minSafetyDays || 0) + Number(extraBufferDays || 0);
   const targetUnits = firstRisk.avgDailyDemand * coverageDays;
   const stockAtArrival = firstRisk.startStock;
-  const recommendedUnits = Math.max(0, Math.ceil(targetUnits - stockAtArrival));
+  let recommendedUnits = Math.max(0, Math.ceil(targetUnits - stockAtArrival));
+  let moqApplied = false;
+  if (recommendedUnits > 0 && moqUnits > 0 && recommendedUnits < moqUnits) {
+    recommendedUnits = moqUnits;
+    moqApplied = true;
+  }
 
   return {
     sku,
@@ -304,6 +312,8 @@ export function computeFoRecommendation({
     orderDateAdjusted: formatIsoDate(orderDateAdjusted),
     overlapDays,
     recommendedUnits,
+    moqUnits,
+    moqApplied,
     stockAtArrival,
     avgDailyDemand: firstRisk.avgDailyDemand,
     issues: buildIssueList(projection, inboundWithoutEtaCount),

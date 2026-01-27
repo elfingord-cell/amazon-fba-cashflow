@@ -342,9 +342,14 @@ function listProductsForSelect(products) {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
+function getTemplateFields(product) {
+  return product?.template?.fields || product?.template || {};
+}
+
 function resolveDefault(field, context) {
   const { product, supplier, settings, transportMode, incoterm } = context;
   const incotermValue = String(incoterm || "").toUpperCase();
+  const templateFields = getTemplateFields(product);
   if (field === "supplierId") return product?.supplierId || "";
   if (field === "transportMode") return product?.defaultTransportMode || "SEA";
   if (field === "incoterm") return product?.defaultIncoterm || supplier?.incotermDefault || "EXW";
@@ -353,6 +358,9 @@ function resolveDefault(field, context) {
   if (field === "unitPrice") {
     if (product?.defaultUnitPrice != null || product?.unitPrice != null) {
       return parseLocaleNumber(product.defaultUnitPrice ?? product.unitPrice);
+    }
+    if (templateFields.unitPriceUsd != null) {
+      return parseLocaleNumber(templateFields.unitPriceUsd);
     }
     return null;
   }
@@ -382,6 +390,7 @@ function resolveDefault(field, context) {
 function buildSuggestedFields(state, form) {
   const settings = state.settings || {};
   const product = getProductBySku(state.products || [], form.sku);
+  const templateFields = getTemplateFields(product);
   const supplierId = form.supplierId || product?.supplierId || "";
   const supplier = (state.suppliers || []).find(item => item.id === supplierId) || null;
   const baseContext = { product, supplier, settings, transportMode: form.transportMode, incoterm: form.incoterm };
@@ -391,7 +400,9 @@ function buildSuggestedFields(state, form) {
   const context = { ...baseContext, transportMode: transport };
   const logisticsLeadTimeDays = Number(leadTimes[transport.toLowerCase()] ?? 0);
   const unitPrice = resolveDefault("unitPrice", context);
-  const unitPriceSource = product?.defaultUnitPrice != null || product?.unitPrice != null
+  const unitPriceSource = product?.defaultUnitPrice != null
+    || product?.unitPrice != null
+    || templateFields.unitPriceUsd != null
     ? "Produktdatenbank"
     : null;
   const leadTimeResolution = resolveProductionLeadTimeDays({
@@ -1316,6 +1327,7 @@ export default function render(root) {
         extraBufferDays: 30,
         cnyPeriod: state?.settings?.cny,
         inboundWithoutEtaCount: inboundSummary.inboundWithoutEtaCount,
+        moqUnits: Number(getProductBySku(products, sku)?.moqUnits || 0),
       });
 
       baselineNode.textContent = `Closing Snapshot ${baselineMonth}`;
@@ -1336,9 +1348,14 @@ export default function render(root) {
           ? formatDate(recommendation.orderDateAdjusted)
           : "—";
         unitsNode.textContent = `SKU ${sku}: ${formatUnits(recommendation.recommendedUnits)}`;
+        const notes = [];
         if (recommendation.overlapDays > 0) {
-          notesNode.textContent = `CNY berücksichtigt: +${recommendation.overlapDays} Tage`;
+          notes.push(`CNY berücksichtigt: +${recommendation.overlapDays} Tage`);
         }
+        if (recommendation.moqApplied) {
+          notes.push(`MOQ berücksichtigt: ${formatUnits(recommendation.moqUnits)} Einheiten`);
+        }
+        notesNode.textContent = notes.join(" • ");
       } else {
         summary.textContent = "Keine Empfehlung möglich: letzter Monats-Snapshot fehlt.";
         details.style.display = "none";
