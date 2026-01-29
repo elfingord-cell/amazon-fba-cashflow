@@ -1,11 +1,13 @@
 import {
-  loadState,
-  saveState,
   getProductsSnapshot,
   getRecentProducts,
   recordRecentProduct,
   upsertProduct,
 } from "../data/storageLocal.js";
+import {
+  loadAppState,
+  commitAppState,
+} from "../storage/store.js";
 import { createDataTable } from "./components/dataTable.js";
 import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
@@ -14,6 +16,9 @@ import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUti
 import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
 import { computeFreightEstimate } from "../domain/costing/freightEstimate.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
+import { useDraftForm } from "../hooks/useDraftForm.js";
+import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
+import { openConfirmDialog } from "./utils/confirmDialog.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -545,8 +550,15 @@ function buildModal({ title, content, actions = [] }) {
       closeModal(overlay);
     }
   }
-  overlay.addEventListener("click", (ev) => {
-    if (ev.target === overlay) closeModal(overlay);
+  let pointerDownOnOverlay = false;
+  overlay.addEventListener("mousedown", (ev) => {
+    pointerDownOnOverlay = ev.target === overlay;
+  });
+  overlay.addEventListener("mouseup", (ev) => {
+    if (pointerDownOnOverlay && ev.target === overlay) {
+      closeModal(overlay);
+    }
+    pointerDownOnOverlay = false;
   });
   overlay.addEventListener("keydown", handleKey);
   return overlay;
@@ -702,7 +714,7 @@ function normaliseGoodsFields(record, settings = getSettings()) {
 }
 
 function getSettings() {
-  const state = loadState();
+  const state = loadAppState();
   const raw = (state && state.settings) || {};
   return {
     fxRate: parseDE(raw.fxRate ?? 0) || 0,
@@ -1555,14 +1567,13 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
   }
 
   function updateArchive(rec, archived) {
-    const st = loadState();
+    const st = loadAppState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
     const idx = arr.findIndex(item => item?.id === rec.id || item?.[config.numberField] === rec[config.numberField]);
     if (idx >= 0) {
       arr[idx] = { ...arr[idx], archived };
       st[config.entityKey] = arr;
-      saveState(st);
-      window.dispatchEvent(new Event("state:changed"));
+      commitAppState(st, { source: `${config.slug}:archive`, entityKey: `${config.slug}:${rec[config.numberField] || rec.id}`, action: "update" });
       if (typeof options.onUpdate === "function") options.onUpdate();
     }
   }
@@ -2164,7 +2175,23 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   }, [warn ? `Summe: ${sum}% — Bitte auf 100% anpassen.` : "Summe: 100% ✓"]);
   container.append(note);
 
-  const payments = buildPaymentRows(record, config, settings, loadState().payments);
+  function getMergedPayments() {
+    const stateSnapshot = loadAppState();
+    const base = Array.isArray(stateSnapshot.payments) ? stateSnapshot.payments : [];
+    const drafts = editing?.paymentDrafts || {};
+    const merged = base.map(payment => {
+      const draft = drafts[payment?.id];
+      return draft ? { ...payment, ...draft } : payment;
+    });
+    Object.values(drafts).forEach(draft => {
+      if (!merged.some(entry => entry?.id === draft?.id)) {
+        merged.push(draft);
+      }
+    });
+    return merged;
+  }
+
+  const payments = buildPaymentRows(record, config, settings, getMergedPayments());
   ensurePaymentLog(record);
 
   const paymentSection = el("div", { class: "po-payments-section" }, [
@@ -2193,12 +2220,12 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   paymentTable.append(paymentBody);
 
   function openPaymentModal(payment) {
-    const allPayments = buildPaymentRows(record, config, settings, loadState().payments);
+    const mergedPayments = getMergedPayments();
+    const allPayments = buildPaymentRows(record, config, settings, mergedPayments);
     const existingLog = payment ? (record.paymentLog?.[payment.id] || {}) : {};
-    const stateSnapshot = loadState();
     const initialPaymentId = existingLog.paymentId || payment?.paymentId || null;
     const paymentRecord = initialPaymentId
-      ? (stateSnapshot.payments || []).find(entry => entry?.id === initialPaymentId) || null
+      ? mergedPayments.find(entry => entry?.id === initialPaymentId) || null
       : null;
     const currentPaymentId = paymentRecord?.id || initialPaymentId || null;
     const selectedIds = new Set();
@@ -2459,11 +2486,9 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               return;
             }
 
-            const state = loadState();
-            if (!Array.isArray(state.payments)) state.payments = [];
             const requestedPaymentId = normalizePaymentId(paymentIdInput.value) || (paymentRecord?.id || buildPaymentId());
             if (paymentRecord?.id && requestedPaymentId !== paymentRecord.id) {
-              const duplicate = state.payments.find(entry => entry?.id === requestedPaymentId);
+              const duplicate = mergedPayments.find(entry => entry?.id === requestedPaymentId);
               if (duplicate) {
                 alert("Diese Payment-ID ist bereits vergeben.");
                 return;
@@ -2483,17 +2508,11 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               invoiceFolderDriveUrl: folderUrl || "",
             };
 
-            let storedPayment = state.payments.find(entry => entry?.id === initialPaymentId) || null;
-            if (storedPayment) {
-              if (storedPayment.id !== paymentPayload.id) {
-                storedPayment.id = paymentPayload.id;
-              }
-              Object.assign(storedPayment, paymentPayload);
-            } else {
-              storedPayment = paymentPayload;
-              state.payments.push(storedPayment);
+            if (!editing.paymentDrafts) editing.paymentDrafts = {};
+            if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
+              delete editing.paymentDrafts[initialPaymentId];
             }
-            saveState(state);
+            editing.paymentDrafts[paymentPayload.id] = paymentPayload;
 
             const currentLog = record.paymentLog || {};
             const removedIds = new Set();
@@ -2534,7 +2553,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
               };
             });
 
-            onChange({ persist: true, source: "payment-update" });
+            onAnyChange();
             closeModal(modal);
           },
         }, ["Speichern"]),
@@ -2643,7 +2662,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 }
 
 export function renderOrderModule(root, config) {
-  const state = loadState();
+  const state = loadAppState();
   if (!Array.isArray(state[config.entityKey])) state[config.entityKey] = [];
   const initialSettings = getSettings();
   state[config.entityKey].forEach(rec => normaliseGoodsFields(rec, initialSettings));
@@ -3043,9 +3062,16 @@ export function renderOrderModule(root, config) {
   const preview = $(`#${ids.preview}`, root);
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
-  let editing = defaultRecord(config, getSettings());
+  let draftForm = useDraftForm(defaultRecord(config, getSettings()), {
+    key: `${config.slug}:new`,
+    enableDraftCache: true,
+  });
+  let editing = draftForm.draft;
   let lastLoaded = JSON.parse(JSON.stringify(editing));
   let isDirty = false;
+  const dirtyGuard = useDirtyGuard(() => draftForm.isDirty, "Ungespeicherte Änderungen verwerfen?");
+  dirtyGuard.register();
+  dirtyGuard.attachBeforeUnload();
   let freightPerUnitOverridden = false;
   const poListState = poMode ? { searchTerm: "", showArchived: false, sortKey: null, sortDir: null } : null;
 
@@ -3147,36 +3173,31 @@ export function renderOrderModule(root, config) {
   function hasUnsavedChanges() {
     const settings = getSettings();
     syncEditingFromForm(settings);
-    const current = JSON.stringify(editing);
-    const baseline = JSON.stringify(lastLoaded || {});
-    isDirty = current !== baseline;
+    draftForm.setDraft(editing);
+    isDirty = draftForm.isDirty;
     return isDirty;
   }
 
   function confirmDiscard(onConfirm) {
-    const content = el("p", {}, ["Änderungen verwerfen?"]);
-    const overlay = buildModal({
-      title: "Änderungen verwerfen?",
-      content,
-      actions: [
-        el("button", {
-          class: "btn",
-          type: "button",
-          dataset: { action: "cancel" },
-          onclick: () => closeModal(overlay),
-        }, ["Abbrechen"]),
-        el("button", {
-          class: "btn danger",
-          type: "button",
-          onclick: () => {
-            closeModal(overlay);
-            if (typeof onConfirm === "function") onConfirm();
-          },
-        }, ["Verwerfen"]),
-      ],
+    openConfirmDialog({
+      title: "Ungespeicherte Änderungen",
+      message: "Ungespeicherte Änderungen verwerfen?",
+      confirmLabel: "Verwerfen",
+      cancelLabel: "Abbrechen",
+      onConfirm,
     });
-    const cancelBtn = overlay.querySelector("button[data-action='cancel']");
-    if (cancelBtn) cancelBtn.focus();
+  }
+
+  function formatDraftTimestamp(iso) {
+    if (!iso) return "unbekannt";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "unbekannt";
+    return date.toLocaleString("de-DE", { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  function entityKeyFor(record) {
+    const raw = record?.[config.numberField] || record?.id || "new";
+    return `${config.slug}:${raw}`;
   }
 
   function openFormModal() {
@@ -3201,10 +3222,13 @@ export function renderOrderModule(root, config) {
       closeFormModal();
       return;
     }
-    confirmDiscard(() => {
-      if (reset) loadForm(lastLoaded || editing);
-      isDirty = false;
-      closeFormModal();
+    dirtyGuard({
+      confirmWithModal: ({ onConfirm }) => confirmDiscard(onConfirm),
+      onConfirm: () => {
+        if (reset) loadForm(lastLoaded || editing);
+        isDirty = false;
+        closeFormModal();
+      },
     });
   }
 
@@ -3220,7 +3244,7 @@ export function renderOrderModule(root, config) {
   }
 
   function getCurrentState() {
-    return loadState();
+    return loadAppState();
   }
 
   function getAllRecords() {
@@ -3720,7 +3744,7 @@ export function renderOrderModule(root, config) {
     const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
     preview.append(el("h4", {}, ["Ereignisse"]));
-    preview.append(buildEventList(events, editing.paymentLog, loadState().payments));
+    preview.append(buildEventList(events, editing.paymentLog, getMergedPayments()));
   }
 
   function updateTimelineOverrides(timeline) {
@@ -3738,8 +3762,32 @@ export function renderOrderModule(root, config) {
       && (computeGoodsTotals(editing, getSettings()).usd > 0)
       && !!orderDateInput.value
       && hasSku;
-    saveBtn.disabled = !ok;
+    saveBtn.disabled = !ok || !draftForm.isDirty;
     if (convertBtn) convertBtn.disabled = !ok;
+    updateDirtyBadge();
+  }
+
+  function setSaveLoading(isLoading) {
+    [saveBtn, poSaveHeader].forEach(btn => {
+      if (!btn) return;
+      if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+      btn.textContent = isLoading ? "Speichern…" : btn.dataset.label;
+      btn.disabled = isLoading || btn.disabled;
+    });
+  }
+
+  async function handleSave() {
+    if (saveBtn.disabled) return;
+    setSaveLoading(true);
+    await saveRecord();
+    setSaveLoading(false);
+    updateSaveEnabled();
+  }
+
+  function updateDirtyBadge() {
+    if (!poStatus) return;
+    const status = editing.archived ? "Status: Archiviert" : "Status: Aktiv";
+    poStatus.textContent = draftForm.isDirty ? `${status} • Ungespeichert` : status;
   }
 
   function updateGoodsSummary(totals, estimate) {
@@ -3963,21 +4011,6 @@ export function renderOrderModule(root, config) {
     return estimate;
   }
 
-  function persistEditing({ source, silent } = {}) {
-    const st = loadState();
-    const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
-    const idx = arr.findIndex(item => (item.id && item.id === editing.id)
-      || (item[config.numberField] && item[config.numberField] === editing[config.numberField]));
-    if (idx >= 0) arr[idx] = editing;
-    else arr.push(editing);
-    st[config.entityKey] = arr;
-    saveState(st);
-    renderListView(st[config.entityKey]);
-    if (!silent) {
-      window.dispatchEvent(new CustomEvent("state:changed", { detail: { source } }));
-    }
-  }
-
   function onAnyChange(opts = {}) {
     let focusInfo = opts.focusInfo || null;
     if (!focusInfo) {
@@ -4006,10 +4039,8 @@ export function renderOrderModule(root, config) {
     updatePreview(settings);
     updateLogisticsCells(itemsZone, estimate);
     updateSaveEnabled();
-    isDirty = true;
-    if (opts.persist) {
-      persistEditing({ source: opts.source, silent: false });
-    }
+    draftForm.setDraft(editing);
+    isDirty = draftForm.isDirty;
   }
 
   function updateOrderDateFields(iso) {
@@ -4034,14 +4065,14 @@ export function renderOrderModule(root, config) {
     return isoVal;
   }
 
-  function loadForm(record) {
+  function applyDraftToForm() {
     const settings = getSettings();
-    lastLoaded = JSON.parse(JSON.stringify(record));
-    editing = JSON.parse(JSON.stringify(record));
+    editing = draftForm.draft;
     normaliseGoodsFields(editing, settings);
     ensureAutoEvents(editing, settings, editing.milestones);
     ensurePaymentLog(editing);
     normaliseArchiveFlag(editing);
+    if (!editing.paymentDrafts) editing.paymentDrafts = {};
     if (poStatus) {
       poStatus.textContent = editing.archived ? "Status: Archiviert" : "Status: Aktiv";
     }
@@ -4102,7 +4133,32 @@ export function renderOrderModule(root, config) {
     isDirty = false;
   }
 
-  function saveRecord() {
+  function loadForm(record) {
+    draftForm = useDraftForm(record, { key: entityKeyFor(record), enableDraftCache: true });
+    editing = draftForm.draft;
+    lastLoaded = JSON.parse(JSON.stringify(editing));
+    applyDraftToForm();
+    const cached = draftForm.loadDraftIfAvailable();
+    if (cached?.exists) {
+      openConfirmDialog({
+        title: "Entwurf gefunden",
+        message: `Es gibt einen ungespeicherten Entwurf von ${formatDraftTimestamp(cached.updatedAt)}. Wiederherstellen?`,
+        confirmLabel: "Wiederherstellen",
+        cancelLabel: "Verwerfen",
+        onConfirm: () => {
+          draftForm.restoreDraft();
+          applyDraftToForm();
+          updateDirtyBadge();
+        },
+        onCancel: () => {
+          draftForm.discardDraft();
+          updateDirtyBadge();
+        },
+      });
+    }
+  }
+
+  async function saveRecord() {
     const isoDate = validateOrderDate(true);
     if (!isoDate) {
       if (orderDateDisplay) orderDateDisplay.focus();
@@ -4111,7 +4167,7 @@ export function renderOrderModule(root, config) {
     const settings = getSettings();
     syncEditingFromForm(settings);
     normaliseArchiveFlag(editing);
-    const stateSnapshot = loadState();
+    const stateSnapshot = loadAppState();
     const { issues } = validateAll({
       settings: stateSnapshot.settings,
       products: stateSnapshot.products,
@@ -4135,27 +4191,42 @@ export function renderOrderModule(root, config) {
       openBlockingModal(blocking);
       return;
     }
-    const st = loadState();
-    const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
-    const idx = arr.findIndex(item => (item.id && item.id === editing.id)
-      || (item[config.numberField] && item[config.numberField] === editing[config.numberField]));
-    if (idx >= 0) arr[idx] = editing;
-    else arr.push(editing);
-    st[config.entityKey] = arr;
-    saveState(st);
-    renderListView(st[config.entityKey]);
+    await draftForm.commit((draft) => {
+      const st = loadAppState();
+      const nextRecord = JSON.parse(JSON.stringify(draft));
+      const paymentDrafts = nextRecord.paymentDrafts || {};
+      delete nextRecord.paymentDrafts;
+      if (!Array.isArray(st.payments)) st.payments = [];
+      Object.values(paymentDrafts).forEach(payload => {
+        if (!payload?.id) return;
+        const idx = st.payments.findIndex(entry => entry?.id === payload.id);
+        if (idx >= 0) st.payments[idx] = { ...st.payments[idx], ...payload };
+        else st.payments.push(payload);
+      });
+      const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
+      const idx = arr.findIndex(item => (item.id && item.id === nextRecord.id)
+        || (item[config.numberField] && item[config.numberField] === nextRecord[config.numberField]));
+      if (idx >= 0) arr[idx] = nextRecord;
+      else arr.push(nextRecord);
+      st[config.entityKey] = arr;
+      commitAppState(st, {
+        source: `${config.slug}:save`,
+        entityKey: entityKeyFor(nextRecord),
+        action: idx >= 0 ? "update" : "create",
+      });
+      lastLoaded = JSON.parse(JSON.stringify(nextRecord));
+    });
+    renderListView(loadAppState()[config.entityKey]);
     refreshQuickfillControls();
     if (quickfillEnabled && editing.sku) {
       recordRecentProduct(editing.sku);
     }
-    window.dispatchEvent(new Event("state:changed"));
     showToast(`${config.entityLabel || "PO"} gespeichert`);
-    lastLoaded = JSON.parse(JSON.stringify(editing));
     isDirty = false;
     if (poMode) closeFormModal();
   }
 
-  function convertRecord() {
+  async function convertRecord() {
     if (!config.convertTo) return;
     const settings = getSettings();
     syncEditingFromForm(settings);
@@ -4164,9 +4235,9 @@ export function renderOrderModule(root, config) {
       return;
     }
 
-    saveRecord();
+    await saveRecord();
 
-    const st = loadState();
+    const st = loadAppState();
     if (!Array.isArray(st[config.convertTo.entityKey])) st[config.convertTo.entityKey] = [];
 
     const existing = st[config.convertTo.entityKey];
@@ -4199,8 +4270,11 @@ export function renderOrderModule(root, config) {
     delete newRecord[config.numberField];
 
     existing.push(newRecord);
-    saveState(st);
-    window.dispatchEvent(new Event("state:changed"));
+    commitAppState(st, {
+      source: `${config.slug}:convert`,
+      entityKey: `${config.convertTo.slug || config.convertTo.entityKey}:${newRecord[config.convertTo.numberField] || newRecord.id}`,
+      action: "create",
+    });
     window.alert(`${label} ${trimmed} wurde angelegt.`);
   }
 
@@ -4210,16 +4284,19 @@ export function renderOrderModule(root, config) {
   }
 
   function onDelete(record) {
-    const st = loadState();
+    const st = loadAppState();
     const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
     st[config.entityKey] = arr.filter(item => {
       if (item.id && record.id) return item.id !== record.id;
       return item[config.numberField] !== record[config.numberField];
     });
-    saveState(st);
-    renderListView(st[config.entityKey]);
+    commitAppState(st, {
+      source: `${config.slug}:delete`,
+      entityKey: entityKeyFor(record),
+      action: "delete",
+    });
+    renderListView(loadAppState()[config.entityKey]);
     loadForm(defaultRecord(config, getSettings()));
-    window.dispatchEvent(new Event("state:changed"));
     if (poMode) closeFormModal();
   }
 
@@ -4468,20 +4545,25 @@ export function renderOrderModule(root, config) {
     poModalClose.addEventListener("click", () => attemptCloseForm({ reset: true }));
   }
   if (poSaveHeader) {
-    poSaveHeader.addEventListener("click", saveRecord);
+    poSaveHeader.addEventListener("click", handleSave);
   }
   if (poModal) {
-    poModal.addEventListener("click", (event) => {
-      if (event.target === poModal) {
+    let pointerDownOnBackdrop = false;
+    poModal.addEventListener("mousedown", (event) => {
+      pointerDownOnBackdrop = event.target === poModal;
+    });
+    poModal.addEventListener("mouseup", (event) => {
+      if (pointerDownOnBackdrop && event.target === poModal) {
         if (suppressBackdropClose) return;
         attemptCloseForm({ reset: true });
       }
+      pointerDownOnBackdrop = false;
     });
   }
   numberInput.addEventListener("input", onAnyChange);
   if (orderDateDisplay) orderDateDisplay.addEventListener("input", onAnyChange);
 
-  saveBtn.addEventListener("click", saveRecord);
+  saveBtn.addEventListener("click", handleSave);
   if (cancelBtn) {
     cancelBtn.addEventListener("click", () => {
       attemptCloseForm({ reset: true });
@@ -4489,12 +4571,12 @@ export function renderOrderModule(root, config) {
   }
   createBtn.addEventListener("click", () => loadForm(defaultRecord(config, getSettings())));
   deleteBtn.addEventListener("click", () => onDelete(editing));
-  if (convertBtn) convertBtn.addEventListener("click", convertRecord);
+  if (convertBtn) convertBtn.addEventListener("click", () => convertRecord());
 
   const shortcutHandler = (ev) => {
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") {
       ev.preventDefault();
-      saveRecord();
+      handleSave();
     }
     if (ev.key === "Escape" && poMode && poModal?.classList.contains("is-open")) {
       ev.preventDefault();
@@ -4552,13 +4634,24 @@ export function renderOrderModule(root, config) {
     window.removeEventListener("state:changed", root._orderStateListener);
   }
   const handleStateChanged = () => {
-    const freshState = loadState();
+    const freshState = loadAppState();
     const settings = getSettings();
     renderListView(freshState[config.entityKey]);
     if (preview) updatePreview(settings);
   };
   root._orderStateListener = handleStateChanged;
   window.addEventListener("state:changed", handleStateChanged);
+
+  return {
+    cleanup: () => {
+      if (root._orderStateListener) {
+        window.removeEventListener("state:changed", root._orderStateListener);
+      }
+      dirtyGuard.unregister();
+      dirtyGuard.detachBeforeUnload();
+      window.removeEventListener("keydown", shortcutHandler);
+    },
+  };
 }
 
 export const orderEditorUtils = {

@@ -1,4 +1,4 @@
-import { loadState, saveState } from "../data/storageLocal.js";
+import { loadAppState, commitAppState, getViewState, setViewState } from "../storage/store.js";
 import { parseDeNumber } from "../lib/dataHealth.js";
 
 const INVENTORY_VIEW_KEY = "inventory_view_v1";
@@ -92,28 +92,18 @@ function buildCategoryGroups(products, categories = []) {
 }
 
 function loadViewState() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(INVENTORY_VIEW_KEY) || "{}");
-    return {
-      selectedMonth: raw.selectedMonth || null,
-      collapsed: raw.collapsed && typeof raw.collapsed === "object" ? raw.collapsed : {},
-      search: raw.search || "",
-      showSafety: raw.showSafety !== false,
-      projectionMode: raw.projectionMode === "doh" ? "doh" : "units",
-    };
-  } catch {
-    return {
-      selectedMonth: null,
-      collapsed: {},
-      search: "",
-      showSafety: true,
-      projectionMode: "units",
-    };
-  }
+  const raw = getViewState(INVENTORY_VIEW_KEY, {});
+  return {
+    selectedMonth: raw.selectedMonth || null,
+    collapsed: raw.collapsed && typeof raw.collapsed === "object" ? raw.collapsed : {},
+    search: raw.search || "",
+    showSafety: raw.showSafety !== false,
+    projectionMode: raw.projectionMode === "doh" ? "doh" : "units",
+  };
 }
 
 function saveViewState(state) {
-  localStorage.setItem(INVENTORY_VIEW_KEY, JSON.stringify(state));
+  setViewState(INVENTORY_VIEW_KEY, state);
 }
 
 function resolveSelectedMonth(state, view) {
@@ -743,7 +733,7 @@ function updateSnapshotRow(row, snapshot, previousSnapshot, product, state) {
 // - Safety-Indikator bei Unterschreitung sichtbar.
 
 export function render(root) {
-  const state = loadState();
+  const state = loadAppState();
   const view = loadViewState();
   const selectedMonth = resolveSelectedMonth(state, view);
   view.selectedMonth = selectedMonth;
@@ -865,7 +855,7 @@ export function render(root) {
           note: prevItem?.note ?? "",
         };
       });
-      saveState(state);
+      commitAppState(state);
       render(root);
     });
   }
@@ -879,7 +869,7 @@ export function render(root) {
       if (targetSnapshot !== snapshot) {
         targetSnapshot.items = snapshot.items;
       }
-      saveState(state);
+      commitAppState(state);
     }, 250);
   };
 
@@ -1015,7 +1005,7 @@ export function render(root) {
       if (!state.inventory) state.inventory = { snapshots: [], settings: {} };
       if (!state.inventory.settings) state.inventory.settings = {};
       state.inventory.settings.projectionMonths = value;
-      saveState(state);
+      commitAppState(state);
       render(root);
     });
   }

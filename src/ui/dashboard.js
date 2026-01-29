@@ -1,4 +1,5 @@
-import { loadState, addStateListener } from "../data/storageLocal.js";
+import { addStateListener } from "../data/storageLocal.js";
+import { loadAppState, getViewValue, setViewValue } from "../storage/store.js";
 import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
@@ -17,12 +18,8 @@ function isValidRange(value) {
 }
 
 function loadRangePreference() {
-  try {
-    const stored = localStorage.getItem(RANGE_STORAGE_KEY);
-    return isValidRange(stored) ? stored : RANGE_DEFAULT;
-  } catch {
-    return RANGE_DEFAULT;
-  }
+  const stored = getViewValue(RANGE_STORAGE_KEY, RANGE_DEFAULT);
+  return isValidRange(stored) ? stored : RANGE_DEFAULT;
 }
 
 const dashboardState = {
@@ -1651,7 +1648,7 @@ function attachDashboardHandlers(root, state) {
       dashboardState.range = rangeSelect.value;
       try {
         if (isValidRange(dashboardState.range)) {
-          localStorage.setItem(RANGE_STORAGE_KEY, dashboardState.range);
+          setViewValue(RANGE_STORAGE_KEY, dashboardState.range);
         }
       } catch {}
       render(root);
@@ -1664,7 +1661,7 @@ let stateListenerOff = null;
 
 export function render(root) {
   dashboardRoot = root;
-  const state = loadState();
+  const state = loadAppState();
   root.innerHTML = buildDashboardHTML(state);
   attachDashboardHandlers(root, state);
 

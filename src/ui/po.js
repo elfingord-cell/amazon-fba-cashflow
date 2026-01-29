@@ -13,7 +13,7 @@ const config = {
 };
 
 export function render(root) {
-  renderOrderModule(root, config);
+  return renderOrderModule(root, config);
 }
 
 export default { render };

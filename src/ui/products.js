@@ -1,5 +1,4 @@
 import {
-  loadState,
   getProductsSnapshot,
   getProductBySku,
   upsertProduct,
@@ -7,10 +6,20 @@ import {
   setProductStatus,
   setProductsTableColumns,
 } from "../data/storageLocal.js";
+import {
+  loadAppState,
+  getViewValue,
+  setViewValue,
+  getViewState,
+  setViewState,
+} from "../storage/store.js";
 import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { formatDeNumber, parseDeNumber, validateProducts } from "../lib/dataHealth.js";
 import { openDataHealthPanel } from "./dataHealthUi.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
+import { useDraftForm } from "../hooks/useDraftForm.js";
+import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
+import { openConfirmDialog } from "./utils/confirmDialog.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -113,9 +122,12 @@ function openModal({ title, content, actions = [], onClose }) {
       type: "button",
       class: "btn tertiary",
       onclick: () => {
+        if (typeof onClose === "function") {
+          onClose();
+          return;
+        }
         document.body.removeChild(overlay);
         document.removeEventListener("keydown", escHandler);
-        onClose?.();
       },
       "aria-label": "Schließen",
     }, ["✕"]),
@@ -125,18 +137,29 @@ function openModal({ title, content, actions = [], onClose }) {
   actions.forEach(action => footer.append(action));
   modal.append(header, body, footer);
   overlay.append(modal);
-  overlay.addEventListener("click", ev => {
-    if (ev.target === overlay) {
-      document.body.removeChild(overlay);
-      document.removeEventListener("keydown", escHandler);
-      onClose?.();
+  let pointerDownOnOverlay = false;
+  overlay.addEventListener("mousedown", ev => {
+    pointerDownOnOverlay = ev.target === overlay;
+  });
+  overlay.addEventListener("mouseup", ev => {
+    if (pointerDownOnOverlay && ev.target === overlay) {
+      if (typeof onClose === "function") {
+        onClose();
+      } else {
+        document.body.removeChild(overlay);
+        document.removeEventListener("keydown", escHandler);
+      }
     }
+    pointerDownOnOverlay = false;
   });
   function escHandler(ev) {
     if (ev.key === "Escape") {
+      if (typeof onClose === "function") {
+        onClose();
+        return;
+      }
       document.body.removeChild(overlay);
       document.removeEventListener("keydown", escHandler);
-      onClose?.();
     }
   }
   document.addEventListener("keydown", escHandler);
@@ -189,7 +212,7 @@ function buildHistoryTable(state, sku) {
 }
 
   function renderProducts(root) {
-  const state = loadState();
+  const state = loadAppState();
   const products = getProductsSnapshot();
   const productIssues = validateProducts(products, state.settings || {});
   const productIssuesBySku = new Map();
@@ -203,11 +226,21 @@ function buildHistoryTable(state, sku) {
   const categoryById = new Map(categories.map(category => [String(category.id), category]));
   const supplierLabelMap = buildSupplierLabelMap(state, products);
   let searchTerm = "";
-  let viewMode = localStorage.getItem("productsView");
+  let viewMode = getViewValue("productsView");
   if (viewMode !== "table" && viewMode !== "list") {
     viewMode = "list";
   }
-  const pendingEdits = new Map();
+  const bulkDraft = root.__productsBulkDraft || useDraftForm({}, { key: "products:bulk", enableDraftCache: true });
+  root.__productsBulkDraft = bulkDraft;
+  const pendingEdits = bulkDraft.draft;
+  if (root.__productsBulkGuard) {
+    root.__productsBulkGuard.unregister();
+    root.__productsBulkGuard.detachBeforeUnload();
+  }
+  const bulkGuard = useDirtyGuard(() => bulkDraft.isDirty, "Ungespeicherte Änderungen verwerfen?");
+  root.__productsBulkGuard = bulkGuard;
+  bulkGuard.register();
+  bulkGuard.attachBeforeUnload();
   const collapseKey = "productsCategoryCollapse";
   const focusRaw = sessionStorage.getItem("healthFocus");
   if (focusRaw) {
@@ -220,6 +253,24 @@ function buildHistoryTable(state, sku) {
       // ignore
     }
     sessionStorage.removeItem("healthFocus");
+  }
+
+  const cachedBulk = bulkDraft.loadDraftIfAvailable();
+  if (!root.__bulkDraftPrompted && cachedBulk?.exists && Object.keys(pendingEdits).length === 0) {
+    root.__bulkDraftPrompted = true;
+    openConfirmDialog({
+      title: "Entwurf gefunden",
+      message: "Es gibt ungespeicherte Tabellenänderungen. Wiederherstellen?",
+      confirmLabel: "Wiederherstellen",
+      cancelLabel: "Verwerfen",
+      onConfirm: () => {
+        bulkDraft.restoreDraft();
+        render();
+      },
+      onCancel: () => {
+        bulkDraft.discardDraft();
+      },
+    });
   }
 
   function buildHealthDot(sku) {
@@ -257,15 +308,11 @@ function buildHistoryTable(state, sku) {
   }
 
   function loadCollapseState() {
-    try {
-      return JSON.parse(localStorage.getItem(collapseKey) || "{}");
-    } catch (err) {
-      return {};
-    }
+    return getViewState(collapseKey, {});
   }
 
   function saveCollapseState(next) {
-    localStorage.setItem(collapseKey, JSON.stringify(next));
+    setViewState(collapseKey, next);
   }
 
   function setAllCategoriesCollapsed(collapsed) {
@@ -300,8 +347,11 @@ function buildHistoryTable(state, sku) {
   }
 
   function showEditor(existing) {
-    const state = loadState();
-    const product = existing ? { ...existing } : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null };
+    const state = loadAppState();
+    let product = existing ? { ...existing } : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null };
+    const draftForm = useDraftForm(product, { key: product.sku ? `product:${product.sku}` : "product:new", enableDraftCache: true });
+    product = draftForm.draft;
+    const dirtyGuard = useDirtyGuard(() => draftForm.isDirty, "Ungespeicherte Änderungen verwerfen?");
     const form = createEl("form", { class: "form" });
 
     const skuInput = createEl("input", { value: product.sku || "", required: true });
@@ -544,7 +594,7 @@ function buildHistoryTable(state, sku) {
 
     function updateSaveState() {
       const valid = validateAll();
-      saveBtn.disabled = !valid;
+      saveBtn.disabled = !valid || !draftForm.isDirty;
     }
     const freightHint = (() => {
       const history = (state.pos || [])
@@ -691,6 +741,47 @@ function buildHistoryTable(state, sku) {
       validateField(key);
     }
 
+    function applyDraftToInputs() {
+      const draft = draftForm.draft || {};
+      skuInput.value = draft.sku || "";
+      aliasInput.value = draft.alias || "";
+      supplierInput.value = draft.supplierId || "";
+      statusSelect.value = draft.status || "active";
+      categorySelect.value = draft.categoryId || "";
+      tagsInput.value = (draft.tags || []).join(", ");
+      avgSellingPriceInput.value = draft.avgSellingPriceGrossEUR != null
+        ? formatInputNumber(parseDeNumber(draft.avgSellingPriceGrossEUR), 2)
+        : "";
+      sellerboardMarginInput.value = draft.sellerboardMarginPct != null
+        ? formatInputNumber(parseDeNumber(draft.sellerboardMarginPct), 2)
+        : "";
+      productionLeadTimeInput.value = draft.productionLeadTimeDaysDefault != null
+        ? formatInputNumber(parseDeNumber(draft.productionLeadTimeDaysDefault), 0)
+        : "";
+      moqInput.value = draft.moqUnits != null
+        ? formatInputNumber(parseDeNumber(draft.moqUnits), 0)
+        : "";
+      safetyStockOverrideInput.value = draft.safetyStockDohOverride != null
+        ? formatInputNumber(parseDeNumber(draft.safetyStockDohOverride), 0)
+        : "";
+      foCoverageOverrideInput.value = draft.foCoverageDohOverride != null
+        ? formatInputNumber(parseDeNumber(draft.foCoverageDohOverride), 0)
+        : "";
+      moqOverrideInput.value = draft.moqOverrideUnits != null
+        ? formatInputNumber(parseDeNumber(draft.moqOverrideUnits), 0)
+        : "";
+      landedUnitCostInput.value = draft.landedUnitCostEur != null
+        ? formatInputNumber(parseDeNumber(draft.landedUnitCostEur), 2)
+        : "";
+      const draftTemplate = draft.template?.fields ? draft.template.fields : (draft.template || {});
+      Object.keys(templateInputs).forEach(key => {
+        setFieldValue(key, draftTemplate[key]);
+      });
+      milestonesArea.value = draftTemplate.milestones ? JSON.stringify(draftTemplate.milestones, null, 2) : "";
+      updateEffectiveValues();
+      updateSaveState();
+    }
+
     function applyLatestPoValues() {
       const sku = skuInput.value.trim();
       if (!sku) {
@@ -719,8 +810,8 @@ function buildHistoryTable(state, sku) {
       setFieldValue("fxFeePct", latestPo.fxFeePct);
       setFieldValue("ddp", latestPo.ddp === true);
       setFieldValue("currency", "USD");
-      updateSaveState();
       updateEffectiveValues();
+      syncDraftFromInputs();
       showToast("Letzte PO Werte übernommen.");
     }
 
@@ -746,17 +837,68 @@ function buildHistoryTable(state, sku) {
     const cancelBtn = createEl("button", { class: "btn secondary", type: "button" }, ["Abbrechen"]);
 
     let dialog;
+    dirtyGuard.register();
+    dirtyGuard.attachBeforeUnload();
+
+    function finalizeClose() {
+      dirtyGuard.unregister();
+      dirtyGuard.detachBeforeUnload();
+      if (root.__productsBulkGuard) {
+        root.__productsBulkGuard.register();
+      }
+      dialog.overlay.remove();
+    }
+
+    function attemptClose() {
+      if (!draftForm.isDirty) {
+        finalizeClose();
+        return;
+      }
+      dirtyGuard({
+        confirmWithModal: ({ onConfirm }) => openConfirmDialog({
+          title: "Ungespeicherte Änderungen",
+          message: "Ungespeicherte Änderungen verwerfen?",
+          confirmLabel: "Verwerfen",
+          cancelLabel: "Abbrechen",
+          onConfirm: () => {
+            draftForm.discardDraft();
+            onConfirm?.();
+            finalizeClose();
+          },
+        }),
+      });
+    }
+
     dialog = openModal({
       title: existing ? `Produkt bearbeiten – ${existing.alias || existing.sku}` : "Neues Produkt",
       content: createEl("div", {}, [form, historySection, suppliersSection]),
       actions: [cancelBtn, saveBtn],
-      onClose: () => {},
+      onClose: attemptClose,
     });
-    cancelBtn.addEventListener("click", () => dialog.overlay.remove());
+    cancelBtn.addEventListener("click", attemptClose);
     saveBtn.addEventListener("click", ev => {
       ev.preventDefault();
       form.requestSubmit();
     });
+
+    const cached = draftForm.loadDraftIfAvailable();
+    if (cached?.exists) {
+      openConfirmDialog({
+        title: "Entwurf gefunden",
+        message: "Es gibt einen ungespeicherten Entwurf. Wiederherstellen?",
+        confirmLabel: "Wiederherstellen",
+        cancelLabel: "Verwerfen",
+        onConfirm: () => {
+          draftForm.restoreDraft();
+          applyDraftToInputs();
+          syncDraftFromInputs();
+        },
+        onCancel: () => {
+          draftForm.discardDraft();
+          updateSaveState();
+        },
+      });
+    }
     const applyBtn = $("#product-apply-latest", form);
     if (applyBtn) {
       applyBtn.addEventListener("click", applyLatestPoValues);
@@ -765,12 +907,24 @@ function buildHistoryTable(state, sku) {
     updateSaveState();
     updateEffectiveValues();
 
-    form.addEventListener("submit", ev => {
-      ev.preventDefault();
-      if (!validateAll()) {
-        updateSaveState();
-        return;
+    function parseMilestones({ strict } = {}) {
+      const msValue = milestonesArea.value.trim();
+      if (!msValue) return null;
+      try {
+        const parsed = JSON.parse(msValue);
+        if (!Array.isArray(parsed)) return null;
+        const sum = parsed.reduce((acc, row) => acc + Number(row.percent || 0), 0);
+        if (strict && Math.round(sum) !== 100) {
+          throw new Error("Meilensteine müssen in Summe 100 % ergeben.");
+        }
+        return parsed;
+      } catch (err) {
+        if (strict) throw err;
+        return null;
       }
+    }
+
+    function buildPayload({ strictMilestones = false } = {}) {
       const payload = {
         sku: skuInput.value.trim(),
         alias: aliasInput.value.trim(),
@@ -818,23 +972,8 @@ function buildHistoryTable(state, sku) {
         const parsed = parseDeNumber(raw);
         if (parsed != null) templateObj[key] = parsed;
       });
-      const msValue = milestonesArea.value.trim();
-      if (msValue) {
-        try {
-          const parsed = JSON.parse(msValue);
-          if (Array.isArray(parsed)) {
-            const sum = parsed.reduce((acc, row) => acc + Number(row.percent || 0), 0);
-            if (Math.round(sum) !== 100) {
-              alert("Meilensteine müssen in Summe 100 % ergeben.");
-              return;
-            }
-            templateObj.milestones = parsed;
-          }
-        } catch (err) {
-          alert("Ungültiges Meilenstein-JSON: " + (err.message || err));
-          return;
-        }
-      }
+      const milestones = parseMilestones({ strict: strictMilestones });
+      if (milestones) templateObj.milestones = milestones;
       if (Object.keys(templateObj).length) {
         payload.template = {
           scope: existing?.template?.scope || "SKU",
@@ -852,15 +991,45 @@ function buildHistoryTable(state, sku) {
       });
       payload.fxUsdPerEur = fxUsdPerEur ?? null;
       payload.freightPerUnitEur = derivedFreight.value;
+      return payload;
+    }
+
+    function syncDraftFromInputs() {
+      const nextDraft = buildPayload();
+      draftForm.setDraft(nextDraft);
+      updateSaveState();
+    }
+
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault();
+      if (!validateAll()) {
+        updateSaveState();
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Speichern…";
+      let payload;
       try {
-        upsertProduct(payload);
-        dialog.overlay.remove();
-        renderProducts(root);
-        document.dispatchEvent(new Event("state:changed"));
+        payload = buildPayload({ strictMilestones: true });
       } catch (err) {
         alert(err.message || String(err));
+        saveBtn.textContent = "Speichern";
+        updateSaveState();
+        return;
+      }
+      try {
+        await draftForm.commit(() => upsertProduct(payload));
+        dialog.overlay.remove();
+        renderProducts(root);
+      } catch (err) {
+        alert(err.message || String(err));
+        saveBtn.textContent = "Speichern";
+        updateSaveState();
       }
     });
+
+    form.addEventListener("input", syncDraftFromInputs);
+    form.addEventListener("change", syncDraftFromInputs);
   }
 
   function renderList(list) {
@@ -933,7 +1102,6 @@ function buildHistoryTable(state, sku) {
               onclick: () => {
                 setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
                 renderProducts(root);
-                document.dispatchEvent(new Event("state:changed"));
               }
             }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
             createEl("button", {
@@ -943,7 +1111,6 @@ function buildHistoryTable(state, sku) {
                 if (confirm("Produkt wirklich löschen?")) {
                   deleteProductBySku(product.sku);
                   renderProducts(root);
-                  document.dispatchEvent(new Event("state:changed"));
                 }
               }
             }, ["Löschen"]),
@@ -1190,27 +1357,24 @@ function buildHistoryTable(state, sku) {
     }
 
     function getEditBucket(sku) {
-      if (!pendingEdits.has(sku)) {
-        pendingEdits.set(sku, {});
+      if (!pendingEdits[sku]) {
+        pendingEdits[sku] = {};
       }
-      return pendingEdits.get(sku);
+      return pendingEdits[sku];
     }
 
     function clearEdit(sku, fieldKey) {
-      const bucket = pendingEdits.get(sku);
+      const bucket = pendingEdits[sku];
       if (!bucket) return;
       delete bucket[fieldKey];
       if (!Object.keys(bucket).length) {
-        pendingEdits.delete(sku);
+        delete pendingEdits[sku];
       }
     }
 
     function countEdits() {
-      let total = 0;
-      pendingEdits.forEach(bucket => {
-        total += Object.keys(bucket).length;
-      });
-      return total;
+      return Object.values(pendingEdits)
+        .reduce((total, bucket) => total + Object.keys(bucket || {}).length, 0);
     }
 
     const toolbar = createEl("div", { class: "products-grid-toolbar" });
@@ -1254,6 +1418,7 @@ function buildHistoryTable(state, sku) {
         if (row) updateRowDirty(row);
       }
       updateToolbar();
+      bulkDraft.setDraft(bulkDraft.draft);
     }
 
     const wrapper = createEl("div", { class: "products-grid" });
@@ -1304,7 +1469,7 @@ function buildHistoryTable(state, sku) {
         const row = createEl("tr");
         fields.forEach(field => {
           const cell = createEl("td", { class: field.className || "" });
-          const value = pendingEdits.get(product.sku)?.[field.key] ?? getFieldValue(product, field);
+          const value = pendingEdits[product.sku]?.[field.key] ?? getFieldValue(product, field);
           if (field.type === "checkbox") {
             const input = createEl("input", {
               type: "checkbox",
@@ -1386,12 +1551,12 @@ function buildHistoryTable(state, sku) {
     });
 
     discardBtn.addEventListener("click", () => {
-      pendingEdits.clear();
+      bulkDraft.resetDraft();
       render();
     });
 
     saveBtn.addEventListener("click", async () => {
-      const editsBySku = Array.from(pendingEdits.entries());
+      const editsBySku = Object.entries(pendingEdits);
       if (!editsBySku.length) return;
       const errors = [];
       await Promise.allSettled(editsBySku.map(([sku, edits]) => {
@@ -1449,16 +1614,15 @@ function buildHistoryTable(state, sku) {
       } else {
         showToast("Änderungen gespeichert");
       }
-      pendingEdits.clear();
+      bulkDraft.resetDraft();
       render();
-      document.dispatchEvent(new Event("state:changed"));
     });
 
     return wrapper;
   }
 
   function showHistory(product) {
-    const state = loadState();
+    const state = loadAppState();
     const historyTable = buildHistoryTable(state, product.sku);
     const closeBtn = createEl("button", { class: "btn", type: "button" }, ["Schließen"]);
     const dialog = openModal({
@@ -1499,7 +1663,7 @@ function buildHistoryTable(state, sku) {
         "aria-pressed": viewMode === "list",
         onclick: () => {
           viewMode = "list";
-          localStorage.setItem("productsView", viewMode);
+          setViewValue("productsView", viewMode);
           render();
         },
       }, ["Liste"]),
@@ -1509,7 +1673,7 @@ function buildHistoryTable(state, sku) {
         "aria-pressed": viewMode === "table",
         onclick: () => {
           viewMode = "table";
-          localStorage.setItem("productsView", viewMode);
+          setViewValue("productsView", viewMode);
           render();
         },
       }, ["Tabelle"]),
@@ -1542,6 +1706,11 @@ export default function mountProducts(root) {
   document.addEventListener("state:changed", handler);
   root.__productsCleanup = () => {
     document.removeEventListener("state:changed", handler);
+    if (root.__productsBulkGuard) {
+      root.__productsBulkGuard.unregister();
+      root.__productsBulkGuard.detachBeforeUnload();
+      root.__productsBulkGuard = null;
+    }
   };
   renderProducts(root);
   return { cleanup: root.__productsCleanup };
