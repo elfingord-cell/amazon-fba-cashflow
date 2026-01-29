@@ -138,6 +138,29 @@ function updateDerivedFreight(record, settings = getSettings()) {
   return estimate;
 }
 
+function getMergedPayments(record) {
+  const stateSnapshot = loadAppState();
+  const base = Array.isArray(stateSnapshot.payments) ? stateSnapshot.payments : [];
+  const drafts = record?.paymentDrafts || {};
+  const merged = base.map(payment => {
+    const draft = drafts[payment?.id];
+    return draft ? { ...payment, ...draft } : payment;
+  });
+  Object.values(drafts).forEach(draft => {
+    if (!merged.some(entry => entry?.id === draft?.id)) {
+      merged.push(draft);
+    }
+  });
+  return merged;
+}
+
+function prepareRecordForDraft(record, settings) {
+  const next = JSON.parse(JSON.stringify(record || {}));
+  normaliseGoodsFields(next, settings);
+  updateDerivedFreight(next, settings);
+  return next;
+}
+
 function formatAutoFreightTooltip(line) {
   if (!line) return [];
   const alias = productCache.find(
@@ -2175,23 +2198,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   }, [warn ? `Summe: ${sum}% — Bitte auf 100% anpassen.` : "Summe: 100% ✓"]);
   container.append(note);
 
-  function getMergedPayments() {
-    const stateSnapshot = loadAppState();
-    const base = Array.isArray(stateSnapshot.payments) ? stateSnapshot.payments : [];
-    const drafts = record?.paymentDrafts || {};
-    const merged = base.map(payment => {
-      const draft = drafts[payment?.id];
-      return draft ? { ...payment, ...draft } : payment;
-    });
-    Object.values(drafts).forEach(draft => {
-      if (!merged.some(entry => entry?.id === draft?.id)) {
-        merged.push(draft);
-      }
-    });
-    return merged;
-  }
-
-  const payments = buildPaymentRows(record, config, settings, getMergedPayments());
+  const payments = buildPaymentRows(record, config, settings, getMergedPayments(record));
   ensurePaymentLog(record);
 
   const paymentSection = el("div", { class: "po-payments-section" }, [
@@ -2220,7 +2227,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   paymentTable.append(paymentBody);
 
   function openPaymentModal(payment) {
-    const mergedPayments = getMergedPayments();
+    const mergedPayments = getMergedPayments(record);
     const allPayments = buildPaymentRows(record, config, settings, mergedPayments);
     const existingLog = payment ? (record.paymentLog?.[payment.id] || {}) : {};
     const initialPaymentId = existingLog.paymentId || payment?.paymentId || null;
@@ -3062,7 +3069,7 @@ export function renderOrderModule(root, config) {
   const preview = $(`#${ids.preview}`, root);
   const convertBtn = ids.convert ? $(`#${ids.convert}`, root) : null;
 
-  let draftForm = useDraftForm(defaultRecord(config, getSettings()), {
+  let draftForm = useDraftForm(prepareRecordForDraft(defaultRecord(config, getSettings()), getSettings()), {
     key: `${config.slug}:new`,
     enableDraftCache: true,
   });
@@ -3744,7 +3751,7 @@ export function renderOrderModule(root, config) {
     const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
     preview.append(el("h4", {}, ["Ereignisse"]));
-    preview.append(buildEventList(events, editing.paymentLog, getMergedPayments()));
+    preview.append(buildEventList(events, editing.paymentLog, getMergedPayments(editing)));
   }
 
   function updateTimelineOverrides(timeline) {
@@ -4134,7 +4141,8 @@ export function renderOrderModule(root, config) {
   }
 
   function loadForm(record) {
-    draftForm = useDraftForm(record, { key: entityKeyFor(record), enableDraftCache: true });
+    const settings = getSettings();
+    draftForm = useDraftForm(prepareRecordForDraft(record, settings), { key: entityKeyFor(record), enableDraftCache: true });
     editing = draftForm.draft;
     lastLoaded = JSON.parse(JSON.stringify(editing));
     applyDraftToForm();
