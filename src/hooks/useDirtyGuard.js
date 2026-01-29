@@ -18,17 +18,31 @@ export function confirmNavigation() {
 }
 
 export function useDirtyGuard(isDirty, message) {
+  const confirmCooldownMs = 500;
+  let lastPromptAt = 0;
+  let lastPromptResult = true;
   const confirmLeave = (options = {}) => {
     const dirty = typeof isDirty === "function" ? isDirty() : Boolean(isDirty);
-    if (!dirty) return true;
+    if (!dirty) {
+      lastPromptAt = 0;
+      return true;
+    }
+    const now = Date.now();
+    if (now - lastPromptAt < confirmCooldownMs) {
+      return lastPromptResult;
+    }
     if (typeof options.confirmWithModal === "function") {
+      lastPromptAt = now;
+      lastPromptResult = false;
       options.confirmWithModal({
         onConfirm: options.onConfirm,
         onCancel: options.onCancel,
       });
       return false;
     }
-    return window.confirm(message || "Ungespeicherte Änderungen verwerfen?");
+    lastPromptResult = window.confirm(message || "Ungespeicherte Änderungen verwerfen?");
+    lastPromptAt = Date.now();
+    return lastPromptResult;
   };
 
   const beforeUnloadHandler = (event) => {
