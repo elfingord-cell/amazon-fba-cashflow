@@ -4153,6 +4153,7 @@ export function renderOrderModule(root, config) {
     editing = draftForm.draft;
     lastLoaded = JSON.parse(JSON.stringify(editing));
     applyDraftToForm();
+    draftForm.markClean();
     const cached = draftForm.loadDraftIfAvailable();
     if (cached?.exists) {
       openConfirmDialog({
