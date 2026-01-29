@@ -158,6 +158,10 @@ function getMergedPayments(record) {
 function prepareRecordForDraft(record, settings) {
   const next = JSON.parse(JSON.stringify(record || {}));
   normaliseGoodsFields(next, settings);
+  ensureAutoEvents(next, settings, next.milestones || []);
+  ensurePaymentLog(next);
+  normaliseArchiveFlag(next);
+  if (!next.paymentDrafts) next.paymentDrafts = {};
   updateDerivedFreight(next, settings);
   return next;
 }
