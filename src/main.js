@@ -6,6 +6,7 @@
 import { initDataHealthUI } from "./ui/dataHealthUi.js";
 import { confirmNavigation } from "./hooks/useDirtyGuard.js";
 import { loadAppState } from "./storage/store.js";
+import { initRemoteSync } from "./sync/remoteSync.js";
 
 const APP = document.getElementById('app');
 const STATE_KEY = 'amazon_fba_cashflow_v1';
@@ -185,4 +186,5 @@ window.addEventListener('state:changed', (event) => {
 
 initSidebarToggle();
 initDataHealthUI();
+initRemoteSync();
 renderRoute();
