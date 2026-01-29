@@ -170,6 +170,9 @@ export async function render(root){
         <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}" ${canDownload ? '' : 'disabled aria-disabled="true"'}>
           JSON herunterladen
         </button>
+        <button id="btn-dl-backup" class="btn secondary">
+          Backup JSON herunterladen
+        </button>
         <label class="btn" for="file-imp" style="cursor:pointer">JSON importieren</label>
         <input id="file-imp" type="file" accept="application/json" class="hidden" />
         <button id="btn-seed" class="btn secondary">Testdaten laden</button>
@@ -212,6 +215,10 @@ export async function render(root){
     exportState(clean); // nutzt bestehenden Export (Dateiname mit Timestamp)
   });
 
+  $("#btn-dl-backup")?.addEventListener("click", ()=>{
+    exportState(loadState());
+  });
+
   $("#file-imp")?.addEventListener("change", (ev)=>{
     const file = ev.target.files?.[0];
     if (!file) return;
@@ -221,6 +228,7 @@ export async function render(root){
         return;
       }
       // Soft-merge + speichern
+      window.dispatchEvent(new CustomEvent("remote-sync:local-import"));
       saveState(stateOrError);
       // Info & Reload der View
       alert("Import übernommen.");

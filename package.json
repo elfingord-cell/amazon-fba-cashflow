@@ -1,0 +1,9 @@
+{
+  "name": "amazon-fba-cashflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Amazon FBA Cashflow planning (static) with Netlify Functions storage",
+  "dependencies": {
+    "@netlify/blobs": "^8.0.0"
+  }
+}

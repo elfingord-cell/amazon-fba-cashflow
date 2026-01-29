@@ -2,6 +2,7 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
 
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
+export const LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
 const CURRENCIES = ["EUR", "USD", "CNY"];
 
 function parseEuro(value) {
@@ -915,6 +916,9 @@ export function commitState(s, meta = {}){
   } catch {}
   lastCommitAt = new Date().toISOString();
   lastCommitMeta = meta && typeof meta === "object" ? meta : {};
+  try {
+    localStorage.setItem(LAST_COMMIT_KEY, lastCommitAt);
+  } catch {}
   for (const fn of listeners) try { fn(_state); } catch {}
   broadcastStateChanged(lastCommitMeta);
 }
