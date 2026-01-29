@@ -16,6 +16,7 @@ import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUti
 import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
 import { computeFreightEstimate } from "../domain/costing/freightEstimate.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
+import { deepEqual } from "../utils/deepEqual.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
@@ -3179,10 +3180,17 @@ export function renderOrderModule(root, config) {
 
   function hasUnsavedChanges() {
     const settings = getSettings();
-    syncEditingFromForm(settings);
-    draftForm.setDraft(editing);
-    isDirty = draftForm.isDirty;
-    return isDirty;
+    const snapshot = JSON.parse(JSON.stringify(editing));
+    syncEditingFromForm(settings, snapshot);
+    const dirty = !deepEqual(snapshot, lastLoaded);
+    if (dirty) {
+      editing = snapshot;
+      draftForm.setDraft(editing);
+    } else {
+      draftForm.setDraft(lastLoaded);
+    }
+    isDirty = dirty;
+    return dirty;
   }
 
   function confirmDiscard(onConfirm) {
@@ -3738,15 +3746,9 @@ export function renderOrderModule(root, config) {
   }
 
   function updatePreview(settings) {
-    syncEditingFromForm(settings);
-    const draft = JSON.parse(JSON.stringify({
-      ...editing,
-      [config.numberField]: numberInput.value,
-      orderDate: orderDateInput.value,
-      prodDays: Number(prodInput.value || 0),
-      transport: transportSelect.value,
-      transitDays: Number(transitInput.value || 0),
-    }));
+    const snapshot = JSON.parse(JSON.stringify(editing));
+    syncEditingFromForm(settings, snapshot);
+    const draft = JSON.parse(JSON.stringify(snapshot));
     normaliseGoodsFields(draft, settings);
     const events = orderEvents(draft, config, settings);
     preview.innerHTML = "";
@@ -3952,16 +3954,17 @@ export function renderOrderModule(root, config) {
     return true;
   }
 
-  function syncEditingFromForm(settings = getSettings()) {
+  function syncEditingFromForm(settings = getSettings(), target = editing) {
+    const draft = target || editing;
     if (quickfillEnabled) {
-      editing.sku = skuInput ? parseSkuInputValue(skuInput.value) : "";
-      editing.supplier = supplierInput ? supplierInput.value.trim() : "";
+      draft.sku = skuInput ? parseSkuInputValue(skuInput.value) : "";
+      draft.supplier = supplierInput ? supplierInput.value.trim() : "";
     }
-    editing[config.numberField] = numberInput.value.trim();
+    draft[config.numberField] = numberInput.value.trim();
     const parsedDisplay = parseDeDate(orderDateDisplay?.value || "");
     const isoFromDisplay = parsedDisplay ? formatDateISO(parsedDisplay) : null;
     const isoFromPicker = orderDateInput?.value || null;
-    editing.orderDate = isoFromDisplay || isoFromPicker || editing.orderDate;
+    draft.orderDate = isoFromDisplay || isoFromPicker || draft.orderDate;
     const domItems = itemsZone ? Array.from(itemsZone.querySelectorAll("[data-item-id]")) : [];
     const nextItems = [];
     domItems.forEach(row => {
@@ -3978,43 +3981,43 @@ export function renderOrderModule(root, config) {
       });
     });
     if (nextItems.length) {
-      editing.items = nextItems;
+      draft.items = nextItems;
     }
-    ensureItems(editing);
+    ensureItems(draft);
     const fxOverrideValue = parseDE(fxRateInput?.value ?? "");
-    editing.fxOverride = Number.isFinite(fxOverrideValue) && fxOverrideValue > 0 ? fxOverrideValue : null;
-    editing.timeline = editing.timeline || {};
-    editing.timeline.fxUsdPerEur = editing.fxOverride
-      ? editing.fxOverride
+    draft.fxOverride = Number.isFinite(fxOverrideValue) && fxOverrideValue > 0 ? fxOverrideValue : null;
+    draft.timeline = draft.timeline || {};
+    draft.timeline.fxUsdPerEur = draft.fxOverride
+      ? draft.fxOverride
       : (Number.isFinite(settings.fxRate) && settings.fxRate > 0 ? settings.fxRate : null);
-    normaliseGoodsFields(editing, settings);
-    const totals = computeGoodsTotals(editing, settings);
+    normaliseGoodsFields(draft, settings);
+    const totals = computeGoodsTotals(draft, settings);
     const selectedMode = freightModeSelect?.value || "TOTAL_EUR";
-    editing.timeline = editing.timeline || {};
-    editing.timeline.freightInputMode = selectedMode;
-    editing.freightMode = selectedMode === "PER_UNIT_EUR" ? "per_unit" : "total";
-    editing.freightEur = fmtCurrencyInput(freightInput.value);
-    editing.freightPerUnitEur = fmtCurrencyInput(freightPerUnitInput?.value || "");
-    const estimate = updateDerivedFreight(editing, settings);
+    draft.timeline = draft.timeline || {};
+    draft.timeline.freightInputMode = selectedMode;
+    draft.freightMode = selectedMode === "PER_UNIT_EUR" ? "per_unit" : "total";
+    draft.freightEur = fmtCurrencyInput(freightInput.value);
+    draft.freightPerUnitEur = fmtCurrencyInput(freightPerUnitInput?.value || "");
+    const estimate = updateDerivedFreight(draft, settings);
     updateGoodsSummary(totals, estimate);
-    editing.prodDays = Number(prodInput.value || 0);
-    editing.transport = transportSelect.value;
-    editing.transitDays = Number(transitInput.value || 0);
-    editing.dutyRatePct = clampPct(dutyRateInput.value);
-    editing.dutyIncludeFreight = dutyIncludeToggle.checked;
-    editing.eustRatePct = clampPct(eustRateInput.value);
-    editing.fxFeePct = clampPct(fxFeeInput.value);
-    editing.vatRefundLagMonths = Number(vatLagInput.value || 0);
-    editing.vatRefundEnabled = vatToggle.checked;
-    editing.ddp = ddpToggle.checked;
+    draft.prodDays = Number(prodInput.value || 0);
+    draft.transport = transportSelect.value;
+    draft.transitDays = Number(transitInput.value || 0);
+    draft.dutyRatePct = clampPct(dutyRateInput.value);
+    draft.dutyIncludeFreight = dutyIncludeToggle.checked;
+    draft.eustRatePct = clampPct(eustRateInput.value);
+    draft.fxFeePct = clampPct(fxFeeInput.value);
+    draft.vatRefundLagMonths = Number(vatLagInput.value || 0);
+    draft.vatRefundEnabled = vatToggle.checked;
+    draft.ddp = ddpToggle.checked;
     if (etdManualInput) {
-      editing.etdManual = etdManualInput.value || null;
+      draft.etdManual = etdManualInput.value || null;
     }
     if (etaManualInput) {
-      editing.etaManual = etaManualInput.value || null;
+      draft.etaManual = etaManualInput.value || null;
     }
-    const timeline = computeTimeline(editing, settings);
-    editing.cnyAdjustmentDays = timeline?.cnyAdjustmentDays || 0;
+    const timeline = computeTimeline(draft, settings);
+    draft.cnyAdjustmentDays = timeline?.cnyAdjustmentDays || 0;
     return estimate;
   }
 
