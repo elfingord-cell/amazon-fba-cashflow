@@ -2178,7 +2178,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   function getMergedPayments() {
     const stateSnapshot = loadAppState();
     const base = Array.isArray(stateSnapshot.payments) ? stateSnapshot.payments : [];
-    const drafts = editing?.paymentDrafts || {};
+    const drafts = record?.paymentDrafts || {};
     const merged = base.map(payment => {
       const draft = drafts[payment?.id];
       return draft ? { ...payment, ...draft } : payment;

@@ -97,10 +97,10 @@ function initSidebarToggle() {
     const link = ev.target.closest('a[data-tab]');
     if (!link) return;
     ev.preventDefault();
-    if (!confirmNavigation()) return;
     const targetHash = normalizeHash(link.getAttribute('href'));
     const currentHash = normalizeHash(location.hash);
     if (targetHash === currentHash) {
+      if (!confirmNavigation()) return;
       renderRoute(targetHash);
     } else {
       location.hash = targetHash;
