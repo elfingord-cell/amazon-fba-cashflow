@@ -4,9 +4,13 @@
 // oder default-Objekt mit .render FUNCTION.
 
 import { initDataHealthUI } from "./ui/dataHealthUi.js";
+import { confirmNavigation } from "./hooks/useDirtyGuard.js";
+import { loadAppState } from "./storage/store.js";
 
 const APP = document.getElementById('app');
 const STATE_KEY = 'amazon_fba_cashflow_v1';
+let lastHash = location.hash;
+let skipNextHashConfirm = false;
 
 const routes = {
   '#dashboard': () => import('./ui/dashboard.js'),
@@ -29,9 +33,8 @@ const routes = {
   '#debug': () =>
     import('./ui/debug.js').catch(() => ({
       default: (el) => {
-        let json = {};
-        try { json = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch {}
-        el.innerHTML = `<section class="panel"><h2>Debug</h2><pre class="mono">${escapeHtml(JSON.stringify(json, null, 2))}</pre></section>`;
+        const json = loadAppState();
+        el.innerHTML = `<section class="panel"><h2>Debug</h2><pre class="mono">${escapeHtml(JSON.stringify(json || {}, null, 2))}</pre></section>`;
       }
     })),
 };
@@ -95,11 +98,13 @@ function initSidebarToggle() {
     const link = ev.target.closest('a[data-tab]');
     if (!link) return;
     ev.preventDefault();
+    if (!confirmNavigation()) return;
     const targetHash = normalizeHash(link.getAttribute('href'));
     const currentHash = normalizeHash(location.hash);
     if (targetHash === currentHash) {
       renderRoute(targetHash);
     } else {
+      skipNextHashConfirm = true;
       location.hash = targetHash;
     }
     if (window.matchMedia('(max-width: 960px)').matches) {
@@ -159,7 +164,18 @@ function renderRoute(forcedHash) {
     });
 }
 
-window.addEventListener('hashchange', renderRoute);
+window.addEventListener('hashchange', () => {
+  if (skipNextHashConfirm) {
+    skipNextHashConfirm = false;
+  } else if (!confirmNavigation()) {
+    if (location.hash !== lastHash) {
+      location.hash = lastHash || '#dashboard';
+    }
+    return;
+  }
+  lastHash = location.hash;
+  renderRoute();
+});
 window.addEventListener('storage', (e) => {
   if (!e || e.key === STATE_KEY) renderRoute();
 });

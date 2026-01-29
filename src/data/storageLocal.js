@@ -829,10 +829,15 @@ function ensureStatusSection(state){
   return target.status;
 }
 
-function broadcastStateChanged(){
+let lastCommitAt = null;
+let lastCommitMeta = null;
+
+function broadcastStateChanged(meta){
   try {
     if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
-      window.dispatchEvent(new Event("state:changed"));
+      const detail = meta && typeof meta === "object" ? meta : {};
+      const source = detail.source || "saveState";
+      window.dispatchEvent(new CustomEvent("state:changed", { detail: { source, meta: detail } }));
     }
   } catch {}
 }
@@ -887,7 +892,7 @@ export function loadState(){
   return _state;
 }
 
-export function saveState(s){
+export function commitState(s, meta = {}){
   _state = s || _state || structuredClone(defaults);
   ensureStatusSection(_state);
   ensureFixcostContainers(_state);
@@ -908,7 +913,21 @@ export function saveState(s){
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
   } catch {}
+  lastCommitAt = new Date().toISOString();
+  lastCommitMeta = meta && typeof meta === "object" ? meta : {};
   for (const fn of listeners) try { fn(_state); } catch {}
+  broadcastStateChanged(lastCommitMeta);
+}
+
+export function saveState(s, meta = {}){
+  commitState(s, meta);
+}
+
+export function getLastCommitInfo(){
+  return {
+    lastCommitAt,
+    lastCommitMeta,
+  };
 }
 
 export function addStateListener(fn){
@@ -973,8 +992,7 @@ export function setAutoManualCheck(enabled){
   const next = enabled === true;
   if (status.autoManualCheck === next) return;
   status.autoManualCheck = next;
-  saveState(state);
-  broadcastStateChanged();
+  saveState(state, { source: "status:autoManual" });
 }
 
 export function setEventManualPaid(eventId, paid){
@@ -987,8 +1005,7 @@ export function setEventManualPaid(eventId, paid){
   const next = typeof paid === "boolean" ? paid : Boolean(paid);
   if (record.manual === next) return;
   record.manual = next;
-  saveState(state);
-  broadcastStateChanged();
+  saveState(state, { source: "status:eventPaid", eventId });
 }
 
 export function clearEventManualPaid(eventId){
@@ -999,8 +1016,7 @@ export function clearEventManualPaid(eventId){
   if (!map[eventId] || typeof map[eventId].manual === "undefined") return;
   delete map[eventId].manual;
   if (!Object.keys(map[eventId]).length) delete map[eventId];
-  saveState(state);
-  broadcastStateChanged();
+  saveState(state, { source: "status:eventPaid", eventId });
 }
 
 export function setEventsManualPaid(eventIds, paid){
@@ -1020,8 +1036,7 @@ export function setEventsManualPaid(eventIds, paid){
     }
   }
   if (changed) {
-    saveState(state);
-    broadcastStateChanged();
+    saveState(state, { source: "status:eventPaidBulk" });
   }
 }
 
@@ -1058,8 +1073,7 @@ export function updateVatPreviewSettings(patch){
   if (typeof patch.deShareDefault !== "undefined") target.deShareDefault = Number(patch.deShareDefault);
   if (typeof patch.feeRateDefault !== "undefined") target.feeRateDefault = Number(patch.feeRateDefault);
   if (typeof patch.fixInputDefault !== "undefined") target.fixInputDefault = Number(patch.fixInputDefault);
-  saveState(state);
-  broadcastStateChanged();
+  saveState(state, { source: "vat:settings" });
 }
 
 export function updateVatPreviewMonth(month, patch){
@@ -1071,16 +1085,14 @@ export function updateVatPreviewMonth(month, patch){
   if (typeof patch.feeRateOfGross !== "undefined") target.feeRateOfGross = Number(patch.feeRateOfGross);
   if (typeof patch.fixInputVat !== "undefined") target.fixInputVat = Number(patch.fixInputVat);
   state.vatPreviewMonths[month] = target;
-  saveState(state);
-  broadcastStateChanged();
+  saveState(state, { source: "vat:month", month });
 }
 
 export function resetVatPreviewMonths(){
   const state = loadState();
   ensureVatData(state);
   state.vatPreviewMonths = {};
-  saveState(state);
-  broadcastStateChanged();
+  saveState(state, { source: "vat:reset" });
 }
 
 export function getProductBySku(sku){

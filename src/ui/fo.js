@@ -1,6 +1,4 @@
 import {
-  loadState,
-  saveState,
   getProductsSnapshot,
   upsertProduct,
 } from "../data/storageLocal.js";
@@ -11,6 +9,10 @@ import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
 import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
+import { loadAppState, commitAppState } from "../storage/store.js";
+import { useDraftForm } from "../hooks/useDraftForm.js";
+import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
+import { openConfirmDialog } from "./utils/confirmDialog.js";
 import {
   buildSkuProjection,
   computeFoRecommendation,
@@ -800,18 +802,43 @@ function pruneFreightPaymentsForDdp(payments, incoterm) {
   return payments.filter(payment => payment.category !== "freight");
 }
 
-function openModal(title, content, actions = []) {
+function openModal(title, content, actions = [], onClose) {
   const overlay = el("div", { class: "po-modal-backdrop", role: "dialog", "aria-modal": "true" });
   const card = el("div", { class: "po-modal fo-modal-frame" }, [
     el("header", { class: "po-modal-header" }, [
       el("h3", {}, [title]),
-      el("button", { class: "btn ghost", type: "button", onclick: () => overlay.remove(), "aria-label": "Schließen" }, ["✕"]),
+      el("button", {
+        class: "btn ghost",
+        type: "button",
+        onclick: () => {
+          if (typeof onClose === "function") {
+            onClose();
+            return;
+          }
+          overlay.remove();
+        },
+        "aria-label": "Schließen",
+      }, ["✕"]),
     ]),
     el("div", { class: "po-modal-body" }, [content]),
     el("footer", { class: "po-modal-actions" }, actions),
   ]);
   overlay.append(card);
   document.body.append(overlay);
+  let pointerDownOnOverlay = false;
+  overlay.addEventListener("mousedown", (event) => {
+    pointerDownOnOverlay = event.target === overlay;
+  });
+  overlay.addEventListener("mouseup", (event) => {
+    if (pointerDownOnOverlay && event.target === overlay) {
+      if (typeof onClose === "function") {
+        onClose();
+      } else {
+        overlay.remove();
+      }
+    }
+    pointerDownOnOverlay = false;
+  });
   return overlay;
 }
 
@@ -857,7 +884,7 @@ function normalizeFoRecord(form, schedule, payments) {
 }
 
 export default function render(root) {
-  const state = loadState();
+  const state = loadAppState();
   if (!Array.isArray(state.fos)) state.fos = [];
   if (!Array.isArray(state.suppliers)) state.suppliers = [];
   const products = getProductsSnapshot();
@@ -1168,7 +1195,7 @@ export default function render(root) {
       fo.convertedPoId = po.id;
       fo.convertedPoNo = po.poNo;
       fo.updatedAt = new Date().toISOString();
-      saveState(state);
+      commitAppState(state, { source: "fo:convert", entityKey: `fo:${fo.id}`, action: "update" });
       renderRows();
       overlay.remove();
       const openPo = window.confirm("PO created. Open PO?");
@@ -1184,7 +1211,7 @@ export default function render(root) {
     const plannedSalesBySku = buildPlannedSalesBySku(state);
     const closingStockBySku = buildClosingStockBySku(state);
     const inboundSummary = buildInboundBySku(state);
-    const baseForm = existing
+    let baseForm = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
           id: `fo-${Math.random().toString(36).slice(2, 9)}`,
@@ -1244,6 +1271,12 @@ export default function render(root) {
         category: payment.category || "supplier",
       }));
     }
+
+    const draftForm = useDraftForm(baseForm, { key: `fo:${baseForm.id || "new"}`, enableDraftCache: false });
+    baseForm = draftForm.draft;
+    const dirtyGuard = useDirtyGuard(() => draftForm.isDirty, "Ungespeicherte Änderungen verwerfen?");
+    dirtyGuard.register();
+    dirtyGuard.attachBeforeUnload();
 
     const overrides = {
       transportMode: isExisting,
@@ -1586,6 +1619,7 @@ export default function render(root) {
       updateSchedulePreview(schedule);
       updateCostSummary(values);
       updateDdpPaymentNote();
+      touchDraft();
     }
 
     function updateSchedulePreview(schedule) {
@@ -2133,9 +2167,52 @@ export default function render(root) {
 
     const saveBtn = el("button", { class: "btn primary", type: "button" }, ["Save FO"]);
     const cancelBtn = el("button", { class: "btn", type: "button" }, ["Cancel"]);
-    const overlay = openModal(isExisting ? "FO bearbeiten" : "FO anlegen", content, [cancelBtn, saveBtn]);
 
-    cancelBtn.addEventListener("click", () => overlay.remove());
+    let escHandler = null;
+
+    function finalizeClose() {
+      dirtyGuard.unregister();
+      dirtyGuard.detachBeforeUnload();
+      if (escHandler) document.removeEventListener("keydown", escHandler);
+      overlay.remove();
+    }
+
+    function attemptClose() {
+      if (!draftForm.isDirty) {
+        finalizeClose();
+        return;
+      }
+      dirtyGuard({
+        confirmWithModal: ({ onConfirm }) => openConfirmDialog({
+          title: "Ungespeicherte Änderungen",
+          message: "Ungespeicherte Änderungen verwerfen?",
+          confirmLabel: "Verwerfen",
+          cancelLabel: "Abbrechen",
+          onConfirm: () => {
+            draftForm.discardDraft();
+            onConfirm?.();
+            finalizeClose();
+          },
+        }),
+      });
+    }
+
+    const overlay = openModal(
+      isExisting ? "FO bearbeiten" : "FO anlegen",
+      content,
+      [cancelBtn, saveBtn],
+      attemptClose,
+    );
+
+    escHandler = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        attemptClose();
+      }
+    };
+    document.addEventListener("keydown", escHandler);
+
+    cancelBtn.addEventListener("click", attemptClose);
     if (isConverted) {
       saveBtn.disabled = true;
       content.querySelectorAll("input, select, textarea, button.btn.secondary, button.btn.ghost").forEach((el) => {
@@ -2192,8 +2269,13 @@ export default function render(root) {
       if (paymentError) {
         paymentError.textContent = paymentsValid ? "" : "Payment Terms fehlen oder ergeben nicht 100%.";
       }
-      saveBtn.disabled = !valid;
+      saveBtn.disabled = !valid || !draftForm.isDirty;
       $("#fo-save-error", content).textContent = valid ? "" : "Bitte fehlende Felder korrigieren.";
+    }
+
+    function touchDraft() {
+      draftForm.setDraft(baseForm);
+      validateForm();
     }
 
     let recomputeTimer = null;
@@ -2224,6 +2306,7 @@ export default function render(root) {
         renderPaymentsTable();
         updateCostSummary(values);
         updateDdpPaymentNote();
+        touchDraft();
       }, 300);
     }
 
@@ -2531,7 +2614,7 @@ export default function render(root) {
       });
     }
 
-    saveBtn.addEventListener("click", () => {
+    saveBtn.addEventListener("click", async () => {
       validateForm();
       if (saveBtn.disabled) return;
       const blockingIssues = collectBlockingIssues();
@@ -2539,6 +2622,8 @@ export default function render(root) {
         openBlockingModal(blockingIssues);
         return;
       }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Speichern…";
       if (String(baseForm.incoterm || "").toUpperCase() === "DDP") {
         baseForm.dutyRatePct = 0;
         baseForm.eustRatePct = 0;
@@ -2546,13 +2631,21 @@ export default function render(root) {
       }
       const schedule = buildSchedule(baseForm);
       const normalized = normalizeFoRecord(baseForm, schedule, baseForm.payments);
-      const existingIndex = state.fos.findIndex(item => item.id === normalized.id);
-      if (existingIndex >= 0) state.fos[existingIndex] = normalized;
-      else state.fos.push(normalized);
-      saveState(state);
+      await draftForm.commit(() => {
+        const nextState = loadAppState();
+        if (!Array.isArray(nextState.fos)) nextState.fos = [];
+        const existingIndex = nextState.fos.findIndex(item => item.id === normalized.id);
+        if (existingIndex >= 0) nextState.fos[existingIndex] = normalized;
+        else nextState.fos.push(normalized);
+        commitAppState(nextState, {
+          source: "fo:save",
+          entityKey: `fo:${normalized.id}`,
+          action: existingIndex >= 0 ? "update" : "create",
+        });
+      });
       renderRows();
       window.alert("FO gespeichert.");
-      overlay.remove();
+      finalizeClose();
     });
 
     if (!baseForm.payments.length) {
@@ -2584,6 +2677,7 @@ export default function render(root) {
     updateProductBanner();
     updatePaymentsPreview();
     validateForm();
+    draftForm.markSaved();
   }
 
   $("#fo-add", root).addEventListener("click", () => openFoModal(null));
@@ -2610,7 +2704,7 @@ export default function render(root) {
       const confirmed = window.confirm(prompt);
       if (!confirmed) return;
       state.fos = state.fos.filter(item => item.id !== id);
-      saveState(state);
+      commitAppState(state, { source: "fo:delete", entityKey: `fo:${id}`, action: "delete" });
       renderRows();
     } else if (action === "supplier") {
       const supplier = state.suppliers.find(item => item.id === fo.supplierId);

@@ -1,7 +1,9 @@
-import { loadState, saveState } from "../data/storageLocal.js";
+import { loadAppState, commitAppState } from "../storage/store.js";
 import { formatDeNumber, parseDeNumber, validateAll, validateSettings } from "../lib/dataHealth.js";
 import { parseISODate } from "../lib/dateUtils.js";
 import { goToIssue } from "./dataHealthUi.js";
+import { useDraftForm } from "../hooks/useDraftForm.js";
+import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 
 const CURRENCIES = ["EUR", "USD", "CNY"];
 
@@ -70,8 +72,9 @@ function updateSettings(state, patch) {
 }
 
 export function render(root) {
-  const state = loadState();
+  const state = loadAppState();
   const settings = state.settings || {};
+  const draftForm = useDraftForm(settings, { key: "settings", enableDraftCache: false });
   const lead = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
   const errors = {
     air: "",
@@ -92,7 +95,7 @@ export function render(root) {
       <h2>Settings</h2>
       <div class="table-card-header">
         <span class="muted">Eigenschaften</span>
-        <button class="btn primary" id="settings-save">Speichern</button>
+        <button class="btn primary" id="settings-save" disabled>Speichern</button>
       </div>
     </section>
 
@@ -219,11 +222,49 @@ export function render(root) {
       <div class="health-list" id="health-list"></div>
     </section>
   `;
-  $("#default-currency", root).value = settings.defaultCurrency || "EUR";
+  $("#default-currency", root).value = draftForm.draft.defaultCurrency || "EUR";
   const cnyStartInput = $("#cny-start", root);
   const cnyEndInput = $("#cny-end", root);
-  if (cnyStartInput) cnyStartInput.value = settings?.cny?.start || "";
-  if (cnyEndInput) cnyEndInput.value = settings?.cny?.end || "";
+  if (cnyStartInput) cnyStartInput.value = draftForm.draft?.cny?.start || "";
+  if (cnyEndInput) cnyEndInput.value = draftForm.draft?.cny?.end || "";
+
+  const guard = useDirtyGuard(() => draftForm.isDirty, "Ungespeicherte Änderungen verwerfen?");
+  guard.register();
+  guard.attachBeforeUnload();
+
+  function updateSaveState() {
+    const saveBtn = $("#settings-save", root);
+    if (!saveBtn) return;
+    saveBtn.disabled = !draftForm.isDirty;
+  }
+
+  function syncDraftFromForm() {
+    const values = validate();
+    if (!values) return;
+    const productionLeadInput = $("#default-production-lead", root);
+    const defaultDdpInput = $("#default-ddp", root);
+    draftForm.setDraft({
+      transportLeadTimesDays: {
+        air: values.air,
+        rail: values.rail,
+        sea: values.sea,
+      },
+      defaultBufferDays: values.buffer,
+      defaultCurrency: ($("#default-currency", root).value || "EUR").trim() || "EUR",
+      fxRate: formatRate(values.fxRate),
+      eurUsdRate: formatRate(values.eurUsdRate),
+      safetyStockDohDefault: values.safetyStockDohDefault,
+      foCoverageDohDefault: values.foCoverageDohDefault,
+      moqDefaultUnits: values.moqDefaultUnits,
+      defaultProductionLeadTimeDays: productionLeadInput ? values.defaultProductionLead : draftForm.draft.defaultProductionLeadTimeDays,
+      defaultDdp: defaultDdpInput ? defaultDdpInput.checked : draftForm.draft.defaultDdp,
+      cny: {
+        start: cnyStartInput ? cnyStartInput.value : "",
+        end: cnyEndInput ? cnyEndInput.value : "",
+      },
+    });
+    updateSaveState();
+  }
 
   function renderHealthHints() {
     const issues = validateSettings(state.settings || {});
@@ -336,7 +377,7 @@ export function render(root) {
     };
   }
 
-  $("#settings-save", root).addEventListener("click", () => {
+  $("#settings-save", root).addEventListener("click", async () => {
     const {
       air,
       rail,
@@ -351,32 +392,24 @@ export function render(root) {
       ok,
     } = validate();
     if (!ok) return;
-    const cnyStart = cnyStartInput ? cnyStartInput.value : "";
-    const cnyEnd = cnyEndInput ? cnyEndInput.value : "";
-    const productionLeadInput = $("#default-production-lead", root);
-    const defaultDdpInput = $("#default-ddp", root);
-    const patch = {
-      transportLeadTimesDays: { air, rail, sea },
-      defaultBufferDays: buffer,
-      defaultCurrency: ($("#default-currency", root).value || "EUR").trim() || "EUR",
-      fxRate: formatRate(fxRate),
-      eurUsdRate: formatRate(eurUsdRate),
-      safetyStockDohDefault,
-      foCoverageDohDefault,
-      moqDefaultUnits,
-      cny: {
-        start: cnyStart || "",
-        end: cnyEnd || "",
-      },
-    };
-    if (productionLeadInput) {
-      patch.defaultProductionLeadTimeDays = defaultProductionLead;
+    syncDraftFromForm();
+    const saveBtn = $("#settings-save", root);
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Speichern…";
     }
-    if (defaultDdpInput) {
-      patch.defaultDdp = defaultDdpInput.checked;
+    await draftForm.commit((draft) => {
+      const nextState = loadAppState();
+      updateSettings(nextState, draft);
+      commitAppState(nextState, { source: "settings:save", entityKey: "settings", action: "update" });
+      state.settings = nextState.settings;
+      state.products = nextState.products;
+      state.suppliers = nextState.suppliers;
+      state.productCategories = nextState.productCategories;
+    });
+    if (saveBtn) {
+      saveBtn.textContent = "Speichern";
     }
-    updateSettings(state, patch);
-    saveState(state);
     let toast = document.getElementById("settings-toast");
     if (!toast) {
       toast = document.createElement("div");
@@ -389,6 +422,7 @@ export function render(root) {
     setTimeout(() => { toast.hidden = true; }, 2000);
     renderHealthHints();
     renderHealth();
+    updateSaveState();
   });
 
   root.querySelectorAll("input[type=number]").forEach((input) => {
@@ -418,6 +452,15 @@ export function render(root) {
       validate();
     });
   }
+
+  root.addEventListener("input", (event) => {
+    if (event.target.closest("#settings-save")) return;
+    syncDraftFromForm();
+  });
+  root.addEventListener("change", (event) => {
+    if (event.target.closest("#settings-save")) return;
+    syncDraftFromForm();
+  });
 
   root.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-action='fix']");
@@ -497,7 +540,7 @@ export function render(root) {
   }
 
   function persistCategories() {
-    saveState(state);
+    commitAppState(state, { source: "settings:categories", entityKey: "settings", action: "update" });
     renderCategories();
   }
 
@@ -567,6 +610,14 @@ export function render(root) {
   }
 
   renderCategories();
+  updateSaveState();
+
+  return {
+    cleanup: () => {
+      guard.unregister();
+      guard.detachBeforeUnload();
+    },
+  };
 }
 
 export default { render };

@@ -1,5 +1,10 @@
-import { createEmptyState, saveState, loadState } from "../data/storageLocal.js";
+import { createEmptyState } from "../data/storageLocal.js";
+import { loadAppState, commitAppState, getLastCommitSummary, countDrafts } from "../storage/store.js";
 import { orderEditorUtils } from "./orderEditorFactory.js";
+
+function escapeHtml(str){
+  return String(str ?? "").replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
 
 function buildDemoState(){
   const demo = createEmptyState();
@@ -533,6 +538,8 @@ function buildDemoState(){
 }
 
 export async function render(root){
+  const commitInfo = getLastCommitSummary();
+  const draftCount = countDrafts();
   root.innerHTML = `
     <section class="card">
       <h2>Debug / Werkzeuge</h2>
@@ -543,6 +550,12 @@ export async function render(root){
         <button class="btn secondary" id="undo" disabled>Letzten Import rückgängig</button>
       </div>
       <div id="status" class="muted" style="margin-top:12px"></div>
+      <div class="muted" style="margin-top:12px">
+        <div>Storage-Key: <strong>${commitInfo?.storageKey || "—"}</strong></div>
+        <div>Last Commit: <strong>${commitInfo?.lastCommitAt || "—"}</strong></div>
+        <div>Last Commit Meta: <strong>${commitInfo?.lastCommitMeta ? escapeHtml(JSON.stringify(commitInfo.lastCommitMeta)) : "—"}</strong></div>
+        <div>Drafts (lokal): <strong>${draftCount}</strong></div>
+      </div>
     </section>`;
 
   const status = root.querySelector("#status");
@@ -567,7 +580,7 @@ export async function render(root){
   }
 
   root.querySelector("#seed").addEventListener("click", ()=>{
-    const current = loadState();
+    const current = loadAppState();
     if (hasExistingData(current)) {
       const proceed = window.confirm("Daten vorhanden – überschreiben?");
       if (!proceed) return;
@@ -576,24 +589,21 @@ export async function render(root){
       lastSnapshot = null;
     }
     const demoState = buildDemoState();
-    saveState(demoState);
-    window.dispatchEvent(new Event("state:changed"));
+    commitAppState(demoState, { source: "debug:seed", action: "seed" });
     updateStatus("Testdaten wurden geladen.");
     updateUndoState();
   });
 
   root.querySelector("#wipe").addEventListener("click", ()=>{
     const empty = createEmptyState();
-    saveState(empty);
-    window.dispatchEvent(new Event("state:changed"));
+    commitAppState(empty, { source: "debug:wipe", action: "wipe" });
     updateStatus("Alle Daten wurden zurückgesetzt.");
   });
 
   if (undoBtn) {
     undoBtn.addEventListener("click", ()=>{
       if (!lastSnapshot) return;
-      saveState(lastSnapshot);
-      window.dispatchEvent(new Event("state:changed"));
+      commitAppState(lastSnapshot, { source: "debug:undo", action: "undo" });
       updateStatus("Letzter Import wurde rückgängig gemacht.");
       lastSnapshot = null;
       updateUndoState();
