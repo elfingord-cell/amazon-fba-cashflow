@@ -1,4 +1,5 @@
-import { loadState, saveState, addStateListener } from '../data/storageLocal.js';
+import { addStateListener } from '../data/storageLocal.js';
+import { loadAppState, commitAppState, getViewState, setViewState } from "../storage/store.js";
 import { parseVentoryCsv } from "./forecastCsv.js";
 
 const CSV_IMPORT_LABEL = "VentoryOne Forecast importieren (CSV)";
@@ -14,29 +15,25 @@ const defaultView = {
 };
 
 const forecastView = (() => {
-  try {
-    const raw = JSON.parse(localStorage.getItem(FORECAST_VIEW_KEY) || "{}");
-    return {
-      ...defaultView,
-      ...raw,
-      collapsed: (raw && raw.collapsed) || {},
-    };
-  } catch {
-    return { ...defaultView };
-  }
+  const raw = getViewState(FORECAST_VIEW_KEY, {});
+  return {
+    ...defaultView,
+    ...raw,
+    collapsed: (raw && raw.collapsed) || {},
+  };
 })();
 
 forecastView.scrollLeft = Number(forecastView.scrollLeft || 0);
 
 function persistView() {
-  localStorage.setItem(FORECAST_VIEW_KEY, JSON.stringify({
+  setViewState(FORECAST_VIEW_KEY, {
     search: forecastView.search,
     range: forecastView.range,
     onlyActive: forecastView.onlyActive,
     onlyWithForecast: forecastView.onlyWithForecast,
     view: forecastView.view,
     collapsed: forecastView.collapsed,
-  }));
+  });
 }
 
 function arrayBufferToBinaryString(buffer) {
@@ -546,7 +543,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
     activeInput = null;
     if (commit && sku && month) {
       const value = parseNumberDE(raw);
-      const st = loadState();
+      const st = loadAppState();
       ensureForecastContainers(st);
       if (!st.forecast.forecastManual[sku]) st.forecast.forecastManual[sku] = {};
       if (raw.trim() === "" || value == null) {
@@ -557,7 +554,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
       } else {
         st.forecast.forecastManual[sku][month] = value;
       }
-      saveState(st);
+      commitAppState(st);
       render(el);
       return;
     }
@@ -633,7 +630,7 @@ function ensureForecastContainers(state) {
 }
 
 function render(el) {
-  const state = loadState();
+  const state = loadAppState();
   ensureForecastContainers(state);
   el.innerHTML = '';
   const products = Array.isArray(state.products) ? state.products : [];
@@ -743,10 +740,10 @@ function render(el) {
   el.appendChild(wrap);
 
   wrap.querySelector('[data-forecast-toggle]').addEventListener('change', ev => {
-    const st = loadState();
+    const st = loadAppState();
     ensureForecastContainers(st);
     st.forecast.settings.useForecast = ev.target.checked;
-    saveState(st);
+    commitAppState(st);
   });
 
   wrap.querySelector('[data-ventory-csv]').addEventListener('click', () => {
@@ -754,8 +751,8 @@ function render(el) {
   });
 
   wrap.querySelector('[data-forecast-save]').addEventListener('click', () => {
-    const st = loadState();
-    saveState(st);
+    const st = loadAppState();
+    commitAppState(st);
     showToast("Änderungen gespeichert.");
   });
 
@@ -898,7 +895,7 @@ function openVentoryImportModal(host) {
     const rows = await parseExcelFile(file);
     const { records, warnings, months } = parseVentoryRows(rows);
     if (!records.length) return { error: 'Keine gültigen Zeilen gefunden.' };
-    const st = loadState();
+    const st = loadAppState();
     const products = Array.isArray(st.products) ? st.products : [];
     const skuSet = new Set(products.map(prod => String(prod.sku || '').trim()));
     const unknownSkus = [...new Set(records.map(rec => rec.sku).filter(sku => !skuSet.has(sku)))];
@@ -950,7 +947,7 @@ function openVentoryImportModal(host) {
   importBtn.addEventListener('click', () => {
     if (!parsed || !parsed.records || !parsed.records.length) return;
     const mode = (modal.querySelector('input[name="import-mode"]:checked') || {}).value || 'overwrite';
-    const st = loadState();
+    const st = loadAppState();
     ensureForecastContainers(st);
     const products = Array.isArray(st.products) ? st.products : [];
     const skuSet = new Set(products.map(prod => String(prod.sku || '').trim()));
@@ -990,7 +987,7 @@ function openVentoryImportModal(host) {
 
     st.forecast.lastImportAt = now;
     st.forecast.importSource = "ventoryone";
-    saveState(st);
+    commitAppState(st);
     showToast(`Import erfolgreich: ${updates.length} Werte (${skippedUnknown.size} unbekannte SKUs übersprungen).`);
     closeModal();
     render(host);
@@ -1085,7 +1082,7 @@ function openVentoryCsvImportModal(host) {
 
   importBtn.addEventListener("click", () => {
     if (!parsed || !parsed.records || !parsed.records.length) return;
-    const st = loadState();
+    const st = loadAppState();
     ensureForecastContainers(st);
     const products = Array.isArray(st.products) ? st.products : [];
     const skuSet = new Set(products.map(prod => String(prod.sku || "").trim()));
@@ -1126,7 +1123,7 @@ function openVentoryCsvImportModal(host) {
 
     st.forecast.lastImportAt = now;
     st.forecast.importSource = "ventoryone";
-    saveState(st);
+    commitAppState(st);
 
     const summary = {
       skuCount: new Set(parsed.records.map(rec => rec.sku)).size,
