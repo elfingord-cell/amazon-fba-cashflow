@@ -76,6 +76,10 @@ export function useDraftForm(initialValue, options = {}) {
     mutate(draft, clone(saved));
   }
 
+  function markClean() {
+    saved = clone(draft);
+  }
+
   async function commit(commitFn) {
     if (typeof commitFn !== "function") return;
     const result = commitFn(draft);
@@ -101,6 +105,7 @@ export function useDraftForm(initialValue, options = {}) {
     loadDraftIfAvailable,
     restoreDraft,
     discardDraft,
+    markClean,
     commit,
   };
 
