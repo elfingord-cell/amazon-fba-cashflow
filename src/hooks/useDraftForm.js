@@ -5,8 +5,20 @@ import {
   clearDraftCache,
 } from "../storage/store.js";
 
+function safeDeepClone(value) {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch (err) {
+      // fall through to JSON clone
+    }
+  }
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
 function clone(value) {
-  return structuredClone(value ?? {});
+  return safeDeepClone(value ?? {});
 }
 
 function mutate(target, next) {
@@ -30,6 +42,31 @@ export function useDraftForm(initialValue, options = {}) {
 
   const draft = clone(initialValue);
   let saved = clone(initialValue);
+  const debugForms = typeof window !== "undefined" && window.__DEBUG_FORMS__ === true;
+
+  function assertNoSharedRefs(action) {
+    if (!debugForms) return;
+    const warnings = [];
+    if (!deepEqual(draft, saved)) {
+      warnings.push("draft/saved are not deep-equal after save.");
+    }
+    if (draft === saved) {
+      warnings.push("draft and saved share the same reference.");
+    }
+    if (Array.isArray(draft?.payments) && draft.payments === saved?.payments) {
+      warnings.push("payments array reference is shared.");
+    }
+    if (Array.isArray(draft?.items) && draft.items === saved?.items) {
+      warnings.push("items array reference is shared.");
+    }
+    if (warnings.length) {
+      console.warn(`[useDraftForm] Shared references detected after ${action}`, {
+        warnings,
+        draft,
+        saved,
+      });
+    }
+  }
 
   function syncCache() {
     if (!config.enableDraftCache) return;
@@ -38,16 +75,13 @@ export function useDraftForm(initialValue, options = {}) {
 
   function setDraft(patchOrUpdater) {
     if (typeof patchOrUpdater === "function") {
-      const next = patchOrUpdater(draft);
+      const next = patchOrUpdater(clone(draft));
       if (next && typeof next === "object") {
         mutate(draft, clone(next));
       }
     } else if (patchOrUpdater && typeof patchOrUpdater === "object") {
-      if (patchOrUpdater === draft) {
-        // no-op
-      } else {
-        Object.assign(draft, patchOrUpdater);
-      }
+      const next = patchOrUpdater === draft ? patchOrUpdater : { ...draft, ...patchOrUpdater };
+      mutate(draft, clone(next));
     }
     syncCache();
   }
@@ -61,7 +95,7 @@ export function useDraftForm(initialValue, options = {}) {
     if (!config.enableDraftCache) return { exists: false, draft: null };
     const cached = readDraftCache(config.key, config.draftCacheNamespace);
     if (!cached?.data) return { exists: false, draft: null };
-    return { exists: true, draft: cached.data, updatedAt: cached.updatedAt };
+    return { exists: true, draft: clone(cached.data), updatedAt: cached.updatedAt };
   }
 
   function restoreDraft() {
@@ -78,6 +112,7 @@ export function useDraftForm(initialValue, options = {}) {
 
   function markClean() {
     saved = clone(draft);
+    assertNoSharedRefs("markClean");
   }
 
   async function commit(commitFn) {
@@ -87,6 +122,7 @@ export function useDraftForm(initialValue, options = {}) {
       await result;
     }
     saved = clone(draft);
+    assertNoSharedRefs("commit");
     clearDraftCache(config.key, config.draftCacheNamespace);
   }
 

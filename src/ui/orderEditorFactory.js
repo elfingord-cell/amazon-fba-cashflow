@@ -2232,6 +2232,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
   paymentTable.append(paymentBody);
 
   function openPaymentModal(payment) {
+    const debugForms = typeof window !== "undefined" && window.__DEBUG_FORMS__ === true;
     const mergedPayments = getMergedPayments(record);
     const allPayments = buildPaymentRows(record, config, settings, mergedPayments);
     const existingLog = payment ? (record.paymentLog?.[payment.id] || {}) : {};
@@ -2353,6 +2354,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       else if (selectedIds.has(evtId)) selectedIds.delete(evtId);
       else selectedIds.add(evtId);
       updateSummary();
+      updateSaveState();
     };
     selectableEvents.forEach(evt => {
       const disabled = evt.status === "paid" && evt.paymentId !== currentPaymentId;
@@ -2408,7 +2410,98 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     updateSummary();
     updateLinkButtons();
 
+    const formError = el("div", { class: "form-error po-payment-error" }, []);
+
+    function getModalState() {
+      return {
+        selectedIds: Array.from(selectedIds).sort(),
+        paidDate: paidDateInput.value || "",
+        method: methodSelect.value || "",
+        paidBy: paidBySelect.value || "",
+        actual: actualInput.value.trim(),
+        paymentId: paymentIdInput.value.trim(),
+        invoiceUrl: normalizeUrl(invoiceUrlInput.value) || "",
+        folderUrl: normalizeUrl(folderUrlInput.value) || "",
+        note: noteInput.value.trim(),
+      };
+    }
+
+    const initialState = getModalState();
+
+    function setFormError(message) {
+      formError.textContent = message || "";
+    }
+
+    function computeValidation() {
+      if (!selectedIds.size) {
+        return { valid: false, reason: "Bitte mindestens ein Event auswählen." };
+      }
+      if (!paidBySelect.value) {
+        return { valid: false, reason: "Bitte Paid by auswählen." };
+      }
+      const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
+      const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
+      if (!Number.isFinite(sumPlanned)) {
+        return { valid: false, reason: "Summe der geplanten Beträge muss gültig sein." };
+      }
+      const actualRaw = actualInput.value.trim();
+      const parsedActual = actualRaw ? parseMoneyInput(actualRaw) : sumPlanned;
+      if (!Number.isFinite(parsedActual)) {
+        return { valid: false, reason: "Bitte einen gültigen Ist-Betrag eingeben." };
+      }
+      if (parsedActual < 0) {
+        return { valid: false, reason: "Ist-Betrag darf nicht negativ sein." };
+      }
+      if (parsedActual === 0 && sumPlanned > 0) {
+        return { valid: false, reason: "Ist-Betrag darf nicht 0 sein, wenn ein Soll-Betrag vorhanden ist." };
+      }
+
+      let allocations = null;
+      if (sumPlanned > 0) {
+        allocations = allocatePayment(parsedActual, selectedEvents);
+      } else if (parsedActual === 0) {
+        allocations = selectedEvents.map(evt => ({
+          eventId: evt.id,
+          planned: 0,
+          raw: 0,
+          actual: 0,
+        }));
+      }
+      if (!allocations) {
+        return { valid: false, reason: "Konnte die Ist-Beträge nicht aufteilen." };
+      }
+
+      const invoiceUrl = normalizeUrl(invoiceUrlInput.value);
+      if (invoiceUrl && !isHttpUrl(invoiceUrl)) {
+        return { valid: false, reason: "Invoice URL muss mit http:// oder https:// beginnen." };
+      }
+      const folderUrl = normalizeUrl(folderUrlInput.value);
+      if (folderUrl && !isHttpUrl(folderUrl)) {
+        return { valid: false, reason: "Folder URL muss mit http:// oder https:// beginnen." };
+      }
+
+      const requestedPaymentId = normalizePaymentId(paymentIdInput.value) || (paymentRecord?.id || buildPaymentId());
+      if (paymentRecord?.id && requestedPaymentId !== paymentRecord.id) {
+        const duplicate = mergedPayments.find(entry => entry?.id === requestedPaymentId);
+        if (duplicate) {
+          return { valid: false, reason: "Diese Payment-ID ist bereits vergeben." };
+        }
+      }
+
+      return {
+        valid: true,
+        selectedEvents,
+        sumPlanned,
+        parsedActual,
+        allocations,
+        invoiceUrl,
+        folderUrl,
+        requestedPaymentId,
+      };
+    }
+
     const form = el("div", { class: "po-payment-form" }, [
+      formError,
       el("div", { class: "po-payment-debug muted" }, ["Status: bereit"]),
       el("label", {}, ["Events (mehrere möglich)"]),
       eventList,
@@ -2433,142 +2526,147 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       noteInput,
     ]);
 
+    const saveHelper = el("div", { class: "muted po-payment-save-hint" }, []);
+    const saveBtn = el("button", { class: "btn", type: "button" }, ["Speichern"]);
+
+    function updateSaveState() {
+      const validation = computeValidation();
+      const isDirty = !deepEqual(getModalState(), initialState);
+      saveBtn.disabled = !isDirty || !validation.valid;
+      if (!validation.valid) {
+        saveHelper.textContent = "Bitte Pflichtfelder ausfüllen";
+      } else if (!isDirty) {
+        saveHelper.textContent = "Keine Änderungen";
+      } else {
+        saveHelper.textContent = "";
+      }
+      if (validation.valid) {
+        setFormError("");
+      }
+      return { isDirty, validation };
+    }
+
+    [
+      paidDateInput,
+      methodSelect,
+      paidBySelect,
+      actualInput,
+      paymentIdInput,
+      invoiceUrlInput,
+      folderUrlInput,
+      noteInput,
+    ].forEach(input => {
+      input.addEventListener("input", updateSaveState);
+      input.addEventListener("change", updateSaveState);
+    });
+
+    updateSaveState();
+
+    saveBtn.addEventListener("click", () => {
+      const isDirty = !deepEqual(getModalState(), initialState);
+      const validation = computeValidation();
+      const allocationsSum = Array.isArray(validation.allocations)
+        ? validation.allocations.reduce((sum, entry) => sum + Number(entry.actual || 0), 0)
+        : null;
+      if (debugForms) {
+        console.debug("[po-payment-modal] save click", {
+          isDirty,
+          valid: validation.valid,
+          reason: validation.reason || null,
+          allocationsSum,
+        });
+      }
+      if (!isDirty) {
+        setFormError("Speichern nicht möglich: Keine Änderungen.");
+        updateSaveState();
+        return;
+      }
+      if (!validation.valid) {
+        setFormError(`Speichern nicht möglich: ${validation.reason}`);
+        updateSaveState();
+        return;
+      }
+
+      const paymentPayload = {
+        id: validation.requestedPaymentId,
+        paidDate: paidDateInput.value || null,
+        method: methodSelect.value || null,
+        payer: paidBySelect.value,
+        currency: "EUR",
+        amountActualEurTotal: validation.parsedActual,
+        coveredEventIds: validation.allocations.map(entry => entry.eventId),
+        note: noteInput.value.trim() || null,
+        invoiceDriveUrl: validation.invoiceUrl || "",
+        invoiceFolderDriveUrl: validation.folderUrl || "",
+      };
+
+      draftForm.setDraft((current) => {
+        const base = current || {};
+        const nextPaymentDrafts = { ...(base.paymentDrafts || {}) };
+        if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
+          delete nextPaymentDrafts[initialPaymentId];
+        }
+        nextPaymentDrafts[paymentPayload.id] = paymentPayload;
+
+        const currentLog = base.paymentLog || {};
+        const nextPaymentLog = { ...currentLog };
+        const removedIds = new Set();
+        if (initialPaymentId) {
+          Object.entries(currentLog).forEach(([eventId, log]) => {
+            if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
+              removedIds.add(eventId);
+            }
+          });
+        }
+        removedIds.forEach(eventId => {
+          const log = currentLog?.[eventId] || {};
+          nextPaymentLog[eventId] = {
+            ...log,
+            status: "open",
+            paidDate: null,
+            paymentId: null,
+            amountActualEur: null,
+            method: null,
+            payer: null,
+            note: null,
+          };
+        });
+
+        validation.allocations.forEach(entry => {
+          const log = currentLog?.[entry.eventId] || {};
+          const paymentInternalId = log.paymentInternalId || `payrow-${Math.random().toString(36).slice(2, 9)}`;
+          nextPaymentLog[entry.eventId] = {
+            ...log,
+            paymentInternalId,
+            status: "paid",
+            paidDate: paymentPayload.paidDate,
+            paymentId: paymentPayload.id,
+            amountActualEur: entry.actual,
+            method: paymentPayload.method,
+            payer: paymentPayload.payer,
+            note: paymentPayload.note,
+          };
+        });
+
+        return {
+          ...base,
+          paymentDrafts: nextPaymentDrafts,
+          paymentLog: nextPaymentLog,
+        };
+      });
+
+      editing = draftForm.draft;
+      onAnyChange();
+      closeModal(modal);
+    });
+
     const modal = buildModal({
       title: paymentRecord || initialPaymentId ? "Zahlung bearbeiten" : "Zahlungen als bezahlt markieren",
       content: form,
       actions: [
         el("button", { class: "btn secondary", type: "button", onclick: () => closeModal(modal) }, ["Abbrechen"]),
-        el("button", {
-          class: "btn",
-          type: "button",
-          onclick: () => {
-            if (!selectedIds.size) {
-              alert("Bitte mindestens ein Event auswählen.");
-              return;
-            }
-            if (!paidBySelect.value) {
-              alert("Bitte Paid by auswählen.");
-              return;
-            }
-            const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
-            const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
-            if (!Number.isFinite(sumPlanned)) {
-              alert("Summe der geplanten Beträge muss gültig sein.");
-              return;
-            }
-            const actualRaw = actualInput.value.trim();
-            const parsedActual = actualRaw ? parseMoneyInput(actualRaw) : sumPlanned;
-            if (!Number.isFinite(parsedActual)) {
-              alert("Bitte einen gültigen Ist-Betrag eingeben.");
-              return;
-            }
-            if (parsedActual < 0) {
-              alert("Ist-Betrag darf nicht negativ sein.");
-              return;
-            }
-            if (parsedActual === 0 && sumPlanned > 0) {
-              alert("Ist-Betrag darf nicht 0 sein, wenn ein Soll-Betrag vorhanden ist.");
-              return;
-            }
-
-            let allocations = null;
-            if (sumPlanned > 0) {
-              allocations = allocatePayment(parsedActual, selectedEvents);
-            } else if (parsedActual === 0) {
-              allocations = selectedEvents.map(evt => ({
-                eventId: evt.id,
-                planned: 0,
-                raw: 0,
-                actual: 0,
-              }));
-            }
-            if (!allocations) {
-              alert("Konnte die Ist-Beträge nicht aufteilen.");
-              return;
-            }
-
-            const invoiceUrl = normalizeUrl(invoiceUrlInput.value);
-            if (invoiceUrl && !isHttpUrl(invoiceUrl)) {
-              alert("Invoice URL muss mit http:// oder https:// beginnen.");
-              return;
-            }
-            const folderUrl = normalizeUrl(folderUrlInput.value);
-            if (folderUrl && !isHttpUrl(folderUrl)) {
-              alert("Folder URL muss mit http:// oder https:// beginnen.");
-              return;
-            }
-
-            const requestedPaymentId = normalizePaymentId(paymentIdInput.value) || (paymentRecord?.id || buildPaymentId());
-            if (paymentRecord?.id && requestedPaymentId !== paymentRecord.id) {
-              const duplicate = mergedPayments.find(entry => entry?.id === requestedPaymentId);
-              if (duplicate) {
-                alert("Diese Payment-ID ist bereits vergeben.");
-                return;
-              }
-            }
-
-            const paymentPayload = {
-              id: requestedPaymentId,
-              paidDate: paidDateInput.value || null,
-              method: methodSelect.value || null,
-              payer: paidBySelect.value,
-              currency: "EUR",
-              amountActualEurTotal: parsedActual,
-              coveredEventIds: allocations.map(entry => entry.eventId),
-              note: noteInput.value.trim() || null,
-              invoiceDriveUrl: invoiceUrl || "",
-              invoiceFolderDriveUrl: folderUrl || "",
-            };
-
-            if (!editing.paymentDrafts) editing.paymentDrafts = {};
-            if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
-              delete editing.paymentDrafts[initialPaymentId];
-            }
-            editing.paymentDrafts[paymentPayload.id] = paymentPayload;
-
-            const currentLog = record.paymentLog || {};
-            const removedIds = new Set();
-            if (initialPaymentId) {
-              Object.entries(currentLog).forEach(([eventId, log]) => {
-                if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
-                  removedIds.add(eventId);
-                }
-              });
-            }
-            removedIds.forEach(eventId => {
-              const log = record.paymentLog?.[eventId] || {};
-              record.paymentLog[eventId] = {
-                ...log,
-                status: "open",
-                paidDate: null,
-                paymentId: null,
-                amountActualEur: null,
-                method: null,
-                payer: null,
-                note: null,
-              };
-            });
-
-            allocations.forEach(entry => {
-              const log = record.paymentLog?.[entry.eventId] || {};
-              const paymentInternalId = log.paymentInternalId || ensurePaymentInternalId(record, entry.eventId);
-              record.paymentLog[entry.eventId] = {
-                ...log,
-                paymentInternalId,
-                status: "paid",
-                paidDate: paymentPayload.paidDate,
-                paymentId: paymentPayload.id,
-                amountActualEur: entry.actual,
-                method: paymentPayload.method,
-                payer: paymentPayload.payer,
-                note: paymentPayload.note,
-              };
-            });
-
-            onAnyChange();
-            closeModal(modal);
-          },
-        }, ["Speichern"]),
+        saveHelper,
+        saveBtn,
       ],
     });
   }
