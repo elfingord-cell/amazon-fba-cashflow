@@ -1,21 +1,10 @@
 import { deepEqual } from "../utils/deepEqual.js";
+import { safeDeepClone } from "../utils/safeDeepClone.js";
 import {
   readDraftCache,
   writeDraftCache,
   clearDraftCache,
 } from "../storage/store.js";
-
-function safeDeepClone(value) {
-  if (typeof structuredClone === "function") {
-    try {
-      return structuredClone(value);
-    } catch (err) {
-      // fall through to JSON clone
-    }
-  }
-  if (value === undefined) return undefined;
-  return JSON.parse(JSON.stringify(value));
-}
 
 function clone(value) {
   return safeDeepClone(value ?? {});
