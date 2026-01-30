@@ -49,6 +49,7 @@ const defaults = {
     safetyStockDohDefault: 60,
     foCoverageDohDefault: 90,
     moqDefaultUnits: 500,
+    monthAnchorDay: "START",
     eurUsdRate: "0,92",
     lastUpdatedAt: null,
     cny: {
@@ -205,6 +206,10 @@ function ensureGlobalSettings(state) {
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
+  const monthAnchor = String(settings.monthAnchorDay || defaults.settings.monthAnchorDay || "START").toUpperCase();
+  settings.monthAnchorDay = ["START", "MID", "END"].includes(monthAnchor)
+    ? monthAnchor
+    : defaults.settings.monthAnchorDay;
   if (settings.eurUsdRate == null || String(settings.eurUsdRate).trim() === "") {
     settings.eurUsdRate = defaults.settings.eurUsdRate;
   }

@@ -52,6 +52,10 @@ function updateSettings(state, patch) {
   if (typeof patch.moqDefaultUnits !== "undefined") {
     state.settings.moqDefaultUnits = patch.moqDefaultUnits;
   }
+  if (typeof patch.monthAnchorDay !== "undefined") {
+    const anchor = String(patch.monthAnchorDay || "START").toUpperCase();
+    state.settings.monthAnchorDay = ["START", "MID", "END"].includes(anchor) ? anchor : "START";
+  }
   if (patch.cny && typeof patch.cny === "object") {
     state.settings.cny = {
       start: patch.cny.start || "",
@@ -174,6 +178,16 @@ export function render(root) {
           <small class="form-error" id="moq-default-error"></small>
         </label>
       </div>
+      <div class="grid two" style="margin-top: 12px;">
+        <label>
+          Monats-Anker (Default)
+          <select id="default-month-anchor">
+            <option value="START">Start (1. Tag)</option>
+            <option value="MID">Mitte (15. Tag)</option>
+            <option value="END">Ende (letzter Tag)</option>
+          </select>
+        </label>
+      </div>
     </section>
 
     <section class="card">
@@ -223,6 +237,10 @@ export function render(root) {
     </section>
   `;
   $("#default-currency", root).value = draftForm.draft.defaultCurrency || "EUR";
+  const anchorSelect = $("#default-month-anchor", root);
+  if (anchorSelect) {
+    anchorSelect.value = draftForm.draft.monthAnchorDay || "START";
+  }
   const cnyStartInput = $("#cny-start", root);
   const cnyEndInput = $("#cny-end", root);
   if (cnyStartInput) cnyStartInput.value = draftForm.draft?.cny?.start || "";
@@ -256,6 +274,7 @@ export function render(root) {
       safetyStockDohDefault: values.safetyStockDohDefault,
       foCoverageDohDefault: values.foCoverageDohDefault,
       moqDefaultUnits: values.moqDefaultUnits,
+      monthAnchorDay: anchorSelect ? anchorSelect.value : draftForm.draft.monthAnchorDay,
       defaultProductionLeadTimeDays: productionLeadInput ? values.defaultProductionLead : draftForm.draft.defaultProductionLeadTimeDays,
       defaultDdp: defaultDdpInput ? defaultDdpInput.checked : draftForm.draft.defaultDdp,
       cny: {
@@ -326,6 +345,8 @@ export function render(root) {
     const safetyStockDohDefault = clampNonNegative($("#default-safety-stock", root).value);
     const foCoverageDohDefault = clampNonNegative($("#default-fo-coverage", root).value);
     const moqDefaultUnits = clampNonNegative($("#default-moq-units", root).value);
+    const anchorRaw = $("#default-month-anchor", root)?.value || "START";
+    const anchorValue = ["START", "MID", "END"].includes(anchorRaw) ? anchorRaw : "START";
     const productionLeadInput = $("#default-production-lead", root);
     const productionLeadRaw = productionLeadInput ? parseDeNumber(productionLeadInput.value) : null;
     const defaultProductionLead = productionLeadRaw == null ? null : Math.max(0, Math.round(productionLeadRaw));
@@ -372,6 +393,7 @@ export function render(root) {
       safetyStockDohDefault,
       foCoverageDohDefault,
       moqDefaultUnits,
+      monthAnchorDay: anchorValue,
       defaultProductionLead,
       ok: !errors.air && !errors.rail && !errors.sea && !errors.buffer && !errors.fxRate && !errors.eurUsdRate && !errors.defaultProductionLeadTime && !errors.cny && !errors.safetyStockDohDefault && !errors.foCoverageDohDefault && !errors.moqDefaultUnits
     };

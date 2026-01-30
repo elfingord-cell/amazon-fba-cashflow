@@ -258,6 +258,7 @@ td.num, th.num{text-align:right}
 .inventory-input-warn .inventory-input-hint{display:inline;}
 .inventory-value{font-weight:600;}
 .inventory-cell{position:relative;}
+.inventory-projection-cell{cursor:pointer;}
 .inventory-cell.incomplete{background:rgba(15,27,45,0.04); color:var(--muted);}
 .inventory-cell.inbound-po{background:rgba(59,130,246,0.08);}
 .inventory-cell.inbound-fo{background:rgba(124,58,237,0.08);}
@@ -271,6 +272,10 @@ td.num, th.num{text-align:right}
 .inventory-cell-value{position:relative; z-index:2;}
 .inventory-tooltip-layer{position:fixed; min-width:260px; max-width:340px; background:#0f1b2d; color:#fff; font-size:12px; padding:10px; border-radius:10px; box-shadow:var(--shadow); z-index:50; pointer-events:auto;}
 .inventory-tooltip-layer[hidden]{display:none;}
+.inventory-cell-popover{position:fixed; min-width:260px; background:#fff; border:1px solid var(--table-border); border-radius:12px; box-shadow:var(--shadow); padding:10px; z-index:60;}
+.inventory-cell-popover-title{font-weight:700; font-size:12px; margin-bottom:8px;}
+.inventory-cell-popover-action{display:block; width:100%; border:none; background:transparent; text-align:left; padding:8px 6px; border-radius:8px; font-size:12px; cursor:pointer;}
+.inventory-cell-popover-action:hover{background:rgba(15,27,45,0.06);}
 .inventory-tooltip-header{margin-bottom:8px;}
 .inventory-tooltip-title{font-weight:700; margin-bottom:4px;}
 .inventory-tooltip-alias{font-size:12px; color:rgba(255,255,255,0.8);}
