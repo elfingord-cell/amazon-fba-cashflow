@@ -1211,6 +1211,9 @@ export default function render(root) {
     const plannedSalesBySku = buildPlannedSalesBySku(state);
     const closingStockBySku = buildClosingStockBySku(state);
     const inboundSummary = buildInboundBySku(state);
+    const anchorContext = {
+      anchorMonth: prefill?.anchorMonth || "",
+    };
     let baseForm = existing
       ? JSON.parse(JSON.stringify(existing))
       : {
@@ -1439,6 +1442,9 @@ export default function render(root) {
       if (!warningBox || !warningList) return;
       warningList.innerHTML = "";
       const product = getProductBySku(products, baseForm.sku);
+      if (baseForm.sku && !baseForm.supplierId && !product?.supplierId) {
+        warningList.append(el("li", {}, ["Supplier fehlt in Produktdaten."]));
+      }
       if (product) {
         const templateFields = product.template?.fields || {};
         const hasFreight = product.freight != null || product.freightAir != null || product.freightSea != null || product.freightRail != null || templateFields.freightEur != null;
@@ -1628,6 +1634,16 @@ export default function render(root) {
       $("#fo-preview-etd", content).textContent = formatDate(schedule.etdDate);
       $("#fo-preview-eta", content).textContent = formatDate(schedule.etaDate);
       $("#fo-preview-target", content).textContent = formatDate(baseForm.targetDeliveryDate);
+      const anchorNote = $("#fo-user-anchor", content);
+      if (anchorNote) {
+        if (anchorContext.anchorMonth) {
+          anchorNote.textContent = `User-Anker: ETA-Monat ${anchorContext.anchorMonth}`;
+          anchorNote.style.display = "block";
+        } else {
+          anchorNote.textContent = "";
+          anchorNote.style.display = "none";
+        }
+      }
       const missingFields = [];
       if (!baseForm.targetDeliveryDate) missingFields.push("Zieltermin");
       if (!Number.isFinite(Number(baseForm.productionLeadTimeDays)) || Number(baseForm.productionLeadTimeDays) <= 0) {
@@ -2101,6 +2117,7 @@ export default function render(root) {
             el("div", { class: "fo-date-row" }, [el("span", {}, ["ETD"]), el("strong", { id: "fo-preview-etd" }, ["—"])]),
             el("div", { class: "fo-date-row" }, [el("span", {}, ["ETA"]), el("strong", { id: "fo-preview-eta" }, ["—"])]),
           ]),
+          el("p", { class: "muted", id: "fo-user-anchor", style: "display:none;" }, []),
           el("div", { class: "fo-schedule-missing", id: "fo-schedule-missing", style: "display:none;" }, [
             el("strong", {}, ["Fehlende Daten"]),
             el("ul", { class: "fo-schedule-missing-list", id: "fo-schedule-missing-list" }, []),
@@ -2729,6 +2746,7 @@ export default function render(root) {
         sku: query.sku || "",
         alias: query.alias || "",
         targetDeliveryDate: query.target || "",
+        anchorMonth: query.anchorMonth || "",
       });
       window.__routeQuery = {};
       return;

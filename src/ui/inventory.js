@@ -38,6 +38,12 @@ function formatMonthLabel(month) {
   return `${m}-${y}`;
 }
 
+function formatMonthSlash(month) {
+  if (!month) return "—";
+  const [y, m] = month.split("-");
+  return `${m}/${y}`;
+}
+
 function daysInMonth(monthKey) {
   if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return 30;
   const [y, m] = monthKey.split("-").map(Number);
@@ -232,6 +238,22 @@ function formatEur(value) {
 function formatShortDate(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
   return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function resolveAnchorDate(monthKey, anchorDay) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return null;
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  const anchor = String(anchorDay || "START").toUpperCase();
+  let day = 1;
+  if (anchor === "MID") day = 15;
+  if (anchor === "END") day = new Date(year, month, 0).getDate();
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function formatAnchorLabel(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
+  return date.toISOString().slice(0, 10);
 }
 
 function resolvePoEtd(po) {
@@ -651,7 +673,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const tooltipHtml = tooltip ? tooltip.replace(/\s+/g, " ").trim() : "";
         const tooltipId = tooltip ? `inventory-inbound-${sku}-${month}-${inboundDetailIndex++}` : "";
         return `
-          <td class="num ${inboundClasses} ${safetyClassFinal} ${incompleteClass}" ${tooltip ? `data-tooltip-html="${encodeTooltip(tooltipHtml)}"` : ""} ${tooltipId ? `data-tooltip-id="${tooltipId}"` : ""}>
+          <td class="num ${inboundClasses} ${safetyClassFinal} ${incompleteClass} inventory-projection-cell" data-month="${escapeHtml(month)}" ${tooltip ? `data-tooltip-html="${encodeTooltip(tooltipHtml)}"` : ""} ${tooltipId ? `data-tooltip-id="${tooltipId}"` : ""}>
             <span class="inventory-cell-value">${displayValue}</span>
             ${inboundMarkers}
           </td>
@@ -738,6 +760,10 @@ export function render(root) {
   const selectedMonth = resolveSelectedMonth(state, view);
   view.selectedMonth = selectedMonth;
   saveViewState(view);
+  if (root._inventoryCleanup) {
+    root._inventoryCleanup();
+    root._inventoryCleanup = null;
+  }
 
   const snapshot = getSnapshot(state, selectedMonth) || { month: selectedMonth, items: [] };
   const previousSnapshot = getPreviousSnapshot(state, selectedMonth);
@@ -918,10 +944,25 @@ export function render(root) {
       saveViewState(view);
       render(root);
     });
+    projectionTable.addEventListener("click", (event) => {
+      const toggle = event.target.closest("button.tree-toggle[data-category]");
+      if (toggle) return;
+      const cell = event.target.closest("td.inventory-projection-cell");
+      if (!cell) return;
+      const row = cell.closest("tr[data-sku]");
+      if (!row) return;
+      const sku = row.getAttribute("data-sku");
+      const month = cell.getAttribute("data-month");
+      if (!sku || !month) return;
+      event.stopPropagation();
+      openProjectionPopover(cell, { sku, month });
+    });
   }
 
   const tooltipLayer = root.querySelector("#inventory-tooltip-layer");
   let activeTooltipTarget = null;
+  let projectionPopover = null;
+  let projectionPopoverCell = null;
 
   function positionTooltip(event) {
     if (!tooltipLayer || tooltipLayer.hidden) return;
@@ -957,6 +998,80 @@ export function render(root) {
     activeTooltipTarget = null;
   }
 
+  function closeProjectionPopover() {
+    if (projectionPopover) {
+      projectionPopover.remove();
+    }
+    projectionPopover = null;
+    projectionPopoverCell = null;
+  }
+
+  function positionProjectionPopover(anchor) {
+    if (!projectionPopover || !anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const padding = 8;
+    const maxX = window.innerWidth - projectionPopover.offsetWidth - padding;
+    const maxY = window.innerHeight - projectionPopover.offsetHeight - padding;
+    const x = Math.min(rect.left, maxX);
+    const y = Math.min(rect.bottom + 6, maxY);
+    projectionPopover.style.left = `${Math.max(padding, x)}px`;
+    projectionPopover.style.top = `${Math.max(padding, y)}px`;
+  }
+
+  function openProjectionPopover(cell, { sku, month }) {
+    if (!cell || !sku || !month) return;
+    if (projectionPopoverCell === cell && projectionPopover) {
+      closeProjectionPopover();
+      return;
+    }
+    closeProjectionPopover();
+    const anchorSetting = state.settings?.monthAnchorDay || "START";
+    const anchorDate = resolveAnchorDate(month, anchorSetting);
+    const anchorIso = formatAnchorLabel(anchorDate);
+    const anchorLabel = formatShortDate(anchorDate);
+    const monthLabel = formatMonthSlash(month);
+    const menu = document.createElement("div");
+    menu.className = "inventory-cell-popover";
+    menu.innerHTML = `
+      <div class="inventory-cell-popover-title">Aktion für ${escapeHtml(sku)}</div>
+      <button class="inventory-cell-popover-action" type="button" data-action="fo">
+        FO erstellen – Ankunft in ${escapeHtml(monthLabel)} <span class="muted">(Anker: ${escapeHtml(anchorLabel)})</span>
+      </button>
+      <button class="inventory-cell-popover-action" type="button" data-action="po">
+        PO erstellen – Bestellung in ${escapeHtml(monthLabel)} <span class="muted">(Anker: ${escapeHtml(anchorLabel)})</span>
+      </button>
+      <button class="inventory-cell-popover-action" type="button" data-action="po-arrival">
+        PO rückwärts – Ankunft in ${escapeHtml(monthLabel)} <span class="muted">(Anker: ${escapeHtml(anchorLabel)})</span>
+      </button>
+    `;
+    menu.addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const params = new URLSearchParams();
+      params.set("create", "1");
+      params.set("sku", sku);
+      params.set("anchorMonth", month);
+      params.set("anchorDate", anchorIso);
+      if (action === "fo") {
+        params.set("target", anchorIso);
+        location.hash = `#fo?${params.toString()}`;
+      } else if (action === "po") {
+        params.set("orderDate", anchorIso);
+        params.set("anchorMode", "order");
+        location.hash = `#po?${params.toString()}`;
+      } else if (action === "po-arrival") {
+        params.set("anchorMode", "arrival");
+        location.hash = `#po?${params.toString()}`;
+      }
+      closeProjectionPopover();
+    });
+    document.body.appendChild(menu);
+    projectionPopover = menu;
+    projectionPopoverCell = cell;
+    positionProjectionPopover(cell);
+  }
+
   root.addEventListener("mouseover", (event) => {
     const target = event.target.closest("[data-tooltip-html]");
     if (!target || target === activeTooltipTarget) return;
@@ -985,6 +1100,26 @@ export function render(root) {
     tooltipLayer.addEventListener("mouseleave", () => {
       hideTooltip();
     });
+  }
+
+  const handleDocClick = (event) => {
+    if (!projectionPopover) return;
+    if (projectionPopover.contains(event.target)) return;
+    const cell = event.target.closest("td.inventory-projection-cell");
+    if (cell && projectionPopoverCell === cell) return;
+    closeProjectionPopover();
+  };
+  const handleKeydown = (event) => {
+    if (event.key === "Escape") {
+      closeProjectionPopover();
+    }
+  };
+  document.addEventListener("click", handleDocClick);
+  document.addEventListener("keydown", handleKeydown);
+  const tableScroll = root.querySelector(".inventory-table-scroll");
+  const handleScroll = () => closeProjectionPopover();
+  if (tableScroll) {
+    tableScroll.addEventListener("scroll", handleScroll);
   }
 
   root.addEventListener("click", (event) => {
@@ -1027,6 +1162,15 @@ export function render(root) {
       render(root);
     });
   });
+
+  root._inventoryCleanup = () => {
+    document.removeEventListener("click", handleDocClick);
+    document.removeEventListener("keydown", handleKeydown);
+    if (tableScroll) {
+      tableScroll.removeEventListener("scroll", handleScroll);
+    }
+    closeProjectionPopover();
+  };
 }
 
 export default { render };

@@ -344,6 +344,20 @@ function formatDateISO(date) {
   return date.toISOString().slice(0, 10);
 }
 
+function monthKeyFromDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function formatMonthSlash(monthKey) {
+  if (!monthKey) return "—";
+  const [year, month] = String(monthKey).split("-");
+  if (!year || !month) return "—";
+  return `${month}/${year}`;
+}
+
 function getCnyWindow(settings, year) {
   const direct = settings?.cny;
   if (direct?.start && direct?.end) {
@@ -1856,6 +1870,20 @@ function computeTimeline(record, settings = getSettings()) {
   };
 }
 
+function computeOrderDateForEta(anchorDate, record, settings = getSettings()) {
+  if (!(anchorDate instanceof Date) || Number.isNaN(anchorDate.getTime())) return null;
+  const prodDays = Math.max(0, Number(record?.prodDays || 0));
+  const transitDays = Math.max(0, Number(record?.transitDays || 0));
+  const bufferDays = Math.max(0, Number(settings?.defaultBufferDays || 0));
+  const baseTotal = prodDays + transitDays + bufferDays;
+  let candidate = addDaysUtcDate(anchorDate, -baseTotal);
+  const blackout = applyCnyBlackout(candidate, prodDays, settings);
+  if (blackout.adjustmentDays) {
+    candidate = addDaysUtcDate(candidate, -blackout.adjustmentDays);
+  }
+  return candidate;
+}
+
 function formatTimelineSummary(record, settings) {
   const timeline = computeTimeline(record, settings);
   if (!timeline) return "—";
@@ -2812,6 +2840,7 @@ export function renderOrderModule(root, config) {
     timeline: `${config.slug}-timeline`,
     timelineSummary: `${config.slug}-timeline-summary`,
     cnyBanner: `${config.slug}-cny-banner`,
+    prefillBanner: `${config.slug}-prefill-banner`,
     etdComputed: `${config.slug}-etd-computed`,
     etaComputed: `${config.slug}-eta-computed`,
     etdManual: `${config.slug}-etd-manual`,
@@ -2862,6 +2891,7 @@ export function renderOrderModule(root, config) {
           <h4>Header</h4>
           <span class="po-form-section-meta" id="${ids.status}"></span>
         </div>
+        <div id="${ids.prefillBanner}" class="banner warning" hidden></div>
         ${quickfillEnabled ? `
         <div class="grid two po-quickfill">
         <div class="po-product-field">
@@ -3119,6 +3149,7 @@ export function renderOrderModule(root, config) {
   const poStatus = poMode ? $(`#${ids.status}`, root) : null;
   const poMeta = poMode ? $(`#${ids.meta}`, root) : null;
   const poSaveHeader = poMode ? $(`#${ids.saveHeader}`, root) : null;
+  const prefillBanner = $(`#${ids.prefillBanner}`, root);
   const skuInput = quickfillEnabled ? $(`#${ids.sku}`, root) : null;
   const skuList = quickfillEnabled ? $(`#${ids.skuList}`, root) : null;
   const supplierInput = quickfillEnabled ? $(`#${ids.supplier}`, root) : null;
@@ -3262,6 +3293,18 @@ export function renderOrderModule(root, config) {
   function setQuickStatus(message) {
     if (!quickStatus) return;
     quickStatus.textContent = message || "";
+  }
+
+  function setPrefillBanner(messages = [], title = "Hinweise") {
+    if (!prefillBanner) return;
+    if (!messages.length) {
+      prefillBanner.hidden = true;
+      prefillBanner.innerHTML = "";
+      return;
+    }
+    const list = messages.map(message => `<li>${message}</li>`).join("");
+    prefillBanner.innerHTML = `<strong>${title}</strong><ul>${list}</ul>`;
+    prefillBanner.hidden = false;
   }
 
   function showToast(message) {
@@ -4247,6 +4290,7 @@ export function renderOrderModule(root, config) {
   }
 
   function loadForm(record) {
+    setPrefillBanner([]);
     const settings = getSettings();
     draftForm = useDraftForm(prepareRecordForDraft(record, settings), { key: entityKeyFor(record), enableDraftCache: true });
     editing = draftForm.draft;
@@ -4707,6 +4751,49 @@ export function renderOrderModule(root, config) {
   refreshQuickfillControls();
   loadForm(defaultRecord(config, getSettings()));
 
+  function buildPrefillRecord(query) {
+    const settings = getSettings();
+    refreshProductCache();
+    const record = defaultRecord(config, settings);
+    const messages = [];
+    const sku = String(query.sku || "").trim();
+    if (sku) {
+      record.sku = sku;
+      if (Array.isArray(record.items) && record.items[0]) {
+        record.items[0].sku = sku;
+        record.items[0].units = "";
+      }
+    }
+    const product = sku
+      ? productCache.find(prod => prod?.sku?.trim().toLowerCase() === sku.toLowerCase())
+      : null;
+    if (product?.supplierId) {
+      record.supplier = product.supplierId;
+    } else if (sku) {
+      messages.push("Supplier fehlt in Produktdaten.");
+    }
+    const anchorMode = String(query.anchorMode || "order").toLowerCase();
+    const anchorDateRaw = query.orderDate || query.anchorDate || "";
+    const anchorDate = parseISOToDate(anchorDateRaw);
+    if (anchorDate) {
+      if (anchorMode === "arrival") {
+        record.etaManual = formatDateISO(anchorDate);
+        const orderDate = computeOrderDateForEta(anchorDate, record, settings);
+        if (orderDate) {
+          record.orderDate = formatDateISO(orderDate);
+        }
+        messages.push(`Order Date wurde rückwärts bestimmt für ETA-Anker ${fmtDateDE(anchorDate)}.`);
+      } else {
+        record.orderDate = formatDateISO(anchorDate);
+      }
+    }
+    if (!Number.isFinite(parseDE(settings.fxRate))) {
+      messages.push("FX-Kurs fehlt in Settings.");
+    }
+    const anchorMonth = query.anchorMonth || (anchorDate ? monthKeyFromDate(anchorDate) : null);
+    return { record, messages, anchorMonth, anchorMode, anchorDate, product };
+  }
+
   function focusPaymentRow(focus) {
     if (!focus || !poMode) return;
     const targetKey = String(focus).split(":")[1] || "";
@@ -4729,6 +4816,26 @@ export function renderOrderModule(root, config) {
 
   function openFromRoute() {
     const query = window.__routeQuery || {};
+    const isCreate = query.create === "1" || query.mode === "create";
+    if (isCreate) {
+      const { record, messages, anchorMonth, anchorMode, product } = buildPrefillRecord(query);
+      loadForm(record);
+      if (product && quickfillEnabled) {
+        applyProductDefaultsFromProduct(product);
+        freightPerUnitOverridden = false;
+        updateFreightPerUnitSuggestion(product, { force: true });
+      }
+      const etaMonthKey = anchorMode !== "arrival"
+        ? monthKeyFromDate(computeTimeline(editing, getSettings())?.eta)
+        : null;
+      if (anchorMonth && etaMonthKey && etaMonthKey > anchorMonth) {
+        messages.push(`Mit aktuellen Lead Times liegt ETA voraussichtlich in ${formatMonthSlash(etaMonthKey)} (Stockout-Risiko möglich).`);
+      }
+      setPrefillBanner(messages);
+      if (poMode) openFormModal();
+      window.__routeQuery = {};
+      return;
+    }
     if (!query.open) return;
     const openValue = String(query.open || "").trim().toLowerCase();
     if (!openValue) return;
