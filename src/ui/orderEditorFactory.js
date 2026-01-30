@@ -17,6 +17,7 @@ import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
 import { computeFreightEstimate } from "../domain/costing/freightEstimate.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
 import { deepEqual } from "../utils/deepEqual.js";
+import { safeDeepClone } from "../utils/safeDeepClone.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
@@ -156,7 +157,7 @@ function getMergedPayments(record) {
 }
 
 function prepareRecordForDraft(record, settings) {
-  const next = JSON.parse(JSON.stringify(record || {}));
+  const next = safeDeepClone(record || {});
   normaliseGoodsFields(next, settings);
   ensureAutoEvents(next, settings, next.milestones || []);
   ensurePaymentLog(next);
@@ -4249,7 +4250,7 @@ export function renderOrderModule(root, config) {
     const settings = getSettings();
     draftForm = useDraftForm(prepareRecordForDraft(record, settings), { key: entityKeyFor(record), enableDraftCache: true });
     editing = draftForm.draft;
-    lastLoaded = JSON.parse(JSON.stringify(editing));
+    lastLoaded = safeDeepClone(editing);
     applyDraftToForm();
     draftForm.markClean();
     const cached = draftForm.loadDraftIfAvailable();
@@ -4307,16 +4308,19 @@ export function renderOrderModule(root, config) {
     }
     await draftForm.commit((draft) => {
       const st = loadAppState();
-      const nextRecord = JSON.parse(JSON.stringify(draft));
+      const nextRecord = safeDeepClone(draft);
       const paymentDrafts = nextRecord.paymentDrafts || {};
       delete nextRecord.paymentDrafts;
-      if (!Array.isArray(st.payments)) st.payments = [];
+      const basePayments = Array.isArray(st.payments) ? st.payments : [];
+      const nextPayments = basePayments.map(payment => safeDeepClone(payment));
       Object.values(paymentDrafts).forEach(payload => {
         if (!payload?.id) return;
-        const idx = st.payments.findIndex(entry => entry?.id === payload.id);
-        if (idx >= 0) st.payments[idx] = { ...st.payments[idx], ...payload };
-        else st.payments.push(payload);
+        const idx = nextPayments.findIndex(entry => entry?.id === payload.id);
+        const nextPayload = safeDeepClone(payload);
+        if (idx >= 0) nextPayments[idx] = { ...nextPayments[idx], ...nextPayload };
+        else nextPayments.push(nextPayload);
       });
+      st.payments = nextPayments;
       const arr = Array.isArray(st[config.entityKey]) ? st[config.entityKey] : [];
       const idx = arr.findIndex(item => (item.id && item.id === nextRecord.id)
         || (item[config.numberField] && item[config.numberField] === nextRecord[config.numberField]));
@@ -4328,7 +4332,7 @@ export function renderOrderModule(root, config) {
         entityKey: entityKeyFor(nextRecord),
         action: idx >= 0 ? "update" : "create",
       });
-      lastLoaded = JSON.parse(JSON.stringify(nextRecord));
+      lastLoaded = safeDeepClone(nextRecord);
     });
     renderListView(loadAppState()[config.entityKey]);
     refreshQuickfillControls();
