@@ -625,7 +625,12 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           previousUnknown = true;
         }
         const forecastMissing = !Number.isFinite(forecastUnits) || previousUnknown;
-        const safetyDays = state.inventory?.settings?.safetyDays || 60;
+        const safetyDays = Number(
+          product?.safetyStockDohOverride
+            ?? state.settings?.safetyStockDohDefault
+            ?? state.inventory?.settings?.safetyDays
+            ?? 60,
+        );
         const safetyUnits = view.showSafety && Number.isFinite(forecastUnits)
           ? Math.round((forecastUnits / daysInMonth(month)) * safetyDays)
           : null;
