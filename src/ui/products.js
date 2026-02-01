@@ -1037,9 +1037,9 @@ function buildHistoryTable(state, sku) {
       return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
     }
     const columns = [
-      { key: "alias", label: "Alias" },
-      { key: "sku", label: "SKU" },
-      { key: "supplier", label: "Supplier" },
+      { key: "alias", label: "Alias", className: "cell-ellipsis col-alias" },
+      { key: "sku", label: "SKU", className: "cell-ellipsis col-sku" },
+      { key: "supplier", label: "Supplier", className: "cell-ellipsis col-supplier" },
       { key: "category", label: "Kategorie" },
       { key: "status", label: "Status" },
       { key: "moqUnits", label: "MOQ", className: "num" },
@@ -1048,11 +1048,11 @@ function buildHistoryTable(state, sku) {
       { key: "count", label: "POs", className: "num" },
       { key: "template", label: "Template" },
       { key: "tags", label: "Tags" },
-      { key: "actions", label: "Aktionen" },
+      { key: "actions", label: "Aktionen", className: "sticky-actions actions" },
     ];
     const colCount = columns.length;
     const columnWidths = state?.settings?.productsTableColumns?.list || [];
-    const table = createEl("table", { class: "table products-list-table" });
+    const table = createEl("table", { class: "table table-compact products-list-table" });
     const thead = createEl("thead", {}, [
       createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "", title: col.label }, [col.label])))
     ]);
@@ -1062,14 +1062,16 @@ function buildHistoryTable(state, sku) {
 
     const renderCell = (product, col) => {
       switch (col.key) {
-        case "alias":
+        case "alias": {
+          const aliasText = product.alias || "—";
           return createEl("div", { class: "data-health-inline" }, [
             buildHealthDot(product.sku),
-            product.alias || "—",
+            createEl("span", { class: "truncate-text", title: aliasText }, [aliasText]),
             product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
           ]);
+        }
         case "sku":
-          return product.sku || "—";
+          return createEl("span", { title: product.sku || "—" }, [product.sku || "—"]);
         case "supplier":
           return createEl("span", { title: supplierLabelMap.get(product.supplierId) || product.supplierId || "—" }, [
             supplierLabelMap.get(product.supplierId) || product.supplierId || "—"
@@ -1094,10 +1096,10 @@ function buildHistoryTable(state, sku) {
           return (product.tags || []).length ? (product.tags || []).join(", ") : "—";
         case "actions":
           return createEl("div", { class: "table-actions" }, [
-            createEl("button", { class: "btn secondary", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
-            createEl("button", { class: "btn tertiary", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+            createEl("button", { class: "btn secondary sm", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+            createEl("button", { class: "btn tertiary sm", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
             createEl("button", {
-              class: "btn tertiary",
+              class: "btn tertiary sm",
               type: "button",
               onclick: () => {
                 setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
@@ -1105,7 +1107,7 @@ function buildHistoryTable(state, sku) {
               }
             }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
             createEl("button", {
-              class: "btn danger",
+              class: "btn danger sm",
               type: "button",
               onclick: () => {
                 if (confirm("Produkt wirklich löschen?")) {

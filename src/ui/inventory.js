@@ -63,6 +63,15 @@ function formatInt(value) {
   return Math.round(Number(value)).toLocaleString("de-DE", { maximumFractionDigits: 0 });
 }
 
+function filterProductsBySearch(products, search) {
+  const term = String(search || "").trim().toLowerCase();
+  if (!term) return products;
+  return products.filter(product => {
+    return String(product.alias || "").toLowerCase().includes(term)
+      || String(product.sku || "").toLowerCase().includes(term);
+  });
+}
+
 function isProductActive(product) {
   if (!product) return false;
   if (typeof product.active === "boolean") return product.active;
@@ -125,6 +134,17 @@ function resolveSelectedMonth(state, view) {
   const candidate = view.selectedMonth || latest || current;
   if (!candidate) return current;
   return candidate;
+}
+
+function setAllCategoriesCollapsed({ products, categories, view, collapsed }) {
+  const filtered = filterProductsBySearch(products, view.search);
+  const groups = buildCategoryGroups(filtered, categories);
+  const next = { ...view.collapsed };
+  groups.forEach(group => {
+    next[group.id] = collapsed;
+  });
+  view.collapsed = next;
+  saveViewState(view);
 }
 
 function normalizeMonthKey(value) {
@@ -555,12 +575,7 @@ function encodeTooltip(html) {
 }
 
 function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories }) {
-  const search = view.search.trim().toLowerCase();
-  const filtered = products.filter(product => {
-    if (!search) return true;
-    return String(product.alias || "").toLowerCase().includes(search)
-      || String(product.sku || "").toLowerCase().includes(search);
-  });
+  const filtered = filterProductsBySearch(products, view.search);
 
   const groups = buildCategoryGroups(filtered, categories);
   const prevMap = new Map();
@@ -653,12 +668,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
 }
 
 function buildProjectionTable({ state, view, snapshot, products, categories, months }) {
-  const search = view.search.trim().toLowerCase();
-  const filtered = products.filter(product => {
-    if (!search) return true;
-    return String(product.alias || "").toLowerCase().includes(search)
-      || String(product.sku || "").toLowerCase().includes(search);
-  });
+  const filtered = filterProductsBySearch(products, view.search);
   const groups = buildCategoryGroups(filtered, categories);
   const forecastBySku = buildForecastBySku(state, filtered, months);
   const forecastTotalsByGroup = view.projectionMode === "plan"
@@ -880,6 +890,8 @@ export function render(root) {
           <select id="inventory-month"></select>
         </label>
         <button class="btn secondary" id="inventory-copy">Copy from previous month</button>
+        <button class="btn secondary" id="inventory-expand-all">Alles aufklappen</button>
+        <button class="btn secondary" id="inventory-collapse-all">Alles zuklappen</button>
         <span class="muted small">${previousSnapshot ? `Vorheriger Snapshot: ${formatMonthLabel(previousSnapshot.month)}` : "Kein vorheriger Snapshot vorhanden."}</span>
       </div>
       <div class="inventory-table-wrap">
@@ -976,6 +988,22 @@ export function render(root) {
         };
       });
       commitAppState(state);
+      render(root);
+    });
+  }
+
+  const expandAllBtn = root.querySelector("#inventory-expand-all");
+  if (expandAllBtn) {
+    expandAllBtn.addEventListener("click", () => {
+      setAllCategoriesCollapsed({ products, categories, view, collapsed: false });
+      render(root);
+    });
+  }
+
+  const collapseAllBtn = root.querySelector("#inventory-collapse-all");
+  if (collapseAllBtn) {
+    collapseAllBtn.addEventListener("click", () => {
+      setAllCategoriesCollapsed({ products, categories, view, collapsed: true });
       render(root);
     });
   }
