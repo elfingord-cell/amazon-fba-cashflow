@@ -530,6 +530,7 @@ td.num, th.num{text-align:right}
 .products-list-table th.col-supplier,.products-list-table td.col-supplier{width:180px;}
 .products-list-table th.col-category,.products-list-table td.col-category{width:150px;}
 .products-list-table th.col-status,.products-list-table td.col-status{width:90px;}
+.products-list-table th.col-abc,.products-list-table td.col-abc{width:70px; text-align:center;}
 .products-list-table th.col-moq,.products-list-table td.col-moq{width:80px;}
 .products-list-table th.col-last-po,.products-list-table td.col-last-po{width:110px;}
 .products-list-table th.col-avg,.products-list-table td.col-avg{width:120px;}
@@ -643,6 +644,8 @@ th:hover > .col-resizer::after{opacity:1;}
 .products-grid-table th.col-short,
 .products-grid-table th.col-amount,
 .products-grid-table th.col-days{ text-align:right; }
+.products-grid-table th.col-abc,
+.products-grid-table td.col-abc{ text-align:center; }
 .products-grid-table td.col-short input,
 .products-grid-table td.col-amount input,
 .products-grid-table td.col-days input{ text-align:right; }
