@@ -17,7 +17,7 @@ import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { formatDeNumber, parseDeNumber, validateProducts } from "../lib/dataHealth.js";
 import { openDataHealthPanel } from "./dataHealthUi.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
-import { getProductCompleteness } from "../lib/productCompleteness.js";
+import { evaluateProductCompleteness } from "../lib/productCompleteness.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
@@ -300,10 +300,10 @@ function buildHistoryTable(state, sku) {
   const completenessContext = { state };
   function getCompleteness(product) {
     if (!product?.sku) {
-      return getProductCompleteness(product, { state });
+      return evaluateProductCompleteness(product, { state });
     }
     if (!completenessBySku.has(product.sku)) {
-      completenessBySku.set(product.sku, getProductCompleteness(product, completenessContext));
+      completenessBySku.set(product.sku, evaluateProductCompleteness(product, completenessContext));
     }
     return completenessBySku.get(product.sku);
   }
@@ -318,14 +318,16 @@ function buildHistoryTable(state, sku) {
         .some(val => String(val).toLowerCase().includes(needle));
     });
     if (!statusFilter || statusFilter === "all") return filteredBySearch;
-    const normalized = statusFilter === "ready" ? "ok" : statusFilter;
+    const normalized = statusFilter === "ready"
+      ? "ok"
+      : (statusFilter === "warning" ? "warn" : statusFilter);
     return filteredBySearch.filter(item => getCompleteness(item).status === normalized);
   }
 
   function formatCompletenessLabel(status) {
-    if (status === "ok") return "✅ Vollständig";
-    if (status === "warning") return "⚠️ Unvollständig";
-    return "❌ Blockiert";
+    if (status === "ok") return "OK";
+    if (status === "warn") return "WARN";
+    return "BLOCKED";
   }
 
   function formatMissingSummary(items, maxItems = 3) {
@@ -333,19 +335,18 @@ function buildHistoryTable(state, sku) {
     if (!labels.length) return "";
     const shown = labels.slice(0, maxItems);
     const remaining = labels.length - shown.length;
-    return `Fehlt: ${shown.join(", ")}${remaining > 0 ? ` +${remaining} weitere` : ""}`;
+    return `${shown.join(", ")}${remaining > 0 ? ` +${remaining} weitere` : ""}`;
   }
 
   function buildCompletenessTooltip(completeness) {
     const lines = [];
-    if (completeness.status === "blocked") {
-      const summary = formatMissingSummary(completeness.missingRequired);
-      if (summary) lines.push(summary);
-    } else if (completeness.missingRecommended?.length) {
-      lines.push(`Empfehlungen fehlen: ${completeness.missingRecommended.map(item => item.label).join(", ")}`);
-    } else {
-      lines.push("Alle Pflichtfelder vorhanden.");
-    }
+    const blockingSummary = formatMissingSummary(completeness.blockingMissing);
+    const defaultSummary = formatMissingSummary(completeness.defaulted);
+    const suggestedSummary = formatMissingSummary(completeness.suggestedMissing);
+    if (blockingSummary) lines.push(`Fehlt (blockierend): ${blockingSummary}`);
+    if (defaultSummary) lines.push(`Default aktiv: ${defaultSummary}`);
+    if (suggestedSummary) lines.push(`Empfohlen: ${suggestedSummary}`);
+    if (!lines.length) lines.push("Alle Pflichtfelder vorhanden.");
     return lines.map(line => createEl("div", {}, [line]));
   }
 
@@ -443,8 +444,8 @@ function buildHistoryTable(state, sku) {
       "aria-label": label,
       onclick: (event) => {
         event.stopPropagation();
-        if (status === "blocked" && completeness.missingRequired?.length) {
-          showEditor(product, { focusFieldKey: completeness.missingRequired[0].fieldKey });
+        if (status === "blocked" && completeness.blockingMissing?.length) {
+          showEditor(product, { focusFieldKey: completeness.blockingMissing[0].fieldKey });
         }
       },
     }, [label]);
@@ -822,7 +823,13 @@ function buildHistoryTable(state, sku) {
     const templateErrors = {};
     const templateFieldMeta = {};
     const requiredFieldTargets = new Map();
+    const suggestedFieldTargets = new Map();
     const requiredHelperText = "Pflichtfeld – benötigt für PO/FO & Kalkulation";
+    const suggestedHelperText = {
+      avgSellingPriceGrossEUR: "Empfohlen für Pricing Analytics.",
+      sellerboardMarginPct: "Empfohlen für Pricing Analytics.",
+      landedUnitCostEur: "Wird verfügbar nach erster PO / kann später gepflegt werden.",
+    };
     const fieldRules = {
       unitPriceUsd: { min: 0 },
       extraPerUnitUsd: { min: 0 },
@@ -881,8 +888,8 @@ function buildHistoryTable(state, sku) {
     function updateSaveState() {
       const valid = validateAll();
       const completeness = latestCompleteness || computeCompletenessFromInputs();
-      const hasMissingRequired = completeness.missingRequired.length > 0;
-      saveBtn.disabled = !valid || !draftForm.isDirty || hasMissingRequired;
+      const isBlocked = completeness.status === "blocked";
+      saveBtn.disabled = !valid || !draftForm.isDirty || isBlocked;
     }
     const freightHint = (() => {
       const history = (state.pos || [])
@@ -907,6 +914,15 @@ function buildHistoryTable(state, sku) {
       const helper = createEl("small", { class: "field-required-helper", hidden: true }, [requiredHelperText]);
       labelEl.append(helper);
       requiredFieldTargets.set(fieldKey, { input, helper });
+    }
+
+    function registerSuggestedTarget(fieldKey, labelEl, input) {
+      if (!labelEl || !input) return;
+      const helper = createEl("small", { class: "field-suggested-helper", hidden: true }, [
+        suggestedHelperText[fieldKey] || "Empfohlen.",
+      ]);
+      labelEl.append(helper);
+      suggestedFieldTargets.set(fieldKey, { input, helper });
     }
 
     function focusRequiredField(fieldKey) {
@@ -968,6 +984,15 @@ function buildHistoryTable(state, sku) {
         }
         if (field.key === "unitPriceUsd") {
           registerRequiredTarget("unitPriceUsd", label, input);
+        }
+        if (field.key === "transitDays") {
+          registerRequiredTarget("transitDays", label, input);
+        }
+        if (field.key === "dutyPct") {
+          registerRequiredTarget("dutyPct", label, input);
+        }
+        if (field.key === "vatImportPct") {
+          registerRequiredTarget("vatImportPct", label, input);
         }
         templateContainer.append(label);
       }
@@ -1142,7 +1167,7 @@ function buildHistoryTable(state, sku) {
     const cancelBtn = createEl("button", { class: "btn secondary", type: "button" }, ["Abbrechen"]);
 
     let dialog;
-    let latestCompleteness = getProductCompleteness(product, { state });
+    let latestCompleteness = evaluateProductCompleteness(product, { state });
     dirtyGuard.register();
     dirtyGuard.attachBeforeUnload();
 
@@ -1211,10 +1236,12 @@ function buildHistoryTable(state, sku) {
     }
     registerRequiredTarget("sku", skuLabel, skuInput);
     registerRequiredTarget("alias", aliasLabel, aliasInput);
-    registerRequiredTarget("status", statusLabel, statusSelect);
     registerRequiredTarget("categoryId", categoryLabel, categorySelect);
     registerRequiredTarget("moqUnits", moqLabel, moqInput);
     registerRequiredTarget("productionLeadTimeDaysDefault", productionLeadTimeLabel, productionLeadTimeInput);
+    registerSuggestedTarget("avgSellingPriceGrossEUR", avgSellingPriceLabel, avgSellingPriceInput);
+    registerSuggestedTarget("sellerboardMarginPct", sellerboardMarginLabel, sellerboardMarginInput);
+    registerSuggestedTarget("landedUnitCostEur", landedUnitCostLabel, landedUnitCostInput);
     Object.keys(fieldRules).forEach(key => validateField(key));
     updateCompletenessUI();
     updateEffectiveValues();
@@ -1312,32 +1339,88 @@ function buildHistoryTable(state, sku) {
 
     function computeCompletenessFromInputs() {
       const draft = buildPayload();
-      return getProductCompleteness(draft, { state });
+      return evaluateProductCompleteness(draft, { state });
+    }
+
+    function formatDefaultHelperText(entry) {
+      if (!entry) return "";
+      if (entry.fieldKey === "unitPriceUsd" && entry.value) {
+        const amount = formatDeNumber(entry.value.amount, 2);
+        const currency = entry.value.currency || "";
+        return `Default aktiv: ${amount} ${currency}`.trim();
+      }
+      if (entry.fieldKey === "moqUnits") {
+        return `Default aktiv: ${formatDeNumber(entry.value, 0)} Einheiten`;
+      }
+      if (entry.fieldKey === "productionLeadTimeDaysDefault" || entry.fieldKey === "transitDays") {
+        return `Default aktiv: ${formatDeNumber(entry.value, 0)} Tage`;
+      }
+      if (entry.fieldKey === "dutyPct" || entry.fieldKey === "vatImportPct") {
+        return `Default aktiv: ${formatDeNumber(entry.value, 2)} %`;
+      }
+      return "Default aktiv";
     }
 
     function updateCompletenessSummary(completeness) {
-      const missing = completeness.missingRequired || [];
-      if (!missing.length) {
-        completenessSummary.hidden = true;
-        completenessSummaryList.innerHTML = "";
+      const missing = completeness.blockingMissing || [];
+      const defaulted = completeness.defaulted || [];
+      completenessSummaryList.innerHTML = "";
+      if (missing.length) {
+        completenessSummary.hidden = false;
+        completenessSummary.classList.add("blocked");
+        completenessSummary.classList.remove("warn");
+        completenessSummaryTitle.textContent = `Blockiert: ${missing.length} Pflichtfelder fehlen`;
+        missing.forEach(item => {
+          const button = createEl("button", { class: "btn secondary sm", type: "button" }, [item.label]);
+          button.addEventListener("click", () => focusRequiredField(item.fieldKey));
+          completenessSummaryList.append(button);
+        });
         return;
       }
-      completenessSummary.hidden = false;
-      completenessSummaryTitle.textContent = `Blockiert: ${missing.length} Pflichtfelder fehlen`;
-      completenessSummaryList.innerHTML = "";
-      missing.forEach(item => {
-        const button = createEl("button", { class: "btn secondary sm", type: "button" }, [item.label]);
-        button.addEventListener("click", () => focusRequiredField(item.fieldKey));
-        completenessSummaryList.append(button);
-      });
+      if (defaulted.length) {
+        completenessSummary.hidden = false;
+        completenessSummary.classList.add("warn");
+        completenessSummary.classList.remove("blocked");
+        completenessSummaryTitle.textContent = "Hinweis: Defaults aktiv";
+        defaulted.forEach(item => {
+          const chip = createEl("span", { class: "btn secondary sm" }, [item.label]);
+          completenessSummaryList.append(chip);
+        });
+        return;
+      }
+      completenessSummary.hidden = true;
+      completenessSummary.classList.remove("blocked", "warn");
     }
 
     function updateCompletenessHighlights(completeness) {
-      const missingKeys = new Set((completeness.missingRequired || []).map(item => item.fieldKey));
+      const missingKeys = new Set((completeness.blockingMissing || []).map(item => item.fieldKey));
+      const defaultedMap = new Map((completeness.defaulted || []).map(item => [item.fieldKey, item]));
       requiredFieldTargets.forEach((target, key) => {
         const isMissing = missingKeys.has(key);
+        const defaulted = defaultedMap.get(key);
         target.input.classList.toggle("field-missing-required", isMissing);
         target.input.setAttribute("aria-invalid", isMissing ? "true" : "false");
+        if (isMissing) {
+          target.helper.textContent = requiredHelperText;
+          target.helper.classList.add("is-missing");
+          target.helper.classList.remove("is-defaulted");
+          target.helper.hidden = false;
+          return;
+        }
+        if (defaulted) {
+          target.helper.textContent = formatDefaultHelperText(defaulted);
+          target.helper.classList.add("is-defaulted");
+          target.helper.classList.remove("is-missing");
+          target.helper.hidden = false;
+          return;
+        }
+        target.helper.textContent = "";
+        target.helper.classList.remove("is-missing", "is-defaulted");
+        target.helper.hidden = true;
+      });
+      const suggestedKeys = new Set((completeness.suggestedMissing || []).map(item => item.fieldKey));
+      suggestedFieldTargets.forEach((target, key) => {
+        const isMissing = suggestedKeys.has(key);
         target.helper.hidden = !isMissing;
       });
     }
@@ -1362,7 +1445,7 @@ function buildHistoryTable(state, sku) {
         return;
       }
       const completeness = computeCompletenessFromInputs();
-      if (completeness.missingRequired.length) {
+      if (completeness.status === "blocked") {
         updateCompletenessHighlights(completeness);
         updateCompletenessSummary(completeness);
         showToast("Bitte Pflichtfelder ergänzen.");
@@ -2042,10 +2125,10 @@ function buildHistoryTable(state, sku) {
     }, [
       createEl("option", { value: "all" }, ["Alle Vollständigkeiten"]),
       createEl("option", { value: "blocked" }, ["Nur Blockierte"]),
-      createEl("option", { value: "warning" }, ["Nur Unvollständige"]),
+      createEl("option", { value: "warn" }, ["Nur Warnungen"]),
       createEl("option", { value: "ok" }, ["Nur Vollständige"]),
     ]);
-    completenessSelect.value = completenessFilter;
+    completenessSelect.value = completenessFilter === "warning" ? "warn" : completenessFilter;
     const viewToggle = createEl("div", { class: "view-toggle" }, [
       createEl("button", {
         type: "button",

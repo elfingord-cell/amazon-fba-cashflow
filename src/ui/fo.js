@@ -350,21 +350,21 @@ function listProductsForSelect(products, state) {
 }
 
 function formatCompletenessLabel(status) {
-  if (status === "ready") return "✅ Ready";
-  if (status === "warning") return "⚠️ Unvollständig";
+  if (status === "ok") return "✅ OK";
+  if (status === "warn") return "⚠️ Warnung";
   return "❌ Blockiert";
 }
 
 function formatCompletenessTooltip(completeness) {
   const lines = [];
-  if (completeness?.missingRequired?.length) {
-    lines.push(`Pflichtfelder fehlen: ${completeness.missingRequired.join(", ")}`);
+  if (completeness?.blockingMissing?.length) {
+    lines.push(`Fehlt (blockierend): ${completeness.blockingMissing.map(item => item.label).join(", ")}`);
   }
-  if (completeness?.missingWarnings?.length) {
-    lines.push(`Warnungen: ${completeness.missingWarnings.join(", ")}`);
+  if (completeness?.defaulted?.length) {
+    lines.push(`Defaults aktiv: ${completeness.defaulted.map(item => item.label).join(", ")}`);
   }
-  if (completeness?.resolvedUsingDefaults?.length) {
-    lines.push(`Defaults genutzt: ${completeness.resolvedUsingDefaults.join(", ")}`);
+  if (completeness?.suggestedMissing?.length) {
+    lines.push(`Empfohlen: ${completeness.suggestedMissing.map(item => item.label).join(", ")}`);
   }
   return lines.join(" • ");
 }
