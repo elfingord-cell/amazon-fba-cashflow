@@ -301,6 +301,117 @@ function buildHistoryTable(state, sku) {
     });
   }
 
+  if (root.__productsActionsCleanup) {
+    root.__productsActionsCleanup();
+  }
+
+  let actionsMenu = null;
+  let actionsMenuAnchor = null;
+
+  function closeActionsMenu() {
+    if (actionsMenuAnchor) {
+      actionsMenuAnchor.setAttribute("aria-expanded", "false");
+    }
+    if (actionsMenu) {
+      actionsMenu.remove();
+    }
+    actionsMenu = null;
+    actionsMenuAnchor = null;
+  }
+
+  function positionActionsMenu() {
+    if (!actionsMenu || !actionsMenuAnchor) return;
+    const rect = actionsMenuAnchor.getBoundingClientRect();
+    const menuRect = actionsMenu.getBoundingClientRect();
+    const padding = 8;
+    const maxX = window.innerWidth - menuRect.width - padding;
+    const maxY = window.innerHeight - menuRect.height - padding;
+    let left = rect.right - menuRect.width;
+    let top = rect.bottom + 6;
+    left = Math.min(maxX, left);
+    left = Math.max(padding, left);
+    if (top > maxY) {
+      top = rect.top - menuRect.height - 6;
+    }
+    top = Math.max(padding, top);
+    actionsMenu.style.left = `${left}px`;
+    actionsMenu.style.top = `${top}px`;
+  }
+
+  function openActionsMenu(anchor, product) {
+    if (!anchor || !product) return;
+    if (actionsMenuAnchor === anchor) {
+      closeActionsMenu();
+      return;
+    }
+    closeActionsMenu();
+    const menu = createEl("div", { class: "product-actions-menu", role: "menu" });
+    const historyBtn = createEl("button", {
+      class: "product-actions-menu-item",
+      type: "button",
+      onclick: (event) => {
+        event.stopPropagation();
+        showHistory(product);
+        closeActionsMenu();
+      },
+    }, ["Historie"]);
+    const statusBtn = createEl("button", {
+      class: "product-actions-menu-item",
+      type: "button",
+      onclick: (event) => {
+        event.stopPropagation();
+        setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
+        closeActionsMenu();
+        renderProducts(root);
+      },
+    }, [product.status === "inactive" ? "Aktiv setzen" : "Inaktiv setzen"]);
+    const deleteBtn = createEl("button", {
+      class: "product-actions-menu-item danger",
+      type: "button",
+      onclick: (event) => {
+        event.stopPropagation();
+        if (confirm("Produkt wirklich löschen?")) {
+          deleteProductBySku(product.sku);
+          closeActionsMenu();
+          renderProducts(root);
+        }
+      },
+    }, ["Löschen"]);
+    menu.append(historyBtn, statusBtn, deleteBtn);
+    document.body.appendChild(menu);
+    actionsMenu = menu;
+    actionsMenuAnchor = anchor;
+    actionsMenuAnchor.setAttribute("aria-expanded", "true");
+    positionActionsMenu();
+    requestAnimationFrame(positionActionsMenu);
+  }
+
+  function handleDocumentClick(event) {
+    if (!actionsMenu) return;
+    if (actionsMenu.contains(event.target)) return;
+    if (actionsMenuAnchor && actionsMenuAnchor.contains(event.target)) return;
+    closeActionsMenu();
+  }
+
+  function handleWindowResize() {
+    positionActionsMenu();
+  }
+
+  function handleWindowScroll() {
+    if (!actionsMenu) return;
+    closeActionsMenu();
+  }
+
+  document.addEventListener("click", handleDocumentClick);
+  window.addEventListener("resize", handleWindowResize);
+  window.addEventListener("scroll", handleWindowScroll, true);
+  root.__productsActionsCleanup = () => {
+    closeActionsMenu();
+    document.removeEventListener("click", handleDocumentClick);
+    window.removeEventListener("resize", handleWindowResize);
+    window.removeEventListener("scroll", handleWindowScroll, true);
+  };
+
   function getCategoryLabel(categoryId) {
     if (!categoryId) return "Ohne Kategorie";
     const category = categoryById.get(String(categoryId));
@@ -1040,15 +1151,15 @@ function buildHistoryTable(state, sku) {
       { key: "alias", label: "Alias", className: "cell-ellipsis col-alias" },
       { key: "sku", label: "SKU", className: "cell-ellipsis col-sku" },
       { key: "supplier", label: "Supplier", className: "cell-ellipsis col-supplier" },
-      { key: "category", label: "Kategorie" },
-      { key: "status", label: "Status" },
-      { key: "moqUnits", label: "MOQ", className: "num" },
-      { key: "lastPo", label: "Letzte PO" },
-      { key: "avg", label: "Ø Stückpreis", className: "num" },
-      { key: "count", label: "POs", className: "num" },
-      { key: "template", label: "Template" },
-      { key: "tags", label: "Tags" },
-      { key: "actions", label: "Aktionen", className: "sticky-actions actions" },
+      { key: "category", label: "Kategorie", className: "col-category" },
+      { key: "status", label: "Status", className: "col-status" },
+      { key: "moqUnits", label: "MOQ", className: "num col-moq" },
+      { key: "lastPo", label: "Letzte PO", className: "col-last-po" },
+      { key: "avg", label: "Ø Stückpreis", className: "num col-avg" },
+      { key: "count", label: "POs", className: "num col-count" },
+      { key: "template", label: "Template", className: "col-template" },
+      { key: "tags", label: "Tags", className: "col-tags" },
+      { key: "actions", label: "Aktionen", className: "sticky-actions col-actions" },
     ];
     const colCount = columns.length;
     const columnWidths = state?.settings?.productsTableColumns?.list || [];
@@ -1093,29 +1204,23 @@ function buildHistoryTable(state, sku) {
         case "template":
           return product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
         case "tags":
-          return (product.tags || []).length ? (product.tags || []).join(", ") : "—";
+          if (!(product.tags || []).length) return "—";
+          return createEl("span", { class: "product-tags", title: (product.tags || []).join(", ") }, [
+            ...(product.tags || []).map(tag => createEl("span", { class: "product-tag-pill", title: tag }, [tag]))
+          ]);
         case "actions":
           return createEl("div", { class: "table-actions" }, [
-            createEl("button", { class: "btn secondary sm", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
-            createEl("button", { class: "btn tertiary sm", type: "button", onclick: () => showHistory(product) }, ["Historie"]),
+            createEl("button", { class: "btn primary sm", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
             createEl("button", {
-              class: "btn tertiary sm",
+              class: "btn secondary sm",
               type: "button",
-              onclick: () => {
-                setProductStatus(product.sku, product.status === "inactive" ? "active" : "inactive");
-                renderProducts(root);
-              }
-            }, [product.status === "inactive" ? "Aktivieren" : "Inaktiv setzen"]),
-            createEl("button", {
-              class: "btn danger sm",
-              type: "button",
-              onclick: () => {
-                if (confirm("Produkt wirklich löschen?")) {
-                  deleteProductBySku(product.sku);
-                  renderProducts(root);
-                }
-              }
-            }, ["Löschen"]),
+              "aria-haspopup": "menu",
+              "aria-expanded": "false",
+              onclick: (event) => {
+                event.stopPropagation();
+                openActionsMenu(event.currentTarget, product);
+              },
+            }, ["Mehr…"]),
           ]);
         default:
           return "—";
@@ -1708,6 +1813,10 @@ export default function mountProducts(root) {
   document.addEventListener("state:changed", handler);
   root.__productsCleanup = () => {
     document.removeEventListener("state:changed", handler);
+    if (root.__productsActionsCleanup) {
+      root.__productsActionsCleanup();
+      root.__productsActionsCleanup = null;
+    }
     if (root.__productsBulkGuard) {
       root.__productsBulkGuard.unregister();
       root.__productsBulkGuard.detachBeforeUnload();
