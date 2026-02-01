@@ -17,6 +17,7 @@ import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { formatDeNumber, parseDeNumber, validateProducts } from "../lib/dataHealth.js";
 import { openDataHealthPanel } from "./dataHealthUi.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
+import { evaluateProductCompleteness } from "../lib/productCompleteness.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
@@ -226,6 +227,9 @@ function buildHistoryTable(state, sku) {
   const categoryById = new Map(categories.map(category => [String(category.id), category]));
   const supplierLabelMap = buildSupplierLabelMap(state, products);
   let searchTerm = "";
+  const completenessViewKey = "productsCompletenessView";
+  const completenessView = getViewState(completenessViewKey, { filter: "all" });
+  let completenessFilter = completenessView.filter || "all";
   let viewMode = getViewValue("productsView");
   if (viewMode !== "table" && viewMode !== "list") {
     viewMode = "list";
@@ -289,16 +293,66 @@ function buildHistoryTable(state, sku) {
     });
   }
 
-  function applyFilter(list, term) {
-    if (!term) return list;
-    const needle = term.trim().toLowerCase();
-    return list.filter(item => {
+  const completenessBySku = new Map();
+  const completenessContext = { state };
+  function getCompleteness(product) {
+    if (!product?.sku) {
+      return { status: "blocked", missingRequired: ["SKU"], missingWarnings: [], resolvedUsingDefaults: [] };
+    }
+    if (!completenessBySku.has(product.sku)) {
+      completenessBySku.set(product.sku, evaluateProductCompleteness(product, completenessContext));
+    }
+    return completenessBySku.get(product.sku);
+  }
+
+  function applyFilter(list, term, statusFilter) {
+    const filteredBySearch = !term ? list : list.filter(item => {
+      const needle = term.trim().toLowerCase();
       const categoryName = getCategoryLabel(item.categoryId);
       const supplierLabel = supplierLabelMap.get(item.supplierId);
       return [item.alias, item.sku, item.supplierId, supplierLabel, categoryName, ...(item.tags || [])]
         .filter(Boolean)
         .some(val => String(val).toLowerCase().includes(needle));
     });
+    if (!statusFilter || statusFilter === "all") return filteredBySearch;
+    return filteredBySearch.filter(item => getCompleteness(item).status === statusFilter);
+  }
+
+  function formatCompletenessLabel(status) {
+    if (status === "ready") return "✅ Ready";
+    if (status === "warning") return "⚠️ Unvollständig";
+    return "❌ Blockiert";
+  }
+
+  function buildCompletenessTooltip(completeness) {
+    const lines = [];
+    if (completeness.missingRequired?.length) {
+      lines.push(`Pflichtfelder fehlen: ${completeness.missingRequired.join(", ")}`);
+    }
+    if (completeness.missingWarnings?.length) {
+      lines.push(`Warnungen: ${completeness.missingWarnings.join(", ")}`);
+    }
+    if (completeness.resolvedUsingDefaults?.length) {
+      lines.push(`Defaults genutzt: ${completeness.resolvedUsingDefaults.join(", ")}`);
+    }
+    if (!lines.length) {
+      lines.push("Alle Pflichtfelder vorhanden.");
+    }
+    return lines.map(line => createEl("div", {}, [line]));
+  }
+
+  function renderCompletenessBadge(product) {
+    const completeness = getCompleteness(product);
+    const status = completeness.status || "blocked";
+    const label = formatCompletenessLabel(status);
+    return createEl("span", { class: "tooltip" }, [
+      createEl("button", {
+        class: `tooltip-trigger completeness-badge ${status}`,
+        type: "button",
+        "aria-label": label,
+      }, [label]),
+      createEl("span", { class: "tooltip-content" }, buildCompletenessTooltip(completeness)),
+    ]);
   }
 
   if (root.__productsActionsCleanup) {
@@ -569,7 +623,7 @@ function buildHistoryTable(state, sku) {
       { key: "transportMode", label: "Transport", type: "select", options: ["SEA", "RAIL", "AIR"] },
       { key: "productionDays", label: "Produktionstage", valueType: "number", decimals: 0 },
       { key: "transitDays", label: "Transit-Tage", valueType: "number", decimals: 0 },
-      { key: "freightEur", label: "Fracht (€ / Stück)", valueType: "number", decimals: 2 },
+      { key: "freightEur", label: "Logistik / Stk. (EUR)", valueType: "number", decimals: 2 },
       { key: "dutyPct", label: "Zoll %", valueType: "number", decimals: 2 },
       { key: "dutyIncludesFreight", label: "Fracht einbeziehen", type: "checkbox" },
       { key: "vatImportPct", label: "EUSt %", valueType: "number", decimals: 2 },
@@ -722,7 +776,7 @@ function buildHistoryTable(state, sku) {
       if (computed == null || !Number.isFinite(computed)) {
         return "Hinweis: —";
       }
-      return `Hinweis: Frachtkosten pro Stück aus letzter PO: ${formatDeNumber(computed, 2)} €`;
+      return `Hinweis: Logistik / Stk. (EUR) aus letzter PO: ${formatDeNumber(computed, 2)} €`;
     })();
     templateFields.forEach(field => {
       templateFieldMeta[field.key] = field;
@@ -812,8 +866,8 @@ function buildHistoryTable(state, sku) {
         });
         shippingDerived.innerHTML = "";
         const label = derived.value == null
-          ? "Fracht €/Stück (berechnet): —"
-          : `Fracht €/Stück (berechnet): ${formatDeNumber(derived.value, 2)} €`;
+          ? "Logistik / Stk. (EUR, berechnet): —"
+          : `Logistik / Stk. (EUR, berechnet): ${formatDeNumber(derived.value, 2)} €`;
         shippingDerived.append(document.createTextNode(label));
         const missingLabels = derived.missingFields.map((field) => {
           if (field === "landedCostEur") return "Einstandspreis (EUR)";
@@ -1101,6 +1155,7 @@ function buildHistoryTable(state, sku) {
         fxUsdPerEur,
       });
       payload.fxUsdPerEur = fxUsdPerEur ?? null;
+      payload.logisticsPerUnitEur = derivedFreight.value;
       payload.freightPerUnitEur = derivedFreight.value;
       return payload;
     }
@@ -1153,6 +1208,7 @@ function buildHistoryTable(state, sku) {
       { key: "supplier", label: "Supplier", className: "cell-ellipsis col-supplier" },
       { key: "category", label: "Kategorie", className: "col-category" },
       { key: "status", label: "Status", className: "col-status" },
+      { key: "completeness", label: "Vollständigkeit", className: "col-completeness" },
       { key: "moqUnits", label: "MOQ", className: "num col-moq" },
       { key: "lastPo", label: "Letzte PO", className: "col-last-po" },
       { key: "avg", label: "Ø Stückpreis", className: "num col-avg" },
@@ -1193,6 +1249,8 @@ function buildHistoryTable(state, sku) {
           return product.status === "inactive"
             ? createEl("span", { class: "badge muted" }, ["inaktiv"])
             : createEl("span", { class: "badge" }, ["aktiv"]);
+        case "completeness":
+          return renderCompletenessBadge(product);
         case "moqUnits":
           return Number.isFinite(Number(product.moqUnits)) ? String(product.moqUnits) : "—";
         case "lastPo":
@@ -1385,6 +1443,7 @@ function buildHistoryTable(state, sku) {
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
       ], width: "110px", className: "col-status" },
+      { key: "completeness", label: "Vollständigkeit", type: "display", width: "160px", className: "col-completeness" },
       { key: "avgSellingPriceGrossEUR", label: "Ø VK-Preis (Brutto)", type: "number", decimals: 2, width: "150px", className: "col-amount" },
       { key: "sellerboardMarginPct", label: "Sellerboard Marge (%)", type: "number", decimals: 2, width: "140px", className: "col-short" },
       { key: "productionLeadTimeDaysDefault", label: "Default Production Lead Time (Fallback)", type: "number", decimals: 0, width: "170px", className: "col-days" },
@@ -1399,7 +1458,7 @@ function buildHistoryTable(state, sku) {
       ], width: "130px", className: "col-transport" },
       { key: "template.productionDays", label: "Produktionstage", type: "number", decimals: 0, width: "120px", className: "col-days" },
       { key: "template.transitDays", label: "Transit-Tage", type: "number", decimals: 0, width: "120px", className: "col-days col-group-end" },
-      { key: "template.freightEur", label: "Fracht (€ / Stück)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
+      { key: "template.freightEur", label: "Logistik / Stk. (EUR)", type: "number", decimals: 2, width: "140px", className: "col-amount" },
       { key: "template.dutyPct", label: "Zoll %", type: "number", decimals: 2, width: "90px", className: "col-short" },
       { key: "template.dutyIncludesFreight", label: "Fracht einbeziehen", type: "checkbox", width: "56px", className: "col-check" },
       { key: "template.vatImportPct", label: "EUSt %", type: "number", decimals: 2, width: "90px", className: "col-short" },
@@ -1429,6 +1488,9 @@ function buildHistoryTable(state, sku) {
       if (field.key === "categoryId") {
         return product.categoryId || "";
       }
+      if (field.key === "completeness") {
+        return getCompleteness(product);
+      }
       if (field.key === "tags") {
         return Array.isArray(product.tags) ? product.tags.join(", ") : "";
       }
@@ -1440,6 +1502,9 @@ function buildHistoryTable(state, sku) {
         const parsed = parseDeNumber(value);
         return parsed == null ? "" : formatInputNumber(parsed, field.decimals ?? 2);
       }
+      if (field.type === "display") {
+        return value;
+      }
       if (field.type === "checkbox") {
         return Boolean(value);
       }
@@ -1449,6 +1514,9 @@ function buildHistoryTable(state, sku) {
     function normalizeValue(raw, field) {
       if (field.type === "number") {
         return parseDeNumber(raw);
+      }
+      if (field.type === "display") {
+        return raw;
       }
       if (field.type === "checkbox") {
         return Boolean(raw);
@@ -1541,7 +1609,7 @@ function buildHistoryTable(state, sku) {
     colgroup.append(createEl("col", { style: `width:${actionsWidth}` }));
     const thead = createEl("thead", {}, [
       createEl("tr", { class: "products-grid-group-header" }, [
-        createEl("th", { colspan: "8", title: "Stammdaten" }, ["Stammdaten"]),
+        createEl("th", { colspan: "9", title: "Stammdaten" }, ["Stammdaten"]),
         createEl("th", { colspan: "3", title: "Kosten" }, ["Kosten"]),
         createEl("th", { colspan: "4", title: "Logistik" }, ["Logistik"]),
         createEl("th", { colspan: "5", title: "Steuern" }, ["Steuern"]),
@@ -1577,7 +1645,9 @@ function buildHistoryTable(state, sku) {
         fields.forEach(field => {
           const cell = createEl("td", { class: field.className || "" });
           const value = pendingEdits[product.sku]?.[field.key] ?? getFieldValue(product, field);
-          if (field.type === "checkbox") {
+          if (field.type === "display") {
+            cell.append(renderCompletenessBadge(product));
+          } else if (field.type === "checkbox") {
             const input = createEl("input", {
               type: "checkbox",
               checked: Boolean(value),
@@ -1621,13 +1691,15 @@ function buildHistoryTable(state, sku) {
             }
             cell.append(input);
           }
-          const original = normalizeValue(getFieldValue(product, field), field);
-          const current = normalizeValue(value, field);
-          const isDirty = field.type === "number"
-            ? Number(current) !== Number(original)
-            : current !== original;
-          if (isDirty) {
-            cell.classList.add("is-dirty");
+          if (field.type !== "display") {
+            const original = normalizeValue(getFieldValue(product, field), field);
+            const current = normalizeValue(value, field);
+            const isDirty = field.type === "number"
+              ? Number(current) !== Number(original)
+              : current !== original;
+            if (isDirty) {
+              cell.classList.add("is-dirty");
+            }
           }
           row.append(cell);
         });
@@ -1746,7 +1818,7 @@ function buildHistoryTable(state, sku) {
     const shouldFocusSearch = document.activeElement === prevSearch;
     const cursorPos = shouldFocusSearch ? prevSearch.selectionStart : null;
     root.innerHTML = "";
-    const filtered = applyFilter(products, searchTerm);
+    const filtered = applyFilter(products, searchTerm, completenessFilter);
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
     const header = createEl("div", { class: "products-header" });
     const title = createEl("h2", {}, ["Produkte"]);
@@ -1763,6 +1835,20 @@ function buildHistoryTable(state, sku) {
         render();
       }
     });
+    const completenessSelect = createEl("select", {
+      class: "products-completeness-filter",
+      onchange: event => {
+        completenessFilter = event.target.value;
+        setViewState(completenessViewKey, { filter: completenessFilter });
+        render();
+      },
+    }, [
+      createEl("option", { value: "all" }, ["Alle Vollständigkeiten"]),
+      createEl("option", { value: "blocked" }, ["Nur Blockierte"]),
+      createEl("option", { value: "warning" }, ["Nur Unvollständige"]),
+      createEl("option", { value: "ready" }, ["Nur Ready"]),
+    ]);
+    completenessSelect.value = completenessFilter;
     const viewToggle = createEl("div", { class: "view-toggle" }, [
       createEl("button", {
         type: "button",
@@ -1785,7 +1871,7 @@ function buildHistoryTable(state, sku) {
         },
       }, ["Tabelle"]),
     ]);
-    actions.append(search, expandBtn, collapseBtn, viewToggle, createBtn);
+    actions.append(search, completenessSelect, expandBtn, collapseBtn, viewToggle, createBtn);
     header.append(title, actions);
     root.append(header);
     if (bannerCount) {

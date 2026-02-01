@@ -599,7 +599,7 @@ function normaliseTemplate(template, options = {}) {
     vatRefundLag: Math.max(0, Math.round(parseNumber(rawFields.vatRefundLag ?? 0) ?? 0)),
     fxRate: parseNumber(rawFields.fxRate ?? defaults.settings.fxRate) ?? parseNumber(defaults.settings.fxRate) ?? 0,
     fxFeePct: clamp(parseNumber(rawFields.fxFeePct ?? 0) ?? 0, 0, 100),
-    ddp: Boolean(rawFields.ddp),
+    ddp: parseBoolean(rawFields.ddp),
     currency: ["USD", "EUR", "CNY"].includes(String(currencyRaw || "USD").toUpperCase())
       ? String(currencyRaw).toUpperCase()
       : "USD",
@@ -659,9 +659,16 @@ function migrateProducts(state) {
         landedUnitCostEur: Number.isFinite(Number(prod.landedUnitCostEur))
           ? Math.max(0, Number(prod.landedUnitCostEur))
           : (Number.isFinite(Number(base.landedUnitCostEur)) ? Math.max(0, Number(base.landedUnitCostEur)) : null),
-        freightPerUnitEur: Number.isFinite(Number(prod.freightPerUnitEur))
-          ? Math.max(0, Number(prod.freightPerUnitEur))
-          : (Number.isFinite(Number(base.freightPerUnitEur)) ? Math.max(0, Number(base.freightPerUnitEur)) : null),
+        logisticsPerUnitEur: Number.isFinite(Number(prod.logisticsPerUnitEur ?? prod.freightPerUnitEur))
+          ? Math.max(0, Number(prod.logisticsPerUnitEur ?? prod.freightPerUnitEur))
+          : (Number.isFinite(Number(base.logisticsPerUnitEur ?? base.freightPerUnitEur))
+            ? Math.max(0, Number(base.logisticsPerUnitEur ?? base.freightPerUnitEur))
+            : null),
+        freightPerUnitEur: Number.isFinite(Number(prod.freightPerUnitEur ?? prod.logisticsPerUnitEur))
+          ? Math.max(0, Number(prod.freightPerUnitEur ?? prod.logisticsPerUnitEur))
+          : (Number.isFinite(Number(base.freightPerUnitEur ?? base.logisticsPerUnitEur))
+            ? Math.max(0, Number(base.freightPerUnitEur ?? base.logisticsPerUnitEur))
+            : null),
         productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
           ? Number(prod.productionLeadTimeDaysDefault)
           : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
@@ -786,7 +793,8 @@ function normaliseProductInput(input) {
   const moqOverrideUnitsRaw = parseNumber(input.moqOverrideUnits ?? null);
   const fxUsdPerEurRaw = parseNumber(input.fxUsdPerEur ?? null);
   const landedUnitCostEurRaw = parseNumber(input.landedUnitCostEur ?? input.landedUnitCostEUR ?? null);
-  const freightPerUnitEurRaw = parseNumber(input.freightPerUnitEur ?? null);
+  const logisticsPerUnitEurRaw = parseNumber(input.logisticsPerUnitEur ?? input.freightPerUnitEur ?? null);
+  const freightPerUnitEurRaw = parseNumber(input.freightPerUnitEur ?? input.logisticsPerUnitEur ?? null);
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
@@ -808,6 +816,7 @@ function normaliseProductInput(input) {
     moqOverrideUnits: Number.isFinite(moqOverrideUnitsRaw) ? Math.max(0, Math.round(moqOverrideUnitsRaw)) : null,
     fxUsdPerEur: Number.isFinite(fxUsdPerEurRaw) ? Math.max(0, fxUsdPerEurRaw) : null,
     landedUnitCostEur: Number.isFinite(landedUnitCostEurRaw) ? Math.max(0, landedUnitCostEurRaw) : null,
+    logisticsPerUnitEur: Number.isFinite(logisticsPerUnitEurRaw) ? Math.max(0, logisticsPerUnitEurRaw) : null,
     freightPerUnitEur: Number.isFinite(freightPerUnitEurRaw) ? Math.max(0, freightPerUnitEurRaw) : null,
     productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
@@ -1152,6 +1161,7 @@ export function upsertProduct(input){
       moqOverrideUnits: normalised.moqOverrideUnits,
       fxUsdPerEur: normalised.fxUsdPerEur,
       landedUnitCostEur: normalised.landedUnitCostEur,
+      logisticsPerUnitEur: normalised.logisticsPerUnitEur,
       freightPerUnitEur: normalised.freightPerUnitEur,
       productionLeadTimeDaysDefault: normalised.productionLeadTimeDaysDefault,
       avgSellingPriceGrossEUR: normalised.avgSellingPriceGrossEUR,
@@ -1173,6 +1183,7 @@ export function upsertProduct(input){
     target.moqOverrideUnits = normalised.moqOverrideUnits;
     target.fxUsdPerEur = normalised.fxUsdPerEur;
     target.landedUnitCostEur = normalised.landedUnitCostEur;
+    target.logisticsPerUnitEur = normalised.logisticsPerUnitEur;
     target.freightPerUnitEur = normalised.freightPerUnitEur;
     target.productionLeadTimeDaysDefault = normalised.productionLeadTimeDaysDefault;
     target.avgSellingPriceGrossEUR = normalised.avgSellingPriceGrossEUR;
