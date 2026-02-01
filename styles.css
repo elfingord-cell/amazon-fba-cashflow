@@ -489,6 +489,17 @@ td.num, th.num{text-align:right}
 .view-toggle .btn.is-active{background:var(--mint-500); border-color:var(--mint-500); color:#fff;}
 .products-list-table{table-layout:fixed; width:100%;}
 .products-list-table th{position:sticky; top:0; z-index:1;}
+.products-list.table-wrap{overflow-x:auto;}
+.products-list-table th,
+.products-list-table td{padding:6px 10px; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;}
+.products-list-table .table-actions{flex-wrap:nowrap; gap:6px;}
+.products-list-table .table-actions .btn{white-space:nowrap;}
+.products-list-table .data-health-inline{min-width:0;}
+.products-list-table .truncate-text{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;}
+.products-list-table th.sticky-actions,
+.products-list-table td.sticky-actions{position:sticky; right:0; background:#fff; z-index:2; border-left:1px solid rgba(15,27,45,0.08);}
+.products-list-table thead th.sticky-actions{z-index:4; background:#f8fafc;}
+.products-list-table tbody tr:hover td.sticky-actions{background:#f8fafc;}
 .products-list-table th,
 .products-grid-table th{position:relative;}
 .products-list-table.is-resizing,
@@ -564,6 +575,13 @@ th:hover > .col-resizer::after{opacity:1;}
 .products-grid-scroll::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.25); border-radius:999px;}
 .products-grid-table{width:100%; border-collapse:collapse; min-width:3000px; table-layout:fixed;}
 .products-grid-table th{position:sticky; top:0; background:#f8fafc; font-size:11px; text-transform:uppercase; letter-spacing:.4px; padding:8px 10px; border-bottom:1px solid rgba(15,27,45,0.1); z-index:1;}
+.products-grid-group-header th{position:static;}
+.products-grid-table thead tr:last-child th{position:sticky; top:0; z-index:3;}
+.products-grid-table th.col-alias,
+.products-grid-table td.col-alias{position:sticky; left:0; background:#fff;}
+.products-grid-table th.col-alias{z-index:5; background:#f8fafc;}
+.products-grid-table td.col-alias{z-index:2; box-shadow:1px 0 0 rgba(15,27,45,0.08);}
+.products-grid-table tbody tr:hover td.col-alias{background:#f8fafc;}
 .products-grid-group-header th{background:#e8eef5; font-size:11px; text-transform:none; letter-spacing:.2px; font-weight:700;}
 .products-grid-group-header th{border-bottom:2px solid rgba(15,27,45,0.2);}
 .products-grid-group-header th:not(:last-child){border-right:2px solid rgba(15,27,45,0.15);}
