@@ -1066,6 +1066,28 @@ tr.auto-ms.disabled select{opacity:0.8;}
 .fix-instance-table .instance-note{font-size:0.85rem;}
 .fix-instance-table .checkbox{display:flex; align-items:center; justify-content:center;}
 .fix-instance-table .checkbox input{width:20px; height:20px;}
+
+.vat-preview-toolbar{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin:12px 0;}
+.vat-preview-toolbar label{display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted);}
+.vat-preview-toolbar input{min-width:140px; height:36px; border:1px solid var(--table-border); border-radius:8px; padding:0 10px; font-size:13px;}
+.vat-preview-toolbar-actions{margin-left:auto; display:flex; gap:8px;}
+.vat-preview-kpis{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:12px;}
+.vat-preview-kpi{background:#fff; border:1px solid var(--table-border); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow);}
+.vat-preview-kpi .label{display:block; font-size:11px; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.4px;}
+.vat-preview-kpi .value{font-size:14px; font-weight:600; font-variant-numeric:tabular-nums;}
+.vat-preview-kpi .value.is-negative{color:rgba(47,143,107,0.9);}
+.vat-preview-table-wrap{margin-top:6px;}
+.vat-preview-table{min-width:900px;}
+.vat-preview-table th.num,.vat-preview-table td.num{text-align:right; font-variant-numeric:tabular-nums;}
+.vat-preview-table td.vat-preview-action{text-align:right;}
+.vat-preview-table tfoot td{font-weight:600; background:rgba(15,27,45,0.03);}
+.vat-preview-table .vat-payable.is-negative{color:rgba(47,143,107,0.9);}
+.vat-preview-details td{background:#f8fafc; padding:0;}
+.vat-preview-details-inner{display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; padding:12px;}
+.vat-preview-fields{display:flex; flex-wrap:wrap; gap:12px;}
+.vat-preview-fields label{display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted);}
+.vat-preview-fields input{min-width:140px; height:36px; border:1px solid var(--table-border); border-radius:8px; padding:0 10px; font-size:13px;}
+.vat-preview-actions{display:flex; align-items:flex-end; gap:8px;}
 .badge.auto{background:#1976d2; color:#fff; border-radius:999px; font-size:0.75rem; padding:2px 8px; margin-left:6px;}
 .badge.override{background:#f57c00; color:#fff; border-radius:999px; font-size:0.75rem; padding:2px 8px; margin-left:6px;}
 .data-health-badge{margin-left:auto; border:none; background:rgba(15,27,45,0.08); color:var(--ink); font-size:12px; padding:4px 10px; border-radius:999px; cursor:pointer;}

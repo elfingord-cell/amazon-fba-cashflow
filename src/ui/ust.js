@@ -24,36 +24,52 @@ function rateInput(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
-function buildRow(row, cfg) {
+function buildToolbar(data) {
   const wrapper = document.createElement("div");
-  wrapper.className = "vat-row";
-  wrapper.setAttribute("role", "row");
-  const label = monthKeyToDateLabel(row.month);
+  wrapper.className = "vat-preview-toolbar";
   wrapper.innerHTML = `
-    <span role="cell" class="mono">${label}</span>
-    <span role="cell" title="Brutto-Umsatz gesamt">${fmt(row.grossTotal)}</span>
-    <span role="cell" title="Anteil Deutschland">${fmt(row.grossDe)}</span>
-    <span role="cell" title="Output-USt">${fmt(row.outVat)}</span>
-    <span role="cell" title="Vorsteuer auf Amazon-Gebühren">${fmt(row.feeInputVat)}</span>
-    <span role="cell" title="Vorsteuer aus Fixkosten">${fmt(row.fixInputVat)}</span>
-    <span role="cell" title="EUSt-Erstattung">${fmt(row.eustRefund)}</span>
-    <span role="cell" class="bold" title="Zahllast DE">${fmt(row.payable)}</span>
-    <div class="vat-controls" role="cell">
-      <label>
-        DE-Anteil
-        <input type="number" step="0.01" min="0" max="1" data-month="${row.month}" data-field="deShare" value="${cfg.deShare}" aria-label="DE-Anteil" />
-      </label>
-      <label>
-        Gebührensatz
-        <input type="number" step="0.01" min="0" max="1" data-month="${row.month}" data-field="feeRateOfGross" value="${cfg.feeRateOfGross}" aria-label="Gebührensatz" />
-      </label>
-      <label>
-        Fixkosten-VSt
-        <input type="text" inputmode="decimal" data-month="${row.month}" data-field="fixInputVat" value="${fmt(row.fixInputVat)}" aria-label="Fixkosten Vorsteuer" />
-      </label>
-      <div class="vat-actions">
-        <button type="button" class="btn-secondary" data-copy-prev="${row.month}" aria-label="Vormonat übernehmen">Vormonat übernehmen</button>
-      </div>
+    <label>
+      EUSt-Lag (Monate)
+      <input type="number" id="vat-eust-lag" min="0" value="${data.settings.eustLagMonths}" aria-label="EUSt Lag Monate" />
+    </label>
+    <label>
+      DE-Anteil
+      <input type="number" id="vat-de-share" step="0.01" min="0" max="1" value="${data.settings.deShareDefault}" aria-label="DE-Anteil Standard" />
+    </label>
+    <label>
+      Gebührensatz
+      <input type="number" id="vat-fee-rate" step="0.01" min="0" max="1" value="${data.settings.feeRateDefault}" aria-label="Gebührensatz Standard" />
+    </label>
+    <label>
+      Fixkosten-VSt
+      <input type="text" id="vat-fix-input" inputmode="decimal" value="${fmt(data.settings.fixInputDefault)}" aria-label="Fixkosten Vorsteuer Standard" />
+    </label>
+    <div class="vat-preview-toolbar-actions">
+      <button type="button" class="btn secondary sm" id="vat-reset" aria-label="Alle zurücksetzen">Alle zurücksetzen</button>
+    </div>
+  `;
+  return wrapper;
+}
+
+function buildKpis(data) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "vat-preview-kpis";
+  wrapper.innerHTML = `
+    <div class="vat-preview-kpi">
+      <span class="label">Output-USt gesamt</span>
+      <span class="value">${fmt(data.totals.outVat)}</span>
+    </div>
+    <div class="vat-preview-kpi">
+      <span class="label">VSt Fees gesamt</span>
+      <span class="value">${fmt(data.totals.feeInputVat)}</span>
+    </div>
+    <div class="vat-preview-kpi">
+      <span class="label">Fixkosten-VSt gesamt</span>
+      <span class="value">${fmt(data.totals.fixInputVat)}</span>
+    </div>
+    <div class="vat-preview-kpi">
+      <span class="label">Zahllast gesamt</span>
+      <span class="value ${data.totals.payable < 0 ? "is-negative" : ""}">${fmt(data.totals.payable)}</span>
     </div>
   `;
   return wrapper;
@@ -68,53 +84,113 @@ function renderTable(root, data) {
         <h2>USt-Vorschau (DE)</h2>
         <p class="muted">19 % DE, Gebührenquote, Fixkosten-VSt und EUSt-Erstattung pro Monat</p>
       </div>
-      <div class="toolbar">
-        <label>
-          EUSt-Lag (Monate)
-          <input type="number" id="vat-eust-lag" min="0" value="${data.settings.eustLagMonths}" aria-label="EUSt Lag Monate" />
-        </label>
-        <button type="button" class="btn-secondary" id="vat-reset" aria-label="Alle zurücksetzen">Alle zurücksetzen</button>
-      </div>
     </div>
-    <div class="vat-table" role="table" aria-label="USt Vorschau Tabelle">
-      <div class="vat-head" role="row">
-        <span role="columnheader">Monat</span>
-        <span role="columnheader">Brutto gesamt</span>
-        <span role="columnheader">DE-Brutto</span>
-        <span role="columnheader">Output-USt</span>
-        <span role="columnheader">VSt Fees</span>
-        <span role="columnheader">VSt Fix</span>
-        <span role="columnheader">EUSt-Erst.</span>
-        <span role="columnheader">Zahllast</span>
-        <span role="columnheader" class="wide">Einstellungen</span>
-      </div>
-      <div class="vat-body" role="rowgroup"></div>
-      <div class="vat-row vat-footer" role="row">
-        <span role="cell">Summe</span>
-        <span role="cell">${fmt(data.totals.grossTotal)}</span>
-        <span role="cell">${fmt(data.totals.grossDe)}</span>
-        <span role="cell">${fmt(data.totals.outVat)}</span>
-        <span role="cell">${fmt(data.totals.feeInputVat)}</span>
-        <span role="cell">${fmt(data.totals.fixInputVat)}</span>
-        <span role="cell">${fmt(data.totals.eustRefund)}</span>
-        <span role="cell" class="bold">${fmt(data.totals.payable)}</span>
-        <span role="cell"></span>
-      </div>
+    <div class="vat-preview-table-wrap table-wrap">
+      <table class="table-compact vat-preview-table" aria-label="USt Vorschau Tabelle">
+        <thead>
+          <tr>
+            <th>Monat</th>
+            <th class="num">DE-Brutto</th>
+            <th class="num">Output-USt</th>
+            <th class="num">VSt Fees</th>
+            <th class="num">Fixkosten-VSt</th>
+            <th class="num">EUSt-Erstattung</th>
+            <th class="num">Zahllast</th>
+            <th class="vat-preview-actions-col"></th>
+          </tr>
+        </thead>
+        <tbody class="vat-body"></tbody>
+        <tfoot>
+          <tr class="vat-preview-summary">
+            <td>Summe</td>
+            <td class="num">${fmt(data.totals.grossDe)}</td>
+            <td class="num">${fmt(data.totals.outVat)}</td>
+            <td class="num">${fmt(data.totals.feeInputVat)}</td>
+            <td class="num">${fmt(data.totals.fixInputVat)}</td>
+            <td class="num">${fmt(data.totals.eustRefund)}</td>
+            <td class="num vat-payable ${data.totals.payable < 0 ? "is-negative" : ""}">${fmt(data.totals.payable)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
     <p class="muted small">Vereinfachte Schätzung (19 % DE; ohne RC/OSS). EUSt-Erstattung wird automatisch aus POs (Monatsende + Lag) übernommen.</p>
   `;
 
   const body = table.querySelector(".vat-body");
-  data.rows.forEach(row => {
+  data.rows.forEach((row, idx) => {
     const monthCfg = data.monthConfig[row.month];
-    body.appendChild(buildRow(row, monthCfg));
+    const label = monthKeyToDateLabel(row.month);
+    const payableClass = row.payable < 0 ? "is-negative" : "";
+    const detailDisabled = idx === 0 ? "disabled" : "";
+    const rowEl = document.createElement("tr");
+    rowEl.className = "vat-preview-row";
+    rowEl.dataset.month = row.month;
+    rowEl.innerHTML = `
+      <td class="mono">${label}</td>
+      <td class="num">${fmt(row.grossDe)}</td>
+      <td class="num">${fmt(row.outVat)}</td>
+      <td class="num">${fmt(row.feeInputVat)}</td>
+      <td class="num">${fmt(row.fixInputVat)}</td>
+      <td class="num">${fmt(row.eustRefund)}</td>
+      <td class="num vat-payable ${payableClass}">${fmt(row.payable)}</td>
+      <td class="vat-preview-action">
+        <button type="button" class="btn ghost sm" data-toggle="${row.month}" aria-expanded="false">Bearbeiten</button>
+      </td>
+    `;
+    const detailRow = document.createElement("tr");
+    detailRow.className = "vat-preview-details";
+    detailRow.dataset.details = row.month;
+    detailRow.hidden = true;
+    detailRow.innerHTML = `
+      <td colspan="8">
+        <div class="vat-preview-details-inner">
+          <div class="vat-preview-fields">
+            <label>
+              DE-Anteil
+              <input type="number" step="0.01" min="0" max="1" data-month="${row.month}" data-field="deShare" value="${monthCfg.deShare}" aria-label="DE-Anteil" />
+            </label>
+            <label>
+              Gebührensatz
+              <input type="number" step="0.01" min="0" max="1" data-month="${row.month}" data-field="feeRateOfGross" value="${monthCfg.feeRateOfGross}" aria-label="Gebührensatz" />
+            </label>
+            <label>
+              Fixkosten-VSt
+              <input type="text" inputmode="decimal" data-month="${row.month}" data-field="fixInputVat" value="${fmt(monthCfg.fixInputVat)}" aria-label="Fixkosten Vorsteuer" />
+            </label>
+          </div>
+          <div class="vat-preview-actions">
+            <button type="button" class="btn secondary sm" data-copy-prev="${row.month}" ${detailDisabled} aria-label="Vormonat übernehmen">Vormonat übernehmen</button>
+          </div>
+        </div>
+      </td>
+    `;
+    body.appendChild(rowEl);
+    body.appendChild(detailRow);
   });
 
-  table.querySelector("#vat-eust-lag")?.addEventListener("change", (ev) => {
+  const toolbar = buildToolbar(data);
+  const kpis = buildKpis(data);
+  table.querySelector(".panel-header")?.after(toolbar);
+  toolbar.after(kpis);
+
+  toolbar.querySelector("#vat-eust-lag")?.addEventListener("change", (ev) => {
     updateVatPreviewSettings({ eustLagMonths: Number(ev.target.value) || 0 });
   });
 
-  table.querySelector("#vat-reset")?.addEventListener("click", () => {
+  toolbar.querySelector("#vat-de-share")?.addEventListener("change", (ev) => {
+    updateVatPreviewSettings({ deShareDefault: rateInput(ev.target.value) });
+  });
+
+  toolbar.querySelector("#vat-fee-rate")?.addEventListener("change", (ev) => {
+    updateVatPreviewSettings({ feeRateDefault: rateInput(ev.target.value) });
+  });
+
+  toolbar.querySelector("#vat-fix-input")?.addEventListener("change", (ev) => {
+    updateVatPreviewSettings({ fixInputDefault: parseEuro(ev.target.value) });
+  });
+
+  toolbar.querySelector("#vat-reset")?.addEventListener("click", () => {
     resetVatPreviewMonths();
   });
 
@@ -128,6 +204,18 @@ function renderTable(root, data) {
   });
 
   body.addEventListener("click", (ev) => {
+    const toggle = ev.target.closest("[data-toggle]");
+    if (toggle) {
+      const month = toggle.getAttribute("data-toggle");
+      const details = body.querySelector(`[data-details="${month}"]`);
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      if (details) {
+        details.hidden = expanded;
+        toggle.setAttribute("aria-expanded", String(!expanded));
+        toggle.textContent = expanded ? "Bearbeiten" : "Schließen";
+      }
+      return;
+    }
     const btn = ev.target.closest("[data-copy-prev]");
     if (!btn) return;
     const month = btn.getAttribute("data-copy-prev");
