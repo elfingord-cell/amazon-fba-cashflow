@@ -3319,14 +3319,14 @@ export function renderOrderModule(root, config) {
   function getCompletenessMessages(completeness) {
     if (!completeness) return [];
     const messages = [];
-    if (completeness.missingRequired?.length) {
-      messages.push(`Pflichtfelder fehlen: ${completeness.missingRequired.join(", ")}`);
+    if (completeness.blockingMissing?.length) {
+      messages.push(`Pflichtfelder fehlen: ${completeness.blockingMissing.map(item => item.label).join(", ")}`);
     }
-    if (completeness.missingWarnings?.length) {
-      messages.push(`Warnungen: ${completeness.missingWarnings.join(", ")}`);
+    if (completeness.defaulted?.length) {
+      messages.push(`Defaults aktiv: ${completeness.defaulted.map(item => item.label).join(", ")}`);
     }
-    if (completeness.resolvedUsingDefaults?.length) {
-      messages.push(`Defaults genutzt: ${completeness.resolvedUsingDefaults.join(", ")}`);
+    if (completeness.suggestedMissing?.length) {
+      messages.push(`Empfohlen: ${completeness.suggestedMissing.map(item => item.label).join(", ")}`);
     }
     return messages;
   }

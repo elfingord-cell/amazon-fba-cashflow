@@ -6,9 +6,11 @@ import { buildPrefillForSku } from "./prefill.js";
 test("evaluateProductCompleteness marks ready product", () => {
   const state = {
     settings: {
-      fxRate: 1.17,
       transportLeadTimesDays: { air: 10, rail: 25, sea: 45 },
       defaultProductionLeadTimeDays: 30,
+      moqDefaultUnits: 500,
+      dutyRatePct: 6.5,
+      eustRatePct: 19,
     },
     suppliers: [{ id: "sup-1", productionLeadTimeDaysDefault: 20 }],
     productSuppliers: [{ sku: "SKU-1", supplierId: "sup-1", productionLeadTimeDays: 18 }],
@@ -22,47 +24,109 @@ test("evaluateProductCompleteness marks ready product", () => {
     supplierId: "sup-1",
     landedUnitCostEur: 10,
     productionLeadTimeDaysDefault: 18,
+    moqUnits: 600,
+    template: {
+      fields: { unitPriceUsd: 5.5, transitDays: 30, dutyPct: 6.5, vatImportPct: 19, currency: "USD" },
+    },
   };
   const result = evaluateProductCompleteness(product, { state });
-  assert.equal(result.status, "ready");
-  assert.deepEqual(result.missingRequired, []);
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.blockingMissing, []);
 });
 
-test("evaluateProductCompleteness blocks missing cost basis", () => {
+test("evaluateProductCompleteness warns when MOQ uses default", () => {
   const state = {
-    settings: { fxRate: 1.17, transportLeadTimesDays: { air: 10, rail: 25, sea: 45 } },
-    suppliers: [],
-    productSuppliers: [],
+    settings: {
+      transportLeadTimesDays: { air: 10, rail: 25, sea: 45 },
+      defaultProductionLeadTimeDays: 30,
+      moqDefaultUnits: 500,
+      dutyRatePct: 6.5,
+      eustRatePct: 19,
+    },
+    suppliers: [{ id: "sup-2", currencyDefault: "USD" }],
+    productSuppliers: [{ sku: "SKU-2", supplierId: "sup-2", unitPrice: 6.37, currency: "USD" }],
     forecast: { settings: { useForecast: false } },
   };
   const product = {
     sku: "SKU-2",
-    alias: "Ohne Kosten",
+    alias: "Mit Preis",
     status: "active",
     categoryId: "cat-2",
+    productionLeadTimeDaysDefault: 12,
+    template: { fields: { transitDays: 22 } },
   };
   const result = evaluateProductCompleteness(product, { state });
-  assert.equal(result.status, "blocked");
-  assert.ok(result.missingRequired.includes("Kostenbasis"));
+  assert.equal(result.status, "warn");
+  assert.equal(result.blockingMissing.length, 0);
+  assert.ok(result.defaulted.some(item => item.label === "MOQ"));
 });
 
-test("evaluateProductCompleteness warns on missing supplier", () => {
+test("evaluateProductCompleteness blocks missing MOQ without default", () => {
   const state = {
-    settings: { fxRate: 1.17, transportLeadTimesDays: { air: 10, rail: 25, sea: 45 } },
+    settings: { transportLeadTimesDays: { air: 10, rail: 25, sea: 45 }, defaultProductionLeadTimeDays: 25 },
     suppliers: [],
     productSuppliers: [],
     forecast: { settings: { useForecast: false } },
   };
   const product = {
     sku: "SKU-3",
-    alias: "Ohne Supplier",
+    alias: "Ohne MOQ",
     status: "active",
     categoryId: "cat-3",
-    landedUnitCostEur: 5,
+    template: { fields: { unitPriceUsd: 5.5, transitDays: 30, dutyPct: 6.5, vatImportPct: 19 } },
   };
   const result = evaluateProductCompleteness(product, { state });
-  assert.equal(result.status, "warning");
-  assert.ok(result.missingWarnings.includes("Supplier"));
+  assert.equal(result.status, "blocked");
+  assert.ok(result.blockingMissing.some(item => item.label === "MOQ"));
+});
+
+test("evaluateProductCompleteness defaults duty and eust without blocking", () => {
+  const state = {
+    settings: {
+      transportLeadTimesDays: { air: 10, rail: 25, sea: 45 },
+      defaultProductionLeadTimeDays: 30,
+      dutyRatePct: 6.5,
+      eustRatePct: 19,
+    },
+    suppliers: [],
+    productSuppliers: [],
+    forecast: { settings: { useForecast: false } },
+  };
+  const product = {
+    sku: "SKU-4",
+    alias: "Mit Defaults",
+    status: "active",
+    categoryId: "cat-4",
+    moqUnits: 400,
+    productionLeadTimeDaysDefault: 14,
+    template: { fields: { unitPriceUsd: 4.2, transitDays: 30 } },
+  };
+  const result = evaluateProductCompleteness(product, { state });
+  assert.equal(result.status, "warn");
+  assert.ok(result.defaulted.some(item => item.label === "Zoll %"));
+  assert.ok(result.defaulted.some(item => item.label === "EUSt %"));
+  assert.equal(result.blockingMissing.length, 0);
+});
+
+test("evaluateProductCompleteness blocks missing production and transit days without defaults", () => {
+  const state = {
+    settings: {},
+    suppliers: [],
+    productSuppliers: [],
+    forecast: { settings: { useForecast: false } },
+  };
+  const product = {
+    sku: "SKU-5",
+    alias: "Ohne Lead Times",
+    status: "active",
+    categoryId: "cat-5",
+    moqUnits: 300,
+    template: { fields: { unitPriceUsd: 5.1, dutyPct: 6.5, vatImportPct: 19 } },
+  };
+  const result = evaluateProductCompleteness(product, { state });
+  assert.equal(result.status, "blocked");
+  assert.ok(result.blockingMissing.some(item => item.label === "Produktionszeit (Tage)"));
+  assert.ok(result.blockingMissing.some(item => item.label === "Transit-Tage"));
 });
 
 test("buildPrefillForSku resolves unit price, logistics, and payment terms", () => {
