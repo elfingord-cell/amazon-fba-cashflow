@@ -99,12 +99,15 @@ function buildCategoryGroups(products, categories = []) {
 
 function loadViewState() {
   const raw = getViewState(INVENTORY_VIEW_KEY, {});
+  const projectionMode = raw.projectionMode === "doh" || raw.projectionMode === "plan"
+    ? raw.projectionMode
+    : "units";
   return {
     selectedMonth: raw.selectedMonth || null,
     collapsed: raw.collapsed && typeof raw.collapsed === "object" ? raw.collapsed : {},
     search: raw.search || "",
     showSafety: raw.showSafety !== false,
-    projectionMode: raw.projectionMode === "doh" ? "doh" : "units",
+    projectionMode,
   };
 }
 
@@ -122,6 +125,15 @@ function resolveSelectedMonth(state, view) {
   const candidate = view.selectedMonth || latest || current;
   if (!candidate) return current;
   return candidate;
+}
+
+function normalizeMonthKey(value) {
+  if (!value) return null;
+  const raw = String(value);
+  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  const match = raw.match(/^(\d{2})-(\d{4})$/);
+  if (match) return `${match[2]}-${match[1]}`;
+  return raw;
 }
 
 function getSnapshot(state, month) {
@@ -207,13 +219,66 @@ function isFoCountable(fo) {
 }
 
 function getForecastUnits(state, sku, month) {
-  const manual = state?.forecast?.forecastManual?.[sku]?.[month];
+  const normalizedMonth = normalizeMonthKey(month);
+  if (!normalizedMonth) return null;
+  const manual = state?.forecast?.forecastManual?.[sku]?.[normalizedMonth];
   const manualParsed = parseDeNumber(manual);
   if (Number.isFinite(manualParsed)) return manualParsed;
-  const imported = state?.forecast?.forecastImport?.[sku]?.[month]?.units;
+  const imported = state?.forecast?.forecastImport?.[sku]?.[normalizedMonth]?.units;
   const importParsed = parseDeNumber(imported);
   if (Number.isFinite(importParsed)) return importParsed;
   return null;
+}
+
+function buildForecastBySku(state, products, months) {
+  const monthKeys = months
+    .map(month => normalizeMonthKey(month))
+    .filter(Boolean);
+  const forecastBySku = new Map();
+  products.forEach(product => {
+    const sku = String(product?.sku || "").trim();
+    if (!sku) return;
+    const monthMap = new Map();
+    monthKeys.forEach(monthKey => {
+      const value = getForecastUnits(state, sku, monthKey);
+      if (Number.isFinite(value)) monthMap.set(monthKey, value);
+    });
+    forecastBySku.set(sku, monthMap);
+  });
+  return forecastBySku;
+}
+
+function getForecastFromMap(forecastBySku, sku, month) {
+  if (!forecastBySku) return null;
+  const monthKey = normalizeMonthKey(month);
+  if (!monthKey) return null;
+  return forecastBySku.get(sku)?.get(monthKey) ?? null;
+}
+
+function buildForecastGroupTotals(groups, forecastBySku, months) {
+  const monthKeys = months
+    .map(month => normalizeMonthKey(month))
+    .filter(Boolean);
+  const totalsByGroup = new Map();
+  groups.forEach(group => {
+    const monthTotals = new Map();
+    monthKeys.forEach(monthKey => {
+      let sum = 0;
+      let hasValue = false;
+      group.items.forEach(product => {
+        const sku = String(product?.sku || "").trim();
+        if (!sku) return;
+        const value = forecastBySku.get(sku)?.get(monthKey);
+        if (Number.isFinite(value)) {
+          sum += value;
+          hasValue = true;
+        }
+      });
+      if (hasValue) monthTotals.set(monthKey, sum);
+    });
+    totalsByGroup.set(group.id, monthTotals);
+  });
+  return totalsByGroup;
 }
 
 function getProductEkEur(product, settings) {
@@ -595,6 +660,10 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
       || String(product.sku || "").toLowerCase().includes(search);
   });
   const groups = buildCategoryGroups(filtered, categories);
+  const forecastBySku = buildForecastBySku(state, filtered, months);
+  const forecastTotalsByGroup = view.projectionMode === "plan"
+    ? buildForecastGroupTotals(groups, forecastBySku, months)
+    : new Map();
   const snapshotMap = new Map();
   (snapshot?.items || []).forEach(item => {
     const sku = String(item.sku || "").trim();
@@ -616,7 +685,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const skuInbound = inboundMap.get(sku);
         const inboundEntry = skuInbound ? skuInbound.get(month) : null;
         const inboundUnits = inboundEntry ? inboundEntry.poUnits + inboundEntry.foUnits : 0;
-        const forecastUnits = getForecastUnits(state, sku, month);
+        const forecastUnits = getForecastFromMap(forecastBySku, sku, month);
         let endAvailable = null;
         if (!previousUnknown && Number.isFinite(forecastUnits)) {
           endAvailable = prevAvailable + inboundUnits - forecastUnits;
@@ -648,7 +717,6 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           : safetyLow
             ? "safety-low"
             : "";
-        const incompleteClass = forecastMissing ? "incomplete" : "";
         const dailyDemand = Number.isFinite(forecastUnits) && forecastUnits > 0
           ? forecastUnits / daysInMonth(month)
           : null;
@@ -656,16 +724,22 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           ? Math.max(0, Math.round(endAvailable / dailyDemand))
           : null;
         const showDoh = view.projectionMode === "doh";
-        const displayValue = forecastMissing
-          ? "—"
-          : safetyNegative
-            ? `0 <span class="inventory-warning-icon">⚠︎</span>`
-            : showDoh
-              ? (dohValue == null ? "—" : formatInt(dohValue))
-              : formatInt(endAvailable);
-        const safetyClassFinal = showDoh
-          ? (Number.isFinite(dohValue) && dohValue < safetyDays ? "safety-negative" : "")
-          : safetyClass;
+        const showPlan = view.projectionMode === "plan";
+        const displayValue = showPlan
+          ? (Number.isFinite(forecastUnits) ? formatInt(forecastUnits) : "—")
+          : forecastMissing
+            ? "—"
+            : safetyNegative
+              ? `0 <span class="inventory-warning-icon">⚠︎</span>`
+              : showDoh
+                ? (dohValue == null ? "—" : formatInt(dohValue))
+                : formatInt(endAvailable);
+        const safetyClassFinal = showPlan
+          ? ""
+          : showDoh
+            ? (Number.isFinite(dohValue) && dohValue < safetyDays ? "safety-negative" : "")
+            : safetyClass;
+        const incompleteClass = showPlan ? "" : (forecastMissing ? "incomplete" : "");
         const inboundMarkers = inboundEntry
           ? `
             ${inboundEntry.hasPo ? `<span class="inventory-inbound-marker po"></span>` : ""}
@@ -699,6 +773,15 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
       `;
     }).join("");
 
+    const groupMonthCells = view.projectionMode === "plan"
+      ? months.map(month => {
+        const monthKey = normalizeMonthKey(month);
+        const sum = forecastTotalsByGroup.get(group.id)?.get(monthKey);
+        const value = Number.isFinite(sum) ? formatInt(sum) : "—";
+        return `<td class="num inventory-projection-group-cell">${value}</td>`;
+      }).join("")
+      : `<th colspan="${months.length}"></th>`;
+
     return `
       <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
         <th class="inventory-col-sku sticky-cell" colspan="3">
@@ -706,7 +789,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           <span class="tree-label">${escapeHtml(group.name)}</span>
           <span class="muted">(${group.items.length})</span>
         </th>
-        <th colspan="${months.length}"></th>
+        ${groupMonthCells}
       </tr>
       ${items}
     `;
@@ -778,6 +861,8 @@ export function render(root) {
   const projectionOptions = [6, 12, 18];
   const months = buildMonthRange(selectedMonth, projectionOptions.includes(projectionMonths) ? projectionMonths : 12);
 
+  const isPlanView = view.projectionMode === "plan";
+
   root.innerHTML = `
     <section class="card inventory-card">
       <div class="inventory-header">
@@ -824,6 +909,8 @@ export function render(root) {
               <label for="inventory-mode-units">Units</label>
               <input type="radio" id="inventory-mode-doh" name="inventory-mode" value="doh" ${view.projectionMode === "doh" ? "checked" : ""} />
               <label for="inventory-mode-doh">Days on hand</label>
+              <input type="radio" id="inventory-mode-plan" name="inventory-mode" value="plan" ${view.projectionMode === "plan" ? "checked" : ""} />
+              <label for="inventory-mode-plan">Plan-Absatz</label>
             </div>
           </div>
           <label class="inventory-toggle">
@@ -838,8 +925,10 @@ export function render(root) {
         </div>
       </div>
       <div class="inventory-legend">
-        <span class="inventory-legend-item"><span class="legend-swatch safety-negative"></span> Stockout / unter Safety</span>
-        <span class="inventory-legend-item"><span class="legend-swatch safety-low"></span> Unter Safety (Units)</span>
+        ${isPlanView ? "" : `
+          <span class="inventory-legend-item"><span class="legend-swatch safety-negative"></span> Stockout / unter Safety</span>
+          <span class="inventory-legend-item"><span class="legend-swatch safety-low"></span> Unter Safety (Units)</span>
+        `}
         <span class="inventory-legend-item"><span class="legend-swatch inbound-po"></span> Inbound PO</span>
         <span class="inventory-legend-item"><span class="legend-swatch inbound-fo"></span> Inbound FO</span>
       </div>
@@ -1035,10 +1124,15 @@ export function render(root) {
     const anchorIso = formatAnchorLabel(anchorDate);
     const anchorLabel = formatShortDate(anchorDate);
     const monthLabel = formatMonthSlash(month);
+    const planUnits = getForecastUnits(state, sku, month);
+    const planRow = Number.isFinite(planUnits)
+      ? `<div class="inventory-cell-popover-meta">Plan-Absatz in diesem Monat: ${formatInt(planUnits)}</div>`
+      : "";
     const menu = document.createElement("div");
     menu.className = "inventory-cell-popover";
     menu.innerHTML = `
       <div class="inventory-cell-popover-title">Aktion für ${escapeHtml(sku)}</div>
+      ${planRow}
       <button class="inventory-cell-popover-action" type="button" data-action="fo">
         FO erstellen – Ankunft in ${escapeHtml(monthLabel)} <span class="muted">(Anker: ${escapeHtml(anchorLabel)})</span>
       </button>
@@ -1162,7 +1256,8 @@ export function render(root) {
   const modeInputs = root.querySelectorAll("input[name='inventory-mode']");
   modeInputs.forEach(input => {
     input.addEventListener("change", (event) => {
-      view.projectionMode = event.target.value === "doh" ? "doh" : "units";
+      const next = event.target.value;
+      view.projectionMode = next === "doh" || next === "plan" ? next : "units";
       saveViewState(view);
       render(root);
     });
