@@ -9,6 +9,13 @@ function escapeHtml(str) {
   ));
 }
 
+function escapeSelector(value) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
 function currentMonthKey() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -855,6 +862,16 @@ function updateSnapshotRow(row, snapshot, previousSnapshot, product, state) {
 export function render(root) {
   const state = loadAppState();
   const view = loadViewState();
+  const routeQuery = window.__routeQuery || {};
+  const routeSku = String(routeQuery.sku || "").trim();
+  const routeMonth = String(routeQuery.month || "").trim();
+  if (routeSku) {
+    view.search = "";
+    view.projectionMode = "doh";
+  }
+  if (/^\d{4}-\d{2}$/.test(routeMonth)) {
+    view.selectedMonth = addMonths(routeMonth, -1);
+  }
   const selectedMonth = resolveSelectedMonth(state, view);
   view.selectedMonth = selectedMonth;
   saveViewState(view);
@@ -867,6 +884,13 @@ export function render(root) {
   const previousSnapshot = getPreviousSnapshot(state, selectedMonth);
   const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
   const products = (state.products || []).filter(isProductActive);
+  if (routeSku) {
+    const matched = products.find(product => String(product?.sku || "").trim() === routeSku);
+    if (matched?.categoryId != null) {
+      view.collapsed[String(matched.categoryId)] = false;
+      saveViewState(view);
+    }
+  }
   const projectionMonths = Number(state.inventory?.settings?.projectionMonths || 12);
   const projectionOptions = [6, 12, 18];
   const months = buildMonthRange(selectedMonth, projectionOptions.includes(projectionMonths) ? projectionMonths : 12);
@@ -1290,6 +1314,26 @@ export function render(root) {
       render(root);
     });
   });
+
+  function focusFromRoute() {
+    if (!routeSku) return;
+    const skuSelector = escapeSelector(routeSku);
+    const monthSelector = /^\d{4}-\d{2}$/.test(routeMonth)
+      ? `[data-month="${escapeSelector(routeMonth)}"]`
+      : "[data-month]";
+    const cell = root.querySelector(`.inventory-projection-table tr[data-sku="${skuSelector}"] td${monthSelector}`);
+    const row = cell ? cell.closest("tr[data-sku]") : root.querySelector(`.inventory-projection-table tr[data-sku="${skuSelector}"]`);
+    if (row) row.classList.add("row-focus");
+    if (cell) {
+      cell.classList.add("cell-focus");
+      cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    } else if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    window.__routeQuery = {};
+  }
+
+  focusFromRoute();
 
   root._inventoryCleanup = () => {
     document.removeEventListener("click", handleDocClick);

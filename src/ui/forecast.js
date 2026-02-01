@@ -354,6 +354,13 @@ function showToast(message) {
   setTimeout(() => { toast.hidden = true; }, 2200);
 }
 
+function escapeSelector(value) {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return String(value).replace(/["\\]/g, "\\$&");
+}
+
 function renderTable(el, state, months, monthsAll, groups, view) {
   const currentMonth = currentMonthKey();
   const currentYear = Number(currentMonth.split("-")[0]);
@@ -479,6 +486,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
         const alias = product.alias || sku;
         const row = document.createElement("tr");
         row.className = "forecast-product-row row-detail";
+        row.setAttribute("data-sku", sku);
         const productValues = months.map(month => {
           const units = getEffectiveValue(state, sku, month);
           return getDerivedValue(view, units, product);
@@ -635,11 +643,26 @@ function render(el) {
   el.innerHTML = '';
   const products = Array.isArray(state.products) ? state.products : [];
   const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
+  const routeQuery = window.__routeQuery || {};
+  const routeSku = String(routeQuery.sku || "").trim();
+  const routeMonth = String(routeQuery.month || "").trim();
+  if (routeSku) {
+    forecastView.search = "";
+    forecastView.onlyActive = false;
+    forecastView.onlyWithForecast = false;
+    const matched = products.find(product => String(product?.sku || "").trim() === routeSku);
+    if (matched?.categoryId != null) {
+      forecastView.collapsed[String(matched.categoryId)] = false;
+    }
+  }
   const monthsAll = getMonthBuckets(
     (state.settings && state.settings.startMonth) || "2025-01",
     Number((state.settings && state.settings.horizonMonths) || 18)
   );
   const rangeOptions = getRangeOptions(monthsAll);
+  if (routeMonth && !applyRange(monthsAll, forecastView.range).includes(routeMonth)) {
+    forecastView.range = "all";
+  }
   if (!rangeOptions.some(option => option.value === forecastView.range)) {
     forecastView.range = rangeOptions[0] ? rangeOptions[0].value : "all";
   }
@@ -804,6 +827,24 @@ function render(el) {
       render(el);
     });
   });
+
+  function focusFromRoute() {
+    if (!routeSku) return;
+    const skuSelector = escapeSelector(routeSku);
+    const monthSelector = routeMonth ? `[data-month="${escapeSelector(routeMonth)}"]` : "";
+    const cell = el.querySelector(`td[data-sku="${skuSelector}"]${monthSelector}`);
+    const row = cell ? cell.closest("tr") : el.querySelector(`tr[data-sku="${skuSelector}"]`);
+    if (row) row.classList.add("row-focus");
+    if (cell) {
+      cell.classList.add("cell-focus");
+      cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    } else if (row) {
+      row.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    window.__routeQuery = {};
+  }
+
+  focusFromRoute();
 }
 
 function openVentoryImportModal(host) {

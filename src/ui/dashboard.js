@@ -5,7 +5,7 @@ import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
 
 const RANGE_STORAGE_KEY = "dashboard_month_range";
-const RANGE_DEFAULT = "NEXT_12";
+const RANGE_DEFAULT = "NEXT_6";
 const RANGE_OPTIONS = [
   { value: "NEXT_6", label: "Nächste 6 Monate", count: 6 },
   { value: "NEXT_12", label: "Nächste 12 Monate", count: 12 },
@@ -28,6 +28,35 @@ const dashboardState = {
   range: loadRangePreference(),
   hideEmptyMonths: true,
   limitBalanceToGreen: false,
+};
+
+const COVERAGE_THRESHOLDS = {
+  full: 1,
+  wide: 0.95,
+  partial: 0.8,
+};
+
+const COVERAGE_LEVELS = {
+  green: {
+    label: "Vollständig",
+    detail: "Alle erforderlichen Kriterien erfüllt.",
+  },
+  light: {
+    label: "Weitgehend",
+    detail: "Kleine Lücken, max. 5% der aktiven Produkte betroffen.",
+  },
+  orange: {
+    label: "Teilweise",
+    detail: "Wichtige Lücken, 5–20% der aktiven Produkte betroffen.",
+  },
+  red: {
+    label: "Unzureichend",
+    detail: "Größere Lücken (>20%) oder kritische Grundlagen fehlen.",
+  },
+  gray: {
+    label: "Keine Daten",
+    detail: "Keine aktiven Produkte vorhanden.",
+  },
 };
 
 const PO_CONFIG = {
@@ -88,6 +117,16 @@ function formatCellValue(value) {
 function formatValueOnly(value) {
   const formatted = formatCellValue(value);
   return formatted.text;
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatInt(value) {
+  if (!Number.isFinite(value)) return "—";
+  return Math.round(value).toLocaleString("de-DE", { maximumFractionDigits: 0 });
 }
 
 function monthIndex(ym) {
@@ -223,6 +262,12 @@ function formatMonthLabel(monthKey) {
   return date.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" });
 }
 
+function daysInMonth(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return 30;
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
 function monthColumnClass(index) {
   return `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
 }
@@ -274,6 +319,15 @@ function getActiveSkus(state) {
 
 function normalizeSku(value) {
   return String(value || "").trim();
+}
+
+function parseNumberDE(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/\./g, "").replace(",", ".");
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
 }
 
 function buildSkuAliasMap(state) {
@@ -341,6 +395,20 @@ function buildCategoryGroups(items, categories = []) {
   return groups.filter(group => group.items.length);
 }
 
+function hasInput(value) {
+  return value != null && String(value).trim() !== "";
+}
+
+function isCashInPresent(state, month) {
+  const incomeRow = (state?.incomings || []).find(row => row?.month === month);
+  if (incomeRow && (hasInput(incomeRow.revenueEur) || hasInput(incomeRow.payoutPct))) return true;
+  const actuals = state?.monthlyActuals && typeof state.monthlyActuals === "object"
+    ? state.monthlyActuals[month]
+    : null;
+  if (actuals && (hasInput(actuals.realRevenueEUR) || hasInput(actuals.realPayoutRatePct))) return true;
+  return false;
+}
+
 function computePoEta(po, settings) {
   if (!po) return null;
   if (po.etaManual) return parseISODate(po.etaManual);
@@ -373,80 +441,64 @@ function getForecastUnits(state, sku, month) {
   return null;
 }
 
-function buildSkuSignalMap(state, activeSkus, months) {
+function getLatestSnapshot(state) {
+  const snapshots = (state?.inventory?.snapshots || [])
+    .filter(snap => snap?.month && monthIndex(snap.month) != null)
+    .slice()
+    .sort((a, b) => monthIndex(a.month) - monthIndex(b.month));
+  return snapshots.length ? snapshots[snapshots.length - 1] : null;
+}
+
+function buildInboundUnitsMap(state, months) {
   const monthSet = new Set(months);
-  const signals = new Map();
-  const hasForecast = new Map();
-
-  activeSkus.forEach(item => {
-    const sku = item.sku;
-    signals.set(sku, new Map(months.map(month => [month, { payment: false, inbound: false, forecast: false }])));
-    hasForecast.set(sku, false);
-  });
-
+  const inboundMap = new Map();
   const settings = getSettings();
-  const pos = state && Array.isArray(state.pos) ? state.pos : [];
-  pos.forEach(po => {
+
+  const addUnits = (sku, month, units) => {
+    if (!sku || !monthSet.has(month)) return;
+    if (!inboundMap.has(sku)) inboundMap.set(sku, new Map());
+    const skuMap = inboundMap.get(sku);
+    skuMap.set(month, (skuMap.get(month) || 0) + units);
+  };
+
+  (state?.pos || []).forEach(po => {
     if (!po || po.archived) return;
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
     const etaDate = computePoEta(po, settings);
     const etaMonth = etaDate ? toMonthKey(etaDate) : null;
-    const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku }];
-    const paymentRows = buildPaymentRows(po, PO_CONFIG, settings, state?.payments || []);
+    if (!etaMonth) return;
+    const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku, units: po.units }];
     items.forEach(item => {
-      const sku = String(item && item.sku ? item.sku : "").trim();
-      if (!sku || !signals.has(sku)) return;
-      if (etaMonth) {
-        if (monthSet.has(etaMonth)) {
-          signals.get(sku).get(etaMonth).inbound = true;
-        }
-      }
-      paymentRows.forEach(row => {
-        const dueMonth = toMonthKey(row.dueDate);
-        if (!dueMonth || !monthSet.has(dueMonth)) return;
-        signals.get(sku).get(dueMonth).payment = true;
-      });
+      const sku = normalizeSku(item?.sku || po?.sku);
+      if (!sku) return;
+      const raw = item?.units ?? item?.qty ?? item?.quantity ?? po?.units;
+      const parsed = parseNumberDE(raw);
+      const units = Number.isFinite(parsed) ? Math.round(parsed) : 0;
+      if (!units) return;
+      addUnits(sku, etaMonth, units);
     });
   });
 
-  const fos = state && Array.isArray(state.fos) ? state.fos : [];
-  fos.forEach(fo => {
+  (state?.fos || []).forEach(fo => {
     if (!fo) return;
     const status = String(fo.status || "").toUpperCase();
     if (status === "CONVERTED" || status === "CANCELLED") return;
-    const sku = String(fo && fo.sku ? fo.sku : "").trim();
-    if (!sku || !signals.has(sku)) return;
     const etaDate = computeFoEta(fo);
     const etaMonth = etaDate ? toMonthKey(etaDate) : null;
-    if (etaMonth) {
-      if (monthSet.has(etaMonth)) {
-        signals.get(sku).get(etaMonth).inbound = true;
-      }
-    }
-    const payments = Array.isArray(fo && fo.payments) ? fo.payments : [];
-    payments.forEach(payment => {
-      const dueMonth = toMonthKey(payment.dueDate);
-      if (!dueMonth || !monthSet.has(dueMonth)) return;
-      signals.get(sku).get(dueMonth).payment = true;
+    if (!etaMonth) return;
+    const items = Array.isArray(fo.items) && fo.items.length ? fo.items : [{ sku: fo.sku, units: fo.units }];
+    items.forEach(item => {
+      const sku = normalizeSku(item?.sku || fo?.sku);
+      if (!sku) return;
+      const raw = item?.units ?? item?.qty ?? item?.quantity ?? fo?.units;
+      const parsed = parseNumberDE(raw);
+      const units = Number.isFinite(parsed) ? Math.round(parsed) : 0;
+      if (!units) return;
+      addUnits(sku, etaMonth, units);
     });
   });
 
-  activeSkus.forEach(item => {
-    const sku = item.sku;
-    months.forEach(month => {
-      const units = getForecastUnits(state, sku, month);
-      if (units != null && units > 0) {
-        signals.get(sku).get(month).forecast = true;
-        hasForecast.set(sku, true);
-      }
-    });
-  });
-
-  return { signals, hasForecast };
-}
-
-function isMonthCovered(signalRow, allowForecast) {
-  return Boolean(signalRow.payment || signalRow.inbound || (allowForecast && signalRow.forecast));
+  return inboundMap;
 }
 
 function computeSkuCoverage(state, months) {
@@ -456,39 +508,144 @@ function computeSkuCoverage(state, months) {
   const details = new Map();
   const perSkuCoverage = new Map();
   const totalCount = activeSkus.length;
-  const { signals, hasForecast } = buildSkuSignalMap(state, activeSkus, months);
+  const products = state && Array.isArray(state.products) ? state.products : [];
+  const productBySku = new Map(products.map(product => [normalizeSku(product?.sku), product]));
+  const inboundUnitsMap = buildInboundUnitsMap(state, months);
+  const snapshot = getLatestSnapshot(state);
+  const snapshotMap = new Map();
+  if (snapshot && Array.isArray(snapshot.items)) {
+    snapshot.items.forEach(item => {
+      const sku = normalizeSku(item?.sku);
+      if (!sku) return;
+      const amazonUnits = Number(item?.amazonUnits || 0);
+      const threePLUnits = Number(item?.threePLUnits || 0);
+      snapshotMap.set(sku, amazonUnits + threePLUnits);
+    });
+  }
 
+  const perSkuMonth = new Map();
   activeSkus.forEach(item => {
+    perSkuMonth.set(item.sku, new Map());
     perSkuCoverage.set(item.sku, new Map());
+    const product = productBySku.get(item.sku);
+    const safetyDays = Number(
+      product?.safetyStockDohOverride
+        ?? state?.settings?.safetyStockDohDefault
+        ?? state?.inventory?.settings?.safetyDays
+        ?? 60,
+    );
+    const startAvailable = snapshot ? (snapshotMap.get(item.sku) ?? 0) : null;
+    let prevAvailable = Number.isFinite(startAvailable) ? startAvailable : null;
+    let previousUnknown = !Number.isFinite(prevAvailable);
+    months.forEach(month => {
+      const forecastUnits = getForecastUnits(state, item.sku, month);
+      const hasForecast = Number.isFinite(forecastUnits);
+      const inboundUnits = inboundUnitsMap.get(item.sku)?.get(month) || 0;
+      let endAvailable = null;
+      if (!previousUnknown && hasForecast) {
+        endAvailable = prevAvailable + inboundUnits - forecastUnits;
+        prevAvailable = endAvailable;
+      } else {
+        previousUnknown = true;
+      }
+      const dailyDemand = hasForecast && forecastUnits > 0
+        ? forecastUnits / daysInMonth(month)
+        : null;
+      const doh = Number.isFinite(endAvailable) && Number.isFinite(dailyDemand) && dailyDemand > 0
+        ? Math.max(0, Math.round(endAvailable / dailyDemand))
+        : null;
+      const passesDoh = Number.isFinite(doh) && doh >= safetyDays;
+      perSkuMonth.get(item.sku).set(month, {
+        hasForecast,
+        forecastUnits,
+        doh,
+        safetyDays,
+        passesDoh,
+      });
+      perSkuCoverage.get(item.sku).set(month, hasForecast);
+    });
   });
 
   months.forEach(month => {
-    const coveredSkus = new Set();
+    const cashInPresent = isCashInPresent(state, month);
+    let forecastCount = 0;
+    let dohPassCount = 0;
+    const missingForecastSkus = [];
+    const dohFailingSkus = [];
     activeSkus.forEach(item => {
       const sku = item.sku;
-      const skuSignal = signals.get(sku)?.get(month);
-      const allowForecast = hasForecast.get(sku);
-      const isCovered = Boolean(skuSignal && isMonthCovered(skuSignal, allowForecast));
-      perSkuCoverage.get(sku).set(month, isCovered);
-      if (isCovered) coveredSkus.add(sku);
+      const skuMonth = perSkuMonth.get(sku)?.get(month);
+      if (skuMonth?.hasForecast) {
+        forecastCount += 1;
+      } else {
+        missingForecastSkus.push({
+          sku,
+          alias: item.alias,
+          categoryName: item.categoryName,
+        });
+      }
+      if (skuMonth?.hasForecast && skuMonth.passesDoh) {
+        dohPassCount += 1;
+      } else if (skuMonth?.hasForecast) {
+        dohFailingSkus.push({
+          sku,
+          alias: item.alias,
+          categoryName: item.categoryName,
+          doh: skuMonth?.doh ?? null,
+          safetyDays: skuMonth?.safetyDays ?? null,
+        });
+      }
     });
-    const coveredCount = coveredSkus.size;
-    const ratio = totalCount ? coveredCount / totalCount : 0;
+    const forecastCoverage = totalCount ? forecastCount / totalCount : 0;
+    const dohPassRate = totalCount ? dohPassCount / totalCount : 0;
+    const overallCoverage = Math.min(forecastCoverage, dohPassRate);
     let status = "gray";
-    if (ratio >= 1) status = "green";
-    else if (ratio >= 0.6) status = "amber";
-    const missingAliases = totalCount
-      ? activeSkus.filter(item => !coveredSkus.has(item.sku)).map(item => item.alias || item.sku)
-      : [];
+    if (totalCount === 0) {
+      status = "gray";
+    } else if (!cashInPresent) {
+      status = "red";
+    } else if (overallCoverage >= COVERAGE_THRESHOLDS.full) {
+      status = "green";
+    } else if (overallCoverage >= COVERAGE_THRESHOLDS.wide) {
+      status = "light";
+    } else if (overallCoverage >= COVERAGE_THRESHOLDS.partial) {
+      status = "orange";
+    } else {
+      status = "red";
+    }
     coverage.set(month, status);
     details.set(month, {
       status,
-      coveredCount,
       totalCount,
-      ratio,
-      missingAliases,
+      cashInPresent,
+      forecastCount,
+      forecastCoverage,
+      dohPassCount,
+      dohPassRate,
+      overallCoverage,
+      missingForecastSkus,
+      dohFailingSkus,
+      forwarded: false,
+      forwardReason: "",
     });
   });
+
+  let redSeen = false;
+  months.forEach(month => {
+    const detail = details.get(month);
+    if (!detail) return;
+    if (detail.status === "red") {
+      redSeen = true;
+      return;
+    }
+    if (redSeen) {
+      detail.status = "red";
+      detail.forwarded = true;
+      detail.forwardReason = "Folgeeffekt: Vorheriger Monat unzureichend.";
+      coverage.set(month, "red");
+    }
+  });
+
   return {
     coverage,
     details,
@@ -1236,25 +1393,30 @@ function buildDashboardHTML(state) {
   const headerCells = nonEmptyMonths
     .map((month, idx) => {
       const columnClass = monthColumnClass(idx);
-      const status = skuCoverage.coverage.get(month) || "gray";
-      const detail = skuCoverage.details.get(month);
-      const plannedCount = detail && typeof detail.coveredCount !== "undefined" ? detail.coveredCount : 0;
-      const totalCount = detail && typeof detail.totalCount !== "undefined" ? detail.totalCount : 0;
-      const ratio = detail && typeof detail.ratio !== "undefined" ? detail.ratio : 0;
-      const missing = detail && detail.missingAliases ? detail.missingAliases : [];
-      const missingPreview = missing.slice(0, 5);
-      const missingRest = missing.length > 5 ? ` +${missing.length - 5} weitere` : "";
+      const detail = skuCoverage.details.get(month) || {};
+      const status = detail.status || "gray";
+      const totalCount = Number.isFinite(detail.totalCount) ? detail.totalCount : 0;
+      const statusLabel = COVERAGE_LEVELS[status]?.label || "—";
+      const missingForecast = detail.missingForecastSkus || [];
+      const missingPreview = missingForecast.slice(0, 5);
+      const missingRest = missingForecast.length > 5 ? ` +${missingForecast.length - 5} weitere` : "";
       const missingLine = missingPreview.length
-        ? `Fehlend: ${missingPreview.join(", ")}${missingRest}`
-        : (totalCount ? "Fehlend: —" : "Keine aktiven SKUs");
+        ? `Forecast fehlt: ${missingPreview.map(item => item.alias || item.sku).join(", ")}${missingRest}`
+        : (totalCount ? "Forecast fehlt: —" : "Keine aktiven SKUs");
       const tooltip = [
-        `Reifegrad: ${plannedCount}/${totalCount} SKUs geplant (${Math.round(ratio * 100)}%)`,
+        `Reifegrad: ${statusLabel}`,
+        `Cash-In: ${detail.cashInPresent ? "vorhanden" : "fehlt"}`,
+        `Forecast: ${detail.forecastCount || 0}/${totalCount} (${formatPercent(detail.forecastCoverage || 0)})`,
+        `DOH ≥ Safety: ${detail.dohPassCount || 0}/${totalCount} (${formatPercent(detail.dohPassRate || 0)})`,
         missingLine,
-      ].join(" · ");
+        detail.forwarded ? detail.forwardReason : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
       return `
         <th scope="col" class="${columnClass}">
-          <span class="coverage-indicator coverage-${status}" title="${escapeHtml(tooltip)}"></span>
-          <span>${escapeHtml(month)}</span>
+          <button type="button" class="coverage-indicator coverage-${status} coverage-button" data-coverage-month="${escapeHtml(month)}" title="${escapeHtml(tooltip)}" aria-label="Reifegrad ${escapeHtml(formatMonthLabel(month))}: ${escapeHtml(statusLabel)}"></button>
+          <span>${escapeHtml(formatMonthLabel(month))}</span>
         </th>
       `;
     })
@@ -1289,7 +1451,7 @@ function buildDashboardHTML(state) {
         .map((month, idx) => {
           const columnClass = monthColumnClass(idx);
           const cell = row.values[month] || { value: 0, warnings: [] };
-          const showBalanceWarning = row.id === "balance" && ["gray", "amber"].includes(skuCoverage.coverage.get(month));
+          const showBalanceWarning = row.id === "balance" && skuCoverage.coverage.get(month) !== "green";
           const balanceWarning = showBalanceWarning
             ? `<span class="cell-balance-warning" title="Kontostand kann unvollständig sein, da Planung fehlt.">⚠︎</span>`
             : "";
@@ -1325,73 +1487,6 @@ function buildDashboardHTML(state) {
     })
     .join("");
 
-  const coverageGroups = skuCoverage.groups;
-  const coverageRows = coverageGroups.length
-    ? coverageGroups
-      .map(group => {
-        const isCollapsed = dashboardState.coverageCollapsed.has(group.id);
-        const groupToggle = `
-          <button type="button" class="tree-toggle coverage-toggle" data-coverage-group="${escapeHtml(group.id)}" aria-expanded="${!isCollapsed}">
-            ${isCollapsed ? "▶" : "▼"}
-          </button>
-        `;
-        const groupRow = `
-          <tr class="coverage-group-row" data-coverage-group="${escapeHtml(group.id)}">
-            <th scope="row" class="coverage-label">
-              ${groupToggle}
-              <span class="tree-label">${escapeHtml(group.name)}</span>
-              <span class="coverage-count muted">${group.items.length}</span>
-            </th>
-            ${nonEmptyMonths.map(() => `<td class="coverage-cell muted">—</td>`).join("")}
-          </tr>
-        `;
-        const skuRows = isCollapsed
-          ? ""
-          : group.items.map(item => {
-            const skuLabel = item.alias || item.sku;
-            const skuMeta = item.alias && item.sku && item.alias !== item.sku
-              ? `<span class="muted coverage-sku">(${escapeHtml(item.sku)})</span>`
-              : "";
-            const cells = nonEmptyMonths.map(month => {
-              const perSkuMap = skuCoverage.perSkuCoverage.get(item.sku);
-              const isCovered = perSkuMap ? perSkuMap.get(month) : false;
-              if (isCovered) {
-                return `
-                  <td class="coverage-cell coverage-planned">
-                    <span class="coverage-chip planned" aria-hidden="true">✓</span>
-                  </td>
-                `;
-              }
-              const targetDate = `${month}-15`;
-              const tooltip = `Nicht geplant für ${formatMonthLabel(month)}`;
-              return `
-                <td class="coverage-cell coverage-missing" title="${escapeHtml(tooltip)}">
-                  <span class="coverage-chip missing" aria-hidden="true">—</span>
-                  <button type="button" class="coverage-plan-btn" data-plan-sku="${escapeHtml(item.sku)}" data-plan-month="${escapeHtml(month)}" data-plan-target="${escapeHtml(targetDate)}">Planen</button>
-                </td>
-              `;
-            }).join("");
-            return `
-              <tr class="coverage-sku-row" data-coverage-sku="${escapeHtml(item.sku)}">
-                <td class="coverage-label">
-                  <span class="tree-spacer" aria-hidden="true"></span>
-                  <div class="coverage-sku-block">
-                    <span>${escapeHtml(skuLabel)}</span>
-                    ${skuMeta}
-                  </div>
-                </td>
-                ${cells}
-              </tr>
-            `;
-          }).join("");
-        return `${groupRow}${skuRows}`;
-      }).join("")
-    : `
-      <tr>
-        <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine aktiven SKUs vorhanden.</td>
-      </tr>
-    `;
-
   const coverageNotice = "";
 
   return `
@@ -1419,9 +1514,13 @@ function buildDashboardHTML(state) {
       </div>
       ${coverageNotice}
       <div class="dashboard-legend muted">
-        <span class="coverage-indicator coverage-green"></span> Reifegrad (vollständig geplant)
-        <span class="coverage-indicator coverage-amber"></span> Teilweise geplant
-        <span class="coverage-indicator coverage-gray"></span> Planung fehlt
+        <button type="button" class="legend-trigger" id="dashboard-legend-info">
+          <span class="coverage-indicator coverage-green"></span> Vollständig
+          <span class="coverage-indicator coverage-light"></span> Weitgehend
+          <span class="coverage-indicator coverage-orange"></span> Teilweise
+          <span class="coverage-indicator coverage-red"></span> Unzureichend
+          <span class="legend-more">Details</span>
+        </button>
         <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
       </div>
       <div class="dashboard-table-wrap">
@@ -1444,6 +1543,187 @@ function buildDashboardHTML(state) {
         </div>
       </div>
     </section>
+  `;
+}
+
+function buildCoverageLegendModalHTML() {
+  const thresholds = `Schwellen: Vollständig ${formatPercent(COVERAGE_THRESHOLDS.full)}, Weitgehend ≥${formatPercent(COVERAGE_THRESHOLDS.wide)}, Teilweise ≥${formatPercent(COVERAGE_THRESHOLDS.partial)}.`;
+  const items = ["green", "light", "orange", "red"]
+    .map(key => `
+      <li class="dashboard-detail-item">
+        <span class="coverage-indicator coverage-${key}"></span>
+        <div>
+          <strong>${escapeHtml(COVERAGE_LEVELS[key].label)}</strong>
+          <div class="muted small">${escapeHtml(COVERAGE_LEVELS[key].detail)}</div>
+        </div>
+      </li>
+    `)
+    .join("");
+  return `
+    <div class="po-modal dashboard-detail-modal">
+      <header class="po-modal-header">
+        <h3>Reifegrad-Legende</h3>
+        <button type="button" class="btn ghost" data-close aria-label="Schließen">✕</button>
+      </header>
+      <div class="po-modal-body">
+        <p class="muted">${thresholds}</p>
+        <ul class="dashboard-detail-list">
+          ${items}
+        </ul>
+      </div>
+      <footer class="po-modal-actions">
+        <button type="button" class="btn secondary" data-close>Schließen</button>
+      </footer>
+    </div>
+  `;
+}
+
+function buildCoverageDetailModalHTML(month, detail) {
+  const statusKey = detail?.status || "gray";
+  const statusLabel = COVERAGE_LEVELS[statusKey]?.label || "—";
+  const statusDetail = COVERAGE_LEVELS[statusKey]?.detail || "";
+  const totalCount = detail?.totalCount || 0;
+  const thresholds = `Schwellen: Vollständig ${formatPercent(COVERAGE_THRESHOLDS.full)}, Weitgehend ≥${formatPercent(COVERAGE_THRESHOLDS.wide)}, Teilweise ≥${formatPercent(COVERAGE_THRESHOLDS.partial)}.`;
+  const cashInPass = Boolean(detail?.cashInPresent);
+  const forecastPass = totalCount > 0 && detail?.forecastCoverage >= COVERAGE_THRESHOLDS.full;
+  const dohPass = totalCount > 0 && detail?.dohPassRate >= COVERAGE_THRESHOLDS.full;
+  const forwardNote = detail?.forwarded ? `<div class="dashboard-detail-note">${escapeHtml(detail.forwardReason)}</div>` : "";
+
+  const missingForecastRows = (detail?.missingForecastSkus || [])
+    .map(item => `
+      <tr>
+        <td>${escapeHtml(item.alias || item.sku)}</td>
+        <td class="muted">${escapeHtml(item.sku)}</td>
+        <td class="muted">${escapeHtml(item.categoryName || "—")}</td>
+        <td><button type="button" class="btn ghost btn-small" data-fix-route="#forecast" data-fix-sku="${escapeHtml(item.sku)}" data-fix-month="${escapeHtml(month)}">Fix</button></td>
+      </tr>
+    `)
+    .join("");
+
+  const dohFailRows = (detail?.dohFailingSkus || [])
+    .map(item => `
+      <tr>
+        <td>${escapeHtml(item.alias || item.sku)}</td>
+        <td class="muted">${escapeHtml(item.sku)}</td>
+        <td class="muted">${escapeHtml(item.categoryName || "—")}</td>
+        <td class="num">${formatInt(item.doh)}</td>
+        <td class="num">${formatInt(item.safetyDays)}</td>
+        <td><button type="button" class="btn ghost btn-small" data-fix-route="#inventory" data-fix-sku="${escapeHtml(item.sku)}" data-fix-month="${escapeHtml(month)}">Fix</button></td>
+      </tr>
+    `)
+    .join("");
+
+  const missingForecastTable = missingForecastRows
+    ? `
+      <table class="dashboard-detail-table">
+        <thead>
+          <tr>
+            <th>Produkt</th>
+            <th>SKU</th>
+            <th>Kategorie</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${missingForecastRows}
+        </tbody>
+      </table>
+    `
+    : `<div class="muted">Keine fehlenden Forecasts.</div>`;
+
+  const dohFailTable = dohFailRows
+    ? `
+      <table class="dashboard-detail-table">
+        <thead>
+          <tr>
+            <th>Produkt</th>
+            <th>SKU</th>
+            <th>Kategorie</th>
+            <th class="num">DOH</th>
+            <th class="num">Safety</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dohFailRows}
+        </tbody>
+      </table>
+    `
+    : `<div class="muted">Alle SKUs erfüllen die Safety-DOH.</div>`;
+
+  return `
+    <div class="po-modal dashboard-detail-modal">
+      <header class="po-modal-header">
+        <h3>Reifegrad Monat ${escapeHtml(formatMonthLabel(month))}</h3>
+        <button type="button" class="btn ghost" data-close aria-label="Schließen">✕</button>
+      </header>
+      <div class="po-modal-body">
+        <div class="dashboard-detail-summary">
+          <span class="coverage-indicator coverage-${statusKey}"></span>
+          <div>
+            <div class="dashboard-detail-status">${escapeHtml(statusLabel)}</div>
+            <div class="muted small">${escapeHtml(statusDetail)}</div>
+            <div class="muted small">${escapeHtml(thresholds)}</div>
+          </div>
+        </div>
+        ${forwardNote}
+        <div class="dashboard-detail-section">
+          <h4>Übersicht</h4>
+          <div class="dashboard-detail-metrics">
+            <div>
+              <span class="muted">Overall Coverage</span>
+              <strong>${formatPercent(detail?.overallCoverage || 0)}</strong>
+            </div>
+            <div>
+              <span class="muted">Forecast Coverage</span>
+              <strong>${formatPercent(detail?.forecastCoverage || 0)}</strong>
+            </div>
+            <div>
+              <span class="muted">DOH Passrate</span>
+              <strong>${formatPercent(detail?.dohPassRate || 0)}</strong>
+            </div>
+          </div>
+        </div>
+        <div class="dashboard-detail-section">
+          <h4>Kriterien</h4>
+          <ul class="dashboard-detail-list">
+            <li class="dashboard-detail-item ${cashInPass ? "detail-pass" : "detail-fail"}">
+              <span class="detail-check">${cashInPass ? "✓" : "—"}</span>
+              <div>
+                <strong>Cash-In vorhanden</strong>
+                <div class="muted small">Amazon-Auszahlung für den Monat erfasst.</div>
+              </div>
+              ${cashInPass ? "" : `<button type="button" class="btn ghost btn-small" data-fix-route="#eingaben" data-fix-month="${escapeHtml(month)}">Fix</button>`}
+            </li>
+            <li class="dashboard-detail-item ${forecastPass ? "detail-pass" : "detail-fail"}">
+              <span class="detail-check">${forecastPass ? "✓" : "—"}</span>
+              <div>
+                <strong>Forecast Coverage</strong>
+                <div class="muted small">${detail?.forecastCount || 0}/${totalCount} aktive SKUs mit Forecast (${formatPercent(detail?.forecastCoverage || 0)}).</div>
+              </div>
+            </li>
+            <li class="dashboard-detail-item ${dohPass ? "detail-pass" : "detail-fail"}">
+              <span class="detail-check">${dohPass ? "✓" : "—"}</span>
+              <div>
+                <strong>DOH ≥ Safety</strong>
+                <div class="muted small">${detail?.dohPassCount || 0}/${totalCount} aktive SKUs erfüllen Safety-DOH (${formatPercent(detail?.dohPassRate || 0)}).</div>
+              </div>
+            </li>
+          </ul>
+        </div>
+        <div class="dashboard-detail-section">
+          <h4>Fehlende Forecasts</h4>
+          ${missingForecastTable}
+        </div>
+        <div class="dashboard-detail-section">
+          <h4>DOH unter Safety</h4>
+          ${dohFailTable}
+        </div>
+      </div>
+      <footer class="po-modal-actions">
+        <button type="button" class="btn secondary" data-close>Schließen</button>
+      </footer>
+    </div>
   `;
 }
 
@@ -1473,6 +1753,49 @@ function buildDashboardHTML(state) {
   }
 
 function attachDashboardHandlers(root, state) {
+  const openModal = (modalHtml) => {
+    const existing = document.querySelector(".dashboard-modal-backdrop");
+    if (existing) existing.remove();
+    const backdrop = document.createElement("div");
+    backdrop.className = "po-modal-backdrop dashboard-modal-backdrop";
+    backdrop.innerHTML = modalHtml;
+    document.body.appendChild(backdrop);
+
+    const closeModal = () => {
+      document.removeEventListener("keydown", handleKeydown);
+      backdrop.remove();
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") closeModal();
+    };
+
+    backdrop.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest("[data-close]");
+      if (closeBtn) {
+        closeModal();
+        return;
+      }
+      if (event.target === backdrop) {
+        closeModal();
+        return;
+      }
+      const fixBtn = event.target.closest("[data-fix-route]");
+      if (!fixBtn) return;
+      const route = fixBtn.getAttribute("data-fix-route");
+      if (!route) return;
+      const params = new URLSearchParams();
+      const sku = fixBtn.getAttribute("data-fix-sku");
+      const month = fixBtn.getAttribute("data-fix-month");
+      if (sku) params.set("sku", sku);
+      if (month) params.set("month", month);
+      location.hash = params.toString() ? `${route}?${params.toString()}` : route;
+      closeModal();
+    });
+
+    document.addEventListener("keydown", handleKeydown);
+  };
+
   root.querySelectorAll("[data-expand]").forEach(btn => {
     btn.addEventListener("click", () => {
       const action = btn.getAttribute("data-expand");
@@ -1542,6 +1865,26 @@ function attachDashboardHandlers(root, state) {
     });
   }
 
+  const legendButton = root.querySelector("#dashboard-legend-info");
+  if (legendButton) {
+    legendButton.addEventListener("click", () => {
+      openModal(buildCoverageLegendModalHTML());
+    });
+  }
+
+  root.querySelectorAll(".coverage-button").forEach(button => {
+    button.addEventListener("click", () => {
+      const month = button.getAttribute("data-coverage-month");
+      if (!month) return;
+      const months = Array.from(root.querySelectorAll("[data-coverage-month]"))
+        .map(el => el.getAttribute("data-coverage-month"))
+        .filter(Boolean);
+      const coverageData = computeSkuCoverage(state, months);
+      const detail = coverageData.details.get(month) || {};
+      openModal(buildCoverageDetailModalHTML(month, detail));
+    });
+  });
+
   const table = root.querySelector(".dashboard-tree-table");
   if (table) {
     table.addEventListener("click", (event) => {
@@ -1589,56 +1932,6 @@ function attachDashboardHandlers(root, state) {
         const payload = JSON.parse(decodeURIComponent(raw));
         navigate(payload);
       } catch {}
-    });
-  }
-
-  const coverageWrap = root.querySelector(".dashboard-coverage-wrap");
-  const tableWrap = root.querySelector(".dashboard-table-scroll");
-  if (coverageWrap && tableWrap) {
-    let syncing = false;
-    const syncScroll = (source, target) => {
-      if (syncing) return;
-      syncing = true;
-      target.scrollLeft = source.scrollLeft;
-      requestAnimationFrame(() => {
-        syncing = false;
-      });
-    };
-    tableWrap.addEventListener("scroll", () => syncScroll(tableWrap, coverageWrap));
-    coverageWrap.addEventListener("scroll", () => syncScroll(coverageWrap, tableWrap));
-  }
-
-  root.querySelectorAll(".coverage-toggle").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const groupId = btn.getAttribute("data-coverage-group");
-      if (!groupId) return;
-      if (dashboardState.coverageCollapsed.has(groupId)) {
-        dashboardState.coverageCollapsed.delete(groupId);
-      } else {
-        dashboardState.coverageCollapsed.add(groupId);
-      }
-      render(root);
-    });
-  });
-
-  root.querySelectorAll(".coverage-plan-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const sku = btn.getAttribute("data-plan-sku") || "";
-      const targetDate = btn.getAttribute("data-plan-target") || "";
-      const params = new URLSearchParams();
-      params.set("create", "1");
-      if (sku) params.set("sku", sku);
-      if (targetDate) params.set("target", targetDate);
-      location.hash = `#fo?${params.toString()}`;
-    });
-  });
-
-  const coverageLink = root.querySelector("#dashboard-coverage-link");
-  if (coverageLink) {
-    coverageLink.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      const panel = root.querySelector("#dashboard-coverage-panel");
-      if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
 
