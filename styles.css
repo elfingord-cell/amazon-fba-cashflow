@@ -251,6 +251,8 @@ td.num, th.num{text-align:right}
 .inventory-table th.sticky-header{z-index:7;}
 .inventory-table td.sticky-cell{background:#fff;}
 .inventory-category-row th{background:rgba(15,27,45,0.04); font-weight:700; border-top:1px solid rgba(15,27,45,0.08);}
+.inventory-category-row td{background:rgba(15,27,45,0.04); font-weight:700; border-top:1px solid rgba(15,27,45,0.08);}
+.inventory-projection-group-cell{color:var(--text); text-align:right;}
 .inventory-row.is-collapsed{display:none;}
 .inventory-input{width:90px; height:30px; border:1px solid rgba(15,27,45,0.15); border-radius:6px; padding:0 6px; font-size:12px;}
 .inventory-input.note{width:160px;}
@@ -274,6 +276,7 @@ td.num, th.num{text-align:right}
 .inventory-tooltip-layer[hidden]{display:none;}
 .inventory-cell-popover{position:fixed; min-width:260px; background:#fff; border:1px solid var(--table-border); border-radius:12px; box-shadow:var(--shadow); padding:10px; z-index:60;}
 .inventory-cell-popover-title{font-weight:700; font-size:12px; margin-bottom:8px;}
+.inventory-cell-popover-meta{font-size:11px; color:var(--muted); margin:-4px 0 8px;}
 .inventory-cell-popover-action{display:block; width:100%; border:none; background:transparent; text-align:left; padding:8px 6px; border-radius:8px; font-size:12px; cursor:pointer;}
 .inventory-cell-popover-action:hover{background:rgba(15,27,45,0.06);}
 .inventory-tooltip-header{margin-bottom:8px;}
