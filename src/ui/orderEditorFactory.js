@@ -21,6 +21,8 @@ import { safeDeepClone } from "../utils/safeDeepClone.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
+import { buildPrefillForSku } from "../lib/prefill.js";
+import { evaluateProductCompleteness } from "../lib/productCompleteness.js";
 
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
@@ -177,7 +179,7 @@ function formatAutoFreightTooltip(line) {
     `Alias: ${alias || "—"}`,
     `Einstand (EUR/Stk): ${line.landedUnitCostEur != null ? fmtEURPlain(line.landedUnitCostEur) : "—"}`,
     `Warenwert (EUR/Stk): ${line.goodsPerUnitEur != null ? fmtEURPlain(line.goodsPerUnitEur) : "—"}`,
-    `Fracht (EUR/Stk): ${line.derivedLogisticsPerUnitEur != null ? fmtEURPlain(line.derivedLogisticsPerUnitEur) : "—"}`,
+    `Logistik / Stk. (EUR): ${line.derivedLogisticsPerUnitEur != null ? fmtEURPlain(line.derivedLogisticsPerUnitEur) : "—"}`,
   ];
   if (line.issues?.includes("MISSING_LANDED_COST")) {
     rows.push("Einstandskosten fehlen");
@@ -212,7 +214,7 @@ function formatFreightMissingFields(fields) {
     if (field === "fxUsdPerEur") return "FX";
     return field;
   });
-  return `Fracht nicht berechenbar – ${labels.join(", ")} fehlt`;
+  return `Logistik nicht berechenbar – ${labels.join(", ")} fehlt`;
 }
 
 function formatSkuSummary(record) {
@@ -443,7 +445,7 @@ const TEMPLATE_FIELD_OPTIONS = [
   { key: "transitDays", label: "Transit-Tage" },
   { key: "freightEur", label: "Fracht (€)" },
   { key: "freightMode", label: "Fracht-Modus" },
-  { key: "freightPerUnitEur", label: "Fracht pro Stück (€)" },
+  { key: "freightPerUnitEur", label: "Logistik / Stk. (EUR)" },
   { key: "dutyRatePct", label: "Zoll (%)" },
   { key: "dutyIncludeFreight", label: "Fracht einbeziehen" },
   { key: "eustRatePct", label: "EUSt (%)" },
@@ -514,7 +516,7 @@ function diffFields(current, incoming) {
     transitDays: "Transit-Tage",
     freightEur: "Fracht (€)",
     freightMode: "Fracht-Modus",
-    freightPerUnitEur: "Fracht pro Stück (€)",
+    freightPerUnitEur: "Logistik / Stk. (EUR)",
     dutyRatePct: "Zoll (%)",
     dutyIncludeFreight: "Fracht einbeziehen",
     eustRatePct: "EUSt (%)",
@@ -1712,7 +1714,7 @@ function renderItemsTable(container, record, onChange, dataListId) {
       el("th", {}, ["Stückkosten (USD)"]),
       el("th", {}, ["Zusatz/ Stück (USD)"]),
       el("th", {}, ["Pauschal (USD)"]),
-      el("th", {}, ["Fracht / Stk (EUR)"]),
+        el("th", {}, ["Logistik / Stk. (EUR)"]),
       el("th", {}, [""])
     ])
   ]);
@@ -2866,6 +2868,7 @@ export function renderOrderModule(root, config) {
       templateSave: `${config.slug}-template-save`,
       quickStatus: `${config.slug}-quick-status`,
       productCreate: `${config.slug}-quick-create-product`,
+      showBlocked: `${config.slug}-show-blocked`,
     });
   }
   if (poMode) {
@@ -2899,6 +2902,10 @@ export function renderOrderModule(root, config) {
           <input id="${ids.sku}" list="${ids.skuList}" placeholder="Tippe Alias oder SKU …" autocomplete="off" />
           <datalist id="${ids.skuList}"></datalist>
           <div class="po-product-recent" id="${ids.recent}" aria-live="polite"></div>
+          <label class="inline-checkbox po-show-blocked">
+            <input type="checkbox" id="${ids.showBlocked}" />
+            Blockierte Produkte anzeigen
+          </label>
         </div>
         <div class="po-quickfill-actions">
           <div class="po-quickfill-buttons">
@@ -2980,7 +2987,7 @@ export function renderOrderModule(root, config) {
           <input id="${ids.freight}" placeholder="z. B. 4.800,00" />
         </div>
         <div>
-          <label>Fracht pro Stück (€)</label>
+          <label>Logistik / Stk. (EUR)</label>
           <input id="${ids.freightPerUnit}" placeholder="z. B. 1,25" />
           <div class="po-suggested-row">
             <span class="muted" id="${ids.freightPerUnitSuggested}"></span>
@@ -3159,6 +3166,7 @@ export function renderOrderModule(root, config) {
   const templateLoadBtn = quickfillEnabled ? $(`#${ids.templateLoad}`, root) : null;
   const templateSaveBtn = quickfillEnabled ? $(`#${ids.templateSave}`, root) : null;
   const quickStatus = quickfillEnabled ? $(`#${ids.quickStatus}`, root) : null;
+  const showBlockedToggle = quickfillEnabled ? $(`#${ids.showBlocked}`, root) : null;
   const numberInput = $(`#${ids.number}`, root);
   const orderDateInput = $(`#${ids.orderDate}`, root);
   const orderDateDisplay = $(`#${ids.orderDateDisplay}`, root);
@@ -3216,6 +3224,7 @@ export function renderOrderModule(root, config) {
   dirtyGuard.attachBeforeUnload();
   let freightPerUnitOverridden = false;
   const poListState = poMode ? { searchTerm: "", showArchived: false, sortKey: null, sortDir: null } : null;
+  let showBlockedProducts = false;
 
   function formatProductOption(product) {
     if (!product) return "";
@@ -3305,6 +3314,21 @@ export function renderOrderModule(root, config) {
     const list = messages.map(message => `<li>${message}</li>`).join("");
     prefillBanner.innerHTML = `<strong>${title}</strong><ul>${list}</ul>`;
     prefillBanner.hidden = false;
+  }
+
+  function getCompletenessMessages(completeness) {
+    if (!completeness) return [];
+    const messages = [];
+    if (completeness.missingRequired?.length) {
+      messages.push(`Pflichtfelder fehlen: ${completeness.missingRequired.join(", ")}`);
+    }
+    if (completeness.missingWarnings?.length) {
+      messages.push(`Warnungen: ${completeness.missingWarnings.join(", ")}`);
+    }
+    if (completeness.resolvedUsingDefaults?.length) {
+      messages.push(`Defaults genutzt: ${completeness.resolvedUsingDefaults.join(", ")}`);
+    }
+    return messages;
   }
 
   function showToast(message) {
@@ -3528,6 +3552,11 @@ export function renderOrderModule(root, config) {
     skuList.innerHTML = "";
     productCache
       .filter(prod => prod && prod.status !== "inactive")
+      .filter(prod => {
+        if (showBlockedProducts) return true;
+        const completeness = evaluateProductCompleteness(prod, { state: getCurrentState() });
+        return completeness.status !== "blocked";
+      })
       .forEach(prod => {
         skuList.append(el("option", { value: formatProductOption(prod) }));
       });
@@ -3982,7 +4011,7 @@ export function renderOrderModule(root, config) {
 
   function resolveFreightPerUnitSuggestion(product, settings) {
     if (!product) return { value: null, warning: false, missingFields: [] };
-    const stored = parseDE(product.freightPerUnitEur);
+    const stored = parseDE(product.logisticsPerUnitEur ?? product.freightPerUnitEur);
     if (Number.isFinite(stored) && stored > 0) {
       return { value: stored, warning: false, missingFields: [] };
     }
@@ -4029,71 +4058,81 @@ export function renderOrderModule(root, config) {
 
   function applyProductDefaultsFromProduct(product) {
     if (!product) return false;
-    const template = product.template?.fields ? product.template.fields : product.template;
-    if (!template || typeof template !== "object") return false;
-    const settings = getSettings();
+    const currentState = getCurrentState();
+    const prefill = buildPrefillForSku(product.sku, {
+      mode: "PO",
+      supplierId: supplierInput?.value?.trim() || product.supplierId,
+      transportMode: transportSelect?.value,
+    }, { state: currentState });
     const next = JSON.parse(JSON.stringify(editing));
     const parseNum = (value) => {
       const parsed = typeof value === "number" ? value : parseDE(value);
       return Number.isFinite(parsed) ? parsed : null;
     };
-    const setMoney = (key, value) => {
+    const isEmptyNumber = (value) => {
       const parsed = parseNum(value);
-      if (parsed == null) return;
-      next[key] = fmtCurrencyInput(parsed);
+      return parsed == null || parsed <= 0;
     };
-    const setNumber = (key, value) => {
-      const parsed = parseNum(value);
-      if (parsed == null) return;
-      next[key] = parsed;
+    const setNumberIfEmpty = (key, value) => {
+      if (value == null || !isEmptyNumber(next[key])) return;
+      next[key] = value;
     };
-
-    setMoney("unitCostUsd", template.unitPriceUsd ?? product.unitPriceUsd);
-    setMoney("unitExtraUsd", template.extraPerUnitUsd);
-    setMoney("extraFlatUsd", template.extraFlatUsd);
-    setNumber("fxOverride", template.fxRate ?? settings.fxRate);
-    setNumber("fxFeePct", template.fxFeePct ?? settings.fxFeePct);
-    const transportMode = template.transportMode || template.transport;
-    if (transportMode) {
-      next.transport = String(transportMode).toLowerCase();
-    }
-    setNumber("prodDays", template.productionDays ?? product.productionLeadTimeDaysDefault);
-    setNumber("transitDays", template.transitDays);
-    const freightPerUnit = parseNum(template.freightEur);
-    if (freightPerUnit != null) {
-      next.freightMode = "per_unit";
-      next.freightPerUnitEur = fmtCurrencyInput(freightPerUnit);
-      next.freightEur = fmtCurrencyInput(0);
-    }
-    setNumber("dutyRatePct", template.dutyPct ?? settings.dutyRatePct);
-    if (typeof template.dutyIncludesFreight === "boolean") {
-      next.dutyIncludeFreight = template.dutyIncludesFreight;
-    }
-    setNumber("eustRatePct", template.vatImportPct ?? settings.eustRatePct);
-    if (typeof template.vatRefundActive === "boolean") {
-      next.vatRefundEnabled = template.vatRefundActive;
-    }
-    setNumber("vatRefundLagMonths", template.vatRefundLag ?? settings.vatRefundLagMonths);
-    if (typeof template.ddp === "boolean") {
-      next.ddp = template.ddp;
-    }
+    const setMoneyIfEmpty = (key, value) => {
+      if (value == null || !isEmptyNumber(next[key])) return;
+      next[key] = fmtCurrencyInput(value);
+    };
 
     if (Array.isArray(next.items)) {
       next.items = next.items.map(item => {
         if (!item || (item.sku && item.sku !== product.sku)) return item;
         const updated = { ...item };
-        if (template.unitPriceUsd != null || product.unitPriceUsd != null) {
-          updated.unitCostUsd = fmtCurrencyInput(template.unitPriceUsd ?? product.unitPriceUsd);
+        const currentCost = parseNum(updated.unitCostUsd);
+        if (!updated.unitCostManuallyEdited && (currentCost == null || currentCost <= 0) && prefill.unitPrice != null) {
+          updated.unitCostUsd = fmtCurrencyInput(prefill.unitPrice);
           updated.unitCostManuallyEdited = false;
-        }
-        if (template.extraPerUnitUsd != null) {
-          updated.unitExtraUsd = fmtCurrencyInput(template.extraPerUnitUsd);
-        }
-        if (template.extraFlatUsd != null) {
-          updated.extraFlatUsd = fmtCurrencyInput(template.extraFlatUsd);
         }
         return updated;
       });
+    }
+
+    setNumberIfEmpty("fxOverride", prefill.fxRate);
+    setNumberIfEmpty("prodDays", prefill.productionLeadTimeDays);
+    if (prefill.transportMode && !next.transport) {
+      next.transport = String(prefill.transportMode).toLowerCase();
+    }
+    setNumberIfEmpty("transitDays", prefill.logisticsLeadTimeDays);
+    if (prefill.logisticsPerUnitEur != null && isEmptyNumber(next.freightPerUnitEur)) {
+      next.freightMode = "per_unit";
+      next.freightPerUnitEur = fmtCurrencyInput(prefill.logisticsPerUnitEur);
+      next.freightEur = fmtCurrencyInput(0);
+    }
+    setNumberIfEmpty("dutyRatePct", prefill.dutyRatePct);
+    setNumberIfEmpty("eustRatePct", prefill.eustRatePct);
+    if (prefill.ddp === true && next.ddp !== true) {
+      next.ddp = true;
+    }
+
+    const defaultMilestones = [
+      { label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+    ];
+    const isDefaultMilestones = (milestones) => {
+      if (!Array.isArray(milestones) || milestones.length !== defaultMilestones.length) return false;
+      return milestones.every((ms, idx) => {
+        const base = defaultMilestones[idx];
+        return ms.label === base.label && Number(ms.percent) === base.percent && ms.anchor === base.anchor;
+      });
+    };
+    if (Array.isArray(prefill.paymentTerms) && prefill.paymentTerms.length && isDefaultMilestones(next.milestones)) {
+      next.milestones = prefill.paymentTerms.map(term => ({
+        id: `ms-${Math.random().toString(36).slice(2, 9)}`,
+        label: term.label || "Milestone",
+        percent: Number(term.percent) || 0,
+        anchor: term.triggerEvent === "PRODUCTION_END"
+          ? "PROD_DONE"
+          : (term.triggerEvent || "ORDER_DATE"),
+        lagDays: Number(term.offsetDays || term.lagDays || 0) || 0,
+      }));
     }
 
     loadForm(next);
@@ -4614,6 +4653,15 @@ export function renderOrderModule(root, config) {
         setSkuField(product);
         editing.sku = product.sku;
         recordRecentProduct(product.sku);
+        const completeness = evaluateProductCompleteness(product, { state: getCurrentState() });
+        const messages = getCompletenessMessages(completeness);
+        if (completeness.status === "blocked") {
+          setPrefillBanner(messages, "Produkt blockiert");
+          updateFreightPerUnitSuggestion(product);
+          updateSaveEnabled();
+          return;
+        }
+        setPrefillBanner(messages, "Prefill verwendet Defaults");
         const applied = applyProductDefaultsFromProduct(product);
         freightPerUnitOverridden = false;
         updateFreightPerUnitSuggestion(product);
@@ -4635,12 +4683,23 @@ export function renderOrderModule(root, config) {
   if (quickfillEnabled && supplierInput) {
     const handleSupplier = () => {
       editing.supplier = supplierInput.value.trim();
+      const product = resolveProductFromInput(skuInput?.value || editing.sku || "");
+      if (product) {
+        applyProductDefaultsFromProduct(product);
+      }
       refreshQuickfillControls();
     };
     supplierInput.addEventListener("input", handleSupplier);
     supplierInput.addEventListener("blur", () => {
       supplierInput.value = supplierInput.value.trim();
       handleSupplier();
+    });
+  }
+  if (quickfillEnabled && showBlockedToggle) {
+    showBlockedToggle.checked = showBlockedProducts;
+    showBlockedToggle.addEventListener("change", () => {
+      showBlockedProducts = showBlockedToggle.checked;
+      refreshQuickfillControls();
     });
   }
   if (quickfillEnabled && quickLatestBtn) {

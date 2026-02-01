@@ -7,8 +7,9 @@ import { buildSupplierLabelMap } from "./utils/supplierLabels.js";
 import { validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { parseLocalizedNumber } from "./utils/numberFormat.js";
-import { resolveProductionLeadTimeDays } from "../domain/leadTime.js";
 import { computeFreightPerUnitEur } from "../utils/costing.js";
+import { buildPrefillForSku, DEFAULT_PAYMENT_TERMS } from "../lib/prefill.js";
+import { evaluateProductCompleteness } from "../lib/productCompleteness.js";
 import { loadAppState, commitAppState } from "../storage/store.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
@@ -60,10 +61,7 @@ function normaliseCurrency(value, fallback = "EUR") {
 }
 
 function defaultPaymentTerms() {
-  return [
-    { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
-    { label: "Balance", percent: 70, triggerEvent: "ETD", offsetDays: 0 },
-  ];
+  return DEFAULT_PAYMENT_TERMS.map(term => ({ ...term }));
 }
 
 function formatDate(input) {
@@ -333,136 +331,82 @@ function getProductByAlias(products, alias) {
   return products.find(product => String(product?.alias || "").trim().toLowerCase() === key) || null;
 }
 
-function listProductsForSelect(products) {
+function listProductsForSelect(products, state) {
   return (products || [])
     .filter(Boolean)
     .map(product => {
       const alias = String(product.alias || "").trim();
       const sku = String(product.sku || "").trim();
       const displayAlias = alias || sku;
+      const completeness = evaluateProductCompleteness(product, { state });
       return {
         sku,
         alias: displayAlias,
         label: displayAlias,
+        completeness,
       };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function formatCompletenessLabel(status) {
+  if (status === "ready") return "✅ Ready";
+  if (status === "warning") return "⚠️ Unvollständig";
+  return "❌ Blockiert";
+}
+
+function formatCompletenessTooltip(completeness) {
+  const lines = [];
+  if (completeness?.missingRequired?.length) {
+    lines.push(`Pflichtfelder fehlen: ${completeness.missingRequired.join(", ")}`);
+  }
+  if (completeness?.missingWarnings?.length) {
+    lines.push(`Warnungen: ${completeness.missingWarnings.join(", ")}`);
+  }
+  if (completeness?.resolvedUsingDefaults?.length) {
+    lines.push(`Defaults genutzt: ${completeness.resolvedUsingDefaults.join(", ")}`);
+  }
+  return lines.join(" • ");
 }
 
 function getTemplateFields(product) {
   return product?.template?.fields || product?.template || {};
 }
 
-function resolveDefault(field, context) {
-  const { product, supplier, settings, transportMode, incoterm } = context;
-  const incotermValue = String(incoterm || "").toUpperCase();
-  const templateFields = getTemplateFields(product);
-  if (field === "supplierId") return product?.supplierId || "";
-  if (field === "transportMode") return product?.defaultTransportMode || "SEA";
-  if (field === "incoterm") return product?.defaultIncoterm || supplier?.incotermDefault || "EXW";
-  if (field === "currency") return supplier?.currencyDefault || "USD";
-  if (field === "freightCurrency") return incotermValue === "DDP" ? "USD" : (product?.freightCurrency || "EUR");
-  if (field === "unitPrice") {
-    if (product?.defaultUnitPrice != null || product?.unitPrice != null) {
-      return parseLocaleNumber(product.defaultUnitPrice ?? product.unitPrice);
-    }
-    if (templateFields.unitPriceUsd != null) {
-      return parseLocaleNumber(templateFields.unitPriceUsd);
-    }
-    return null;
-  }
-  if (field === "freight") {
-    const key = transportMode ? `freight${String(transportMode).toUpperCase()}` : null;
-    if (key && product?.[key] != null) return parseLocaleNumber(product[key]);
-    if (product?.freight != null) return parseLocaleNumber(product.freight);
-    return null;
-  }
-  if (field === "dutyRatePct") {
-    if (incotermValue === "DDP") return 0;
-    if (product?.dutyRatePct != null) return parseLocaleNumber(product.dutyRatePct);
-    return parseLocaleNumber(settings?.dutyRatePct ?? 0);
-  }
-  if (field === "eustRatePct") {
-    if (incotermValue === "DDP") return 0;
-    if (product?.eustRatePct != null) return parseLocaleNumber(product.eustRatePct);
-    return parseLocaleNumber(settings?.eustRatePct ?? 0);
-  }
-  if (field === "fxRate") {
-    if (product?.fxRate != null) return parseLocaleNumber(product.fxRate);
-    return parseLocaleNumber(settings?.fxRate ?? 0);
-  }
-  return null;
-}
-
 function buildSuggestedFields(state, form) {
-  const settings = state.settings || {};
-  const product = getProductBySku(state.products || [], form.sku);
-  const templateFields = getTemplateFields(product);
-  const supplierId = form.supplierId || product?.supplierId || "";
-  const supplier = (state.suppliers || []).find(item => item.id === supplierId) || null;
-  const baseContext = { product, supplier, settings, transportMode: form.transportMode, incoterm: form.incoterm };
-  const resolvedTransport = resolveDefault("transportMode", baseContext);
-  const transport = String(form.transportMode || resolvedTransport || "SEA").toUpperCase();
-  const leadTimes = settings.transportLeadTimesDays || { air: 10, rail: 25, sea: 45 };
-  const context = { ...baseContext, transportMode: transport };
-  const logisticsLeadTimeDays = Number(leadTimes[transport.toLowerCase()] ?? 0);
-  const unitPrice = resolveDefault("unitPrice", context);
-  const unitPriceSource = product?.defaultUnitPrice != null
-    || product?.unitPrice != null
-    || templateFields.unitPriceUsd != null
-    ? "Produktdatenbank"
-    : null;
-  const leadTimeResolution = resolveProductionLeadTimeDays({
-    sku: form.sku,
-    supplierId,
-    state,
-  });
-  const incotermSource = product?.defaultIncoterm ? "Produktdatenbank" : "Supplier Default";
-  const paymentTermsSource = supplier?.paymentTermsDefault?.length ? "Supplier Default" : "System Default";
-  const fxRateSource = settings?.fxRate ? "Settings" : null;
-  const baseCurrency = String(form.currency || resolveDefault("currency", context) || "USD").toUpperCase();
-  const formUnitPrice = parseLocaleNumber(form.unitPrice);
-  const fallbackUnitUsd = parseLocaleNumber(templateFields.unitPriceUsd ?? product?.unitPriceUsd ?? product?.defaultUnitPrice ?? product?.unitPrice);
-  const unitPriceUsd = baseCurrency === "USD"
-    ? (Number.isFinite(formUnitPrice) && formUnitPrice > 0 ? formUnitPrice : fallbackUnitUsd)
-    : fallbackUnitUsd;
-  const extraPerUnitUsd = parseLocaleNumber(templateFields.extraPerUnitUsd ?? product?.extraPerUnitUsd) || 0;
-  const fxUsdPerEur = Number.isFinite(parseLocaleNumber(form.fxRate)) && parseLocaleNumber(form.fxRate) > 0
-    ? parseLocaleNumber(form.fxRate)
-    : parseLocaleNumber(product?.fxUsdPerEur ?? templateFields.fxRate ?? settings?.fxRate);
-  const storedFreight = parseLocaleNumber(product?.freightPerUnitEur);
-  const freightSuggestion = !product || !form.sku
-    ? { value: null, missingFields: [] }
-    : (Number.isFinite(storedFreight) && storedFreight > 0
-      ? { value: storedFreight, missingFields: [] }
-      : computeFreightPerUnitEur({
-        unitPriceUsd: unitPriceUsd != null ? unitPriceUsd + extraPerUnitUsd : unitPriceUsd,
-        landedCostEur: parseLocaleNumber(product?.landedUnitCostEur),
-        fxUsdPerEur,
-      }));
+  const prefill = buildPrefillForSku(form.sku, {
+    mode: "FO",
+    supplierId: form.supplierId,
+    transportMode: form.transportMode,
+    incoterm: form.incoterm,
+  }, { state });
+
+  const freightCurrency = String(prefill.incoterm || "").toUpperCase() === "DDP"
+    ? "USD"
+    : "EUR";
 
   return {
-    transportMode: transport,
-    incoterm: resolveDefault("incoterm", context),
-    unitPrice,
-    unitPriceSource,
-    currency: resolveDefault("currency", context),
-    freight: freightSuggestion.value,
-    freightMissingFields: freightSuggestion.missingFields || [],
-    freightCurrency: resolveDefault("freightCurrency", context),
-    dutyRatePct: resolveDefault("dutyRatePct", context),
-    eustRatePct: resolveDefault("eustRatePct", context),
-    fxRate: resolveDefault("fxRate", context),
-    fxRateSource,
-    supplierId,
-    supplierSource: product?.supplierId ? "Produktdatenbank" : null,
-    productionLeadTimeDays: leadTimeResolution.value,
-    productionLeadTimeSource: leadTimeResolution.source,
-    incotermSource,
-    paymentTermsSource,
+    transportMode: prefill.transportMode,
+    incoterm: prefill.incoterm,
+    unitPrice: prefill.unitPrice,
+    unitPriceSource: prefill.sources.unitPrice || null,
+    currency: prefill.currency,
+    freight: prefill.logisticsPerUnitEur,
+    freightMissingFields: prefill.logisticsMissingFields || [],
+    freightCurrency,
+    dutyRatePct: prefill.dutyRatePct,
+    eustRatePct: prefill.eustRatePct,
+    fxRate: prefill.fxRate,
+    fxRateSource: prefill.sources.fxRate,
+    supplierId: prefill.supplierId,
+    supplierSource: prefill.sources.supplier,
+    productionLeadTimeDays: prefill.productionLeadTimeDays,
+    productionLeadTimeSource: prefill.sources.productionLeadTimeDays,
+    incotermSource: prefill.sources.incoterm,
+    paymentTermsSource: prefill.sources.paymentTerms,
     preferredSupplier: false,
-    logisticsLeadTimeDays: Number.isFinite(logisticsLeadTimeDays) ? logisticsLeadTimeDays : 0,
-    bufferDays: settings.defaultBufferDays ?? 0,
+    logisticsLeadTimeDays: prefill.logisticsLeadTimeDays,
+    bufferDays: prefill.bufferDays,
   };
 }
 
@@ -534,7 +478,7 @@ function formatFreightMissingFields(fields) {
     if (field === "fxUsdPerEur") return "FX";
     return field;
   });
-  return `Fracht nicht berechenbar – ${labels.join(", ")} fehlt`;
+  return `Logistik nicht berechenbar – ${labels.join(", ")} fehlt`;
 }
 
 function computeEstimatedFreight({ product, units, unitPrice, currency, fxRate }) {
@@ -1205,7 +1149,7 @@ export default function render(root) {
 
   function openFoModal(existing, prefill = {}) {
     const products = getProductsSnapshot();
-    const productOptions = listProductsForSelect(products);
+    const productOptions = listProductsForSelect(products, state);
     const isExisting = Boolean(existing);
     const isConverted = String(existing?.status || "").toUpperCase() === "CONVERTED";
     const plannedSalesBySku = buildPlannedSalesBySku(state);
@@ -1432,7 +1376,7 @@ export default function render(root) {
         el("li", {}, [`Incoterm source: ${incotermSource}`]),
         el("li", {}, [`Payment terms source: ${paymentTermsSource}`]),
         el("li", {}, [`FX source: ${fxSource}`]),
-        el("li", {}, [`Frachtquelle: Einstandspreis (Produkt) + FX (Settings) + Stückpreis USD (Produkt/FO).${freightMissing}`]),
+        el("li", {}, [`Logistikquelle: Einstandspreis (Produkt) + FX (Settings) + Stückpreis USD (Produkt/FO).${freightMissing}`]),
       );
     }
 
@@ -1452,7 +1396,7 @@ export default function render(root) {
         const hasEust = product.eustRatePct != null || templateFields.vatImportPct != null;
         if (!hasFreight || !hasDuty || !hasEust) {
           warningList.append(el("li", {}, [
-            "Produktkosten fehlen (Fracht/Zoll/EUSt).",
+            "Produktkosten fehlen (Logistik/Zoll/EUSt).",
             " ",
             el("button", { class: "btn ghost fo-fix-now", type: "button", dataset: { sku: product.sku, tab: "produkte" } }, ["Fix now"]),
           ]));
@@ -1997,7 +1941,7 @@ export default function render(root) {
               el("small", { class: "form-error", id: "fo-currency-error" }, []),
             ]),
             el("label", {}, [
-              "Fracht (€/Stück)",
+              "Logistik / Stk. (EUR)",
               el("input", { type: "text", inputmode: "decimal", id: "fo-freight", value: baseForm.freight ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-freight" }, []),
@@ -2006,7 +1950,7 @@ export default function render(root) {
               el("small", { class: "form-error", id: "fo-freight-warning" }, []),
             ]),
             el("label", {}, [
-              "Fracht-Währung",
+              "Logistik-Währung",
               (() => {
                 const select = el("select", { id: "fo-freightCurrency" });
                 CURRENCIES.forEach(currency => select.append(el("option", { value: currency }, [currency])));
@@ -2252,12 +2196,15 @@ export default function render(root) {
       const units = Number(baseForm.units || 0);
       const unitPrice = parseLocaleNumber(baseForm.unitPrice) || 0;
       const target = baseForm.targetDeliveryDate;
-      const hasProduct = products.some(prod => String(prod.sku || "").trim().toLowerCase() === sku.toLowerCase());
+      const product = getProductBySku(products, sku);
+      const hasProduct = Boolean(product);
+      const completeness = product ? evaluateProductCompleteness(product, { state }) : null;
+      const isBlocked = completeness?.status === "blocked";
       const supplierPayments = baseForm.payments.filter(row => row.category === "supplier");
       const totalPercent = supplierPayments.reduce((sum, row) => sum + (Number(row.percent) || 0), 0);
       const currency = String(baseForm.currency || "").trim();
       const paymentsValid = supplierPayments.length > 0 && Math.round(totalPercent) === 100;
-      const valid = sku && supplierId && units > 0 && unitPrice > 0 && target && paymentsValid && currency && hasProduct;
+      const valid = sku && supplierId && units > 0 && unitPrice > 0 && target && paymentsValid && currency && hasProduct && !isBlocked;
       const unitPriceError = $("#fo-unitPrice-error", content);
       const unitsError = $("#fo-units-error", content);
       const targetError = $("#fo-target-error", content);
@@ -2275,7 +2222,14 @@ export default function render(root) {
         targetError.textContent = target ? "" : "Zieltermin ist erforderlich.";
       }
       if (productError) {
-        productError.textContent = hasProduct ? "" : "Produkt fehlt in der Datenbank.";
+        if (!hasProduct) {
+          productError.textContent = "Produkt fehlt in der Datenbank.";
+        } else if (isBlocked) {
+          const tooltip = formatCompletenessTooltip(completeness);
+          productError.textContent = tooltip ? `Produkt blockiert: ${tooltip}` : "Produkt blockiert.";
+        } else {
+          productError.textContent = "";
+        }
       }
       if (supplierError) {
         supplierError.textContent = supplierId ? "" : "Supplier ist erforderlich.";
@@ -2348,9 +2302,14 @@ export default function render(root) {
         return;
       }
       matches.forEach(option => {
+        const isBlocked = option.completeness?.status === "blocked";
+        const statusLabel = formatCompletenessLabel(option.completeness?.status);
+        const tooltip = formatCompletenessTooltip(option.completeness);
         const row = el("button", {
-          class: "fo-product-option",
+          class: `fo-product-option${isBlocked ? " is-blocked" : ""}`,
           type: "button",
+          disabled: isBlocked,
+          title: tooltip || statusLabel,
           onclick: () => {
             baseForm.sku = option.sku;
             productInput.value = option.alias || option.sku;
@@ -2362,6 +2321,7 @@ export default function render(root) {
         }, [
           el("span", { class: "fo-product-alias", title: option.alias || option.sku }, [option.alias || option.sku]),
           el("span", { class: "fo-product-sku muted", title: option.sku }, [option.sku]),
+          el("span", { class: `fo-product-status ${option.completeness?.status || "blocked"}` }, [statusLabel]),
         ]);
         dropdown.append(row);
       });
