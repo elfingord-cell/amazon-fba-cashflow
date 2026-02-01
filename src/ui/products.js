@@ -73,6 +73,14 @@ function fmtEUR(value) {
   return parsed.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
 }
 
+const ABC_CLASSES = ["A", "B", "C"];
+const ABC_SORT_ORDER = { A: 0, B: 1, C: 2 };
+
+function resolveAbcClass(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return ABC_CLASSES.includes(normalized) ? normalized : "B";
+}
+
 function formatInputNumber(value, decimals = 2) {
   return formatDeNumber(value, decimals, { emptyValue: "", useGrouping: false });
 }
@@ -230,6 +238,12 @@ function buildHistoryTable(state, sku) {
   const completenessViewKey = "productsCompletenessView";
   const completenessView = getViewState(completenessViewKey, { filter: "all" });
   let completenessFilter = completenessView.filter || "all";
+  const abcFilterViewKey = "productsAbcFilter";
+  const abcFilterView = getViewState(abcFilterViewKey, { filter: "all" });
+  let abcFilter = abcFilterView.filter || "all";
+  const tableSortViewKey = "productsTableSort";
+  const tableSortView = getViewState(tableSortViewKey, { mode: "category" });
+  let tableSortMode = tableSortView.mode || "category";
   if (completenessFilter === "ready") {
     completenessFilter = "ok";
   }
@@ -308,7 +322,7 @@ function buildHistoryTable(state, sku) {
     return completenessBySku.get(product.sku);
   }
 
-  function applyFilter(list, term, statusFilter) {
+  function applyFilter(list, term, statusFilter, abcClassFilter) {
     const filteredBySearch = !term ? list : list.filter(item => {
       const needle = term.trim().toLowerCase();
       const categoryName = getCategoryLabel(item.categoryId);
@@ -317,11 +331,14 @@ function buildHistoryTable(state, sku) {
         .filter(Boolean)
         .some(val => String(val).toLowerCase().includes(needle));
     });
-    if (!statusFilter || statusFilter === "all") return filteredBySearch;
+    const filteredByAbc = !abcClassFilter || abcClassFilter === "all"
+      ? filteredBySearch
+      : filteredBySearch.filter(item => resolveAbcClass(item.abcClass) === abcClassFilter);
+    if (!statusFilter || statusFilter === "all") return filteredByAbc;
     const normalized = statusFilter === "ready"
       ? "ok"
       : (statusFilter === "warning" ? "warn" : statusFilter);
-    return filteredBySearch.filter(item => getCompleteness(item).status === normalized);
+    return filteredByAbc.filter(item => getCompleteness(item).status === normalized);
   }
 
   function formatCompletenessLabel(status) {
@@ -587,13 +604,22 @@ function buildHistoryTable(state, sku) {
     saveCollapseState(next);
   }
 
-  function buildCategoryGroups(list) {
+  function buildCategoryGroups(list, { sortMode } = {}) {
     const categoryMap = new Map();
     list.forEach(product => {
       const key = product.categoryId ? String(product.categoryId) : "";
       if (!categoryMap.has(key)) categoryMap.set(key, []);
       categoryMap.get(key).push(product);
     });
+    if (sortMode === "abc") {
+      categoryMap.forEach((items) => {
+        items.sort((a, b) => {
+          const diff = ABC_SORT_ORDER[resolveAbcClass(a.abcClass)] - ABC_SORT_ORDER[resolveAbcClass(b.abcClass)];
+          if (diff) return diff;
+          return String(a.alias || a.sku || "").localeCompare(String(b.alias || b.sku || ""));
+        });
+      });
+    }
     const sortedCategories = categories
       .slice()
       .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.name || "").localeCompare(String(b.name || "")));
@@ -611,7 +637,9 @@ function buildHistoryTable(state, sku) {
 
   function showEditor(existing, options = {}) {
     const state = loadAppState();
-    let product = existing ? { ...existing } : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null };
+    let product = existing
+      ? { ...existing }
+      : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null, abcClass: "B" };
     const draftForm = useDraftForm(product, { key: product.sku ? `product:${product.sku}` : "product:new", enableDraftCache: true });
     product = draftForm.draft;
     const dirtyGuard = useDirtyGuard(() => draftForm.isDirty, "Ungespeicherte Änderungen verwerfen?");
@@ -633,6 +661,9 @@ function buildHistoryTable(state, sku) {
     const statusSelect = createEl("select", {}, [
       createEl("option", { value: "active", selected: product.status !== "inactive" }, ["Aktiv"]),
       createEl("option", { value: "inactive", selected: product.status === "inactive" }, ["Inaktiv"]),
+    ]);
+    const abcSelect = createEl("select", {}, [
+      ...ABC_CLASSES.map(option => createEl("option", { value: option }, [option])),
     ]);
     const categorySelect = (() => {
       const select = createEl("select");
@@ -749,6 +780,7 @@ function buildHistoryTable(state, sku) {
     const supplierLabel = createEl("label", {}, ["Supplier", supplierInput]);
     const categoryLabel = createEl("label", {}, ["Kategorie", categorySelect]);
     const statusLabel = createEl("label", {}, ["Status", statusSelect]);
+    const abcLabel = createEl("label", {}, ["ABC Klassifizierung", abcSelect]);
     const tagsLabel = createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]);
     const avgSellingPriceLabel = createEl("label", {}, ["Ø VK-Preis (Brutto)", avgSellingPriceInput]);
     const sellerboardMarginLabel = createEl("label", {}, ["Sellerboard Marge (%)", sellerboardMarginInput]);
@@ -782,6 +814,7 @@ function buildHistoryTable(state, sku) {
       supplierLabel,
       categoryLabel,
       statusLabel,
+      abcLabel,
       tagsLabel,
       avgSellingPriceLabel,
       sellerboardMarginLabel,
@@ -1078,6 +1111,7 @@ function buildHistoryTable(state, sku) {
       supplierInput.value = draft.supplierId || "";
       statusSelect.value = draft.status || "active";
       categorySelect.value = draft.categoryId || "";
+      abcSelect.value = resolveAbcClass(draft.abcClass);
       tagsInput.value = (draft.tags || []).join(", ");
       avgSellingPriceInput.value = draft.avgSellingPriceGrossEUR != null
         ? formatInputNumber(parseDeNumber(draft.avgSellingPriceGrossEUR), 2)
@@ -1273,6 +1307,7 @@ function buildHistoryTable(state, sku) {
         supplierId: supplierInput.value.trim(),
         categoryId: categorySelect.value.trim() || null,
         status: statusSelect.value,
+        abcClass: abcSelect.value,
         tags: tagsInput.value
           .split(",")
           .map(tag => tag.trim())
@@ -1488,6 +1523,7 @@ function buildHistoryTable(state, sku) {
       { key: "supplier", label: "Supplier", className: "cell-ellipsis col-supplier" },
       { key: "category", label: "Kategorie", className: "col-category" },
       { key: "status", label: "Status", className: "col-status" },
+      { key: "abcClass", label: "ABC", className: "col-abc" },
       { key: "completeness", label: "Vollständigkeit", className: "col-completeness" },
       { key: "moqUnits", label: "MOQ", className: "num col-moq" },
       { key: "lastPo", label: "Letzte PO", className: "col-last-po" },
@@ -1529,6 +1565,8 @@ function buildHistoryTable(state, sku) {
           return product.status === "inactive"
             ? createEl("span", { class: "badge muted" }, ["inaktiv"])
             : createEl("span", { class: "badge" }, ["aktiv"]);
+        case "abcClass":
+          return resolveAbcClass(product.abcClass);
         case "completeness":
           return renderCompletenessBadge(product);
         case "moqUnits":
@@ -1723,6 +1761,7 @@ function buildHistoryTable(state, sku) {
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
       ], width: "110px", className: "col-status" },
+      { key: "abcClass", label: "ABC", type: "select", options: ABC_CLASSES.map(option => ({ value: option, label: option })), width: "80px", className: "col-abc" },
       { key: "completeness", label: "Vollständigkeit", type: "display", width: "160px", className: "col-completeness" },
       { key: "avgSellingPriceGrossEUR", label: "Ø VK-Preis (Brutto)", type: "number", decimals: 2, width: "150px", className: "col-amount" },
       { key: "sellerboardMarginPct", label: "Sellerboard Marge (%)", type: "number", decimals: 2, width: "140px", className: "col-short" },
@@ -1767,6 +1806,9 @@ function buildHistoryTable(state, sku) {
       }
       if (field.key === "categoryId") {
         return product.categoryId || "";
+      }
+      if (field.key === "abcClass") {
+        return resolveAbcClass(product.abcClass);
       }
       if (field.key === "completeness") {
         return getCompleteness(product);
@@ -1833,10 +1875,21 @@ function buildHistoryTable(state, sku) {
     }
 
     const toolbar = createEl("div", { class: "products-grid-toolbar" });
+    const sortSelect = createEl("select", {
+      onchange: event => {
+        tableSortMode = event.target.value;
+        setViewState(tableSortViewKey, { mode: tableSortMode });
+        render();
+      },
+    }, [
+      createEl("option", { value: "category" }, ["Sortierung: Kategorie"]),
+      createEl("option", { value: "abc" }, ["Sortierung: ABC (A → C)"]),
+    ]);
+    sortSelect.value = tableSortMode;
     const counter = createEl("span", { class: "muted" }, ["0 Änderungen"]);
     const saveBtn = createEl("button", { class: "btn", type: "button", disabled: true }, ["Änderungen speichern"]);
     const discardBtn = createEl("button", { class: "btn secondary", type: "button", disabled: true }, ["Änderungen verwerfen"]);
-    toolbar.append(counter, createEl("div", { class: "products-grid-actions" }, [discardBtn, saveBtn]));
+    toolbar.append(sortSelect, counter, createEl("div", { class: "products-grid-actions" }, [discardBtn, saveBtn]));
 
     function updateToolbar() {
       const edits = countEdits();
@@ -1889,7 +1942,7 @@ function buildHistoryTable(state, sku) {
     colgroup.append(createEl("col", { style: `width:${actionsWidth}` }));
     const thead = createEl("thead", {}, [
       createEl("tr", { class: "products-grid-group-header" }, [
-        createEl("th", { colspan: "9", title: "Stammdaten" }, ["Stammdaten"]),
+        createEl("th", { colspan: "10", title: "Stammdaten" }, ["Stammdaten"]),
         createEl("th", { colspan: "3", title: "Kosten" }, ["Kosten"]),
         createEl("th", { colspan: "4", title: "Logistik" }, ["Logistik"]),
         createEl("th", { colspan: "5", title: "Steuern" }, ["Steuern"]),
@@ -1905,7 +1958,7 @@ function buildHistoryTable(state, sku) {
     ]);
     const tbody = createEl("tbody");
     const collapseState = loadCollapseState();
-    const groups = buildCategoryGroups(list);
+    const groups = buildCategoryGroups(list, { sortMode: tableSortMode });
 
     groups.forEach(group => {
       const isCollapsed = Boolean(collapseState[group.id]);
@@ -2038,6 +2091,9 @@ function buildHistoryTable(state, sku) {
           sellerboardMarginPct: original.sellerboardMarginPct ?? null,
           originalSku: original.sku,
         };
+        if (typeof original.abcClass !== "undefined") {
+          payload.abcClass = resolveAbcClass(original.abcClass);
+        }
         Object.entries(edits).forEach(([key, value]) => {
           if (key.startsWith("template.")) {
             const fieldKey = key.replace("template.", "");
@@ -2098,7 +2154,7 @@ function buildHistoryTable(state, sku) {
     const shouldFocusSearch = document.activeElement === prevSearch;
     const cursorPos = shouldFocusSearch ? prevSearch.selectionStart : null;
     root.innerHTML = "";
-    const filtered = applyFilter(products, searchTerm, completenessFilter);
+    const filtered = applyFilter(products, searchTerm, completenessFilter, abcFilter);
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
     const header = createEl("div", { class: "products-header" });
     const title = createEl("h2", {}, ["Produkte"]);
@@ -2129,6 +2185,18 @@ function buildHistoryTable(state, sku) {
       createEl("option", { value: "ok" }, ["Nur Vollständige"]),
     ]);
     completenessSelect.value = completenessFilter === "warning" ? "warn" : completenessFilter;
+    const abcSelect = createEl("select", {
+      class: "products-abc-filter",
+      onchange: event => {
+        abcFilter = event.target.value;
+        setViewState(abcFilterViewKey, { filter: abcFilter });
+        render();
+      },
+    }, [
+      createEl("option", { value: "all" }, ["ABC: Alle"]),
+      ...ABC_CLASSES.map(option => createEl("option", { value: option }, [`ABC: ${option}`])),
+    ]);
+    abcSelect.value = abcFilter;
     const viewToggle = createEl("div", { class: "view-toggle" }, [
       createEl("button", {
         type: "button",
@@ -2151,7 +2219,7 @@ function buildHistoryTable(state, sku) {
         },
       }, ["Tabelle"]),
     ]);
-    actions.append(search, completenessSelect, expandBtn, collapseBtn, viewToggle, createBtn);
+    actions.append(search, completenessSelect, abcSelect, expandBtn, collapseBtn, viewToggle, createBtn);
     header.append(title, actions);
     root.append(header);
     if (bannerCount) {
