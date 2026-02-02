@@ -196,6 +196,8 @@ td.num, th.num{text-align:right}
 .dashboard-tree-table th.tree-header,.dashboard-tree-table td.tree-cell{min-width:260px;}
 .dashboard-tree-table th:not(.tree-header),.dashboard-tree-table td.num{min-width:140px;}
 .dashboard-tree-table th,.dashboard-tree-table td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bottom:1px solid var(--table-border); white-space:nowrap; overflow:visible; text-overflow:clip; font-variant-numeric:tabular-nums;}
+.dashboard-compare-header,.dashboard-compare-cell{min-width:160px; width:160px;}
+.balance-compare{display:flex; flex-direction:column; gap:2px; font-size:11px; color:var(--text);}
 .dashboard-tree-table thead th{background:var(--table-header-bg); font-size:12px; color:var(--muted); font-weight:600; position:sticky; top:0; z-index:4;}
 .dashboard-tree-table th.tree-header{left:0; z-index:6;}
 .dashboard-tree-table td{background:#fff;}
@@ -316,6 +318,11 @@ td.num, th.num{text-align:right}
 .forecast-toolbar-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
 .forecast-toolbar .toggle{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin:0;}
 .forecast-toolbar .toggle input{width:16px; height:16px; padding:0;}
+.forecast-transfer-actions{display:flex; gap:8px; flex-wrap:wrap;}
+.forecast-transfer-list{margin-top:10px; display:flex; flex-direction:column; gap:8px; padding:8px; border:1px solid var(--table-border); border-radius:12px; max-height:320px; overflow:auto; background:#fff;}
+.forecast-transfer-row{display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:10px; padding:6px 10px; border-radius:10px; background:#f8fafc; font-size:12px;}
+.forecast-transfer-row input{width:16px; height:16px;}
+.forecast-transfer-row.is-disabled{opacity:.55;}
 .forecast-table-wrap{overflow-x:visible;}
 .forecast-tree-table{min-width:0; width:100%; table-layout:fixed;}
 .forecast-tree-table th.tree-header,.forecast-tree-table td.tree-cell{min-width:180px; width:180px;}
@@ -629,6 +636,13 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-filename-suggestion{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace; font-size:11px; color:var(--ink); word-break:break-word;}
 .row-focus{background:rgba(59,194,167,0.08);}
 .row-focus td{background:rgba(59,194,167,0.12);}
+.income-legend{display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;}
+.income-source-tag{display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; border:1px solid transparent;}
+.income-source-tag.income-source-forecast{background:rgba(14,165,233,0.15); color:#075985; border-color:rgba(14,165,233,0.35);}
+.income-source-tag.income-source-manual{background:rgba(234,179,8,0.18); color:#854d0e; border-color:rgba(234,179,8,0.35);}
+tr.income-source-forecast td{background:rgba(14,165,233,0.06);}
+tr.income-source-manual td{background:rgba(234,179,8,0.05);}
+.balance-detail{margin-top:4px; display:flex; flex-direction:column; gap:2px; font-size:11px; color:var(--muted);}
 
 .month-header-label{
   display:inline-flex;
