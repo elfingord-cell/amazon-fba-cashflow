@@ -231,6 +231,11 @@ td.num, th.num{text-align:right}
 .inventory-card{width:100%;}
 .inventory-header{display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:10px;}
 .inventory-toolbar{display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom:12px;}
+.inventory-export{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:10px 0 12px; border-top:1px dashed rgba(15,27,45,0.12); margin-top:4px;}
+.inventory-export-controls{display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;}
+.inventory-export-controls input[type="date"]{height:34px; font-size:13px; min-width:160px;}
+.inventory-export-meta{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+.inventory-export-warning{display:inline-flex; align-items:center; gap:6px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; background:rgba(245,158,11,0.2); color:#92400e;}
 .inventory-controls{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
 .inventory-field{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);}
 .inventory-field select{height:34px; font-size:13px; min-width:140px;}
