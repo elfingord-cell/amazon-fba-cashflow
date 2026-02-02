@@ -51,6 +51,45 @@ function formatMonthSlash(month) {
   return `${m}/${y}`;
 }
 
+function formatDateInput(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateInput(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function endOfMonthDate(monthKey) {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return null;
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(year, month, 0);
+}
+
+function normalizeAsOfDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const normalized = new Date(date.getTime());
+  normalized.setHours(23, 59, 59, 999);
+  return normalized;
+}
+
+function formatExportTitle(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "Bestandsaufnahme";
+  return `Bestandsaufnahme zum ${formatShortDate(date)}`;
+}
+
+function formatDateTime(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
+  const datePart = date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const timePart = date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return `${datePart} ${timePart}`;
+}
+
 function daysInMonth(monthKey) {
   if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return 30;
   const [y, m] = monthKey.split("-").map(Number);
@@ -124,6 +163,7 @@ function loadViewState() {
     search: raw.search || "",
     showSafety: raw.showSafety !== false,
     projectionMode,
+    snapshotAsOfDate: raw.snapshotAsOfDate || "",
   };
 }
 
@@ -449,9 +489,10 @@ function buildInboundMap(state) {
   return { inboundMap, missingEtaSkus };
 }
 
-function buildInTransitMap(state) {
+function buildInTransitMap(state, asOfDate) {
   const map = new Map();
   const today = new Date();
+  const cutoff = normalizeAsOfDate(asOfDate) || today;
   const addEntry = (sku, entry) => {
     if (!map.has(sku)) map.set(sku, { total: 0, entries: [] });
     const target = map.get(sku);
@@ -463,7 +504,7 @@ function buildInTransitMap(state) {
     if (!po || po.archived) return;
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
     const eta = resolvePoEta(po);
-    if (eta && eta < today) return;
+    if (eta && eta <= cutoff) return;
     const etd = resolvePoEtd(po);
     const items = Array.isArray(po.items) && po.items.length
       ? po.items
@@ -492,7 +533,7 @@ function buildInTransitMap(state) {
     if (!fo) return;
     if (!isFoCountable(fo)) return;
     const eta = resolveFoArrival(fo);
-    if (eta && eta < today) return;
+    if (eta && eta <= cutoff) return;
     const items = Array.isArray(fo.items) && fo.items.length
       ? fo.items
       : [{ sku: fo.sku, units: fo.units }];
@@ -581,7 +622,7 @@ function encodeTooltip(html) {
   return encodeURIComponent(html || "");
 }
 
-function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories }) {
+function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories, asOfDate }) {
   const filtered = filterProductsBySearch(products, view.search);
 
   const groups = buildCategoryGroups(filtered, categories);
@@ -590,7 +631,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
     const sku = String(item.sku || "").trim();
     if (sku) prevMap.set(sku, item);
   });
-  const inTransitMap = buildInTransitMap(state);
+  const inTransitMap = buildInTransitMap(state, asOfDate);
 
   const rows = groups.map(group => {
     const collapsed = view.collapsed[group.id];
@@ -603,10 +644,11 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
       const amazonUnits = Number(item?.amazonUnits || 0);
       const threePLUnits = Number(item?.threePLUnits || 0);
       const totalUnits = amazonUnits + threePLUnits;
+      const totalUnitsWithTransit = totalUnits + inTransitTotal;
       const prevTotal = (prevItem?.amazonUnits || 0) + (prevItem?.threePLUnits || 0);
       const delta = totalUnits - prevTotal;
       const ekEur = getProductEkEur(product, state.settings || {});
-      const totalValue = Number.isFinite(ekEur) ? Math.round(totalUnits * ekEur) : null;
+      const totalValue = Number.isFinite(ekEur) ? totalUnitsWithTransit * ekEur : null;
       const warning = !Number.isFinite(ekEur);
       const transitTooltip = inTransit && inTransit.entries.length
         ? renderInTransitTooltip({ alias: product.alias || sku, entries: inTransit.entries })
@@ -630,7 +672,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
             ${warning ? `<span class="cell-warning" title="EK fehlt im Produkt">${"⚠︎"}</span>` : ""}
             <span data-field="ekEur">${Number.isFinite(ekEur) ? formatEur(ekEur) : "—"}</span>
           </td>
-          <td class="num inventory-value" data-field="totalValue">${Number.isFinite(totalValue) ? formatInt(totalValue) : "—"}</td>
+          <td class="num inventory-value" data-field="totalValue">${Number.isFinite(totalValue) ? formatEur(totalValue) : "—"}</td>
           <td class="num inventory-value" data-field="delta">${formatInt(delta)}</td>
           <td><input class="inventory-input note" data-field="note" value="${escapeHtml(item?.note || "")}" /></td>
         </tr>
@@ -662,7 +704,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
           <th class="num">Total Units</th>
           <th class="num">In Transit</th>
           <th class="num">EK (EUR)</th>
-          <th class="num">Total Value €</th>
+          <th class="num">Warenwert €</th>
           <th class="num">Delta vs prev</th>
           <th>Note</th>
         </tr>
@@ -671,6 +713,214 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
         ${rows || `<tr><td class="muted" colspan="11">Keine Produkte gefunden.</td></tr>`}
       </tbody>
     </table>
+  `;
+}
+
+function escapeCsv(value, delimiter = ";") {
+  const raw = String(value ?? "");
+  if (!raw) return "";
+  if (raw.includes("\"") || raw.includes("\n") || raw.includes(delimiter)) {
+    return `"${raw.replace(/"/g, "\"\"")}"`;
+  }
+  return raw;
+}
+
+function formatUnitsExport(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  return Math.round(Number(value)).toLocaleString("de-DE", { maximumFractionDigits: 0 });
+}
+
+function formatEurExport(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "";
+  return Number(value).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function buildSnapshotExportData({ state, view, snapshot, products, categories, asOfDate }) {
+  const filtered = filterProductsBySearch(products, view.search);
+  const groups = buildCategoryGroups(filtered, categories);
+  const snapshotMap = new Map();
+  (snapshot?.items || []).forEach(item => {
+    const sku = String(item.sku || "").trim();
+    if (sku) snapshotMap.set(sku, item);
+  });
+  const inTransitMap = buildInTransitMap(state, asOfDate);
+  const rows = [];
+  const missingEk = [];
+  let totalAmazon = 0;
+  let totalMajamo = 0;
+  let totalTransit = 0;
+  let totalValue = 0;
+
+  groups.forEach(group => {
+    group.items.forEach(product => {
+      const sku = String(product.sku || "").trim();
+      if (!sku) return;
+      const alias = product.alias || "";
+      const item = snapshotMap.get(sku) || { amazonUnits: 0, threePLUnits: 0 };
+      const amazonUnits = Number(item?.amazonUnits || 0);
+      const threePlUnits = Number(item?.threePLUnits || 0);
+      const inTransit = inTransitMap.get(sku);
+      const inTransitUnits = inTransit ? inTransit.total : 0;
+      const ekEur = getProductEkEur(product, state.settings || {});
+      const totalUnits = amazonUnits + threePlUnits + inTransitUnits;
+      const rowValue = Number.isFinite(ekEur) ? totalUnits * ekEur : null;
+      if (!Number.isFinite(ekEur)) {
+        missingEk.push(alias ? `${sku} (${alias})` : sku);
+      }
+      if (Number.isFinite(amazonUnits)) totalAmazon += amazonUnits;
+      if (Number.isFinite(threePlUnits)) totalMajamo += threePlUnits;
+      if (Number.isFinite(inTransitUnits)) totalTransit += inTransitUnits;
+      if (Number.isFinite(rowValue)) totalValue += rowValue;
+      rows.push({
+        sku,
+        alias,
+        amazonUnits,
+        threePlUnits,
+        inTransitUnits,
+        ekEur,
+        rowValue,
+      });
+    });
+  });
+
+  return {
+    rows,
+    totals: {
+      amazonUnits: totalAmazon,
+      majamoUnits: totalMajamo,
+      inTransitUnits: totalTransit,
+      totalUnits: totalAmazon + totalMajamo + totalTransit,
+      totalValue,
+    },
+    missingEk,
+  };
+}
+
+function buildSnapshotCsv({ title, rows, totals, missingEk }) {
+  const delimiter = ";";
+  const lines = [];
+  if (title) {
+    lines.push(escapeCsv(title, delimiter));
+    lines.push("");
+  }
+  const headers = [
+    "SKU",
+    "Alias",
+    "Bestand Amazon (Stk)",
+    "Bestand majamo (Stk)",
+    "In Transit (Stk)",
+    "EK-Preis (EUR / Stk)",
+    "Warenwert (EUR)",
+  ];
+  lines.push(headers.map(header => escapeCsv(header, delimiter)).join(delimiter));
+  rows.forEach(row => {
+    const line = [
+      row.sku,
+      row.alias,
+      formatUnitsExport(row.amazonUnits),
+      formatUnitsExport(row.threePlUnits),
+      formatUnitsExport(row.inTransitUnits),
+      formatEurExport(row.ekEur),
+      formatEurExport(row.rowValue),
+    ];
+    lines.push(line.map(value => escapeCsv(value, delimiter)).join(delimiter));
+  });
+  const totalsRow = [
+    "Gesamtsumme Warenwert (EUR)",
+    "",
+    formatUnitsExport(totals.amazonUnits),
+    formatUnitsExport(totals.majamoUnits),
+    formatUnitsExport(totals.inTransitUnits),
+    "",
+    formatEurExport(totals.totalValue),
+  ];
+  lines.push(totalsRow.map(value => escapeCsv(value, delimiter)).join(delimiter));
+  if (missingEk.length) {
+    lines.push("");
+    lines.push(escapeCsv(`Fehlender EK-Preis für: ${missingEk.join(", ")}`, delimiter));
+  }
+  return lines.join("\n");
+}
+
+function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, generatedAt }) {
+  const tableRows = rows.map(row => `
+      <tr>
+        <td>${escapeHtml(row.sku)}</td>
+        <td>${escapeHtml(row.alias || "")}</td>
+        <td class="num">${formatUnitsExport(row.amazonUnits)}</td>
+        <td class="num">${formatUnitsExport(row.threePlUnits)}</td>
+        <td class="num">${formatUnitsExport(row.inTransitUnits)}</td>
+        <td class="num">${formatEurExport(row.ekEur)}</td>
+        <td class="num">${formatEurExport(row.rowValue)}</td>
+      </tr>
+  `).join("");
+  const totalRow = `
+      <tr class="totals">
+        <td>Gesamtsumme Warenwert (EUR)</td>
+        <td></td>
+        <td class="num">${formatUnitsExport(totals.amazonUnits)}</td>
+        <td class="num">${formatUnitsExport(totals.majamoUnits)}</td>
+        <td class="num">${formatUnitsExport(totals.inTransitUnits)}</td>
+        <td class="num"></td>
+        <td class="num">${formatEurExport(totals.totalValue)}</td>
+      </tr>
+  `;
+  const warning = missingEk.length
+    ? `<div class="warning">Fehlender EK-Preis für: ${escapeHtml(missingEk.join(", "))}</div>`
+    : "";
+  return `
+    <!doctype html>
+    <html lang="de">
+      <head>
+        <meta charset="utf-8" />
+        <title>${escapeHtml(fileName || title)}</title>
+        <style>
+          body { font-family: "Inter", system-ui, sans-serif; margin: 32px; color: #0f172a; }
+          h1 { font-size: 20px; margin: 0 0 6px; }
+          .meta { font-size: 12px; color: #475569; margin-bottom: 16px; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { border-bottom: 1px solid #e2e8f0; padding: 8px; text-align: left; }
+          th { background: #f8fafc; font-weight: 600; color: #475569; }
+          .num { text-align: right; font-variant-numeric: tabular-nums; }
+          .totals td { font-weight: 700; background: #f1f5f9; }
+          .warning { margin-top: 12px; font-size: 12px; color: #b45309; }
+          @media print {
+            body { margin: 16px; }
+            .actions { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="actions">
+          <button onclick="window.print()">Drucken / Als PDF speichern</button>
+        </div>
+        <h1>${escapeHtml(title)}</h1>
+        <div class="meta">Erstellt am: ${escapeHtml(generatedAt)}</div>
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Alias</th>
+              <th class="num">Bestand Amazon (Stk)</th>
+              <th class="num">Bestand majamo (Stk)</th>
+              <th class="num">In Transit (Stk)</th>
+              <th class="num">EK-Preis (EUR / Stk)</th>
+              <th class="num">Warenwert (EUR)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+            ${totalRow}
+          </tbody>
+        </table>
+        ${warning}
+        <script>
+          window.addEventListener("load", () => {
+            setTimeout(() => window.print(), 250);
+          });
+        </script>
+      </body>
+    </html>
   `;
 }
 
@@ -839,14 +1089,17 @@ function updateSnapshotRow(row, snapshot, previousSnapshot, product, state) {
   const totalUnits = Number(item.amazonUnits || 0) + Number(item.threePLUnits || 0);
   const prevTotal = (prevItem?.amazonUnits || 0) + (prevItem?.threePLUnits || 0);
   const delta = totalUnits - prevTotal;
+  const inTransitCell = row.querySelector(".inventory-in-transit");
+  const inTransitUnits = parseDeNumber(inTransitCell?.textContent || 0);
+  const totalUnitsWithTransit = totalUnits + (Number.isFinite(inTransitUnits) ? inTransitUnits : 0);
   const ekEur = getProductEkEur(product, state.settings || {});
-  const totalValue = Number.isFinite(ekEur) ? Math.round(totalUnits * ekEur) : null;
+  const totalValue = Number.isFinite(ekEur) ? totalUnitsWithTransit * ekEur : null;
   const totalCell = row.querySelector('[data-field="totalUnits"]');
   const deltaCell = row.querySelector('[data-field="delta"]');
   const valueCell = row.querySelector('[data-field="totalValue"]');
   if (totalCell) totalCell.textContent = formatInt(totalUnits);
   if (deltaCell) deltaCell.textContent = formatInt(delta);
-  if (valueCell) valueCell.textContent = Number.isFinite(totalValue) ? formatInt(totalValue) : "—";
+  if (valueCell) valueCell.textContent = Number.isFinite(totalValue) ? formatEur(totalValue) : "—";
 }
 
 // Manual validation checklist:
@@ -884,6 +1137,19 @@ export function render(root) {
   const previousSnapshot = getPreviousSnapshot(state, selectedMonth);
   const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
   const products = (state.products || []).filter(isProductActive);
+  const storedAsOfDate = parseDateInput(view.snapshotAsOfDate);
+  const monthKeyForStored = storedAsOfDate ? toMonthKey(storedAsOfDate) : null;
+  let asOfDate = storedAsOfDate && monthKeyForStored === selectedMonth
+    ? storedAsOfDate
+    : endOfMonthDate(selectedMonth);
+  if (!asOfDate) {
+    asOfDate = new Date();
+  }
+  if (!storedAsOfDate || monthKeyForStored !== selectedMonth) {
+    view.snapshotAsOfDate = formatDateInput(asOfDate);
+    saveViewState(view);
+  }
+  const normalizedAsOfDate = normalizeAsOfDate(asOfDate);
   if (routeSku) {
     const matched = products.find(product => String(product?.sku || "").trim() === routeSku);
     if (matched?.categoryId != null) {
@@ -896,6 +1162,15 @@ export function render(root) {
   const months = buildMonthRange(selectedMonth, projectionOptions.includes(projectionMonths) ? projectionMonths : 12);
 
   const isPlanView = view.projectionMode === "plan";
+  const exportData = buildSnapshotExportData({
+    state,
+    view,
+    snapshot,
+    products,
+    categories,
+    asOfDate: normalizedAsOfDate,
+  });
+  const missingEkCount = exportData.missingEk.length;
 
   root.innerHTML = `
     <section class="card inventory-card">
@@ -918,9 +1193,23 @@ export function render(root) {
         <button class="btn secondary" id="inventory-collapse-all">Alles zuklappen</button>
         <span class="muted small">${previousSnapshot ? `Vorheriger Snapshot: ${formatMonthLabel(previousSnapshot.month)}` : "Kein vorheriger Snapshot vorhanden."}</span>
       </div>
+      <div class="inventory-export">
+        <div class="inventory-export-controls">
+          <label class="inventory-field">
+            <span class="muted">Bestandsaufnahme zum</span>
+            <input type="date" id="inventory-export-date" value="${escapeHtml(formatDateInput(asOfDate))}" />
+          </label>
+          <button class="btn secondary" id="inventory-export-csv">Export CSV</button>
+          <button class="btn secondary" id="inventory-export-pdf">Export PDF</button>
+        </div>
+        <div class="inventory-export-meta">
+          <span class="muted small">Export für Buchführung: SKU, Bestände, In-Transit, EK-Preis, Warenwert</span>
+          ${missingEkCount ? `<span class="inventory-export-warning">⚠︎ EK fehlt (${missingEkCount})</span>` : ""}
+        </div>
+      </div>
       <div class="inventory-table-wrap">
         <div class="inventory-table-scroll">
-          ${buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories })}
+          ${buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories, asOfDate: normalizedAsOfDate })}
         </div>
       </div>
     </section>
@@ -984,6 +1273,68 @@ export function render(root) {
       view.selectedMonth = event.target.value;
       saveViewState(view);
       render(root);
+    });
+  }
+
+  const exportDateInput = root.querySelector("#inventory-export-date");
+  if (exportDateInput) {
+    exportDateInput.addEventListener("change", (event) => {
+      view.snapshotAsOfDate = event.target.value;
+      saveViewState(view);
+      render(root);
+    });
+  }
+
+  const exportCsvBtn = root.querySelector("#inventory-export-csv");
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener("click", () => {
+      if (!exportData.rows.length) {
+        window.alert("Keine Daten für den Export vorhanden.");
+        return;
+      }
+      const title = formatExportTitle(asOfDate);
+      const csv = buildSnapshotCsv({
+        title,
+        rows: exportData.rows,
+        totals: exportData.totals,
+        missingEk: exportData.missingEk,
+      });
+      const fileName = `bestandsaufnahme_${formatDateInput(asOfDate)}.csv`;
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  const exportPdfBtn = root.querySelector("#inventory-export-pdf");
+  if (exportPdfBtn) {
+    exportPdfBtn.addEventListener("click", () => {
+      if (!exportData.rows.length) {
+        window.alert("Keine Daten für den Export vorhanden.");
+        return;
+      }
+      const title = formatExportTitle(asOfDate);
+      const generatedAt = formatDateTime(new Date());
+      const fileName = `bestandsaufnahme_${formatDateInput(asOfDate)}.pdf`;
+      const html = buildSnapshotPrintHtml({
+        title,
+        fileName,
+        rows: exportData.rows,
+        totals: exportData.totals,
+        missingEk: exportData.missingEk,
+        generatedAt,
+      });
+      const printWindow = window.open("", "_blank", "noopener,noreferrer");
+      if (!printWindow) return;
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
     });
   }
 
