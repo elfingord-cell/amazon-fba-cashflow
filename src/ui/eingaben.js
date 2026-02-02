@@ -164,8 +164,12 @@ export async function render(root) {
     <section class="card">
       <h3>Umsätze × Payout</h3>
       <p class="muted">Optional können Umsätze aus der <a href="#forecast">Absatzprognose</a> übernommen werden.</p>
+      <div class="income-legend">
+        <span class="income-source-tag income-source-forecast">Prognose</span>
+        <span class="income-source-tag income-source-manual">Manuell</span>
+      </div>
       <table class="table">
-        <thead><tr><th>Monat</th><th>Umsatz (€)</th><th>Payout (%)</th><th></th></tr></thead>
+        <thead><tr><th>Monat</th><th>Umsatz (€)</th><th>Payout (%)</th><th>Quelle</th><th></th></tr></thead>
         <tbody id="income-rows"></tbody>
       </table>
       <button class="btn" id="income-add">+ Monat hinzufügen</button>
@@ -243,18 +247,24 @@ export async function render(root) {
 
   function renderIncomes() {
     if (!state.incomings.length) {
-      incomeRows.innerHTML = `<tr><td colspan="4" class="muted">Keine Einträge</td></tr>`;
+      incomeRows.innerHTML = `<tr><td colspan="5" class="muted">Keine Einträge</td></tr>`;
       return;
     }
     incomeRows.innerHTML = state.incomings
-      .map((row, idx) => `
-        <tr data-idx="${idx}" data-month="${row.month || ""}">
-          <td><input type="month" data-field="month" value="${row.month || ""}"></td>
-          <td><input type="text" data-field="revenueEur" inputmode="decimal" value="${fmtCurrency(row.revenueEur)}"></td>
-          <td><input type="text" data-field="payoutPct" inputmode="decimal" value="${fmtPercent(row.payoutPct)}"></td>
-          <td><button class="btn danger" data-remove="${idx}">Entfernen</button></td>
-        </tr>
-      `)
+      .map((row, idx) => {
+        const sourceKey = row.source === "forecast" ? "forecast" : "manual";
+        const sourceLabel = sourceKey === "forecast" ? "Prognose" : "Manuell";
+        const sourceClass = sourceKey === "forecast" ? "income-source-forecast" : "income-source-manual";
+        return `
+          <tr data-idx="${idx}" data-month="${row.month || ""}" class="${sourceClass}">
+            <td><input type="month" data-field="month" value="${row.month || ""}"></td>
+            <td><input type="text" data-field="revenueEur" inputmode="decimal" value="${fmtCurrency(row.revenueEur)}"></td>
+            <td><input type="text" data-field="payoutPct" inputmode="decimal" value="${fmtPercent(row.payoutPct)}"></td>
+            <td><span class="income-source-tag ${sourceClass}">${sourceLabel}</span></td>
+            <td><button class="btn danger" data-remove="${idx}">Entfernen</button></td>
+          </tr>
+        `;
+      })
       .join("");
   }
 
@@ -408,7 +418,7 @@ export async function render(root) {
   $("#income-add", root)?.addEventListener("click", () => {
     const last = state.incomings[state.incomings.length - 1];
     const next = last ? incMonth(last.month || state.settings.startMonth || "") : (state.settings.startMonth || "");
-    state.incomings.push({ month: next, revenueEur: "0,00", payoutPct: "0" });
+    state.incomings.push({ month: next, revenueEur: "0,00", payoutPct: "0", source: "manual" });
     saveState(state);
     renderIncomes();
   });
@@ -437,6 +447,9 @@ export async function render(root) {
     const field = ev.target.dataset.field;
     if (!(field && state.incomings[idx])) return;
     state.incomings[idx][field] = ev.target.value;
+    if (["month", "revenueEur", "payoutPct"].includes(field)) {
+      state.incomings[idx].source = "manual";
+    }
   });
 
   incomeRows?.addEventListener("focusout", (ev) => {

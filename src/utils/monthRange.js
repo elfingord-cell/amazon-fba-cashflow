@@ -40,5 +40,8 @@ export function getVisibleMonths(allMonths, range, nowMonth, options = DASHBOARD
   if (!count) return sortedMonths;
   const startIndex = sortedMonths.findIndex(month => month >= nowMonth);
   if (startIndex === -1) return [];
+  if (range === "NEXT_6" && startIndex > 0) {
+    return sortedMonths.slice(startIndex - 1, startIndex + count);
+  }
   return sortedMonths.slice(startIndex, startIndex + count);
 }

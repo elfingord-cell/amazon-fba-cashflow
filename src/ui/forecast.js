@@ -120,6 +120,14 @@ function formatForecastValue(value) {
   });
 }
 
+function formatCurrency(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "0,00";
+  return Number(value).toLocaleString("de-DE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatUnits(value) {
   if (value == null || !Number.isFinite(Number(value))) return "—";
   return Math.round(Number(value)).toLocaleString("de-DE", { maximumFractionDigits: 0 });
@@ -236,6 +244,23 @@ function getDerivedValue(view, units, product) {
   const margin = parseNumberDE(product && product.sellerboardMarginPct);
   if (!Number.isFinite(margin)) return null;
   return revenue * (margin / 100);
+}
+
+function getForecastRevenueByMonth(state, months) {
+  const revenueByMonth = new Map();
+  const products = Array.isArray(state?.products) ? state.products : [];
+  months.forEach(month => revenueByMonth.set(month, 0));
+  products.forEach(product => {
+    const sku = String(product?.sku || "").trim();
+    if (!sku) return;
+    months.forEach(month => {
+      const units = getEffectiveValue(state, sku, month);
+      const revenue = getDerivedValue("revenue", units, product);
+      if (!Number.isFinite(revenue)) return;
+      revenueByMonth.set(month, (revenueByMonth.get(month) || 0) + revenue);
+    });
+  });
+  return revenueByMonth;
 }
 
 function parseVentoryMonth(raw) {
@@ -736,6 +761,7 @@ function render(el) {
       <div class="forecast-toolbar-row">
         <button class="btn secondary" type="button" data-expand="expand">Alle auf</button>
         <button class="btn secondary" type="button" data-expand="collapse">Alle zu</button>
+        <button class="btn" type="button" data-forecast-transfer>Umsatz übertragen</button>
         <label class="toggle">
           <input type="checkbox" ${state.forecast.settings.useForecast ? "checked" : ""} data-forecast-toggle />
           <span>Umsatz aus Prognose übernehmen</span>
@@ -771,6 +797,10 @@ function render(el) {
 
   wrap.querySelector('[data-ventory-csv]').addEventListener('click', () => {
     openVentoryCsvImportModal(el);
+  });
+
+  wrap.querySelector('[data-forecast-transfer]').addEventListener('click', () => {
+    openForecastTransferModal(el, monthsAll, months);
   });
 
   wrap.querySelector('[data-forecast-save]').addEventListener('click', () => {
@@ -845,6 +875,131 @@ function render(el) {
   }
 
   focusFromRoute();
+}
+
+function openForecastTransferModal(host, monthsAll, defaultMonths) {
+  const state = loadAppState();
+  ensureForecastContainers(state);
+  const revenueByMonth = getForecastRevenueByMonth(state, monthsAll);
+  const monthEntries = monthsAll.map(month => ({
+    month,
+    revenue: Number(revenueByMonth.get(month) || 0),
+  }));
+  const defaultSelection = new Set(
+    (defaultMonths || [])
+      .filter(month => (revenueByMonth.get(month) || 0) > 0)
+  );
+
+  const overlay = document.createElement("div");
+  overlay.className = "po-modal-backdrop";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const modal = document.createElement("div");
+  modal.className = "po-modal";
+  modal.innerHTML = `
+    <header class="po-modal-header">
+      <h3>Umsatz übertragen</h3>
+      <button class="btn ghost" type="button" data-close aria-label="Schließen">✕</button>
+    </header>
+    <div class="po-modal-body">
+      <p class="muted">Wähle die Monate aus, deren Prognose-Umsatz in den Tab <strong>Eingaben</strong> übertragen werden soll.</p>
+      <div class="forecast-transfer-actions">
+        <button class="btn secondary" type="button" data-select-all>Alle mit Umsatz</button>
+        <button class="btn secondary" type="button" data-clear>Auswahl leeren</button>
+      </div>
+      <div class="forecast-transfer-list">
+        ${monthEntries.map(entry => {
+          const isDisabled = !Number.isFinite(entry.revenue) || entry.revenue <= 0;
+          const isChecked = defaultSelection.has(entry.month);
+          return `
+            <label class="forecast-transfer-row ${isDisabled ? "is-disabled" : ""}">
+              <input type="checkbox" data-month="${entry.month}" ${isChecked ? "checked" : ""} ${isDisabled ? "disabled" : ""} />
+              <span>${entry.month}</span>
+              <span class="muted">${formatCurrency(entry.revenue)} €</span>
+            </label>
+          `;
+        }).join("")}
+      </div>
+    </div>
+    <footer class="po-modal-actions">
+      <button class="btn" type="button" data-cancel>Abbrechen</button>
+      <button class="btn primary" type="button" data-transfer disabled>Übertragen</button>
+    </footer>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const closeModal = () => overlay.remove();
+  overlay.addEventListener("click", ev => {
+    if (ev.target === overlay) closeModal();
+  });
+  modal.querySelector("[data-close]").addEventListener("click", closeModal);
+  modal.querySelector("[data-cancel]").addEventListener("click", closeModal);
+
+  const transferBtn = modal.querySelector("[data-transfer]");
+  const monthCheckboxes = Array.from(modal.querySelectorAll('input[data-month]'));
+
+  function updateTransferState() {
+    const checked = monthCheckboxes.some(input => input.checked);
+    transferBtn.disabled = !checked;
+  }
+
+  modal.querySelector("[data-select-all]").addEventListener("click", () => {
+    monthCheckboxes.forEach(input => {
+      if (!input.disabled) input.checked = true;
+    });
+    updateTransferState();
+  });
+
+  modal.querySelector("[data-clear]").addEventListener("click", () => {
+    monthCheckboxes.forEach(input => { input.checked = false; });
+    updateTransferState();
+  });
+
+  monthCheckboxes.forEach(input => {
+    input.addEventListener("change", updateTransferState);
+  });
+
+  updateTransferState();
+
+  transferBtn.addEventListener("click", () => {
+    const selectedMonths = monthCheckboxes
+      .filter(input => input.checked)
+      .map(input => input.getAttribute("data-month"))
+      .filter(Boolean);
+    if (!selectedMonths.length) return;
+    const st = loadAppState();
+    ensureForecastContainers(st);
+    if (!Array.isArray(st.incomings)) st.incomings = [];
+    const lastPayoutRow = st.incomings.slice().reverse().find(row => row?.payoutPct != null && String(row.payoutPct).trim() !== "");
+    const defaultPayout = lastPayoutRow?.payoutPct ?? "0";
+    const updated = [];
+    selectedMonths.forEach(month => {
+      const revenue = Number(revenueByMonth.get(month) || 0);
+      const formatted = formatCurrency(revenue);
+      const idx = st.incomings.findIndex(row => row?.month === month);
+      if (idx >= 0) {
+        const row = st.incomings[idx];
+        row.revenueEur = formatted;
+        if (!row.payoutPct) row.payoutPct = defaultPayout;
+        row.source = "forecast";
+      } else {
+        st.incomings.push({
+          month,
+          revenueEur: formatted,
+          payoutPct: defaultPayout,
+          source: "forecast",
+        });
+      }
+      updated.push(month);
+    });
+    st.incomings.sort((a, b) => String(a.month || "").localeCompare(String(b.month || "")));
+    commitAppState(st);
+    showToast(`Umsatz übertragen: ${updated.length} Monat${updated.length === 1 ? "" : "e"}.`);
+    closeModal();
+    render(host);
+  });
 }
 
 function openVentoryImportModal(host) {

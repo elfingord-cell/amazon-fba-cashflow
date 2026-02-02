@@ -1567,6 +1567,7 @@ function buildDashboardHTML(state) {
       `;
     })
     .join("");
+  const compareHeader = `<th scope="col" class="dashboard-compare-header">Kontostand Plan/Ist</th>`;
 
   const bodyRows = flatRows
     .map(row => {
@@ -1617,20 +1618,46 @@ function buildDashboardHTML(state) {
           ]
             .filter(Boolean)
             .join(" · ");
+          const balanceDetail = row.id === "balance" && cell.isActual
+            ? `<div class="balance-detail"><span>Plan: ${formatValueOnly(cell.plannedTotal)}</span><span>Ist: ${formatValueOnly(cell.actualTotal)}</span></div>`
+            : "";
           const isClickable = row.nav && !formatted.isEmpty;
           const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
           return `
             <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass} ${healthClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
               ${balanceWarning}
               <span class="${formatted.isEmpty ? "cell-empty" : ""} ${isPaidValue ? "cell-paid-value" : ""}">${formatted.text}</span>
+              ${balanceDetail}
               ${actualMarker}
               ${isClickable ? `<span class="cell-link-icon" aria-hidden="true">↗</span>` : ""}
             </td>
           `;
         })
         .join("");
+      const compareCell = (() => {
+        if (row.id !== "balance") {
+          return `<td class="num dashboard-compare-cell muted">—</td>`;
+        }
+        const latestActualMonth = nonEmptyMonths
+          .slice()
+          .reverse()
+          .find(month => row.values[month]?.isActual);
+        if (!latestActualMonth) {
+          return `<td class="num dashboard-compare-cell muted">—</td>`;
+        }
+        const cell = row.values[latestActualMonth] || {};
+        return `
+          <td class="num dashboard-compare-cell">
+            <div class="balance-compare">
+              <span>Plan: ${formatValueOnly(cell.plannedTotal)}</span>
+              <span>Ist: ${formatValueOnly(cell.actualTotal)}</span>
+              <span class="muted">${escapeHtml(formatMonthLabel(latestActualMonth))}</span>
+            </div>
+          </td>
+        `;
+      })();
 
-      return `<tr data-row-id="${escapeHtml(row.id)}" class="${rowClasses}">${labelCell}${valueCells}</tr>`;
+      return `<tr data-row-id="${escapeHtml(row.id)}" class="${rowClasses}">${labelCell}${valueCells}${compareCell}</tr>`;
     })
     .join("");
 
@@ -1677,12 +1704,13 @@ function buildDashboardHTML(state) {
               <tr>
                 <th scope="col" class="tree-header">Kategorie / Zeile</th>
                 ${headerCells}
+                ${compareHeader}
               </tr>
             </thead>
             <tbody>
               ${bodyRows || `
                 <tr>
-                  <td colspan="${nonEmptyMonths.length + 1}" class="muted">Keine Daten vorhanden.</td>
+                  <td colspan="${nonEmptyMonths.length + 2}" class="muted">Keine Daten vorhanden.</td>
                 </tr>
               `}
             </tbody>
