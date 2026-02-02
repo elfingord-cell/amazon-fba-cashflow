@@ -622,7 +622,13 @@ function encodeTooltip(html) {
   return encodeURIComponent(html || "");
 }
 
-function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories, asOfDate }) {
+const inventoryDrafts = new Map();
+
+function getInventoryDraftKey(month, sku, field) {
+  return `${month || "unknown"}:${sku}:${field}`;
+}
+
+function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories, asOfDate, snapshotMonth }) {
   const filtered = filterProductsBySearch(products, view.search);
 
   const groups = buildCategoryGroups(filtered, categories);
@@ -653,17 +659,19 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
       const transitTooltip = inTransit && inTransit.entries.length
         ? renderInTransitTooltip({ alias: product.alias || sku, entries: inTransit.entries })
         : "";
+      const amazonDraft = inventoryDrafts.get(getInventoryDraftKey(snapshotMonth, sku, "amazonUnits"));
+      const threePlDraft = inventoryDrafts.get(getInventoryDraftKey(snapshotMonth, sku, "threePLUnits"));
       return `
         <tr class="inventory-row ${collapsed ? "is-collapsed" : ""}" data-sku="${escapeHtml(sku)}" data-category="${escapeHtml(group.id)}">
           <td class="inventory-col-sku sticky-cell">${escapeHtml(sku)}</td>
           <td class="inventory-col-alias sticky-cell">${escapeHtml(product.alias || "—")}</td>
           <td class="inventory-col-category sticky-cell">${escapeHtml(group.name)}</td>
           <td class="num">
-            <input class="inventory-input" inputmode="decimal" data-field="amazonUnits" value="${escapeHtml(item?.amazonUnits ?? 0)}" />
+            <input class="inventory-input" inputmode="decimal" data-field="amazonUnits" value="${escapeHtml(amazonDraft ?? String(item?.amazonUnits ?? 0))}" />
             <span class="inventory-input-hint">Nur ganze Einheiten</span>
           </td>
           <td class="num">
-            <input class="inventory-input" inputmode="decimal" data-field="threePLUnits" value="${escapeHtml(item?.threePLUnits ?? 0)}" />
+            <input class="inventory-input" inputmode="decimal" data-field="threePLUnits" value="${escapeHtml(threePlDraft ?? String(item?.threePLUnits ?? 0))}" />
             <span class="inventory-input-hint">Nur ganze Einheiten</span>
           </td>
           <td class="num inventory-value" data-field="totalUnits">${formatInt(totalUnits)}</td>
@@ -1209,7 +1217,16 @@ export function render(root) {
       </div>
       <div class="inventory-table-wrap">
         <div class="inventory-table-scroll">
-          ${buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories, asOfDate: normalizedAsOfDate })}
+          ${buildSnapshotTable({
+            state,
+            view,
+            snapshot,
+            previousSnapshot,
+            products,
+            categories,
+            asOfDate: normalizedAsOfDate,
+            snapshotMonth: selectedMonth,
+          })}
         </div>
       </div>
     </section>
@@ -1397,6 +1414,34 @@ export function render(root) {
   };
 
   if (snapshotTable) {
+    const resolveInputContext = (input) => {
+      const row = input.closest("tr[data-sku]");
+      if (!row) return null;
+      const sku = row.getAttribute("data-sku");
+      const product = products.find(prod => String(prod.sku || "").trim() === sku);
+      if (!product) return null;
+      const item = getSnapshotItem(snapshot, sku);
+      const field = input.dataset.field;
+      return { row, sku, product, item, field };
+    };
+
+    const commitNumberInput = (input) => {
+      const context = resolveInputContext(input);
+      if (!context) return;
+      const { row, sku, product, item, field } = context;
+      if (field !== "amazonUnits" && field !== "threePLUnits") return;
+      const draftKey = getInventoryDraftKey(selectedMonth, sku, field);
+      const rawValue = inventoryDrafts.get(draftKey) ?? input.value;
+      const { value, isRounded } = parseIntegerInput(rawValue);
+      inventoryDrafts.delete(draftKey);
+      input.value = String(value);
+      input.closest("td")?.classList.toggle("inventory-input-warn", isRounded);
+      if (field === "amazonUnits") item.amazonUnits = value;
+      if (field === "threePLUnits") item.threePLUnits = value;
+      updateSnapshotRow(row, snapshot, previousSnapshot, product, state);
+      scheduleSave();
+    };
+
     snapshotTable.addEventListener("click", (event) => {
       const toggle = event.target.closest("button.tree-toggle[data-category]");
       if (!toggle) return;
@@ -1409,25 +1454,38 @@ export function render(root) {
     snapshotTable.addEventListener("input", (event) => {
       const input = event.target.closest("input.inventory-input");
       if (!input) return;
-      const row = input.closest("tr[data-sku]");
-      if (!row) return;
-      const sku = row.getAttribute("data-sku");
-      const product = products.find(prod => String(prod.sku || "").trim() === sku);
-      if (!product) return;
-      const item = getSnapshotItem(snapshot, sku);
-      const field = input.dataset.field;
+      const context = resolveInputContext(input);
+      if (!context) return;
+      const { sku, item, field } = context;
       if (field === "note") {
         item.note = input.value;
         scheduleSave();
         return;
       }
-      const { value, isRounded } = parseIntegerInput(input.value);
-      input.value = String(value);
-      input.closest("td")?.classList.toggle("inventory-input-warn", isRounded);
-      if (field === "amazonUnits") item.amazonUnits = value;
-      if (field === "threePLUnits") item.threePLUnits = value;
-      updateSnapshotRow(row, snapshot, previousSnapshot, product, state);
-      scheduleSave();
+      if (field === "amazonUnits" || field === "threePLUnits") {
+        const draftKey = getInventoryDraftKey(selectedMonth, sku, field);
+        inventoryDrafts.set(draftKey, input.value);
+        input.closest("td")?.classList.remove("inventory-input-warn");
+      }
+    });
+
+    snapshotTable.addEventListener("blur", (event) => {
+      const input = event.target.closest("input.inventory-input");
+      if (!input) return;
+      const context = resolveInputContext(input);
+      if (!context) return;
+      if (context.field === "note") return;
+      commitNumberInput(input);
+    }, true);
+
+    snapshotTable.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const input = event.target.closest("input.inventory-input");
+      if (!input) return;
+      const context = resolveInputContext(input);
+      if (!context || context.field === "note") return;
+      event.preventDefault();
+      commitNumberInput(input);
     });
   }
 
