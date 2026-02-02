@@ -210,6 +210,17 @@ td.num, th.num{text-align:right}
 .dashboard-tree-table tr.row-detail:nth-of-type(even) td{background:rgba(15,27,45,0.015);}
 .dashboard-tree-table th.month-col,.dashboard-tree-table td.month-col{border-left:2px solid rgba(15,27,45,0.12); background-clip:padding-box;}
 .dashboard-tree-table th.month-col-alt,.dashboard-tree-table td.month-col-alt{background:rgba(15,27,45,0.02);}
+.dashboard-tree-table th.col-health{background-color:var(--table-header-bg); background-image:linear-gradient(var(--health-bg, transparent), var(--health-bg, transparent));}
+.dashboard-tree-table td.col-health{background-color:var(--health-bg, transparent);}
+.dashboard-tree-table tr.row-section td.col-health{background-color:var(--health-bg, transparent);}
+.dashboard-tree-table tr.row-detail td.col-health{background-color:var(--health-bg, transparent);}
+.dashboard-tree-table tr.row-detail:nth-of-type(even) td.col-health{background-color:var(--health-bg, transparent);}
+.dashboard-tree-table tbody tr:hover td.col-health{background-color:var(--health-bg, transparent);}
+.dashboard-tree-table .health-full{--health-bg:rgba(47,143,107,0.08);}
+.dashboard-tree-table .health-mostly{--health-bg:rgba(227,181,0,0.08);}
+.dashboard-tree-table .health-partial{--health-bg:rgba(227,120,0,0.08);}
+.dashboard-tree-table .health-poor{--health-bg:rgba(186,76,76,0.08);}
+.dashboard-tree-table .health-none{--health-bg:transparent;}
 .dashboard-tree-table td .cell-paid-value{color:rgba(47,143,107,0.9);}
 .dashboard-tree-table td .cell-actual-tag{margin-left:6px; font-size:10px; font-weight:600; color:rgba(47,143,107,0.75); text-transform:uppercase; letter-spacing:0.04em;}
 .dashboard-tree-table tr.section-inflows td.tree-cell{border-left:3px solid rgba(47,143,107,0.35);}
@@ -339,7 +350,7 @@ td.num, th.num{text-align:right}
 .cell-warning{margin-right:4px; color:var(--warn); font-size:12px;}
 .cell-empty{color:var(--muted);}
 .cell-balance-warning{margin-right:4px; color:rgba(196,140,0,0.75); font-size:12px;}
-.cell-paid-current{background:rgba(47,143,107,0.12);}
+.cell-paid-current{background-color:var(--health-bg, transparent); background-image:linear-gradient(rgba(47,143,107,0.12), rgba(47,143,107,0.12));}
 .cell-link{cursor:pointer; position:relative;}
 .cell-link .cell-link-icon{opacity:0; margin-left:4px; font-size:11px; color:var(--muted);}
 .cell-link:hover .cell-link-icon{opacity:1;}

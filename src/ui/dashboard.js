@@ -272,6 +272,17 @@ function monthColumnClass(index) {
   return `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
 }
 
+function coverageStatusToHealthClass(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  const mapping = {
+    green: "health-full",
+    light: "health-mostly",
+    orange: "health-partial",
+    red: "health-poor",
+  };
+  return `col-health ${mapping[normalized] || "health-none"}`.trim();
+}
+
 function sumUnits(record) {
   if (!record) return 0;
   if (Array.isArray(record.items) && record.items.length) {
@@ -1390,9 +1401,15 @@ function buildDashboardHTML(state) {
       </label>
     `;
 
+  const monthHealthClasses = nonEmptyMonths.map(month => {
+    const status = skuCoverage.details.get(month)?.status || "gray";
+    return coverageStatusToHealthClass(status);
+  });
+
   const headerCells = nonEmptyMonths
     .map((month, idx) => {
       const columnClass = monthColumnClass(idx);
+      const healthClass = monthHealthClasses[idx] || "col-health health-none";
       const detail = skuCoverage.details.get(month) || {};
       const status = detail.status || "gray";
       const totalCount = Number.isFinite(detail.totalCount) ? detail.totalCount : 0;
@@ -1414,7 +1431,7 @@ function buildDashboardHTML(state) {
         .filter(Boolean)
         .join(" · ");
       return `
-        <th scope="col" class="${columnClass}">
+        <th scope="col" class="${columnClass} ${healthClass}">
           <button type="button" class="coverage-indicator coverage-${status} coverage-button" data-coverage-month="${escapeHtml(month)}" title="${escapeHtml(tooltip)}" aria-label="Reifegrad ${escapeHtml(formatMonthLabel(month))}: ${escapeHtml(statusLabel)}"></button>
           <span>${escapeHtml(formatMonthLabel(month))}</span>
         </th>
@@ -1450,6 +1467,7 @@ function buildDashboardHTML(state) {
       const valueCells = nonEmptyMonths
         .map((month, idx) => {
           const columnClass = monthColumnClass(idx);
+          const healthClass = monthHealthClasses[idx] || "col-health health-none";
           const cell = row.values[month] || { value: 0, warnings: [] };
           const showBalanceWarning = row.id === "balance" && skuCoverage.coverage.get(month) !== "green";
           const balanceWarning = showBalanceWarning
@@ -1473,7 +1491,7 @@ function buildDashboardHTML(state) {
           const isClickable = row.nav && !formatted.isEmpty;
           const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
           return `
-            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
+            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass} ${healthClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
               ${balanceWarning}
               <span class="${formatted.isEmpty ? "cell-empty" : ""} ${isPaidValue ? "cell-paid-value" : ""}">${formatted.text}</span>
               ${actualMarker}
