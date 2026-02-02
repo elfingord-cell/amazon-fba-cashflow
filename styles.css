@@ -629,6 +629,129 @@ th:hover > .col-resizer::after{opacity:1;}
 .po-filename-suggestion{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace; font-size:11px; color:var(--ink); word-break:break-word;}
 .row-focus{background:rgba(59,194,167,0.08);}
 .row-focus td{background:rgba(59,194,167,0.12);}
+
+.month-header-label{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+
+.coverage-detail-trigger{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  border:1px solid rgba(120,130,140,0.35);
+  background:#fff;
+  color:#1f2a32;
+  font-size:11px;
+  font-weight:700;
+  line-height:1;
+  cursor:pointer;
+}
+
+.coverage-detail-trigger:hover{
+  border-color:rgba(59,194,167,0.8);
+  color:#007e6d;
+}
+
+.dashboard-side-panel-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(15,23,32,0.45);
+  z-index:9999;
+  display:flex;
+  justify-content:flex-end;
+}
+
+.dashboard-side-panel{
+  width:min(520px, 92vw);
+  height:100%;
+  background:#fff;
+  box-shadow:-8px 0 24px rgba(15,23,32,0.2);
+  display:flex;
+  flex-direction:column;
+}
+
+.dashboard-side-panel-header{
+  padding:18px 20px;
+  border-bottom:1px solid #e2e6ea;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.dashboard-side-panel-header h3{
+  margin:0 0 6px;
+  font-size:18px;
+}
+
+.dashboard-side-panel-subtitle{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  color:#57606a;
+  font-size:13px;
+}
+
+.dashboard-side-panel-body{
+  padding:16px 20px 24px;
+  overflow:auto;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+.dashboard-side-panel-section h4{
+  margin:0 0 10px;
+  font-size:14px;
+}
+
+.health-check-list{
+  list-style:none;
+  padding:0;
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+.health-check-item{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:10px 12px;
+  border-radius:10px;
+  border:1px solid #eef1f4;
+  background:#fafbfc;
+}
+
+.health-check-item.is-fail{
+  border-color:rgba(244,63,94,0.3);
+  background:rgba(244,63,94,0.08);
+}
+
+.health-check-item.is-pass{
+  border-color:rgba(34,197,94,0.25);
+  background:rgba(34,197,94,0.08);
+}
+
+.health-check-item .detail-check{
+  font-size:16px;
+  line-height:1;
+  margin-top:2px;
+}
+
+.health-check-body{
+  flex:1;
+}
+
+.health-check-meta{
+  margin-top:6px;
+}
 .po-invoice-link{display:flex; flex-direction:column; gap:6px; padding:10px 12px; border:1px solid rgba(15,27,45,0.1); border-radius:12px; background:#f8fafc;}
 .po-invoice-link input{width:100%; padding:8px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; background:#fff;}
 .po-invoice-actions{display:flex; gap:8px; flex-wrap:wrap;}

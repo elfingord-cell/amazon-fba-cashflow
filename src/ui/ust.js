@@ -530,6 +530,15 @@ export default function renderVat(el) {
     result.months = result.months;
     root.innerHTML = "";
     renderTable(root, result);
+    const query = window.__routeQuery || {};
+    if (query.month) {
+      const row = root.querySelector(`.vat-preview-row[data-month="${query.month}"]`);
+      if (row) {
+        row.classList.add("row-focus");
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+        window.__routeQuery = {};
+      }
+    }
   }
 
   refresh();

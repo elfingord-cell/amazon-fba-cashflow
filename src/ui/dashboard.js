@@ -59,6 +59,8 @@ const COVERAGE_LEVELS = {
   },
 };
 
+const MONTH_HEALTH_CHECK_LIMIT = 20;
+
 const PO_CONFIG = {
   entityLabel: "PO",
   numberField: "poNo",
@@ -664,6 +666,155 @@ function computeSkuCoverage(state, months) {
     perSkuCoverage,
     groups: buildCategoryGroups(activeSkus, categories),
   };
+}
+
+function buildSkuMeta(items, formatter) {
+  const list = Array.isArray(items) ? items : [];
+  const labels = list
+    .map(formatter)
+    .filter(Boolean)
+    .slice(0, MONTH_HEALTH_CHECK_LIMIT);
+  const extraCount = Math.max(0, list.length - labels.length);
+  return labels.length ? { skus: labels, extraCount } : null;
+}
+
+function buildMonthHealthResults(state, months, coverageData) {
+  const fixcosts = Array.isArray(state?.fixcosts) ? state.fixcosts : [];
+  const fixcostInstances = expandFixcostInstances(state, { months });
+  const fixcostByMonth = new Map();
+  fixcostInstances.forEach(inst => {
+    if (!inst?.month) return;
+    if (!fixcostByMonth.has(inst.month)) fixcostByMonth.set(inst.month, []);
+    fixcostByMonth.get(inst.month).push(inst);
+  });
+  const vatDefaults = state?.settings?.vatPreview || {};
+  const hasVatDefaults = [
+    vatDefaults.deShareDefault,
+    vatDefaults.feeRateDefault,
+    vatDefaults.fixInputDefault,
+  ].some(value => value != null && String(value).trim() !== "");
+  const vatMonthOverrides = state?.vatPreviewMonths || {};
+  const results = new Map();
+
+  months.forEach(month => {
+    const detail = coverageData.details.get(month) || {};
+    const totalCount = detail.totalCount || 0;
+    const cashInPresent = Boolean(detail.cashInPresent);
+    const missingForecast = Array.isArray(detail.missingForecastSkus) ? detail.missingForecastSkus : [];
+    const dohFailing = Array.isArray(detail.dohFailingSkus) ? detail.dohFailingSkus : [];
+    const forecastComplete = totalCount === 0 ? true : missingForecast.length === 0;
+    const dohComplete = totalCount === 0 ? true : dohFailing.length === 0;
+    const fixcostPresent = fixcosts.length > 0 || (fixcostByMonth.get(month) || []).length > 0;
+    const vatMonth = vatMonthOverrides[month] || {};
+    const vatConfigured = hasVatDefaults || [
+      vatMonth.deShare,
+      vatMonth.feeRateOfGross,
+      vatMonth.fixInputVat,
+    ].some(value => value != null && String(value).trim() !== "");
+    const forwarded = Boolean(detail.forwarded);
+
+    const checks = [
+      {
+        id: "MISSING_AMAZON_PAYOUTS",
+        label: "Amazon-Auszahlungen",
+        description: "Amazon-Auszahlungen für den Monat sind erfasst.",
+        severity: "blocker",
+        passed: cashInPresent,
+        deeplink: {
+          label: "Zu Eingaben",
+          href: `#eingaben?month=${month}`,
+        },
+      },
+      {
+        id: "MISSING_ABSATZPROGNOSE_ACTIVE_SKUS",
+        label: "Absatzprognose aktive SKUs",
+        description: "Für alle aktiven SKUs existiert eine Absatzprognose.",
+        severity: "major",
+        passed: forecastComplete,
+        deeplink: {
+          label: "Zur Absatzprognose",
+          href: `#forecast?month=${month}`,
+        },
+        meta: buildSkuMeta(missingForecast, item => item.alias || item.sku),
+      },
+      {
+        id: "INVENTORY_BELOW_SAFETY_STOCK",
+        label: "Bestand vs. Safety-Stock",
+        description: "Safety-Stock wird für aktive SKUs eingehalten.",
+        severity: "major",
+        passed: dohComplete,
+        deeplink: {
+          label: "Zum Inventory",
+          href: `#inventory?month=${month}`,
+        },
+        meta: buildSkuMeta(dohFailing, item => {
+          const name = item.alias || item.sku;
+          if (!name) return null;
+          const doh = Number.isFinite(item.doh) ? formatInt(item.doh) : "—";
+          const safety = Number.isFinite(item.safetyDays) ? formatInt(item.safetyDays) : "—";
+          return `${name} (DOH ${doh} < ${safety})`;
+        }),
+      },
+      {
+        id: "MISSING_FIXED_COSTS",
+        label: "Fixkosten",
+        description: "Fixkosten für den Monat sind gepflegt.",
+        severity: "minor",
+        passed: fixcostPresent,
+        deeplink: {
+          label: "Zu Fixkosten",
+          href: `#fixkosten?month=${month}`,
+        },
+      },
+      {
+        id: "MISSING_TAXES_CONFIG",
+        label: "USt-Vorschau Einstellungen",
+        description: "USt-Vorschau ist für den Monat konfiguriert.",
+        severity: "minor",
+        passed: vatConfigured,
+        deeplink: {
+          label: "Zur USt-Vorschau",
+          href: `#ust?month=${month}`,
+        },
+      },
+    ];
+
+    if (forwarded) {
+      checks.unshift({
+        id: "PREVIOUS_MONTH_UNSUFFICIENT",
+        label: "Vorheriger Monat unzureichend",
+        description: detail.forwardReason || "Ein früherer Monat ist unzureichend.",
+        severity: "blocker",
+        passed: false,
+      });
+    }
+
+    let statusKey = "gray";
+    if (totalCount === 0) {
+      statusKey = "gray";
+    } else if (forwarded) {
+      statusKey = "red";
+    } else if (!cashInPresent) {
+      statusKey = "red";
+    } else if ((detail.overallCoverage || 0) >= COVERAGE_THRESHOLDS.full) {
+      statusKey = "green";
+    } else if ((detail.overallCoverage || 0) >= COVERAGE_THRESHOLDS.wide) {
+      statusKey = "light";
+    } else if ((detail.overallCoverage || 0) >= COVERAGE_THRESHOLDS.partial) {
+      statusKey = "orange";
+    } else {
+      statusKey = "red";
+    }
+
+    results.set(month, {
+      monthKey: month,
+      status: COVERAGE_LEVELS[statusKey]?.label || "—",
+      statusKey,
+      checks,
+    });
+  });
+
+  return results;
 }
 
 function computePlannedPayoutByMonth(state, months) {
@@ -1366,6 +1517,7 @@ function buildDashboardHTML(state) {
   }
   const baseMonths = getVisibleMonths(allMonths, dashboardState.range, currentMonth);
   const skuCoverage = computeSkuCoverage(state, baseMonths);
+  const monthHealthResults = buildMonthHealthResults(state, baseMonths, skuCoverage);
 
   const rowsBoth = buildDashboardRows(state, baseMonths, {
     limitBalanceToGreen: dashboardState.limitBalanceToGreen,
@@ -1402,8 +1554,8 @@ function buildDashboardHTML(state) {
     `;
 
   const monthHealthClasses = nonEmptyMonths.map(month => {
-    const status = skuCoverage.details.get(month)?.status || "gray";
-    return coverageStatusToHealthClass(status);
+    const statusKey = monthHealthResults.get(month)?.statusKey || "gray";
+    return coverageStatusToHealthClass(statusKey);
   });
 
   const headerCells = nonEmptyMonths
@@ -1411,9 +1563,14 @@ function buildDashboardHTML(state) {
       const columnClass = monthColumnClass(idx);
       const healthClass = monthHealthClasses[idx] || "col-health health-none";
       const detail = skuCoverage.details.get(month) || {};
-      const status = detail.status || "gray";
+      const healthResult = monthHealthResults.get(month) || {};
+      const status = healthResult.statusKey || detail.status || "gray";
       const totalCount = Number.isFinite(detail.totalCount) ? detail.totalCount : 0;
       const statusLabel = COVERAGE_LEVELS[status]?.label || "—";
+      const hasDetails = status !== "green";
+      const detailsButton = hasDetails
+        ? `<button type="button" class="coverage-detail-trigger" data-health-month="${escapeHtml(month)}" aria-label="Details für ${escapeHtml(formatMonthLabel(month))}">i</button>`
+        : "";
       const missingForecast = detail.missingForecastSkus || [];
       const missingPreview = missingForecast.slice(0, 5);
       const missingRest = missingForecast.length > 5 ? ` +${missingForecast.length - 5} weitere` : "";
@@ -1433,7 +1590,10 @@ function buildDashboardHTML(state) {
       return `
         <th scope="col" class="${columnClass} ${healthClass}">
           <button type="button" class="coverage-indicator coverage-${status} coverage-button" data-coverage-month="${escapeHtml(month)}" title="${escapeHtml(tooltip)}" aria-label="Reifegrad ${escapeHtml(formatMonthLabel(month))}: ${escapeHtml(statusLabel)}"></button>
-          <span>${escapeHtml(formatMonthLabel(month))}</span>
+          <span class="month-header-label">
+            ${escapeHtml(formatMonthLabel(month))}
+            ${detailsButton}
+          </span>
         </th>
       `;
     })
@@ -1745,6 +1905,76 @@ function buildCoverageDetailModalHTML(month, detail) {
   `;
 }
 
+function buildMonthHealthPanelHTML(result) {
+  if (!result) return "";
+  const statusKey = result.statusKey || "gray";
+  const statusLabel = result.status || COVERAGE_LEVELS[statusKey]?.label || "—";
+  const monthLabel = formatMonthLabel(result.monthKey);
+  const failedChecks = (result.checks || []).filter(check => !check.passed);
+  const passedChecks = (result.checks || []).filter(check => check.passed);
+  const failedList = failedChecks.length
+    ? failedChecks.map(check => {
+      const meta = check.meta?.skus?.length
+        ? `<div class="health-check-meta muted small">Betroffene SKUs: ${escapeHtml(check.meta.skus.join(", "))}${check.meta.extraCount ? ` +${check.meta.extraCount} weitere` : ""}</div>`
+        : "";
+      const deeplink = check.deeplink?.href
+        ? `<a class="btn ghost btn-small" href="${escapeHtml(check.deeplink.href)}" data-panel-link>${escapeHtml(check.deeplink.label || "Öffnen")}</a>`
+        : "";
+      return `
+        <li class="health-check-item is-fail">
+          <span class="detail-check">✕</span>
+          <div class="health-check-body">
+            <strong>${escapeHtml(check.label)}</strong>
+            <div class="muted small">${escapeHtml(check.description || "")}</div>
+            ${meta}
+          </div>
+          ${deeplink}
+        </li>
+      `;
+    }).join("")
+    : `<li class="muted small">Keine offenen Punkte.</li>`;
+
+  const passedList = passedChecks.length
+    ? passedChecks.map(check => `
+      <li class="health-check-item is-pass">
+        <span class="detail-check">✓</span>
+        <div class="health-check-body">
+          <strong>${escapeHtml(check.label)}</strong>
+        </div>
+      </li>
+    `).join("")
+    : `<li class="muted small">Keine erfüllten Kriterien.</li>`;
+
+  return `
+    <div class="dashboard-side-panel" role="dialog" aria-modal="true" aria-label="Monats-Details">
+      <header class="dashboard-side-panel-header">
+        <div>
+          <h3>Monat ${escapeHtml(monthLabel)} – Status: ${escapeHtml(statusLabel)}</h3>
+          <div class="dashboard-side-panel-subtitle">
+            <span class="coverage-indicator coverage-${statusKey}"></span>
+            <span>${escapeHtml(COVERAGE_LEVELS[statusKey]?.detail || "")}</span>
+          </div>
+        </div>
+        <button type="button" class="btn ghost" data-close aria-label="Schließen">✕</button>
+      </header>
+      <div class="dashboard-side-panel-body">
+        <section class="dashboard-side-panel-section">
+          <h4>Fehlt / To-Dos</h4>
+          <ul class="health-check-list">
+            ${failedList}
+          </ul>
+        </section>
+        <section class="dashboard-side-panel-section">
+          <h4>Erfüllt</h4>
+          <ul class="health-check-list">
+            ${passedList}
+          </ul>
+        </section>
+      </div>
+    </div>
+  `;
+}
+
   // --- Globaler Tooltip an <body> (nicht clipbar) ---
   function ensureGlobalTip(){
     let el = document.getElementById("global-chart-tip");
@@ -1809,6 +2039,42 @@ function attachDashboardHandlers(root, state) {
       if (month) params.set("month", month);
       location.hash = params.toString() ? `${route}?${params.toString()}` : route;
       closeModal();
+    });
+
+    document.addEventListener("keydown", handleKeydown);
+  };
+
+  const openSidePanel = (panelHtml) => {
+    const existing = document.querySelector(".dashboard-side-panel-backdrop");
+    if (existing) existing.remove();
+    const backdrop = document.createElement("div");
+    backdrop.className = "dashboard-side-panel-backdrop";
+    backdrop.innerHTML = panelHtml;
+    document.body.appendChild(backdrop);
+
+    const closePanel = () => {
+      document.removeEventListener("keydown", handleKeydown);
+      backdrop.remove();
+    };
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") closePanel();
+    };
+
+    backdrop.addEventListener("click", (event) => {
+      const closeBtn = event.target.closest("[data-close]");
+      if (closeBtn) {
+        closePanel();
+        return;
+      }
+      if (event.target === backdrop) {
+        closePanel();
+        return;
+      }
+      const link = event.target.closest("[data-panel-link]");
+      if (link) {
+        closePanel();
+      }
     });
 
     document.addEventListener("keydown", handleKeydown);
@@ -1900,6 +2166,21 @@ function attachDashboardHandlers(root, state) {
       const coverageData = computeSkuCoverage(state, months);
       const detail = coverageData.details.get(month) || {};
       openModal(buildCoverageDetailModalHTML(month, detail));
+    });
+  });
+
+  root.querySelectorAll(".coverage-detail-trigger").forEach(button => {
+    button.addEventListener("click", () => {
+      const month = button.getAttribute("data-health-month");
+      if (!month) return;
+      const months = Array.from(root.querySelectorAll("[data-coverage-month]"))
+        .map(el => el.getAttribute("data-coverage-month"))
+        .filter(Boolean);
+      const coverageData = computeSkuCoverage(state, months);
+      const monthHealthResults = buildMonthHealthResults(state, months, coverageData);
+      const result = monthHealthResults.get(month);
+      if (!result) return;
+      openSidePanel(buildMonthHealthPanelHTML(result));
     });
   });
 
