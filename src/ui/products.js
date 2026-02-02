@@ -21,6 +21,7 @@ import { evaluateProductCompleteness } from "../lib/productCompleteness.js";
 import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
+import { computeAbcClassification } from "../domain/abcClassification.js";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -78,7 +79,16 @@ const ABC_SORT_ORDER = { A: 0, B: 1, C: 2 };
 
 function resolveAbcClass(value) {
   const normalized = String(value || "").trim().toUpperCase();
-  return ABC_CLASSES.includes(normalized) ? normalized : "B";
+  return ABC_CLASSES.includes(normalized) ? normalized : null;
+}
+
+function formatAbcDisplay(value) {
+  return resolveAbcClass(value) || "—";
+}
+
+function abcSortOrder(value) {
+  const resolved = resolveAbcClass(value);
+  return resolved ? ABC_SORT_ORDER[resolved] : ABC_CLASSES.length;
 }
 
 function formatInputNumber(value, decimals = 2) {
@@ -222,7 +232,16 @@ function buildHistoryTable(state, sku) {
 
   function renderProducts(root) {
   const state = loadAppState();
-  const products = getProductsSnapshot();
+  const abcSnapshot = computeAbcClassification(state);
+  const products = getProductsSnapshot().map(product => {
+    const skuKey = String(product?.sku || "").trim().toLowerCase();
+    const abcInfo = skuKey ? abcSnapshot.bySku.get(skuKey) : null;
+    return {
+      ...product,
+      abcClass: abcInfo?.abcClass ?? null,
+      abcMeta: abcInfo || null,
+    };
+  });
   const productIssues = validateProducts(products, state.settings || {});
   const productIssuesBySku = new Map();
   productIssues.forEach(issue => {
@@ -614,7 +633,7 @@ function buildHistoryTable(state, sku) {
     if (sortMode === "abc") {
       categoryMap.forEach((items) => {
         items.sort((a, b) => {
-          const diff = ABC_SORT_ORDER[resolveAbcClass(a.abcClass)] - ABC_SORT_ORDER[resolveAbcClass(b.abcClass)];
+          const diff = abcSortOrder(a.abcClass) - abcSortOrder(b.abcClass);
           if (diff) return diff;
           return String(a.alias || a.sku || "").localeCompare(String(b.alias || b.sku || ""));
         });
@@ -639,7 +658,7 @@ function buildHistoryTable(state, sku) {
     const state = loadAppState();
     let product = existing
       ? { ...existing }
-      : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null, abcClass: "B" };
+      : { sku: "", alias: "", supplierId: "", status: "active", tags: [], template: null, abcClass: null };
     const draftForm = useDraftForm(product, { key: product.sku ? `product:${product.sku}` : "product:new", enableDraftCache: true });
     product = draftForm.draft;
     const dirtyGuard = useDirtyGuard(() => draftForm.isDirty, "Ungespeicherte Änderungen verwerfen?");
@@ -662,9 +681,7 @@ function buildHistoryTable(state, sku) {
       createEl("option", { value: "active", selected: product.status !== "inactive" }, ["Aktiv"]),
       createEl("option", { value: "inactive", selected: product.status === "inactive" }, ["Inaktiv"]),
     ]);
-    const abcSelect = createEl("select", {}, [
-      ...ABC_CLASSES.map(option => createEl("option", { value: option }, [option])),
-    ]);
+    const abcDisplay = createEl("input", { value: formatAbcDisplay(product.abcClass), disabled: true });
     const categorySelect = (() => {
       const select = createEl("select");
       select.append(createEl("option", { value: "" }, ["Ohne Kategorie"]));
@@ -780,7 +797,7 @@ function buildHistoryTable(state, sku) {
     const supplierLabel = createEl("label", {}, ["Supplier", supplierInput]);
     const categoryLabel = createEl("label", {}, ["Kategorie", categorySelect]);
     const statusLabel = createEl("label", {}, ["Status", statusSelect]);
-    const abcLabel = createEl("label", {}, ["ABC Klassifizierung", abcSelect]);
+    const abcLabel = createEl("label", {}, ["ABC Klassifizierung", abcDisplay]);
     const tagsLabel = createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]);
     const avgSellingPriceLabel = createEl("label", {}, ["Ø VK-Preis (Brutto)", avgSellingPriceInput]);
     const sellerboardMarginLabel = createEl("label", {}, ["Sellerboard Marge (%)", sellerboardMarginInput]);
@@ -1111,7 +1128,7 @@ function buildHistoryTable(state, sku) {
       supplierInput.value = draft.supplierId || "";
       statusSelect.value = draft.status || "active";
       categorySelect.value = draft.categoryId || "";
-      abcSelect.value = resolveAbcClass(draft.abcClass);
+      abcDisplay.value = formatAbcDisplay(product.abcClass);
       tagsInput.value = (draft.tags || []).join(", ");
       avgSellingPriceInput.value = draft.avgSellingPriceGrossEUR != null
         ? formatInputNumber(parseDeNumber(draft.avgSellingPriceGrossEUR), 2)
@@ -1273,7 +1290,7 @@ function buildHistoryTable(state, sku) {
     registerRequiredTarget("categoryId", categoryLabel, categorySelect);
     registerRequiredTarget("moqUnits", moqLabel, moqInput);
     registerRequiredTarget("productionLeadTimeDaysDefault", productionLeadTimeLabel, productionLeadTimeInput);
-    registerSuggestedTarget("avgSellingPriceGrossEUR", avgSellingPriceLabel, avgSellingPriceInput);
+    registerRequiredTarget("avgSellingPriceGrossEUR", avgSellingPriceLabel, avgSellingPriceInput);
     registerSuggestedTarget("sellerboardMarginPct", sellerboardMarginLabel, sellerboardMarginInput);
     registerSuggestedTarget("landedUnitCostEur", landedUnitCostLabel, landedUnitCostInput);
     Object.keys(fieldRules).forEach(key => validateField(key));
@@ -1307,7 +1324,6 @@ function buildHistoryTable(state, sku) {
         supplierId: supplierInput.value.trim(),
         categoryId: categorySelect.value.trim() || null,
         status: statusSelect.value,
-        abcClass: abcSelect.value,
         tags: tagsInput.value
           .split(",")
           .map(tag => tag.trim())
@@ -1566,7 +1582,7 @@ function buildHistoryTable(state, sku) {
             ? createEl("span", { class: "badge muted" }, ["inaktiv"])
             : createEl("span", { class: "badge" }, ["aktiv"]);
         case "abcClass":
-          return resolveAbcClass(product.abcClass);
+          return formatAbcDisplay(product.abcClass);
         case "completeness":
           return renderCompletenessBadge(product);
         case "moqUnits":
@@ -1761,7 +1777,7 @@ function buildHistoryTable(state, sku) {
         { value: "active", label: "Aktiv" },
         { value: "inactive", label: "Inaktiv" },
       ], width: "110px", className: "col-status" },
-      { key: "abcClass", label: "ABC", type: "select", options: ABC_CLASSES.map(option => ({ value: option, label: option })), width: "80px", className: "col-abc" },
+      { key: "abcClass", label: "ABC", type: "display", width: "80px", className: "col-abc" },
       { key: "completeness", label: "Vollständigkeit", type: "display", width: "160px", className: "col-completeness" },
       { key: "avgSellingPriceGrossEUR", label: "Ø VK-Preis (Brutto)", type: "number", decimals: 2, width: "150px", className: "col-amount" },
       { key: "sellerboardMarginPct", label: "Sellerboard Marge (%)", type: "number", decimals: 2, width: "140px", className: "col-short" },
@@ -1808,7 +1824,7 @@ function buildHistoryTable(state, sku) {
         return product.categoryId || "";
       }
       if (field.key === "abcClass") {
-        return resolveAbcClass(product.abcClass);
+        return formatAbcDisplay(product.abcClass);
       }
       if (field.key === "completeness") {
         return getCompleteness(product);
@@ -2091,9 +2107,6 @@ function buildHistoryTable(state, sku) {
           sellerboardMarginPct: original.sellerboardMarginPct ?? null,
           originalSku: original.sku,
         };
-        if (typeof original.abcClass !== "undefined") {
-          payload.abcClass = resolveAbcClass(original.abcClass);
-        }
         Object.entries(edits).forEach(([key, value]) => {
           if (key.startsWith("template.")) {
             const fieldKey = key.replace("template.", "");

@@ -138,8 +138,6 @@ function buildForecastExport(state) {
 
 // ---- Render ---------------------------------------------------------------
 export async function render(root){
-  const importWarnings = root.__importWarnings || null;
-  root.__importWarnings = null;
   let s = loadState();
   // Fallback-Struktur
   s.settings  = s.settings  || { startMonth:"2025-02", horizonMonths:18, openingBalance:"50.000,00" };
@@ -164,14 +162,9 @@ export async function render(root){
   const clean = buildCleanJson(s);
   const pretty = JSON.stringify(clean, null, 2);
 
-  const warningBanner = importWarnings?.abcInvalidSkus?.length
-    ? `<div class="banner warning">ABC Klassifizierung ungültig – auf "B" gesetzt für ${importWarnings.abcInvalidSkus.length} Produkte: ${esc(importWarnings.abcInvalidSkus.slice(0, 6).join(", "))}${importWarnings.abcInvalidSkus.length > 6 ? " …" : ""}</div>`
-    : "";
-
   root.innerHTML = `
     <section class="card">
       <h2>Export / Import</h2>
-      ${warningBanner}
 
       <div class="row" style="gap:8px; flex-wrap:wrap">
         <button id="btn-dl" class="btn${canDownload?'':' disabled'}" title="${canDownload?'':'Bitte Fehler beheben, dann exportieren.'}" ${canDownload ? '' : 'disabled aria-disabled="true"'}>
@@ -238,9 +231,6 @@ export async function render(root){
       // Soft-merge + speichern
       window.dispatchEvent(new CustomEvent("remote-sync:local-import"));
       saveState(state);
-      if (warnings?.abcInvalidSkus?.length) {
-        root.__importWarnings = warnings;
-      }
       // Info & Reload der View
       alert("Import übernommen.");
       render(root);

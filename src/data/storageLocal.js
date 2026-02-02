@@ -4,7 +4,6 @@ import { parseDeNumber } from "../lib/dataHealth.js";
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 export const LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
 const CURRENCIES = ["EUR", "USD", "CNY"];
-const ABC_CLASSES = ["A", "B", "C"];
 
 function parseEuro(value) {
   if (value == null) return 0;
@@ -19,27 +18,6 @@ function formatEuro(value) {
     : "0,00";
 }
 
-function normalizeAbcClass(value, fallback = null) {
-  const normalized = String(value || "").trim().toUpperCase();
-  if (!normalized) return fallback;
-  return ABC_CLASSES.includes(normalized) ? normalized : fallback;
-}
-
-function normalizeImportedAbcClasses(products = []) {
-  const invalidSkus = [];
-  products.forEach(product => {
-    if (!product || typeof product !== "object") return;
-    if (!Object.prototype.hasOwnProperty.call(product, "abcClass")) return;
-    const normalized = normalizeAbcClass(product.abcClass);
-    if (!normalized) {
-      product.abcClass = "B";
-      invalidSkus.push(String(product.sku || product.id || "unbekannt"));
-      return;
-    }
-    product.abcClass = normalized;
-  });
-  return invalidSkus;
-}
 
 const defaults = {
   settings: {
@@ -695,7 +673,6 @@ function migrateProducts(state) {
         productionLeadTimeDaysDefault: Number.isFinite(Number(prod.productionLeadTimeDaysDefault))
           ? Number(prod.productionLeadTimeDaysDefault)
           : (Number.isFinite(Number(base.productionLeadTimeDaysDefault)) ? Number(base.productionLeadTimeDaysDefault) : null),
-        abcClass: normalizeAbcClass(prod.abcClass ?? base.abcClass),
         template: normaliseTemplate(prod.template || base.template),
         createdAt: prod.createdAt || base.createdAt || now,
         updatedAt: prod.updatedAt || now,
@@ -822,8 +799,6 @@ function normaliseProductInput(input) {
   const avgSellingPriceGrossEUR = parseNumber(input.avgSellingPriceGrossEUR ?? input.avgSellingPriceGrossEur ?? null);
   const sellerboardMarginRaw = parseNumber(input.sellerboardMarginPct ?? input.sellerboardMargin ?? null);
   const sellerboardMarginPct = Number.isFinite(sellerboardMarginRaw) ? clampPercent(sellerboardMarginRaw) : null;
-  const hasAbcClass = Object.prototype.hasOwnProperty.call(input, "abcClass");
-  const abcClass = hasAbcClass ? normalizeAbcClass(input.abcClass) : null;
   return {
     sku,
     alias,
@@ -847,8 +822,6 @@ function normaliseProductInput(input) {
     productionLeadTimeDaysDefault: Number.isFinite(productionLeadTimeDaysDefault) ? productionLeadTimeDaysDefault : null,
     avgSellingPriceGrossEUR: Number.isFinite(avgSellingPriceGrossEUR) ? avgSellingPriceGrossEUR : null,
     sellerboardMarginPct,
-    abcClass,
-    hasAbcClass,
   };
 }
 
@@ -1016,8 +989,7 @@ export function importStateFile(file, cb){
       ensurePayments(json);
       ensureFos(json);
       migrateLegacyOutgoings(json);
-      const abcWarnings = normalizeImportedAbcClasses(json.products || []);
-      cb({ state: json, warnings: { abcInvalidSkus: abcWarnings } });
+      cb({ state: json, warnings: {} });
     } catch (err) {
       cb({ __error: err?.message || 'Ungültige JSON-Datei' });
     }
@@ -1174,7 +1146,6 @@ export function upsertProduct(input){
     target = conflict || null;
   }
 
-  const nextAbc = normalised.hasAbcClass ? (normalised.abcClass || "B") : null;
   if (!target) {
     target = {
       id: `prod-${Math.random().toString(36).slice(2, 9)}`,
@@ -1185,7 +1156,6 @@ export function upsertProduct(input){
       status: normalised.status,
       tags: normalised.tags,
       template: normalised.template,
-      abcClass: nextAbc || "B",
       moqUnits: normalised.moqUnits,
       safetyStockDohOverride: normalised.safetyStockDohOverride,
       foCoverageDohOverride: normalised.foCoverageDohOverride,
@@ -1208,9 +1178,6 @@ export function upsertProduct(input){
     target.status = normalised.status;
     target.tags = normalised.tags;
     target.template = normalised.template;
-    if (normalised.hasAbcClass) {
-      target.abcClass = nextAbc || "B";
-    }
     target.moqUnits = normalised.moqUnits;
     target.safetyStockDohOverride = normalised.safetyStockDohOverride;
     target.foCoverageDohOverride = normalised.foCoverageDohOverride;
