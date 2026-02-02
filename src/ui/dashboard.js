@@ -91,6 +91,12 @@ function safeValue(value, fallback) {
   return value == null ? fallback : value;
 }
 
+function monthIndex(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym || "")) return null;
+  const [y, m] = ym.split("-").map(Number);
+  return y * 12 + (m - 1);
+}
+
 function formatEur0(value) {
   if (value == null) return "—";
   const num = Number(value);
