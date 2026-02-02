@@ -3,15 +3,16 @@ import { loadAppState, getViewValue, setViewValue } from "../storage/store.js";
 import { parseEuro, expandFixcostInstances } from "../domain/cashflow.js";
 import { buildPaymentRows, getSettings } from "./orderEditorFactory.js";
 import { computeVatPreview } from "../domain/vatPreview.js";
+import {
+  DASHBOARD_RANGE_OPTIONS,
+  currentMonthKey,
+  getMonthlyBuckets,
+  getVisibleMonths,
+} from "../utils/monthRange.js";
 
 const RANGE_STORAGE_KEY = "dashboard_month_range";
 const RANGE_DEFAULT = "NEXT_6";
-const RANGE_OPTIONS = [
-  { value: "NEXT_6", label: "Nächste 6 Monate", count: 6 },
-  { value: "NEXT_12", label: "Nächste 12 Monate", count: 12 },
-  { value: "NEXT_24", label: "Nächste 24 Monate", count: 24 },
-  { value: "ALL", label: "Alles", count: null },
-];
+const RANGE_OPTIONS = DASHBOARD_RANGE_OPTIONS;
 
 function isValidRange(value) {
   return RANGE_OPTIONS.some(option => option.value === value);
@@ -131,48 +132,10 @@ function formatInt(value) {
   return Math.round(value).toLocaleString("de-DE", { maximumFractionDigits: 0 });
 }
 
-function monthIndex(ym) {
-  if (!/^\d{4}-\d{2}$/.test(ym || "")) return null;
-  const [y, m] = ym.split("-").map(Number);
-  return y * 12 + (m - 1);
-}
-
-function currentMonthKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function addMonths(ym, delta) {
   const [y, m] = ym.split("-").map(Number);
   const date = new Date(y, (m - 1) + delta, 1);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function getMonthlyBuckets(startMonth, endMonth) {
-  if (!startMonth || !endMonth) return [];
-  const startIndex = monthIndex(startMonth);
-  const endIndex = monthIndex(endMonth);
-  if (startIndex == null || endIndex == null) return [];
-  if (endIndex < startIndex) return [];
-  const months = [];
-  for (let idx = startIndex; idx <= endIndex; idx += 1) {
-    const y = Math.floor(idx / 12);
-    const m = (idx % 12) + 1;
-    months.push(`${y}-${String(m).padStart(2, "0")}`);
-  }
-  return months;
-}
-
-function getVisibleMonths(allMonths, range, nowMonth) {
-  if (!Array.isArray(allMonths) || !allMonths.length) return [];
-  const sortedMonths = allMonths.slice().sort();
-  if (range === "ALL") return sortedMonths;
-  const option = RANGE_OPTIONS.find(item => item.value === range);
-  const count = option && Number.isFinite(option.count) ? option.count : 0;
-  if (!count) return sortedMonths;
-  const startIndex = sortedMonths.findIndex(month => month >= nowMonth);
-  if (startIndex === -1) return [];
-  return sortedMonths.slice(startIndex, startIndex + count);
 }
 
 function getDisplayLabel(plannedTotal, actualTotal) {

@@ -1,6 +1,7 @@
 import { createEmptyState } from "../data/storageLocal.js";
 import { loadAppState, commitAppState, getLastCommitSummary, countDrafts } from "../storage/store.js";
 import { orderEditorUtils } from "./orderEditorFactory.js";
+import { computeAbcClassification } from "../domain/abcClassification.js";
 
 function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -540,6 +541,8 @@ function buildDemoState(){
 export async function render(root){
   const commitInfo = getLastCommitSummary();
   const draftCount = countDrafts();
+  const state = loadAppState();
+  const abcSnapshot = computeAbcClassification(state);
   root.innerHTML = `
     <section class="card">
       <h2>Debug / Werkzeuge</h2>
@@ -557,9 +560,25 @@ export async function render(root){
         <div>Drafts (lokal): <strong>${draftCount}</strong></div>
       </div>
     </section>`;
+  const debugPanel = document.createElement("section");
+  debugPanel.className = "card";
+  debugPanel.innerHTML = `
+      <h3>ABC Debug</h3>
+      <p class="muted">Kontrolle der ABC-Berechnung auf Basis der Absatzprognose (nächste 6 Monate).</p>
+      <div class="row" style="gap:12px; flex-wrap:wrap; align-items:flex-end;">
+        <label style="display:flex; flex-direction:column; gap:6px;">
+          SKU
+          <select id="abc-debug-sku"></select>
+        </label>
+      </div>
+      <div id="abc-debug-output" class="muted" style="margin-top:12px;"></div>
+    `;
+  root.append(debugPanel);
 
   const status = root.querySelector("#status");
   const undoBtn = root.querySelector("#undo");
+  const skuSelect = root.querySelector("#abc-debug-sku");
+  const output = root.querySelector("#abc-debug-output");
   let lastSnapshot = null;
 
   function updateStatus(msg){
@@ -577,6 +596,42 @@ export async function render(root){
   function updateUndoState(){
     if (!undoBtn) return;
     undoBtn.disabled = !lastSnapshot;
+  }
+
+  function formatValue(value, options = {}) {
+    if (!Number.isFinite(value)) return "—";
+    const formatter = new Intl.NumberFormat("de-DE", {
+      maximumFractionDigits: options.maximumFractionDigits ?? 2,
+    });
+    return formatter.format(value);
+  }
+
+  function renderAbcDebug(sku) {
+    if (!output) return;
+    if (!sku) {
+      output.textContent = "Keine SKU ausgewählt.";
+      return;
+    }
+    const info = abcSnapshot.bySku.get(String(sku).trim().toLowerCase());
+    if (!info) {
+      output.textContent = "Keine Daten verfügbar.";
+      return;
+    }
+    output.innerHTML = `
+      <div>VK-Preis (Brutto): <strong>${formatValue(info.vkPriceGross)}</strong></div>
+      <div>Forecast Units (6M): <strong>${formatValue(info.units6m, { maximumFractionDigits: 0 })}</strong></div>
+      <div>Umsatz 6M: <strong>${formatValue(info.revenue6m)}</strong></div>
+      <div>ABC: <strong>${info.abcClass || "—"}</strong></div>
+    `;
+  }
+
+  if (skuSelect) {
+    const skus = (state.products || [])
+      .map(product => String(product?.sku || "").trim())
+      .filter(Boolean);
+    skuSelect.innerHTML = skus.map(sku => `<option value="${escapeHtml(sku)}">${escapeHtml(sku)}</option>`).join("");
+    skuSelect.addEventListener("change", () => renderAbcDebug(skuSelect.value));
+    renderAbcDebug(skuSelect.value);
   }
 
   root.querySelector("#seed").addEventListener("click", ()=>{

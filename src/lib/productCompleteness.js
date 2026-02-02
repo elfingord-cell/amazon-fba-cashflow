@@ -157,8 +157,8 @@ export function evaluateProductCompleteness(product, ctx = {}) {
   }
 
   const avgSellingPrice = toNumber(product?.avgSellingPriceGrossEUR);
-  if (avgSellingPrice == null) {
-    suggestedMissing.push(buildFieldStatus("avgSellingPriceGrossEUR", "Ø VK-Preis (Brutto)", {}));
+  if (avgSellingPrice == null || avgSellingPrice <= 0) {
+    blockingMissing.push(buildFieldStatus("avgSellingPriceGrossEUR", "Ø VK-Preis (Brutto)", {}));
   }
   const sellerboardMargin = toNumber(product?.sellerboardMarginPct);
   if (sellerboardMargin == null) {
