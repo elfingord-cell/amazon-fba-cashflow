@@ -1987,7 +1987,12 @@ function renderTimeline(timelineNode, summaryNode, record, settings, cnyBannerNo
   timelineNode.append(track);
 }
 
-function renderMsTable(container, record, config, onChange, focusInfo, settings) {
+function renderMsTable(container, record, config, onChange, focusInfo, settings, helpers = {}) {
+  const showToast = typeof helpers.showToast === "function" ? helpers.showToast : (message) => {
+    if (typeof window !== "undefined" && window.alert) {
+      window.alert(message);
+    }
+  };
   container.innerHTML = "";
   container.append(el("div", { class: "muted", style: "margin-bottom:6px" }, ["Zahlungsmeilensteine & Importkosten"]));
 
@@ -2576,60 +2581,55 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       };
 
       try {
-        draftForm.setDraft((current) => {
-          const base = current || {};
-          const nextPaymentDrafts = { ...(base.paymentDrafts || {}) };
-          if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
-            delete nextPaymentDrafts[initialPaymentId];
-          }
-          nextPaymentDrafts[paymentPayload.id] = paymentPayload;
+        const base = record || {};
+        const nextPaymentDrafts = { ...(base.paymentDrafts || {}) };
+        if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
+          delete nextPaymentDrafts[initialPaymentId];
+        }
+        nextPaymentDrafts[paymentPayload.id] = paymentPayload;
 
-          const currentLog = base.paymentLog || {};
-          const nextPaymentLog = { ...currentLog };
-          const removedIds = new Set();
-          if (initialPaymentId) {
-            Object.entries(currentLog).forEach(([eventId, log]) => {
-              if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
-                removedIds.add(eventId);
-              }
-            });
-          }
-          removedIds.forEach(eventId => {
-            const log = currentLog?.[eventId] || {};
-            nextPaymentLog[eventId] = {
-              ...log,
-              status: "open",
-              paidDate: null,
-              paymentId: null,
-              amountActualEur: null,
-              method: null,
-              payer: null,
-              note: null,
-            };
+        const currentLog = base.paymentLog || {};
+        const nextPaymentLog = { ...currentLog };
+        const removedIds = new Set();
+        if (initialPaymentId) {
+          Object.entries(currentLog).forEach(([eventId, log]) => {
+            if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
+              removedIds.add(eventId);
+            }
           });
-
-          validation.allocations.forEach(entry => {
-            const log = currentLog?.[entry.eventId] || {};
-            const paymentInternalId = log.paymentInternalId || `payrow-${Math.random().toString(36).slice(2, 9)}`;
-            nextPaymentLog[entry.eventId] = {
-              ...log,
-              paymentInternalId,
-              status: "paid",
-              paidDate: paymentPayload.paidDate,
-              paymentId: paymentPayload.id,
-              amountActualEur: entry.actual,
-              method: paymentPayload.method,
-              payer: paymentPayload.payer,
-              note: paymentPayload.note,
-            };
-          });
-
-          return {
-            ...base,
-            paymentDrafts: nextPaymentDrafts,
-            paymentLog: nextPaymentLog,
+        }
+        removedIds.forEach(eventId => {
+          const log = currentLog?.[eventId] || {};
+          nextPaymentLog[eventId] = {
+            ...log,
+            status: "open",
+            paidDate: null,
+            paymentId: null,
+            amountActualEur: null,
+            method: null,
+            payer: null,
+            note: null,
           };
         });
+
+        validation.allocations.forEach(entry => {
+          const log = currentLog?.[entry.eventId] || {};
+          const paymentInternalId = log.paymentInternalId || `payrow-${Math.random().toString(36).slice(2, 9)}`;
+          nextPaymentLog[entry.eventId] = {
+            ...log,
+            paymentInternalId,
+            status: "paid",
+            paidDate: paymentPayload.paidDate,
+            paymentId: paymentPayload.id,
+            amountActualEur: entry.actual,
+            method: paymentPayload.method,
+            payer: paymentPayload.payer,
+            note: paymentPayload.note,
+          };
+        });
+
+        base.paymentDrafts = nextPaymentDrafts;
+        base.paymentLog = nextPaymentLog;
 
         console.info("[po-payment-modal] payment marked as paid", {
           eventCount: validation.allocations.length,
@@ -2637,8 +2637,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           amountActual: validation.parsedActual,
         });
 
-        editing = draftForm.draft;
-        onAnyChange();
+        onChange();
         closeModal(modal);
       } catch (error) {
         console.error("[po-payment-modal] save failed", error);
@@ -4185,7 +4184,7 @@ export function renderOrderModule(root, config) {
     ensurePaymentLog(editing);
     renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
     updateTimelineOverrides(computeTimeline(editing, settings));
-    renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings);
+    renderMsTable(msZone, editing, config, onAnyChange, focusInfo, settings, { showToast });
     updatePreview(settings);
     updateLogisticsCells(itemsZone, estimate);
     updateSaveEnabled();
@@ -4277,7 +4276,7 @@ export function renderOrderModule(root, config) {
     const timeline = computeTimeline(editing, settings);
     renderTimeline(timelineZone, timelineSummary, editing, settings, cnyBanner);
     updateTimelineOverrides(timeline);
-    renderMsTable(msZone, editing, config, onAnyChange, null, settings);
+    renderMsTable(msZone, editing, config, onAnyChange, null, settings, { showToast });
     updatePreview(settings);
     updateSaveEnabled();
     isDirty = false;
