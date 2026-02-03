@@ -986,11 +986,14 @@ function buildInvoiceKeyEvents(selectedEvents) {
 }
 
 function allocatePayment(total, selectedEvents) {
-  const plannedValues = selectedEvents.map(evt => Number(evt.plannedEur || 0));
+  const plannedValues = selectedEvents.map(evt => {
+    const planned = Number(evt.plannedEur);
+    return Number.isFinite(planned) ? planned : 0;
+  });
   const sumPlanned = plannedValues.reduce((sum, value) => sum + value, 0);
-  if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) return null;
+  if (!Number.isFinite(total) || !selectedEvents.length) return null;
   const allocations = plannedValues.map((planned, index) => {
-    const share = planned / sumPlanned;
+    const share = sumPlanned > 0 ? planned / sumPlanned : 1 / selectedEvents.length;
     const raw = total * share;
     return {
       eventId: selectedEvents[index].id,
@@ -2468,10 +2471,10 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         return { valid: false, reason: "Bitte mindestens ein Event auswählen." };
       }
       const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
-      const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
-      if (!Number.isFinite(sumPlanned)) {
-        return { valid: false, reason: "Summe der geplanten Beträge muss gültig sein." };
-      }
+      const sumPlanned = selectedEvents.reduce((sum, evt) => {
+        const planned = Number(evt.plannedEur);
+        return sum + (Number.isFinite(planned) ? planned : 0);
+      }, 0);
       const actualRaw = actualInput.value.trim();
       const parsedActual = actualRaw ? parseMoneyInput(actualRaw) : sumPlanned;
       if (!Number.isFinite(parsedActual)) {
@@ -2484,17 +2487,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         return { valid: false, reason: "Ist-Betrag darf nicht 0 sein, wenn ein Soll-Betrag vorhanden ist." };
       }
 
-      let allocations = null;
-      if (sumPlanned > 0) {
-        allocations = allocatePayment(parsedActual, selectedEvents);
-      } else if (parsedActual === 0) {
-        allocations = selectedEvents.map(evt => ({
-          eventId: evt.id,
-          planned: 0,
-          raw: 0,
-          actual: 0,
-        }));
-      }
+      const allocations = allocatePayment(parsedActual, selectedEvents);
       if (!allocations) {
         return { valid: false, reason: "Konnte die Ist-Beträge nicht aufteilen." };
       }
