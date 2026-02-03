@@ -130,6 +130,27 @@ function getLatestSnapshot(state) {
   return snapshots.length ? snapshots[snapshots.length - 1] : null;
 }
 
+export function resolveSafetyStockDays(product, state) {
+  const override = Number(product?.safetyStockDohOverride);
+  if (Number.isFinite(override)) return Math.round(override);
+  const defaultValue = Number(state?.settings?.safetyStockDohDefault ?? state?.inventory?.settings?.safetyDays);
+  return Number.isFinite(defaultValue) ? Math.round(defaultValue) : null;
+}
+
+export function resolveCoverageDays(product, state) {
+  const override = Number(product?.foCoverageDohOverride);
+  if (Number.isFinite(override)) return Math.round(override);
+  const defaultValue = Number(state?.settings?.foCoverageDohDefault);
+  return Number.isFinite(defaultValue) ? Math.round(defaultValue) : null;
+}
+
+export function getProjectionSafetyClass({ endAvailable, safetyUnits }) {
+  if (!Number.isFinite(endAvailable)) return "";
+  if (endAvailable <= 0) return "safety-negative";
+  if (Number.isFinite(safetyUnits) && endAvailable < safetyUnits) return "safety-low";
+  return "";
+}
+
 export function computeInventoryProjection({
   state,
   months,
@@ -166,12 +187,7 @@ export function computeInventoryProjection({
     let prevAvailable = Number.isFinite(startAvailable) ? startAvailable : 0;
     let previousUnknown = false;
     const monthMap = new Map();
-    const safetyDays = Number(
-      product?.safetyStockDohOverride
-        ?? state?.settings?.safetyStockDohDefault
-        ?? state?.inventory?.settings?.safetyDays
-        ?? 60,
-    );
+    const safetyDays = resolveSafetyStockDays(product, state);
 
     monthKeys.forEach(month => {
       const forecastUnits = getForecastUnits(state, sku, month);
@@ -191,10 +207,10 @@ export function computeInventoryProjection({
       const doh = Number.isFinite(endAvailable) && Number.isFinite(dailyDemand) && dailyDemand > 0
         ? Math.max(0, Math.round(endAvailable / dailyDemand))
         : null;
-      const safetyUnits = Number.isFinite(forecastUnits)
+      const safetyUnits = Number.isFinite(forecastUnits) && Number.isFinite(safetyDays)
         ? Math.round((forecastUnits / daysInMonth(month)) * safetyDays)
         : null;
-      const passesDoh = Number.isFinite(doh) && doh >= safetyDays;
+      const passesDoh = Number.isFinite(doh) && Number.isFinite(safetyDays) && doh >= safetyDays;
       const passesUnits = Number.isFinite(endAvailable) && Number.isFinite(safetyUnits) && endAvailable >= safetyUnits;
       const isCovered = normalizedMode === "doh" ? passesDoh : passesUnits;
 
