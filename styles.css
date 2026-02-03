@@ -1355,6 +1355,8 @@ tr.auto-ms.disabled select{opacity:0.8;}
 
 .po-date-picker{display:flex; gap:8px; align-items:center;}
 .form-error{color:#d32f2f; font-size:12px; margin-top:4px; min-height:16px;}
+.input-error{border-color:#d32f2f !important; box-shadow:0 0 0 1px rgba(211,47,47,0.35); border-radius:6px;}
+.po-payment-event-list.input-error{padding:6px; border:1px solid #d32f2f; border-radius:6px;}
 .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
 .po-sticky-footer{position:sticky; bottom:0; background:var(--card-bg,#fff); padding:12px 0; margin-top:12px; border-top:1px solid #e0e0e0;}
 .po-sticky-actions{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}

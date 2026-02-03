@@ -12,6 +12,12 @@ import { createDataTable } from "./components/dataTable.js";
 import { makeIssue, validateAll } from "../lib/dataHealth.js";
 import { openBlockingModal } from "./dataHealthUi.js";
 import { formatLocalizedNumber, parseLocalizedNumber, parseMoneyInput, formatMoneyDE } from "./utils/numberFormat.js";
+import {
+  allocatePayment,
+  isHttpUrl,
+  normalizeUrl,
+  validatePaymentModalState,
+} from "./utils/paymentValidation.js";
 import { addDays as addDaysUtcDate, overlapDays, parseISODate as parseISODateUtil } from "../lib/dateUtils.js";
 import { getSuggestedInvoiceFilename } from "./utils/invoiceFilename.js";
 import { computeFreightEstimate } from "../domain/costing/freightEstimate.js";
@@ -891,27 +897,6 @@ function safeFilenameChunk(value) {
   return base.replace(/\s+/g, "-");
 }
 
-function normalizePaymentId(value) {
-  if (!value) return null;
-  const raw = String(value).trim();
-  if (!raw) return null;
-  const normalized = raw.replace(/^(pay-?)+/i, "");
-  return `pay-${normalized}`;
-}
-
-function buildPaymentId() {
-  return normalizePaymentId(`pay-${Math.random().toString(36).slice(2, 9)}`);
-}
-
-function normalizeUrl(value) {
-  return String(value || "").trim();
-}
-
-function isHttpUrl(value) {
-  if (!value) return false;
-  return /^https?:\/\//i.test(value);
-}
-
 function buildPaymentMap(payments = []) {
   const map = new Map();
   (payments || []).forEach(payment => {
@@ -983,35 +968,6 @@ function buildInvoiceKeyEvents(selectedEvents) {
   const unique = Array.from(new Set(labels));
   if (unique.length <= 2) return unique.join("+");
   return `${unique.slice(0, 2).join("+")}+more`;
-}
-
-function allocatePayment(total, selectedEvents) {
-  const plannedValues = selectedEvents.map(evt => {
-    const planned = Number(evt.plannedEur);
-    return Number.isFinite(planned) ? planned : 0;
-  });
-  const sumPlanned = plannedValues.reduce((sum, value) => sum + value, 0);
-  if (!Number.isFinite(total) || !selectedEvents.length) return null;
-  const allocations = plannedValues.map((planned, index) => {
-    const share = sumPlanned > 0 ? planned / sumPlanned : 1 / selectedEvents.length;
-    const raw = total * share;
-    return {
-      eventId: selectedEvents[index].id,
-      planned,
-      raw,
-      actual: Math.round(raw * 100) / 100,
-    };
-  });
-  const roundedSum = allocations.reduce((sum, entry) => sum + entry.actual, 0);
-  const remainder = Math.round((total - roundedSum) * 100) / 100;
-  if (Math.abs(remainder) > 0) {
-    let target = allocations[allocations.length - 1];
-    if (allocations.length > 1) {
-      target = allocations.reduce((best, entry) => (entry.planned > best.planned ? entry : best), target);
-    }
-    target.actual = Math.round((target.actual + remainder) * 100) / 100;
-  }
-  return allocations;
 }
 
 function buildPaymentRows(record, config, settings, paymentRecords = []) {
@@ -2445,6 +2401,11 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     updateLinkButtons();
 
     const formError = el("div", { class: "form-error po-payment-error" }, []);
+    const eventsError = el("div", { class: "form-error po-payment-field-error", dataset: { field: "events" } }, []);
+    const actualError = el("div", { class: "form-error po-payment-field-error", dataset: { field: "actual" } }, []);
+    const paymentIdError = el("div", { class: "form-error po-payment-field-error", dataset: { field: "paymentId" } }, []);
+    const invoiceError = el("div", { class: "form-error po-payment-field-error", dataset: { field: "invoiceUrl" } }, []);
+    const folderError = el("div", { class: "form-error po-payment-field-error", dataset: { field: "folderUrl" } }, []);
 
     function getModalState() {
       return {
@@ -2467,58 +2428,16 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     }
 
     function computeValidation() {
-      if (!selectedIds.size) {
-        return { valid: false, reason: "Bitte mindestens ein Event auswählen." };
-      }
       const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
-      const sumPlanned = selectedEvents.reduce((sum, evt) => {
-        const planned = Number(evt.plannedEur);
-        return sum + (Number.isFinite(planned) ? planned : 0);
-      }, 0);
-      const actualRaw = actualInput.value.trim();
-      const parsedActual = actualRaw ? parseMoneyInput(actualRaw) : sumPlanned;
-      if (!Number.isFinite(parsedActual)) {
-        return { valid: false, reason: "Bitte einen gültigen Ist-Betrag eingeben." };
-      }
-      if (parsedActual < 0) {
-        return { valid: false, reason: "Ist-Betrag darf nicht negativ sein." };
-      }
-      if (parsedActual === 0 && sumPlanned > 0) {
-        return { valid: false, reason: "Ist-Betrag darf nicht 0 sein, wenn ein Soll-Betrag vorhanden ist." };
-      }
-
-      const allocations = allocatePayment(parsedActual, selectedEvents);
-      if (!allocations) {
-        return { valid: false, reason: "Konnte die Ist-Beträge nicht aufteilen." };
-      }
-
-      const invoiceUrl = normalizeUrl(invoiceUrlInput.value);
-      if (invoiceUrl && !isHttpUrl(invoiceUrl)) {
-        return { valid: false, reason: "Invoice URL muss mit http:// oder https:// beginnen." };
-      }
-      const folderUrl = normalizeUrl(folderUrlInput.value);
-      if (folderUrl && !isHttpUrl(folderUrl)) {
-        return { valid: false, reason: "Folder URL muss mit http:// oder https:// beginnen." };
-      }
-
-      const requestedPaymentId = normalizePaymentId(paymentIdInput.value) || (paymentRecord?.id || buildPaymentId());
-      if (paymentRecord?.id && requestedPaymentId !== paymentRecord.id) {
-        const duplicate = mergedPayments.find(entry => entry?.id === requestedPaymentId);
-        if (duplicate) {
-          return { valid: false, reason: "Diese Payment-ID ist bereits vergeben." };
-        }
-      }
-
-      return {
-        valid: true,
+      return validatePaymentModalState({
         selectedEvents,
-        sumPlanned,
-        parsedActual,
-        allocations,
-        invoiceUrl,
-        folderUrl,
-        requestedPaymentId,
-      };
+        actualRaw: actualInput.value.trim(),
+        invoiceUrl: normalizeUrl(invoiceUrlInput.value),
+        folderUrl: normalizeUrl(folderUrlInput.value),
+        paymentRecord,
+        paymentIdValue: paymentIdInput.value,
+        mergedPayments,
+      });
     }
 
     const form = el("div", { class: "po-payment-form" }, [
@@ -2526,6 +2445,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       el("div", { class: "po-payment-debug muted" }, ["Status: bereit"]),
       el("label", {}, ["Events (mehrere möglich)"]),
       eventList,
+      eventsError,
       selectedSummary,
       el("label", {}, ["Bezahlt am"]),
       paidDateInput,
@@ -2535,12 +2455,16 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       paidBySelect,
       el("label", {}, ["Ist bezahlt (EUR)"]),
       actualInput,
+      actualError,
       el("label", {}, ["Transfer / Payment-ID"]),
       paymentIdInput,
+      paymentIdError,
       el("label", {}, ["Invoice (GDrive URL)"]),
       el("div", { style: "display:flex;gap:8px;align-items:center;" }, [invoiceUrlInput, invoiceBtn]),
+      invoiceError,
       el("label", {}, ["Invoice Folder (GDrive URL)"]),
       el("div", { style: "display:flex;gap:8px;align-items:center;" }, [folderUrlInput, folderBtn]),
+      folderError,
       el("label", {}, ["Aufteilung (Preview)"]),
       allocationTable,
       el("label", {}, ["Notiz"]),
@@ -2552,6 +2476,20 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
 
     const isNewPayment = !initialPaymentId && !paymentRecord;
 
+    function applyFieldErrors(fieldErrors = {}) {
+      eventsError.textContent = fieldErrors.events || "";
+      actualError.textContent = fieldErrors.actual || "";
+      paymentIdError.textContent = fieldErrors.paymentId || "";
+      invoiceError.textContent = fieldErrors.invoiceUrl || "";
+      folderError.textContent = fieldErrors.folderUrl || "";
+
+      eventList.classList.toggle("input-error", Boolean(fieldErrors.events));
+      actualInput.classList.toggle("input-error", Boolean(fieldErrors.actual));
+      paymentIdInput.classList.toggle("input-error", Boolean(fieldErrors.paymentId));
+      invoiceUrlInput.classList.toggle("input-error", Boolean(fieldErrors.invoiceUrl));
+      folderUrlInput.classList.toggle("input-error", Boolean(fieldErrors.folderUrl));
+    }
+
     function updateSaveState() {
       const validation = computeValidation();
       const isDirty = !deepEqual(getModalState(), initialState);
@@ -2559,15 +2497,16 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       const canSave = (isDirty || isNewPayment || canForceSave) && validation.valid;
       saveBtn.disabled = !canSave;
       if (!validation.valid) {
-        saveHelper.textContent = "Bitte Pflichtfelder ausfüllen";
+        saveHelper.textContent = validation.reason || "Bitte Pflichtfelder ausfüllen";
+        setFormError(validation.reason || "Bitte Pflichtfelder ausfüllen");
       } else if (!isDirty && !isNewPayment && !canForceSave) {
         saveHelper.textContent = "Keine Änderungen";
+        setFormError("");
       } else {
         saveHelper.textContent = "";
-      }
-      if (validation.valid) {
         setFormError("");
       }
+      applyFieldErrors(validation.fieldErrors || {});
       return { isDirty, validation };
     }
 
@@ -2608,7 +2547,13 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         return;
       }
       if (!validation.valid) {
+        console.warn("[po-payment-modal] validation failed", {
+          reason: validation.reason || null,
+          selectedCount: validation.selectedEvents?.length || 0,
+          sumPlanned: validation.sumPlanned || 0,
+        });
         setFormError(`Speichern nicht möglich: ${validation.reason}`);
+        applyFieldErrors(validation.fieldErrors || {});
         updateSaveState();
         return;
       }
@@ -2626,64 +2571,75 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         invoiceFolderDriveUrl: validation.folderUrl || "",
       };
 
-      draftForm.setDraft((current) => {
-        const base = current || {};
-        const nextPaymentDrafts = { ...(base.paymentDrafts || {}) };
-        if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
-          delete nextPaymentDrafts[initialPaymentId];
-        }
-        nextPaymentDrafts[paymentPayload.id] = paymentPayload;
+      try {
+        draftForm.setDraft((current) => {
+          const base = current || {};
+          const nextPaymentDrafts = { ...(base.paymentDrafts || {}) };
+          if (initialPaymentId && initialPaymentId !== paymentPayload.id) {
+            delete nextPaymentDrafts[initialPaymentId];
+          }
+          nextPaymentDrafts[paymentPayload.id] = paymentPayload;
 
-        const currentLog = base.paymentLog || {};
-        const nextPaymentLog = { ...currentLog };
-        const removedIds = new Set();
-        if (initialPaymentId) {
-          Object.entries(currentLog).forEach(([eventId, log]) => {
-            if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
-              removedIds.add(eventId);
-            }
+          const currentLog = base.paymentLog || {};
+          const nextPaymentLog = { ...currentLog };
+          const removedIds = new Set();
+          if (initialPaymentId) {
+            Object.entries(currentLog).forEach(([eventId, log]) => {
+              if (log?.paymentId === initialPaymentId && !selectedIds.has(eventId)) {
+                removedIds.add(eventId);
+              }
+            });
+          }
+          removedIds.forEach(eventId => {
+            const log = currentLog?.[eventId] || {};
+            nextPaymentLog[eventId] = {
+              ...log,
+              status: "open",
+              paidDate: null,
+              paymentId: null,
+              amountActualEur: null,
+              method: null,
+              payer: null,
+              note: null,
+            };
           });
-        }
-        removedIds.forEach(eventId => {
-          const log = currentLog?.[eventId] || {};
-          nextPaymentLog[eventId] = {
-            ...log,
-            status: "open",
-            paidDate: null,
-            paymentId: null,
-            amountActualEur: null,
-            method: null,
-            payer: null,
-            note: null,
+
+          validation.allocations.forEach(entry => {
+            const log = currentLog?.[entry.eventId] || {};
+            const paymentInternalId = log.paymentInternalId || `payrow-${Math.random().toString(36).slice(2, 9)}`;
+            nextPaymentLog[entry.eventId] = {
+              ...log,
+              paymentInternalId,
+              status: "paid",
+              paidDate: paymentPayload.paidDate,
+              paymentId: paymentPayload.id,
+              amountActualEur: entry.actual,
+              method: paymentPayload.method,
+              payer: paymentPayload.payer,
+              note: paymentPayload.note,
+            };
+          });
+
+          return {
+            ...base,
+            paymentDrafts: nextPaymentDrafts,
+            paymentLog: nextPaymentLog,
           };
         });
 
-        validation.allocations.forEach(entry => {
-          const log = currentLog?.[entry.eventId] || {};
-          const paymentInternalId = log.paymentInternalId || `payrow-${Math.random().toString(36).slice(2, 9)}`;
-          nextPaymentLog[entry.eventId] = {
-            ...log,
-            paymentInternalId,
-            status: "paid",
-            paidDate: paymentPayload.paidDate,
-            paymentId: paymentPayload.id,
-            amountActualEur: entry.actual,
-            method: paymentPayload.method,
-            payer: paymentPayload.payer,
-            note: paymentPayload.note,
-          };
+        console.info("[po-payment-modal] payment marked as paid", {
+          eventCount: validation.allocations.length,
+          sumPlanned: validation.sumPlanned,
+          amountActual: validation.parsedActual,
         });
 
-        return {
-          ...base,
-          paymentDrafts: nextPaymentDrafts,
-          paymentLog: nextPaymentLog,
-        };
-      });
-
-      editing = draftForm.draft;
-      onAnyChange();
-      closeModal(modal);
+        editing = draftForm.draft;
+        onAnyChange();
+        closeModal(modal);
+      } catch (error) {
+        console.error("[po-payment-modal] save failed", error);
+        showToast("Speichern fehlgeschlagen. Bitte erneut versuchen.");
+      }
     });
 
     const modal = buildModal({
