@@ -166,6 +166,7 @@ function getMergedPayments(record) {
 
 function prepareRecordForDraft(record, settings) {
   const next = safeDeepClone(record || {});
+  ensureMilestoneIds(next);
   normaliseGoodsFields(next, settings);
   ensureAutoEvents(next, settings, next.milestones || []);
   ensurePaymentLog(next);
@@ -883,6 +884,14 @@ function ensurePaymentLog(record) {
   if (!record) return {};
   if (!record.paymentLog || typeof record.paymentLog !== "object") record.paymentLog = {};
   return record.paymentLog;
+}
+
+function ensureMilestoneIds(record) {
+  if (!record || !Array.isArray(record.milestones)) return;
+  record.milestones.forEach((milestone) => {
+    if (!milestone || milestone.id) return;
+    milestone.id = `ms-${Math.random().toString(36).slice(2, 9)}`;
+  });
 }
 
 function safeSupplierShortName(value) {
