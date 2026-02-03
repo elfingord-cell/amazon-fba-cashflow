@@ -29,3 +29,15 @@ test("projection safety class prioritizes red stockout over orange safety", () =
   assert.strictEqual(getProjectionSafetyClass({ endAvailable: 5, safetyUnits: 10 }), "safety-low");
   assert.strictEqual(getProjectionSafetyClass({ endAvailable: 5, safetyUnits: null }), "");
 });
+
+test("defaults apply in DOH mode and orange when below safety days", () => {
+  const product = {};
+  const state = { settings: { safetyStockDohDefault: 60, foCoverageDohDefault: 90 } };
+
+  assert.strictEqual(resolveSafetyStockDays(product, state), 60);
+  assert.strictEqual(resolveCoverageDays(product, state), 90);
+  assert.strictEqual(
+    getProjectionSafetyClass({ projectionMode: "doh", doh: 45, safetyDays: 60 }),
+    "safety-low",
+  );
+});
