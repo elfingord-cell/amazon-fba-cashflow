@@ -2467,9 +2467,6 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       if (!selectedIds.size) {
         return { valid: false, reason: "Bitte mindestens ein Event auswählen." };
       }
-      if (!paidBySelect.value) {
-        return { valid: false, reason: "Bitte Paid by auswählen." };
-      }
       const selectedEvents = allPayments.filter(evt => selectedIds.has(evt.id));
       const sumPlanned = selectedEvents.reduce((sum, evt) => sum + Number(evt.plannedEur || 0), 0);
       if (!Number.isFinite(sumPlanned)) {
@@ -2625,7 +2622,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
         id: validation.requestedPaymentId,
         paidDate: paidDateInput.value || null,
         method: methodSelect.value || null,
-        payer: paidBySelect.value,
+        payer: paidBySelect.value || null,
         currency: "EUR",
         amountActualEurTotal: validation.parsedActual,
         coveredEventIds: validation.allocations.map(entry => entry.eventId),
