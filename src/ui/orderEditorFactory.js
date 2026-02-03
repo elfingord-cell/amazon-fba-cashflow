@@ -2560,13 +2560,16 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     const saveHelper = el("div", { class: "muted po-payment-save-hint" }, []);
     const saveBtn = el("button", { class: "btn", type: "button" }, ["Speichern"]);
 
+    const isNewPayment = !initialPaymentId && !paymentRecord;
+
     function updateSaveState() {
       const validation = computeValidation();
       const isDirty = !deepEqual(getModalState(), initialState);
-      saveBtn.disabled = !isDirty || !validation.valid;
+      const canSave = (isDirty || isNewPayment) && validation.valid;
+      saveBtn.disabled = !canSave;
       if (!validation.valid) {
         saveHelper.textContent = "Bitte Pflichtfelder ausfüllen";
-      } else if (!isDirty) {
+      } else if (!isDirty && !isNewPayment) {
         saveHelper.textContent = "Keine Änderungen";
       } else {
         saveHelper.textContent = "";
@@ -2607,7 +2610,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           allocationsSum,
         });
       }
-      if (!isDirty) {
+      if (!isDirty && !isNewPayment) {
         setFormError("Speichern nicht möglich: Keine Änderungen.");
         updateSaveState();
         return;
