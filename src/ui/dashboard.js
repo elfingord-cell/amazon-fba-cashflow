@@ -435,8 +435,21 @@ function getInventoryCoverageView() {
   const projectionMode = stored?.projectionMode === "doh" ? "doh" : "units";
   return {
     projectionMode,
+    selectedMonth: stored?.selectedMonth || null,
     showSafety: stored?.showSafety !== false,
   };
+}
+
+function getCoverageSnapshot(state, selectedMonth) {
+  const snapshots = (state?.inventory?.snapshots || [])
+    .filter(snap => /^\d{4}-\d{2}$/.test(snap?.month || ""))
+    .slice()
+    .sort((a, b) => String(a.month).localeCompare(String(b.month)));
+  if (selectedMonth) {
+    const match = snapshots.find(snap => snap.month === selectedMonth);
+    if (match) return match;
+  }
+  return snapshots.length ? snapshots[snapshots.length - 1] : null;
 }
 
 function computeSkuCoverage(state, months) {
@@ -446,11 +459,13 @@ function computeSkuCoverage(state, months) {
   const details = new Map();
   const totalCount = activeSkus.length;
   const inventoryView = getInventoryCoverageView();
+  const snapshot = getCoverageSnapshot(state, inventoryView.selectedMonth);
   const activeProducts = (state?.products || []).filter(isProductActive);
   const projection = computeInventoryProjection({
     state,
     months,
     products: activeProducts,
+    snapshot,
     projectionMode: inventoryView.projectionMode,
   });
   const abcBySku = computeAbcClassification(state).bySku;
