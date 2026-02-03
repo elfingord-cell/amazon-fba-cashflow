@@ -2494,7 +2494,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
       const validation = computeValidation();
       const isDirty = !deepEqual(getModalState(), initialState);
       const canForceSave = payment?.status !== "paid";
-      const canSave = (isDirty || isNewPayment || canForceSave) && validation.valid;
+      const canSave = validation.valid;
       saveBtn.disabled = !canSave;
       if (!validation.valid) {
         saveHelper.textContent = validation.reason || "Bitte Pflichtfelder ausfüllen";
@@ -2540,11 +2540,6 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           reason: validation.reason || null,
           allocationsSum,
         });
-      }
-      if (!isDirty && !isNewPayment && !canForceSave) {
-        setFormError("Speichern nicht möglich: Keine Änderungen.");
-        updateSaveState();
-        return;
       }
       if (!validation.valid) {
         console.warn("[po-payment-modal] validation failed", {
