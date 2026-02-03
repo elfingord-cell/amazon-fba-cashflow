@@ -718,6 +718,11 @@ function buildSnapshotExportData({ state, view, snapshot, products, categories, 
   const filtered = filterProductsBySearch(products, view.search);
   const groups = buildCategoryGroups(filtered, categories);
   const inTransitMap = buildInTransitMap(state, asOfDate);
+  const snapshotMap = new Map();
+  (snapshot?.items || []).forEach(item => {
+    const sku = String(item.sku || "").trim();
+    if (sku) snapshotMap.set(sku, item);
+  });
   const rows = [];
   const missingEk = [];
   let totalAmazon = 0;
