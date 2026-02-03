@@ -1,5 +1,7 @@
 import { loadAppState, commitAppState, getViewState, setViewState } from "../storage/store.js";
 import { parseDeNumber } from "../lib/dataHealth.js";
+import { computeAbcClassification } from "../domain/abcClassification.js";
+import { computeInventoryProjection } from "../domain/inventoryProjection.js";
 
 const INVENTORY_VIEW_KEY = "inventory_view_v1";
 
@@ -90,18 +92,24 @@ function formatDateTime(date) {
   return `${datePart} ${timePart}`;
 }
 
-function daysInMonth(monthKey) {
-  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return 30;
-  const [y, m] = monthKey.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
-}
-
 function parseIntegerInput(value) {
   if (value == null || value === "") return { value: 0, isRounded: false };
   const parsed = parseDeNumber(String(value));
   if (!Number.isFinite(parsed)) return { value: 0, isRounded: false };
   const rounded = Math.round(parsed);
   return { value: rounded, isRounded: rounded !== parsed };
+}
+
+function getForecastUnits(state, sku, month) {
+  const normalizedMonth = normalizeMonthKey(month);
+  if (!normalizedMonth) return null;
+  const manual = state?.forecast?.forecastManual?.[sku]?.[normalizedMonth];
+  const manualParsed = parseDeNumber(manual);
+  if (Number.isFinite(manualParsed)) return manualParsed;
+  const imported = state?.forecast?.forecastImport?.[sku]?.[normalizedMonth]?.units;
+  const importParsed = parseDeNumber(imported);
+  if (Number.isFinite(importParsed)) return importParsed;
+  return null;
 }
 
 function formatInt(value) {
@@ -283,43 +291,6 @@ function isFoCountable(fo) {
   const status = String(fo?.status || "").toUpperCase();
   if (status === "CONVERTED" || status === "CANCELLED") return false;
   return true;
-}
-
-function getForecastUnits(state, sku, month) {
-  const normalizedMonth = normalizeMonthKey(month);
-  if (!normalizedMonth) return null;
-  const manual = state?.forecast?.forecastManual?.[sku]?.[normalizedMonth];
-  const manualParsed = parseDeNumber(manual);
-  if (Number.isFinite(manualParsed)) return manualParsed;
-  const imported = state?.forecast?.forecastImport?.[sku]?.[normalizedMonth]?.units;
-  const importParsed = parseDeNumber(imported);
-  if (Number.isFinite(importParsed)) return importParsed;
-  return null;
-}
-
-function buildForecastBySku(state, products, months) {
-  const monthKeys = months
-    .map(month => normalizeMonthKey(month))
-    .filter(Boolean);
-  const forecastBySku = new Map();
-  products.forEach(product => {
-    const sku = String(product?.sku || "").trim();
-    if (!sku) return;
-    const monthMap = new Map();
-    monthKeys.forEach(monthKey => {
-      const value = getForecastUnits(state, sku, monthKey);
-      if (Number.isFinite(value)) monthMap.set(monthKey, value);
-    });
-    forecastBySku.set(sku, monthMap);
-  });
-  return forecastBySku;
-}
-
-function getForecastFromMap(forecastBySku, sku, month) {
-  if (!forecastBySku) return null;
-  const monthKey = normalizeMonthKey(month);
-  if (!monthKey) return null;
-  return forecastBySku.get(sku)?.get(monthKey) ?? null;
 }
 
 function buildForecastGroupTotals(groups, forecastBySku, months) {
@@ -746,11 +717,6 @@ function formatEurExport(value) {
 function buildSnapshotExportData({ state, view, snapshot, products, categories, asOfDate }) {
   const filtered = filterProductsBySearch(products, view.search);
   const groups = buildCategoryGroups(filtered, categories);
-  const snapshotMap = new Map();
-  (snapshot?.items || []).forEach(item => {
-    const sku = String(item.sku || "").trim();
-    if (sku) snapshotMap.set(sku, item);
-  });
   const inTransitMap = buildInTransitMap(state, asOfDate);
   const rows = [];
   const missingEk = [];
@@ -935,7 +901,25 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
 function buildProjectionTable({ state, view, snapshot, products, categories, months }) {
   const filtered = filterProductsBySearch(products, view.search);
   const groups = buildCategoryGroups(filtered, categories);
-  const forecastBySku = buildForecastBySku(state, filtered, months);
+  const forecastBySku = new Map();
+  const projection = computeInventoryProjection({
+    state,
+    months,
+    products: filtered,
+    snapshot,
+    projectionMode: view.projectionMode,
+  });
+  const monthKeys = projection.months;
+  filtered.forEach(product => {
+    const sku = String(product?.sku || "").trim();
+    if (!sku) return;
+    const monthMap = new Map();
+    monthKeys.forEach(monthKey => {
+      const data = projection.perSkuMonth.get(sku)?.get(monthKey);
+      if (Number.isFinite(data?.forecastUnits)) monthMap.set(monthKey, data.forecastUnits);
+    });
+    forecastBySku.set(sku, monthMap);
+  });
   const forecastTotalsByGroup = view.projectionMode === "plan"
     ? buildForecastGroupTotals(groups, forecastBySku, months)
     : new Map();
@@ -945,39 +929,25 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
     if (sku) snapshotMap.set(sku, item);
   });
   const { inboundMap, missingEtaSkus } = buildInboundMap(state);
+  const abcBySku = computeAbcClassification(state).bySku;
 
   const rows = groups.map(group => {
     const collapsed = view.collapsed[group.id];
     const items = group.items.map(product => {
       const sku = String(product.sku || "").trim();
       const alias = product.alias || "—";
-      const snapshotItem = snapshotMap.get(sku);
-      const startAvailable = (snapshotItem?.amazonUnits || 0) + (snapshotItem?.threePLUnits || 0);
-      let prevAvailable = Number.isFinite(startAvailable) ? startAvailable : 0;
-      let previousUnknown = false;
+      const abcClass = abcBySku?.get(sku.toLowerCase())?.abcClass || "—";
       let inboundDetailIndex = 0;
       const cells = months.map(month => {
         const skuInbound = inboundMap.get(sku);
         const inboundEntry = skuInbound ? skuInbound.get(month) : null;
         const inboundUnits = inboundEntry ? inboundEntry.poUnits + inboundEntry.foUnits : 0;
-        const forecastUnits = getForecastFromMap(forecastBySku, sku, month);
-        let endAvailable = null;
-        if (!previousUnknown && Number.isFinite(forecastUnits)) {
-          endAvailable = prevAvailable + inboundUnits - forecastUnits;
-          prevAvailable = endAvailable;
-        } else {
-          previousUnknown = true;
-        }
-        const forecastMissing = !Number.isFinite(forecastUnits) || previousUnknown;
-        const safetyDays = Number(
-          product?.safetyStockDohOverride
-            ?? state.settings?.safetyStockDohDefault
-            ?? state.inventory?.settings?.safetyDays
-            ?? 60,
-        );
-        const safetyUnits = view.showSafety && Number.isFinite(forecastUnits)
-          ? Math.round((forecastUnits / daysInMonth(month)) * safetyDays)
-          : null;
+        const data = projection.perSkuMonth.get(sku)?.get(month);
+        const forecastUnits = data?.forecastUnits ?? null;
+        const endAvailable = data?.endAvailable ?? null;
+        const forecastMissing = data?.forecastMissing ?? true;
+        const safetyDays = data?.safetyDays ?? null;
+        const safetyUnits = Number.isFinite(data?.safetyUnits) ? data.safetyUnits : null;
         const safetyLow = Number.isFinite(endAvailable) && Number.isFinite(safetyUnits) && endAvailable < safetyUnits;
         const safetyNegative = Number.isFinite(endAvailable) && endAvailable < 0;
         const inboundClasses = inboundEntry?.hasPo && inboundEntry?.hasFo
@@ -992,12 +962,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           : safetyLow
             ? "safety-low"
             : "";
-        const dailyDemand = Number.isFinite(forecastUnits) && forecastUnits > 0
-          ? forecastUnits / daysInMonth(month)
-          : null;
-        const dohValue = Number.isFinite(endAvailable) && Number.isFinite(dailyDemand) && dailyDemand > 0
-          ? Math.max(0, Math.round(endAvailable / dailyDemand))
-          : null;
+        const dohValue = data?.doh ?? null;
         const showDoh = view.projectionMode === "doh";
         const showPlan = view.projectionMode === "plan";
         const displayValue = showPlan
@@ -1012,7 +977,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const safetyClassFinal = showPlan
           ? ""
           : showDoh
-            ? (Number.isFinite(dohValue) && dohValue < safetyDays ? "safety-negative" : "")
+            ? (Number.isFinite(dohValue) && Number.isFinite(safetyDays) && dohValue < safetyDays ? "safety-negative" : "")
             : safetyClass;
         const incompleteClass = showPlan ? "" : (forecastMissing ? "incomplete" : "");
         const inboundMarkers = inboundEntry
@@ -1042,6 +1007,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         <tr class="inventory-row ${collapsed ? "is-collapsed" : ""}" data-sku="${escapeHtml(sku)}" data-category="${escapeHtml(group.id)}">
           <td class="inventory-col-sku sticky-cell">${missingEta}${escapeHtml(sku)}</td>
           <td class="inventory-col-alias sticky-cell">${escapeHtml(alias)}</td>
+          <td class="inventory-col-abc sticky-cell">${escapeHtml(abcClass)}</td>
           <td class="inventory-col-category sticky-cell">${escapeHtml(group.name)}</td>
           ${cells}
         </tr>
@@ -1059,7 +1025,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
 
     return `
       <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
-        <th class="inventory-col-sku sticky-cell" colspan="3">
+        <th class="inventory-col-sku sticky-cell" colspan="4">
           <button type="button" class="tree-toggle" data-category="${escapeHtml(group.id)}">${collapsed ? "▸" : "▾"}</button>
           <span class="tree-label">${escapeHtml(group.name)}</span>
           <span class="muted">(${group.items.length})</span>
@@ -1078,12 +1044,13 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
           <th class="inventory-col-alias sticky-header">Alias</th>
+          <th class="inventory-col-abc sticky-header">ABC</th>
           <th class="inventory-col-category sticky-header">Kategorie</th>
           ${monthHeaders}
         </tr>
       </thead>
       <tbody>
-        ${rows || `<tr><td class="muted" colspan="${months.length + 3}">Keine Produkte gefunden.</td></tr>`}
+        ${rows || `<tr><td class="muted" colspan="${months.length + 4}">Keine Produkte gefunden.</td></tr>`}
       </tbody>
     </table>
   `;
