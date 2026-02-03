@@ -2562,11 +2562,12 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     function updateSaveState() {
       const validation = computeValidation();
       const isDirty = !deepEqual(getModalState(), initialState);
-      const canSave = (isDirty || isNewPayment) && validation.valid;
+      const canForceSave = payment?.status !== "paid";
+      const canSave = (isDirty || isNewPayment || canForceSave) && validation.valid;
       saveBtn.disabled = !canSave;
       if (!validation.valid) {
         saveHelper.textContent = "Bitte Pflichtfelder ausfüllen";
-      } else if (!isDirty && !isNewPayment) {
+      } else if (!isDirty && !isNewPayment && !canForceSave) {
         saveHelper.textContent = "Keine Änderungen";
       } else {
         saveHelper.textContent = "";
@@ -2596,6 +2597,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
     saveBtn.addEventListener("click", () => {
       const isDirty = !deepEqual(getModalState(), initialState);
       const validation = computeValidation();
+      const canForceSave = payment?.status !== "paid";
       const allocationsSum = Array.isArray(validation.allocations)
         ? validation.allocations.reduce((sum, entry) => sum + Number(entry.actual || 0), 0)
         : null;
@@ -2607,7 +2609,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings)
           allocationsSum,
         });
       }
-      if (!isDirty && !isNewPayment) {
+      if (!isDirty && !isNewPayment && !canForceSave) {
         setFormError("Speichern nicht möglich: Keine Änderungen.");
         updateSaveState();
         return;
