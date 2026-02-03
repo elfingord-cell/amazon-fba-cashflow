@@ -961,7 +961,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const endAvailable = data?.endAvailable ?? null;
         const forecastMissing = data?.forecastMissing ?? true;
         const safetyUnits = Number.isFinite(data?.safetyUnits) ? data.safetyUnits : null;
-        const safetyNegative = Number.isFinite(endAvailable) && endAvailable <= 0;
+        const safetyDays = Number.isFinite(data?.safetyDays) ? data.safetyDays : null;
         const inboundClasses = inboundEntry?.hasPo && inboundEntry?.hasFo
           ? "inventory-cell inbound-both"
           : inboundEntry?.hasPo
@@ -972,6 +972,9 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const dohValue = data?.doh ?? null;
         const showDoh = view.projectionMode === "doh";
         const showPlan = view.projectionMode === "plan";
+        const safetyNegative = showDoh
+          ? (Number.isFinite(dohValue) && dohValue <= 0)
+          : (Number.isFinite(endAvailable) && endAvailable <= 0);
         const displayValue = showPlan
           ? (Number.isFinite(forecastUnits) ? formatInt(forecastUnits) : "—")
           : forecastMissing
@@ -981,7 +984,15 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
             : showDoh
               ? (dohValue == null ? "—" : formatInt(dohValue))
               : formatInt(endAvailable);
-        const safetyClassFinal = showPlan ? "" : getProjectionSafetyClass({ endAvailable, safetyUnits });
+        const safetyClassFinal = showPlan
+          ? ""
+          : getProjectionSafetyClass({
+            endAvailable,
+            safetyUnits,
+            doh: dohValue,
+            safetyDays,
+            projectionMode: view.projectionMode,
+          });
         const incompleteClass = showPlan ? "" : (forecastMissing ? "incomplete" : "");
         const inboundMarkers = inboundEntry
           ? `

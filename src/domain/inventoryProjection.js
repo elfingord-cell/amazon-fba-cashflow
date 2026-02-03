@@ -131,20 +131,33 @@ function getLatestSnapshot(state) {
 }
 
 export function resolveSafetyStockDays(product, state) {
-  const override = Number(product?.safetyStockDohOverride);
+  const override = parseDeNumber(product?.safetyStockDohOverride);
   if (Number.isFinite(override)) return Math.round(override);
-  const defaultValue = Number(state?.settings?.safetyStockDohDefault ?? state?.inventory?.settings?.safetyDays);
+  const defaultValue = parseDeNumber(state?.settings?.safetyStockDohDefault ?? state?.inventory?.settings?.safetyDays);
   return Number.isFinite(defaultValue) ? Math.round(defaultValue) : null;
 }
 
 export function resolveCoverageDays(product, state) {
-  const override = Number(product?.foCoverageDohOverride);
+  const override = parseDeNumber(product?.foCoverageDohOverride);
   if (Number.isFinite(override)) return Math.round(override);
-  const defaultValue = Number(state?.settings?.foCoverageDohDefault);
+  const defaultValue = parseDeNumber(state?.settings?.foCoverageDohDefault);
   return Number.isFinite(defaultValue) ? Math.round(defaultValue) : null;
 }
 
-export function getProjectionSafetyClass({ endAvailable, safetyUnits }) {
+export function getProjectionSafetyClass({
+  endAvailable,
+  safetyUnits,
+  doh,
+  safetyDays,
+  projectionMode = "units",
+}) {
+  const mode = projectionMode === "doh" ? "doh" : "units";
+  if (mode === "doh") {
+    if (!Number.isFinite(doh)) return "";
+    if (doh <= 0) return "safety-negative";
+    if (Number.isFinite(safetyDays) && doh < safetyDays) return "safety-low";
+    return "";
+  }
   if (!Number.isFinite(endAvailable)) return "";
   if (endAvailable <= 0) return "safety-negative";
   if (Number.isFinite(safetyUnits) && endAvailable < safetyUnits) return "safety-low";
