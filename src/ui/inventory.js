@@ -1,7 +1,12 @@
 import { loadAppState, commitAppState, getViewState, setViewState } from "../storage/store.js";
 import { parseDeNumber } from "../lib/dataHealth.js";
 import { computeAbcClassification } from "../domain/abcClassification.js";
-import { computeInventoryProjection } from "../domain/inventoryProjection.js";
+import {
+  computeInventoryProjection,
+  getProjectionSafetyClass,
+  resolveCoverageDays,
+  resolveSafetyStockDays,
+} from "../domain/inventoryProjection.js";
 
 const INVENTORY_VIEW_KEY = "inventory_view_v1";
 
@@ -942,6 +947,10 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
       const sku = String(product.sku || "").trim();
       const alias = product.alias || "—";
       const abcClass = abcBySku?.get(sku.toLowerCase())?.abcClass || "—";
+      const safetyDaysValue = resolveSafetyStockDays(product, state);
+      const coverageDaysValue = resolveCoverageDays(product, state);
+      const safetyDaysLabel = Number.isFinite(safetyDaysValue) ? formatInt(safetyDaysValue) : "—";
+      const coverageDaysLabel = Number.isFinite(coverageDaysValue) ? formatInt(coverageDaysValue) : "—";
       let inboundDetailIndex = 0;
       const cells = months.map(month => {
         const skuInbound = inboundMap.get(sku);
@@ -951,10 +960,8 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
         const forecastUnits = data?.forecastUnits ?? null;
         const endAvailable = data?.endAvailable ?? null;
         const forecastMissing = data?.forecastMissing ?? true;
-        const safetyDays = data?.safetyDays ?? null;
         const safetyUnits = Number.isFinite(data?.safetyUnits) ? data.safetyUnits : null;
-        const safetyLow = Number.isFinite(endAvailable) && Number.isFinite(safetyUnits) && endAvailable < safetyUnits;
-        const safetyNegative = Number.isFinite(endAvailable) && endAvailable < 0;
+        const safetyNegative = Number.isFinite(endAvailable) && endAvailable <= 0;
         const inboundClasses = inboundEntry?.hasPo && inboundEntry?.hasFo
           ? "inventory-cell inbound-both"
           : inboundEntry?.hasPo
@@ -962,11 +969,6 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
             : inboundEntry?.hasFo
               ? "inventory-cell inbound-fo"
               : "inventory-cell";
-        const safetyClass = safetyNegative
-          ? "safety-negative"
-          : safetyLow
-            ? "safety-low"
-            : "";
         const dohValue = data?.doh ?? null;
         const showDoh = view.projectionMode === "doh";
         const showPlan = view.projectionMode === "plan";
@@ -975,15 +977,11 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           : forecastMissing
             ? "—"
             : safetyNegative
-              ? `0 <span class="inventory-warning-icon">⚠︎</span>`
-              : showDoh
-                ? (dohValue == null ? "—" : formatInt(dohValue))
-                : formatInt(endAvailable);
-        const safetyClassFinal = showPlan
-          ? ""
-          : showDoh
-            ? (Number.isFinite(dohValue) && Number.isFinite(safetyDays) && dohValue < safetyDays ? "safety-negative" : "")
-            : safetyClass;
+            ? `0 <span class="inventory-warning-icon">⚠︎</span>`
+            : showDoh
+              ? (dohValue == null ? "—" : formatInt(dohValue))
+              : formatInt(endAvailable);
+        const safetyClassFinal = showPlan ? "" : getProjectionSafetyClass({ endAvailable, safetyUnits });
         const incompleteClass = showPlan ? "" : (forecastMissing ? "incomplete" : "");
         const inboundMarkers = inboundEntry
           ? `
@@ -1013,7 +1011,8 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           <td class="inventory-col-sku sticky-cell">${missingEta}${escapeHtml(sku)}</td>
           <td class="inventory-col-alias sticky-cell">${escapeHtml(alias)}</td>
           <td class="inventory-col-abc sticky-cell">${escapeHtml(abcClass)}</td>
-          <td class="inventory-col-category sticky-cell">${escapeHtml(group.name)}</td>
+          <td class="inventory-col-safety-days sticky-cell num">${escapeHtml(safetyDaysLabel)}</td>
+          <td class="inventory-col-coverage-days sticky-cell num">${escapeHtml(coverageDaysLabel)}</td>
           ${cells}
         </tr>
       `;
@@ -1030,7 +1029,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
 
     return `
       <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
-        <th class="inventory-col-sku sticky-cell" colspan="4">
+        <th class="inventory-col-sku sticky-cell" colspan="5">
           <button type="button" class="tree-toggle" data-category="${escapeHtml(group.id)}">${collapsed ? "▸" : "▾"}</button>
           <span class="tree-label">${escapeHtml(group.name)}</span>
           <span class="muted">(${group.items.length})</span>
@@ -1050,12 +1049,13 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
           <th class="inventory-col-sku sticky-header">SKU</th>
           <th class="inventory-col-alias sticky-header">Alias</th>
           <th class="inventory-col-abc sticky-header">ABC</th>
-          <th class="inventory-col-category sticky-header">Kategorie</th>
+          <th class="inventory-col-safety-days sticky-header">Sicherheitsbestand in Tagen</th>
+          <th class="inventory-col-coverage-days sticky-header">Bestellreichweite in Tagen</th>
           ${monthHeaders}
         </tr>
       </thead>
       <tbody>
-        ${rows || `<tr><td class="muted" colspan="${months.length + 4}">Keine Produkte gefunden.</td></tr>`}
+        ${rows || `<tr><td class="muted" colspan="${months.length + 5}">Keine Produkte gefunden.</td></tr>`}
       </tbody>
     </table>
   `;
