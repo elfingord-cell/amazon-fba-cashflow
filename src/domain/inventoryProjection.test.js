@@ -21,6 +21,10 @@ test("resolves safety stock and coverage days with overrides and defaults", () =
   const emptyState = { settings: {} };
   assert.strictEqual(resolveSafetyStockDays(fallbackProduct, emptyState), null);
   assert.strictEqual(resolveCoverageDays(fallbackProduct, emptyState), null);
+
+  const zeroState = { settings: { safetyStockDohDefault: 0, foCoverageDohDefault: 0 } };
+  assert.strictEqual(resolveSafetyStockDays(fallbackProduct, zeroState), null);
+  assert.strictEqual(resolveCoverageDays(fallbackProduct, zeroState), null);
 });
 
 test("projection safety class prioritizes red stockout over orange safety", () => {
