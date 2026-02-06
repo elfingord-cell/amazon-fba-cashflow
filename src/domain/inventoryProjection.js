@@ -130,18 +130,27 @@ function getLatestSnapshot(state) {
   return snapshots.length ? snapshots[snapshots.length - 1] : null;
 }
 
+function parsePositiveDays(value) {
+  const parsed = parseDeNumber(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed <= 0) return null;
+  return Math.round(parsed);
+}
+
 export function resolveSafetyStockDays(product, state) {
-  const override = parseDeNumber(product?.safetyStockDohOverride);
-  if (Number.isFinite(override)) return Math.round(override);
-  const defaultValue = parseDeNumber(state?.settings?.safetyStockDohDefault ?? state?.inventory?.settings?.safetyDays);
-  return Number.isFinite(defaultValue) ? Math.round(defaultValue) : null;
+  const override = parsePositiveDays(product?.safetyStockDohOverride);
+  if (override != null) return override;
+  const defaultValue = parsePositiveDays(
+    state?.settings?.safetyStockDohDefault ?? state?.inventory?.settings?.safetyDays,
+  );
+  return defaultValue;
 }
 
 export function resolveCoverageDays(product, state) {
-  const override = parseDeNumber(product?.foCoverageDohOverride);
-  if (Number.isFinite(override)) return Math.round(override);
-  const defaultValue = parseDeNumber(state?.settings?.foCoverageDohDefault);
-  return Number.isFinite(defaultValue) ? Math.round(defaultValue) : null;
+  const override = parsePositiveDays(product?.foCoverageDohOverride);
+  if (override != null) return override;
+  const defaultValue = parsePositiveDays(state?.settings?.foCoverageDohDefault);
+  return defaultValue;
 }
 
 export function getProjectionSafetyClass({
