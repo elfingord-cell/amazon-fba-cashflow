@@ -1502,7 +1502,7 @@ function buildDashboardHTML(state) {
       </div>
       <div class="dashboard-table-wrap">
         <div class="dashboard-table-scroll">
-          <table class="table-compact dashboard-tree-table" role="table">
+          <table class="table-compact dashboard-tree-table" role="table" data-ui-table="true" data-sticky-cols="1">
             <thead>
               <tr>
                 <th scope="col" class="tree-header">Kategorie / Zeile</th>
@@ -1619,7 +1619,7 @@ function buildMonthHealthPanelHTML(result) {
 
   const problemTable = problemRows
     ? `
-      <table class="dashboard-detail-table">
+      <table class="dashboard-detail-table" data-ui-table="true">
         <thead>
           <tr>
             <th>SKU</th>

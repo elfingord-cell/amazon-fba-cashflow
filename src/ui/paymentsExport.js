@@ -522,7 +522,7 @@ export function render(root) {
   const scopeControl = buildSegmented("payment-scope", scopeOptions, "both");
   const formatControl = buildSegmented("payment-format", formatOptions, "csv");
 
-  const table = el("table", { class: "table payments-export-table" });
+  const table = el("table", { class: "table payments-export-table", "data-ui-table": "true" });
   const thead = el("thead", {}, [
     el("tr", {}, [
       el("th", {}, ["Monat"]),
@@ -534,8 +534,8 @@ export function render(root) {
       el("th", {}, ["Status"]),
       el("th", {}, ["Fällig"]),
       el("th", {}, ["Bezahlt"]),
-      el("th", {}, ["Soll EUR"]),
-      el("th", {}, ["Ist EUR"]),
+      el("th", { class: "num" }, ["Soll EUR"]),
+      el("th", { class: "num" }, ["Ist EUR"]),
       el("th", {}, ["Issues"]),
       el("th", {}, ["Payment ID"]),
       el("th", {}, ["Zahler"]),
@@ -583,18 +583,25 @@ export function render(root) {
       const actualValue = hasActual ? fmtEurPlain(row.amountActualEur) : "—";
       const issueText = row.issues?.length ? row.issues.join(" | ") : "";
       const showWarning = row.status === "PAID" && !hasActual;
+      const entityRef = row.entityType === "PO" ? row.poNumber || "—" : row.foNumber || "—";
+      const entityTooltip = [
+        `${row.entityType}: ${entityRef}`,
+        row.skuAliases ? `Alias: ${row.skuAliases}` : "",
+        row.supplierName ? `Supplier: ${row.supplierName}` : "",
+        row.paymentType ? `Payment: ${row.paymentType}` : "",
+      ].filter(Boolean).join("\n");
       tbody.append(el("tr", {}, [
         el("td", {}, [row.month || "—"]),
         el("td", {}, [row.entityType]),
-        el("td", {}, [row.entityType === "PO" ? row.poNumber || "—" : row.foNumber || "—"]),
+        el("td", { "data-ui-tooltip": entityTooltip }, [entityRef]),
         el("td", {}, [row.supplierName]),
-        el("td", {}, [row.skuAliases]),
+        el("td", { "data-ui-tooltip": row.skuAliases || "—" }, [row.skuAliases]),
         el("td", {}, [row.paymentType]),
         el("td", {}, [row.status === "PAID" ? "Bezahlt" : "Offen"]),
         el("td", {}, [fmtDate(row.dueDate)]),
         el("td", {}, [fmtDate(row.paidDate)]),
-        el("td", {}, [fmtEurPlain(row.amountPlannedEur)]),
-        el("td", {}, [
+        el("td", { class: "num" }, [fmtEurPlain(row.amountPlannedEur)]),
+        el("td", { class: "num" }, [
           row.status === "PAID" ? actualValue : "—",
           showWarning ? el("span", { class: "cell-warning", title: "Bezahlt, aber keine Ist-Zahlung zugeordnet" }, ["⚠︎"]) : null,
         ]),

@@ -3,7 +3,15 @@
   "version": "1.0.0",
   "private": true,
   "description": "Amazon FBA Cashflow planning (static) with Netlify Functions storage",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
   "dependencies": {
     "@netlify/blobs": "^8.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.14"
   }
 }

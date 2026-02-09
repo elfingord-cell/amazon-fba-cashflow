@@ -7,6 +7,7 @@ import { initDataHealthUI } from "./ui/dataHealthUi.js";
 import { confirmNavigation } from "./hooks/useDirtyGuard.js";
 import { loadAppState } from "./storage/store.js";
 import { initRemoteSync } from "./sync/remoteSync.js";
+import { hydrateDataTables } from "./ui/components/dataTable.js";
 
 const APP = document.getElementById('app');
 const STATE_KEY = 'amazon_fba_cashflow_v1';
@@ -133,7 +134,15 @@ function renderRoute(forcedHash) {
   const resolvedHash = routes[base] ? base : '#dashboard';
   window.__routeQuery = query;
   const loader = routes[resolvedHash];
-  APP.classList.toggle('app-wide', resolvedHash === '#po' || resolvedHash === '#dashboard' || resolvedHash === '#inventory');
+  APP.classList.toggle(
+    'app-wide',
+    resolvedHash === '#po'
+      || resolvedHash === '#dashboard'
+      || resolvedHash === '#inventory'
+      || resolvedHash === '#forecast'
+      || resolvedHash === '#produkte'
+      || resolvedHash === '#payments-export'
+  );
   setActiveTab(resolvedHash);
   if (typeof APP.__cleanup === 'function') {
     try { APP.__cleanup(); } catch {}
@@ -148,6 +157,7 @@ function renderRoute(forcedHash) {
         if (typeof APP.__cleanup !== 'function' && result && typeof result === 'object' && typeof result.cleanup === 'function') {
           APP.__cleanup = result.cleanup;
         }
+        hydrateDataTables(APP);
       } else {
         console.warn('Route-Modul ohne passenden Export. Verfügbare Keys:', Object.keys(mod || {}));
         APP.innerHTML = `<section class="panel">

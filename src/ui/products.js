@@ -194,7 +194,7 @@ function buildHistoryTable(state, sku) {
   if (!rows.length) {
     return createEl("p", { class: "empty-state" }, ["Keine Bestellhistorie verfügbar."]);
   }
-  const table = createEl("table", { class: "table" });
+  const table = createEl("table", { class: "table", "data-ui-table": "true" });
   const thead = createEl("thead", {}, [
     createEl("tr", {}, [
       createEl("th", {}, ["PO-Nr."]),
@@ -1553,7 +1553,7 @@ function buildHistoryTable(state, sku) {
     ];
     const colCount = columns.length;
     const columnWidths = state?.settings?.productsTableColumns?.list || [];
-    const table = createEl("table", { class: "table table-compact products-list-table" });
+    const table = createEl("table", { class: "table table-compact products-list-table", "data-ui-table": "true" });
     const thead = createEl("thead", {}, [
       createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "", title: col.label }, [col.label])))
     ]);
@@ -1951,7 +1951,7 @@ function buildHistoryTable(state, sku) {
 
     const wrapper = createEl("div", { class: "products-grid" });
     const scroll = createEl("div", { class: "products-grid-scroll" });
-    const table = createEl("table", { class: "products-grid-table" });
+    const table = createEl("table", { class: "products-grid-table", "data-ui-table": "true", "data-sticky-cols": "1" });
     const colgroup = createEl("colgroup");
     const gridWidths = state?.settings?.productsTableColumns?.grid || [];
     fields.forEach((field, index) => {

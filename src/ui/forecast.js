@@ -391,6 +391,8 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   const currentYear = Number(currentMonth.split("-")[0]);
   const table = document.createElement("table");
   table.className = "table-compact dashboard-tree-table forecast-tree-table";
+  table.dataset.uiTable = "true";
+  table.dataset.stickyCols = "1";
 
   const monthColumnClass = (index) => `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
 

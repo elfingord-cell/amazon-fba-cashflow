@@ -677,7 +677,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
     }).join("");
 
   return `
-    <table class="table-compact inventory-table inventory-snapshot-table">
+    <table class="table-compact inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="3">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
@@ -880,7 +880,7 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
         </div>
         <h1>${escapeHtml(title)}</h1>
         <div class="meta">Erstellt am: ${escapeHtml(generatedAt)}</div>
-        <table>
+        <table data-ui-table="true">
           <thead>
             <tr>
               <th>SKU</th>
@@ -1054,14 +1054,14 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
   const monthHeaders = months.map(month => `<th class="num">${formatMonthLabel(month)}</th>`).join("");
 
   return `
-    <table class="table-compact inventory-table inventory-projection-table">
+    <table class="table-compact inventory-table inventory-projection-table" data-ui-table="true" data-sticky-cols="5">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
           <th class="inventory-col-alias sticky-header">Alias</th>
           <th class="inventory-col-abc sticky-header">ABC</th>
-          <th class="inventory-col-safety-days sticky-header">Sicherheitsbestand in Tagen</th>
-          <th class="inventory-col-coverage-days sticky-header">Bestellreichweite in Tagen</th>
+          <th class="inventory-col-safety-days sticky-header" data-ui-tooltip="Sicherheitsbestand in Days on Hand">Safety DOH</th>
+          <th class="inventory-col-coverage-days sticky-header" data-ui-tooltip="Bestellreichweite in Days on Hand">Coverage DOH</th>
           ${monthHeaders}
         </tr>
       </thead>
