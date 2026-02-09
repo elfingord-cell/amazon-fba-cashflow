@@ -111,10 +111,11 @@ a{color:inherit; text-decoration:none}
 label{font-size:12px; color:var(--muted); margin-bottom:4px; display:block}
 input,select,textarea{width:100%; height:40px; border-radius:var(--radius-md); border:1px solid rgba(15,27,45,.12); background:#fff; padding:0 10px}
 input:focus,select:focus,textarea:focus{outline:none; box-shadow:0 0 0 4px var(--ring)}
-table{width:100%; border-collapse:separate; border-spacing:0; background:#fff}
-th,td{padding:12px 14px; border-bottom:1px solid rgba(15,27,45,.08); text-align:left; background:#fff}
-thead th{font-size:12px; color:var(--table-header-text); font-weight:600; position:sticky; top:0; z-index:2; background:#f8fafc; text-transform:none; letter-spacing:0}
-tbody tr:hover td{background:#f8fafc}
+table{width:100%; border-collapse:separate; border-spacing:0; background:#fff; font-size:var(--table-font-size)}
+th,td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bottom:1px solid var(--table-border); text-align:left; background:#fff; white-space:nowrap; font-variant-numeric:tabular-nums}
+thead th{font-size:12px; color:var(--table-header-text); font-weight:600; position:sticky; top:0; z-index:2; background:var(--table-header-bg); text-transform:none; letter-spacing:0}
+tbody tr:hover td{background:rgba(15,27,45,0.03)}
+.table{border-collapse:collapse;}
 td.num, th.num{text-align:right}
 .table-compact{table-layout:fixed; font-size:var(--table-font-size); border-collapse:collapse;}
 .table-compact th,.table-compact td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bottom:1px solid var(--table-border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
