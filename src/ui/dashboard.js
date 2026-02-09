@@ -1358,15 +1358,12 @@ function buildDashboardHTML(state) {
       const statusLabel = COVERAGE_LEVELS[status]?.label || "—";
       const tooltip = [
         `Status: ${statusLabel}`,
-        `Inventory Coverage: ${detail.coveredSkus || 0}/${totalCount} (${formatPercent(detail.coverageRatio || 0)})`,
-        `Amazon-Auszahlungen: ${detail.missingCritical?.amazonPayout ? "fehlt" : "vorhanden"}`,
-        `Fixkosten: ${detail.missingCritical?.fixedCosts ? "fehlt" : "vorhanden"}`,
-        detail.taxesActive ? `USt-Vorschau: ${detail.missingCritical?.taxes ? "fehlt" : "ok"}` : "USt-Vorschau: nicht aktiv",
+        `Abdeckung: ${detail.coveredSkus || 0}/${totalCount} (${formatPercent(detail.coverageRatio || 0)})`,
       ]
         .filter(Boolean)
-        .join(" · ");
+        .join("\n");
       return `
-        <th scope="col" class="${columnClass} ${healthClass}">
+        <th scope="col" class="${columnClass} ${healthClass}" data-col-index="${idx}">
           <button type="button" class="coverage-indicator coverage-${status} coverage-button" data-coverage-month="${escapeHtml(month)}" data-health-month="${escapeHtml(month)}" title="${escapeHtml(tooltip)}" aria-label="Reifegrad ${escapeHtml(formatMonthLabel(month))}: ${escapeHtml(statusLabel)}"></button>
           <span class="month-header-label">
             <button type="button" class="month-header-trigger" data-health-month="${escapeHtml(month)}">
@@ -1419,22 +1416,18 @@ function buildDashboardHTML(state) {
           const isPaidValue = cell.hasPaidValue && String(row.sourceLabel || "").toLowerCase().includes("po");
           const actualMarker = cell.isActual ? `<span class="cell-actual-tag" title="Realer Wert">Ist</span>` : "";
           const tooltip = [
-            `Geplant: ${formatValueOnly(cell.plannedTotal)}`,
-            `Ist: ${formatValueOnly(cell.actualTotal)}`,
+            `Plan/Ist: ${formatValueOnly(cell.plannedTotal)} / ${formatValueOnly(cell.actualTotal)}`,
             `Status: ${cell.displayLabel || "Plan"}`,
-            `Quelle: ${row.sourceLabel || row.label}`,
-            `Anzeige: ${cell.displayLabel || "Plan"}`,
-            paidHint,
           ]
             .filter(Boolean)
-            .join(" · ");
+            .join("\n");
           const balanceDetail = row.id === "balance" && cell.isActual
             ? `<div class="balance-detail"><span>Plan: ${formatValueOnly(cell.plannedTotal)}</span><span>Ist: ${formatValueOnly(cell.actualTotal)}</span></div>`
             : "";
           const isClickable = row.nav && !formatted.isEmpty;
           const navPayload = row.nav ? encodeURIComponent(JSON.stringify({ ...row.nav, month })) : "";
           return `
-            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass} ${healthClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} title="${escapeHtml(tooltip)}">
+            <td class="num ${row.isSummary ? "tree-summary" : ""} ${paidThisMonth ? "cell-paid-current" : ""} ${isClickable ? "cell-link" : ""} ${columnClass} ${healthClass}" ${isClickable ? `data-nav="${navPayload}"` : ""} data-col-index="${idx}" title="${escapeHtml(tooltip)}">
               ${balanceWarning}
               <span class="${formatted.isEmpty ? "cell-empty" : ""} ${isPaidValue ? "cell-paid-value" : ""}">${formatted.text}</span>
               ${balanceDetail}
@@ -1905,6 +1898,31 @@ function attachDashboardHandlers(root, state) {
 
   const table = root.querySelector(".dashboard-tree-table");
   if (table) {
+    let activeColIndex = null;
+    const clearColumnHover = () => {
+      if (activeColIndex == null) return;
+      table.querySelectorAll(`[data-col-index="${activeColIndex}"]`).forEach(el => {
+        el.classList.remove("is-col-hover");
+      });
+      activeColIndex = null;
+    };
+    const setColumnHover = (index) => {
+      if (index == null || index === activeColIndex) return;
+      clearColumnHover();
+      table.querySelectorAll(`[data-col-index="${index}"]`).forEach(el => {
+        el.classList.add("is-col-hover");
+      });
+      activeColIndex = index;
+    };
+    table.addEventListener("mouseover", (event) => {
+      const cell = event.target.closest("[data-col-index]");
+      if (!cell || !table.contains(cell)) return;
+      setColumnHover(cell.getAttribute("data-col-index"));
+    });
+    table.addEventListener("mouseleave", () => {
+      clearColumnHover();
+    });
+
     table.addEventListener("click", (event) => {
       const toggle = event.target.closest("button.tree-toggle[data-row-id]");
       if (!toggle) return;
