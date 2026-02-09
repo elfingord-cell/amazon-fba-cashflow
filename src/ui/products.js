@@ -379,11 +379,13 @@ function buildHistoryTable(state, sku) {
     const blockingSummary = formatMissingSummary(completeness.blockingMissing);
     const defaultSummary = formatMissingSummary(completeness.defaulted);
     const suggestedSummary = formatMissingSummary(completeness.suggestedMissing);
-    if (blockingSummary) lines.push(`Fehlt (blockierend): ${blockingSummary}`);
-    if (defaultSummary) lines.push(`Default aktiv: ${defaultSummary}`);
-    if (suggestedSummary) lines.push(`Empfohlen: ${suggestedSummary}`);
+    if (blockingSummary) lines.push(`Fehlt: ${blockingSummary}`);
+    const secondary = [];
+    if (defaultSummary) secondary.push(`Standardwert: ${defaultSummary}`);
+    if (suggestedSummary) secondary.push(`Empfohlen: ${suggestedSummary}`);
+    if (secondary.length) lines.push(secondary.join(" · "));
     if (!lines.length) lines.push("Alle Pflichtfelder vorhanden.");
-    return lines.map(line => createEl("div", {}, [line]));
+    return lines.slice(0, 2).map(line => createEl("div", {}, [line]));
   }
 
   function ensurePortalTooltipLayer() {
@@ -1581,8 +1583,10 @@ function buildHistoryTable(state, sku) {
           return product.status === "inactive"
             ? createEl("span", { class: "badge muted" }, ["inaktiv"])
             : createEl("span", { class: "badge" }, ["aktiv"]);
-        case "abcClass":
-          return formatAbcDisplay(product.abcClass);
+        case "abcClass": {
+          const abcLabel = formatAbcDisplay(product.abcClass);
+          return createEl("span", { class: abcLabel === "—" ? "badge muted" : "badge" }, [abcLabel]);
+        }
         case "completeness":
           return renderCompletenessBadge(product);
         case "moqUnits":
@@ -1602,9 +1606,9 @@ function buildHistoryTable(state, sku) {
           ]);
         case "actions":
           return createEl("div", { class: "table-actions" }, [
-            createEl("button", { class: "btn primary sm", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
+            createEl("button", { class: "btn secondary sm", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
             createEl("button", {
-              class: "btn secondary sm",
+              class: "btn ghost sm",
               type: "button",
               "aria-haspopup": "menu",
               "aria-expanded": "false",
