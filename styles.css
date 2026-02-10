@@ -221,6 +221,7 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .forecast-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(15,27,45,0.35)}
 .ui-table-scroll{
   scrollbar-width:none !important;
+  scrollbar-gutter:auto !important;
 }
 .ui-table-scroll::-webkit-scrollbar{
   width:0 !important;
