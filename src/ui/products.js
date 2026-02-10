@@ -6,6 +6,8 @@ import {
   setProductStatus,
   setProductsTableColumns,
 } from "../data/storageLocal.js";
+import { createElement as h } from "react";
+import { createRoot } from "react-dom/client";
 import {
   loadAppState,
   getViewValue,
@@ -22,6 +24,8 @@ import { useDraftForm } from "../hooks/useDraftForm.js";
 import { useDirtyGuard } from "../hooks/useDirtyGuard.js";
 import { openConfirmDialog } from "./utils/confirmDialog.js";
 import { computeAbcClassification } from "../domain/abcClassification.js";
+import { AppDataTable } from "../react/components/AppDataTable.jsx";
+import { AppTooltip } from "../react/components/AppTooltip.jsx";
 
 function $(sel, ctx = document) {
   return ctx.querySelector(sel);
@@ -341,12 +345,22 @@ function buildHistoryTable(state, sku) {
     return completenessBySku.get(product.sku);
   }
 
+  function getEffectiveMoqUnits(product) {
+    const settingsMoq = parseDeNumber(state?.settings?.moqDefaultUnits);
+    const override = parseDeNumber(product?.moqOverrideUnits);
+    if (override != null && override > 0) return Math.round(override);
+    const productMoq = parseDeNumber(product?.moqUnits);
+    if (productMoq != null && productMoq > 0) return Math.round(productMoq);
+    if (settingsMoq != null && settingsMoq > 0) return Math.round(settingsMoq);
+    return null;
+  }
+
   function applyFilter(list, term, statusFilter, abcClassFilter) {
     const filteredBySearch = !term ? list : list.filter(item => {
       const needle = term.trim().toLowerCase();
       const categoryName = getCategoryLabel(item.categoryId);
       const supplierLabel = supplierLabelMap.get(item.supplierId);
-      return [item.alias, item.sku, item.supplierId, supplierLabel, categoryName, ...(item.tags || [])]
+      return [item.alias, item.sku, item.supplierId, supplierLabel, categoryName]
         .filter(Boolean)
         .some(val => String(val).toLowerCase().includes(needle));
     });
@@ -489,6 +503,43 @@ function buildHistoryTable(state, sku) {
     }, [label]);
     attachPortalTooltip(trigger, () => buildCompletenessTooltip(completeness));
     return trigger;
+  }
+
+  function renderCompletenessBadgeReact(product) {
+    const completeness = getCompleteness(product);
+    const status = completeness.status || "blocked";
+    const label = formatCompletenessLabel(status);
+    const tooltip = [
+      formatMissingSummary(completeness.blockingMissing),
+      formatMissingSummary(completeness.defaulted),
+      formatMissingSummary(completeness.suggestedMissing),
+    ].filter(Boolean).join(" · ") || "Alle Pflichtfelder vorhanden.";
+    const btn = h("button", {
+      className: `tooltip-trigger completeness-badge ${status}`,
+      type: "button",
+      onClick: (event) => {
+        event.stopPropagation();
+        if (status === "blocked" && completeness.blockingMissing?.length) {
+          showEditor(product, { focusFieldKey: completeness.blockingMissing[0].fieldKey });
+        }
+      },
+    }, label);
+    return h(AppTooltip, { title: tooltip }, btn);
+  }
+
+  function renderHealthDotReact(sku) {
+    const issues = productIssuesBySku.get(sku) || [];
+    if (!issues.length) return null;
+    const tooltip = getIssueTooltip(issues);
+    return h("button", {
+      className: "data-health-dot",
+      type: "button",
+      "aria-label": tooltip,
+      onClick: (event) => {
+        event.stopPropagation();
+        openDataHealthPanel({ scope: "product", entityId: sku });
+      },
+    });
   }
 
   if (root.__productsActionsCleanup) {
@@ -693,7 +744,6 @@ function buildHistoryTable(state, sku) {
       select.value = product.categoryId || "";
       return select;
     })();
-    const tagsInput = createEl("input", { value: (product.tags || []).join(", ") });
     const avgSellingPriceInput = createEl("input", {
       value: product.avgSellingPriceGrossEUR != null ? formatInputNumber(parseDeNumber(product.avgSellingPriceGrossEUR), 2) : "",
       inputmode: "decimal",
@@ -800,7 +850,6 @@ function buildHistoryTable(state, sku) {
     const categoryLabel = createEl("label", {}, ["Kategorie", categorySelect]);
     const statusLabel = createEl("label", {}, ["Status", statusSelect]);
     const abcLabel = createEl("label", {}, ["ABC Klassifizierung", abcDisplay]);
-    const tagsLabel = createEl("label", {}, ["Tags (Komma-getrennt)", tagsInput]);
     const avgSellingPriceLabel = createEl("label", {}, ["Ø VK-Preis (Brutto)", avgSellingPriceInput]);
     const sellerboardMarginLabel = createEl("label", {}, ["Sellerboard Marge (%)", sellerboardMarginInput]);
     const productionLeadTimeLabel = createEl("label", {}, ["Default Production Lead Time (Fallback)", productionLeadTimeInput]);
@@ -834,7 +883,6 @@ function buildHistoryTable(state, sku) {
       categoryLabel,
       statusLabel,
       abcLabel,
-      tagsLabel,
       avgSellingPriceLabel,
       sellerboardMarginLabel,
       productionLeadTimeLabel,
@@ -1131,7 +1179,6 @@ function buildHistoryTable(state, sku) {
       statusSelect.value = draft.status || "active";
       categorySelect.value = draft.categoryId || "";
       abcDisplay.value = formatAbcDisplay(product.abcClass);
-      tagsInput.value = (draft.tags || []).join(", ");
       avgSellingPriceInput.value = draft.avgSellingPriceGrossEUR != null
         ? formatInputNumber(parseDeNumber(draft.avgSellingPriceGrossEUR), 2)
         : "";
@@ -1326,10 +1373,7 @@ function buildHistoryTable(state, sku) {
         supplierId: supplierInput.value.trim(),
         categoryId: categorySelect.value.trim() || null,
         status: statusSelect.value,
-        tags: tagsInput.value
-          .split(",")
-          .map(tag => tag.trim())
-          .filter(Boolean),
+        tags: Array.isArray(product.tags) ? [...product.tags] : [],
         avgSellingPriceGrossEUR: parseDeNumber(avgSellingPriceInput.value.trim()),
         sellerboardMarginPct: parseDeNumber(sellerboardMarginInput.value.trim()),
         productionLeadTimeDaysDefault: parseDeNumber(productionLeadTimeInput.value.trim()),
@@ -1535,129 +1579,283 @@ function buildHistoryTable(state, sku) {
     if (!list.length) {
       return createEl("p", { class: "empty-state" }, ["Keine Produkte gefunden. Lege ein Produkt an oder erfasse eine PO."]);
     }
-    const columns = [
-      { key: "alias", label: "Alias", className: "cell-ellipsis col-alias" },
-      { key: "sku", label: "SKU", className: "cell-ellipsis col-sku" },
-      { key: "supplier", label: "Supplier", className: "cell-ellipsis col-supplier" },
-      { key: "category", label: "Kategorie", className: "col-category" },
-      { key: "status", label: "Status", className: "col-status" },
-      { key: "abcClass", label: "ABC", className: "col-abc" },
-      { key: "completeness", label: "Vollständigkeit", className: "col-completeness" },
-      { key: "moqUnits", label: "MOQ", className: "num col-moq" },
-      { key: "lastPo", label: "Letzte PO", className: "col-last-po" },
-      { key: "avg", label: "Ø Stückpreis", className: "num col-avg" },
-      { key: "count", label: "POs", className: "num col-count" },
-      { key: "template", label: "Template", className: "col-template" },
-      { key: "tags", label: "Tags", className: "col-tags" },
-      { key: "actions", label: "Aktionen", className: "sticky-actions col-actions" },
-    ];
-    const colCount = columns.length;
-    const columnWidths = state?.settings?.productsTableColumns?.list || [];
-    const table = createEl("table", { class: "table table-compact products-list-table", "data-ui-table": "true" });
-    const thead = createEl("thead", {}, [
-      createEl("tr", {}, columns.map(col => createEl("th", { class: col.className || "", title: col.label }, [col.label])))
-    ]);
-    const tbody = createEl("tbody");
     const collapseState = loadCollapseState();
     const groups = buildCategoryGroups(list);
-
-    const renderCell = (product, col) => {
-      switch (col.key) {
-        case "alias": {
-          const aliasText = product.alias || "—";
-          return createEl("div", { class: "data-health-inline" }, [
-            buildHealthDot(product.sku),
-            createEl("span", { class: "truncate-text", title: aliasText }, [aliasText]),
-            product.status === "inactive" ? createEl("span", { class: "badge muted" }, ["inaktiv"]) : null,
-          ]);
-        }
-        case "sku":
-          return createEl("span", { title: product.sku || "—" }, [product.sku || "—"]);
-        case "supplier":
-          return createEl("span", { title: supplierLabelMap.get(product.supplierId) || product.supplierId || "—" }, [
-            supplierLabelMap.get(product.supplierId) || product.supplierId || "—"
-          ]);
-        case "category":
-          return createEl("span", { title: getCategoryLabel(product.categoryId) }, [getCategoryLabel(product.categoryId)]);
-        case "status":
-          return product.status === "inactive"
-            ? createEl("span", { class: "badge muted" }, ["inaktiv"])
-            : createEl("span", { class: "badge" }, ["aktiv"]);
-        case "abcClass": {
-          const abcLabel = formatAbcDisplay(product.abcClass);
-          return createEl("span", { class: abcLabel === "—" ? "badge muted" : "badge" }, [abcLabel]);
-        }
-        case "completeness":
-          return renderCompletenessBadge(product);
-        case "moqUnits":
-          return Number.isFinite(Number(product.moqUnits)) ? String(product.moqUnits) : "—";
-        case "lastPo":
-          return product.stats?.lastOrderDate ? fmtDate(product.stats.lastOrderDate) : "—";
-        case "avg":
-          return product.stats?.avgUnitPriceUsd != null ? fmtUSD(product.stats.avgUnitPriceUsd) : "—";
-        case "count":
-          return product.stats?.poCount != null ? String(product.stats.poCount) : "0";
-        case "template":
-          return product.template ? createEl("span", { class: "badge" }, ["vorhanden"]) : createEl("span", { class: "badge muted" }, ["—"]);
-        case "tags":
-          if (!(product.tags || []).length) return "—";
-          return createEl("span", { class: "product-tags", title: (product.tags || []).join(", ") }, [
-            ...(product.tags || []).map(tag => createEl("span", { class: "product-tag-pill", title: tag }, [tag]))
-          ]);
-        case "actions":
-          return createEl("div", { class: "table-actions" }, [
-            createEl("button", { class: "btn secondary sm", type: "button", onclick: () => showEditor(product) }, ["Bearbeiten"]),
-            createEl("button", {
-              class: "btn ghost sm",
-              type: "button",
-              "aria-haspopup": "menu",
-              "aria-expanded": "false",
-              onclick: (event) => {
-                event.stopPropagation();
-                openActionsMenu(event.currentTarget, product);
-              },
-            }, ["Mehr…"]),
-          ]);
-        default:
-          return "—";
-      }
-    };
-
-    groups.forEach(group => {
+    const rows = [];
+    groups.forEach((group) => {
       const isCollapsed = Boolean(collapseState[group.id]);
-      tbody.append(createEl("tr", { class: "product-group-row" }, [
-        createEl("td", { colspan: String(colCount) }, [
-          createEl("button", {
-            class: "product-group-toggle",
-            type: "button",
-            dataset: { categoryId: group.id },
-            "aria-expanded": String(!isCollapsed),
-          }, [`${group.name} (${group.items.length})`]),
-        ]),
-      ]));
+      rows.push({
+        id: `group-${group.id}`,
+        isGroup: true,
+        categoryId: group.id,
+        categoryName: group.name,
+        count: group.items.length,
+        collapsed: isCollapsed,
+      });
       if (isCollapsed) return;
-      group.items.forEach(product => {
-        const row = createEl("tr");
-        columns.forEach(col => {
-          row.append(createEl("td", { class: col.className || "" }, [renderCell(product, col)]));
+      group.items.forEach((product) => {
+        rows.push({
+          id: `product-${product.sku}`,
+          isGroup: false,
+          product,
         });
-        tbody.append(row);
       });
     });
 
-    table.append(thead, tbody);
-    initColumnResizing(table, { key: "list", widths: columnWidths });
-    table.addEventListener("click", (event) => {
-      const toggle = event.target.closest(".product-group-toggle");
-      if (!toggle) return;
-      const next = loadCollapseState();
-      const id = toggle.dataset.categoryId;
-      next[id] = !next[id];
-      saveCollapseState(next);
-      render();
-    });
+    const columns = [
+      {
+        key: "alias",
+        title: "Alias",
+        dataIndex: "alias",
+        width: 230,
+        fixed: "left",
+        onCell: (record) => {
+          if (!record.isGroup) return {};
+          return { colSpan: 14 };
+        },
+        render: (_, record) => {
+          if (record.isGroup) {
+            return h("button", {
+              className: "product-group-toggle",
+              type: "button",
+              "aria-expanded": String(!record.collapsed),
+              onClick: () => {
+                const next = loadCollapseState();
+                next[record.categoryId] = !record.collapsed;
+                saveCollapseState(next);
+                render();
+              },
+            }, `${record.categoryName} (${record.count})`);
+          }
+          const product = record.product;
+          const aliasText = product.alias || "—";
+          return h("div", { className: "data-health-inline" }, [
+            renderHealthDotReact(product.sku),
+            h("span", { className: "truncate-text" }, aliasText),
+            product.status === "inactive" ? h("span", { className: "badge muted" }, "inaktiv") : null,
+          ]);
+        },
+      },
+      {
+        key: "sku",
+        title: "SKU",
+        dataIndex: "sku",
+        width: 130,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => (record.isGroup ? null : (record.product.sku || "—")),
+      },
+      {
+        key: "supplier",
+        title: "Supplier",
+        dataIndex: "supplier",
+        width: 180,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => {
+          if (record.isGroup) return null;
+          const product = record.product;
+          return supplierLabelMap.get(product.supplierId) || product.supplierId || "—";
+        },
+      },
+      {
+        key: "category",
+        title: "Kategorie",
+        dataIndex: "category",
+        width: 150,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => (record.isGroup ? null : getCategoryLabel(record.product.categoryId)),
+      },
+      {
+        key: "status",
+        title: "Status",
+        dataIndex: "status",
+        width: 100,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => {
+          if (record.isGroup) return null;
+          return record.product.status === "inactive"
+            ? h("span", { className: "badge muted" }, "inaktiv")
+            : h("span", { className: "badge" }, "aktiv");
+        },
+      },
+      {
+        key: "abcClass",
+        title: "ABC",
+        dataIndex: "abcClass",
+        width: 70,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => {
+          if (record.isGroup) return null;
+          const abcLabel = formatAbcDisplay(record.product.abcClass);
+          return h("span", { className: abcLabel === "—" ? "badge muted" : "badge" }, abcLabel);
+        },
+      },
+      {
+        key: "completeness",
+        title: "Vollständigkeit",
+        dataIndex: "completeness",
+        width: 130,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => (record.isGroup ? null : renderCompletenessBadgeReact(record.product)),
+      },
+      {
+        key: "moqUnits",
+        title: "MOQ",
+        tooltip: "Minimum Order Quantity",
+        dataIndex: "moqUnits",
+        width: 90,
+        numeric: true,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => {
+          if (record.isGroup) return null;
+          const val = getEffectiveMoqUnits(record.product);
+          return Number.isFinite(val) ? Number(val).toLocaleString("de-DE") : "—";
+        },
+      },
+      {
+        key: "lastPo",
+        title: "Letzte PO",
+        dataIndex: "lastPo",
+        width: 110,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => (record.isGroup ? null : (record.product.stats?.lastOrderDate ? fmtDate(record.product.stats.lastOrderDate) : "—")),
+      },
+      {
+        key: "avg",
+        title: "Ø Stückpreis",
+        dataIndex: "avg",
+        width: 120,
+        numeric: true,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => (record.isGroup ? null : (record.product.stats?.avgUnitPriceUsd != null ? fmtUSD(record.product.stats.avgUnitPriceUsd) : "—")),
+      },
+      {
+        key: "count",
+        title: "POs",
+        dataIndex: "count",
+        width: 80,
+        numeric: true,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => (record.isGroup ? null : String(record.product.stats?.poCount ?? 0)),
+      },
+      {
+        key: "template",
+        title: "Template",
+        dataIndex: "template",
+        width: 100,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => {
+          if (record.isGroup) return null;
+          return record.product.template ? h("span", { className: "badge" }, "vorhanden") : h("span", { className: "badge muted" }, "—");
+        },
+      },
+      {
+        key: "actions",
+        title: "Aktionen",
+        dataIndex: "actions",
+        width: 170,
+        fixed: "right",
+        ellipsis: false,
+        onCell: (record) => (record.isGroup ? { colSpan: 0 } : {}),
+        render: (_, record) => {
+          if (record.isGroup) return null;
+          const product = record.product;
+          return h("div", { className: "table-actions" }, [
+            h("button", { className: "btn secondary sm", type: "button", onClick: () => showEditor(product) }, "Bearbeiten"),
+            h("button", {
+              className: "btn ghost sm",
+              type: "button",
+              "aria-haspopup": "menu",
+              "aria-expanded": "false",
+              onClick: (event) => {
+                event.stopPropagation();
+                openActionsMenu(event.currentTarget, product);
+              },
+            }, "Mehr…"),
+          ]);
+        },
+      },
+    ];
 
-    return createEl("div", { class: "table-wrap products-list" }, [table]);
+    const wrapper = createEl("div", { class: "table-wrap products-list products-list-antd" });
+    const topScrollControl = createEl("div", { class: "products-scroll-control products-scroll-control-top", "aria-hidden": "true" }, [
+      createEl("input", { class: "products-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
+    ]);
+    const mountPoint = createEl("div", { class: "products-list-react-mount" });
+    const bottomScrollControl = createEl("div", { class: "products-scroll-control products-scroll-control-bottom", "aria-hidden": "true" }, [
+      createEl("input", { class: "products-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
+    ]);
+    wrapper.append(topScrollControl, mountPoint, bottomScrollControl);
+    root.__productsListReactRoot = createRoot(mountPoint);
+    root.__productsListReactRoot.render(
+      h(AppDataTable, {
+        className: "products-list-table-antd",
+        columns,
+        dataSource: rows,
+        rowKey: "id",
+        rowClassName: (record) => (record.isGroup ? "product-group-row" : "product-product-row"),
+      })
+    );
+    requestAnimationFrame(() => {
+      const cleanupExisting = root.__productsListScrollCleanup;
+      if (typeof cleanupExisting === "function") cleanupExisting();
+      const scrollCandidates = Array.from(
+        mountPoint.querySelectorAll(".ant-table-content, .ant-table-body")
+      );
+      const scrollContent = scrollCandidates.find(
+        (node) => node && (node.scrollWidth - node.clientWidth) > 0
+      ) || scrollCandidates[0] || null;
+      const table = mountPoint.querySelector(".ant-table-content table, .ant-table-body table");
+      const topRange = topScrollControl.querySelector(".products-scroll-range");
+      const bottomRange = bottomScrollControl.querySelector(".products-scroll-range");
+      if (!scrollContent || !table || !topRange || !bottomRange) return;
+      let syncing = false;
+      const updateRanges = () => {
+        const max = Math.max(0, Math.ceil(scrollContent.scrollWidth - scrollContent.clientWidth));
+        topRange.max = String(max);
+        bottomRange.max = String(max);
+        const current = Math.min(max, Math.max(0, Math.round(scrollContent.scrollLeft)));
+        topRange.value = String(current);
+        bottomRange.value = String(current);
+        topRange.disabled = max <= 0;
+        bottomRange.disabled = max <= 0;
+      };
+      const syncFromRange = (nextValue) => {
+        if (syncing) return;
+        syncing = true;
+        scrollContent.scrollLeft = Number(nextValue || 0);
+        syncing = false;
+      };
+      const syncFromTable = () => {
+        if (syncing) return;
+        syncing = true;
+        const value = String(Math.round(scrollContent.scrollLeft));
+        topRange.value = value;
+        bottomRange.value = value;
+        syncing = false;
+      };
+      const onTopInput = () => syncFromRange(topRange.value);
+      const onBottomInput = () => syncFromRange(bottomRange.value);
+      updateRanges();
+      topRange.addEventListener("input", onTopInput);
+      bottomRange.addEventListener("input", onBottomInput);
+      scrollContent.addEventListener("scroll", syncFromTable, { passive: true });
+      window.addEventListener("resize", updateRanges);
+      const resizeObserver = typeof ResizeObserver === "function"
+        ? new ResizeObserver(() => updateRanges())
+        : null;
+      if (resizeObserver) {
+        resizeObserver.observe(scrollContent);
+        resizeObserver.observe(table);
+      }
+      root.__productsListScrollCleanup = () => {
+        topRange.removeEventListener("input", onTopInput);
+        bottomRange.removeEventListener("input", onBottomInput);
+        scrollContent.removeEventListener("scroll", syncFromTable);
+        window.removeEventListener("resize", updateRanges);
+        if (resizeObserver) resizeObserver.disconnect();
+      };
+    });
+    return wrapper;
   }
 
   function initColumnResizing(table, { key, colgroup = null, widths = [] } = {}) {
@@ -1811,7 +2009,6 @@ function buildHistoryTable(state, sku) {
         { value: "CNY", label: "CNY" },
       ], width: "110px", className: "col-currency" },
       { key: "template.ddp", label: "DDP", type: "checkbox", width: "56px", className: "col-check col-group-end" },
-      { key: "tags", label: "Tags", type: "text", width: "280px", className: "col-tags" },
     ];
 
     function getTemplateFields(product) {
@@ -1833,8 +2030,9 @@ function buildHistoryTable(state, sku) {
       if (field.key === "completeness") {
         return getCompleteness(product);
       }
-      if (field.key === "tags") {
-        return Array.isArray(product.tags) ? product.tags.join(", ") : "";
+      if (field.key === "moqUnits") {
+        const effective = getEffectiveMoqUnits(product);
+        return effective != null ? effective : "";
       }
       return product[field.key] ?? "";
     }
@@ -1862,13 +2060,6 @@ function buildHistoryTable(state, sku) {
       }
       if (field.type === "checkbox") {
         return Boolean(raw);
-      }
-      if (field.key === "tags") {
-        return String(raw || "")
-          .split(",")
-          .map(tag => tag.trim())
-          .filter(Boolean)
-          .join(", ");
       }
       return String(raw ?? "").trim();
     }
@@ -2123,11 +2314,6 @@ function buildHistoryTable(state, sku) {
             payload.template.fields[fieldKey] = value;
           } else if (key === "categoryId") {
             payload.categoryId = value ? String(value) : null;
-          } else if (key === "tags") {
-            payload.tags = String(value || "")
-              .split(",")
-              .map(tag => tag.trim())
-              .filter(Boolean);
           } else {
             payload[key] = value;
           }
@@ -2170,6 +2356,14 @@ function buildHistoryTable(state, sku) {
     const prevSearch = root.querySelector('input[type="search"]');
     const shouldFocusSearch = document.activeElement === prevSearch;
     const cursorPos = shouldFocusSearch ? prevSearch.selectionStart : null;
+    if (typeof root.__productsListScrollCleanup === "function") {
+      root.__productsListScrollCleanup();
+      root.__productsListScrollCleanup = null;
+    }
+    if (root.__productsListReactRoot) {
+      root.__productsListReactRoot.unmount();
+      root.__productsListReactRoot = null;
+    }
     root.innerHTML = "";
     const filtered = applyFilter(products, searchTerm, completenessFilter, abcFilter);
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
@@ -2181,7 +2375,7 @@ function buildHistoryTable(state, sku) {
     const collapseBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(true); render(); } }, ["Alles zuklappen"]);
     const search = createEl("input", {
       type: "search",
-      placeholder: "Suche nach Alias, SKU, Tag, Supplier",
+      placeholder: "Suche nach Alias, SKU, Supplier",
       value: searchTerm,
       oninput: ev => {
         searchTerm = ev.target.value;
@@ -2263,6 +2457,14 @@ export default function mountProducts(root) {
   }
   document.addEventListener("state:changed", handler);
   root.__productsCleanup = () => {
+    if (typeof root.__productsListScrollCleanup === "function") {
+      root.__productsListScrollCleanup();
+      root.__productsListScrollCleanup = null;
+    }
+    if (root.__productsListReactRoot) {
+      root.__productsListReactRoot.unmount();
+      root.__productsListReactRoot = null;
+    }
     document.removeEventListener("state:changed", handler);
     if (root.__productsActionsCleanup) {
       root.__productsActionsCleanup();

@@ -169,9 +169,7 @@ export function evaluateProductCompleteness(product, ctx = {}) {
     suggestedMissing.push(buildFieldStatus("landedUnitCostEur", "Einstandspreis (EUR)", {}));
   }
 
-  const statusValue = blockingMissing.length
-    ? "blocked"
-    : (defaulted.length ? "warn" : "ok");
+  const statusValue = blockingMissing.length ? "blocked" : "ok";
 
   return {
     status: statusValue,

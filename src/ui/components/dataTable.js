@@ -9,6 +9,7 @@ const ABBREVIATION_TOOLTIPS = {
 };
 
 const hydratedTables = new Set();
+const tableScrollSync = new WeakMap();
 let tooltipBound = false;
 let resizeBound = false;
 let layoutRaf = 0;
@@ -135,6 +136,15 @@ function scheduleLayoutRefresh() {
     for (const table of Array.from(hydratedTables)) {
       if (!table.isConnected) {
         hydratedTables.delete(table);
+        const syncState = tableScrollSync.get(table);
+        if (syncState) {
+          try {
+            syncState.cleanup();
+          } catch {
+            // no-op
+          }
+          tableScrollSync.delete(table);
+        }
         continue;
       }
       refreshSingleTable(table);
@@ -152,6 +162,118 @@ function ensureScrollContainer(table) {
   table.parentNode?.insertBefore(wrapper, table);
   wrapper.append(table);
   return wrapper;
+}
+
+function resolveHorizontalScrollElement(scrollContainer) {
+  if (!(scrollContainer instanceof HTMLElement)) return null;
+  const candidates = [
+    scrollContainer,
+    ...Array.from(scrollContainer.querySelectorAll(".ant-table-content, .ant-table-body")),
+  ];
+  for (const candidate of candidates) {
+    if (!(candidate instanceof HTMLElement)) continue;
+    if ((candidate.scrollWidth - candidate.clientWidth) > 1) return candidate;
+  }
+  return candidates.find((candidate) => candidate instanceof HTMLElement) || null;
+}
+
+function ensureHorizontalScrollControls(table, scrollContainer) {
+  if (!(table instanceof HTMLTableElement)) return;
+  if (!(scrollContainer instanceof HTMLElement)) return;
+  const scrollEl = resolveHorizontalScrollElement(scrollContainer);
+  if (!(scrollEl instanceof HTMLElement)) return;
+
+  const existing = tableScrollSync.get(table);
+  if (existing && existing.scrollContainer === scrollContainer && existing.scrollEl === scrollEl) {
+    existing.update();
+    return;
+  }
+  if (existing) {
+    try {
+      existing.cleanup();
+    } catch {
+      // no-op
+    }
+    tableScrollSync.delete(table);
+  }
+
+  const parent = scrollContainer.parentElement;
+  if (!parent) return;
+
+  const topControl = createEl("div", { class: "ui-scroll-control ui-scroll-control-top", "aria-hidden": "true" }, [
+    createEl("input", { class: "ui-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
+  ]);
+  const bottomControl = createEl("div", { class: "ui-scroll-control ui-scroll-control-bottom", "aria-hidden": "true" }, [
+    createEl("input", { class: "ui-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
+  ]);
+  const topInput = topControl.querySelector(".ui-scroll-range");
+  const bottomInput = bottomControl.querySelector(".ui-scroll-range");
+  if (!(topInput instanceof HTMLInputElement) || !(bottomInput instanceof HTMLInputElement)) return;
+
+  parent.insertBefore(topControl, scrollContainer);
+  parent.insertBefore(bottomControl, scrollContainer.nextSibling);
+
+  let syncing = false;
+  const update = () => {
+    const max = Math.max(0, Math.ceil(scrollEl.scrollWidth - scrollEl.clientWidth));
+    topInput.max = String(max);
+    bottomInput.max = String(max);
+    const current = Math.min(max, Math.max(0, Math.round(scrollEl.scrollLeft)));
+    topInput.value = String(current);
+    bottomInput.value = String(current);
+    const disabled = max <= 0;
+    topInput.disabled = disabled;
+    bottomInput.disabled = disabled;
+  };
+
+  const syncFromInput = (value) => {
+    if (syncing) return;
+    syncing = true;
+    scrollEl.scrollLeft = Number(value || 0);
+    syncing = false;
+  };
+
+  const syncFromScroll = () => {
+    if (syncing) return;
+    syncing = true;
+    const value = String(Math.round(scrollEl.scrollLeft));
+    topInput.value = value;
+    bottomInput.value = value;
+    syncing = false;
+  };
+
+  const onTopInput = () => syncFromInput(topInput.value);
+  const onBottomInput = () => syncFromInput(bottomInput.value);
+
+  topInput.addEventListener("input", onTopInput);
+  bottomInput.addEventListener("input", onBottomInput);
+  scrollEl.addEventListener("scroll", syncFromScroll, { passive: true });
+  window.addEventListener("resize", update);
+  const resizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => update())
+    : null;
+  if (resizeObserver) {
+    resizeObserver.observe(scrollEl);
+    resizeObserver.observe(table);
+  }
+
+  const cleanup = () => {
+    topInput.removeEventListener("input", onTopInput);
+    bottomInput.removeEventListener("input", onBottomInput);
+    scrollEl.removeEventListener("scroll", syncFromScroll);
+    window.removeEventListener("resize", update);
+    if (resizeObserver) resizeObserver.disconnect();
+    topControl.remove();
+    bottomControl.remove();
+  };
+
+  tableScrollSync.set(table, {
+    scrollContainer,
+    scrollEl,
+    update,
+    cleanup,
+  });
+  update();
 }
 
 function normalizeNativeTitles(table) {
@@ -255,13 +377,21 @@ function refreshSingleTable(table) {
   applyNumericAlignment(table);
   applyStickyColumns(table);
   applyOverflowTooltips(table);
+  const syncState = tableScrollSync.get(table);
+  if (syncState) {
+    syncState.update();
+  } else {
+    const scrollContainer = ensureScrollContainer(table);
+    ensureHorizontalScrollControls(table, scrollContainer);
+  }
 }
 
 function hydrateSingleTable(table) {
   if (!table) return;
   table.classList.add("ui-data-table", "table-compact");
   if (!table.dataset.uiTable) table.dataset.uiTable = "true";
-  ensureScrollContainer(table);
+  const scrollContainer = ensureScrollContainer(table);
+  ensureHorizontalScrollControls(table, scrollContainer);
   normalizeNativeTitles(table);
   applyAbbreviationTooltips(table);
   hydratedTables.add(table);
@@ -270,8 +400,13 @@ function hydrateSingleTable(table) {
 export function hydrateDataTables(root = document) {
   bindTooltipEvents();
   bindLayoutEvents();
-  const tables = root.querySelectorAll("table[data-ui-table], table.data-table-table");
-  tables.forEach(hydrateSingleTable);
+  const tables = Array.from(root.querySelectorAll("table")).filter((table) => {
+    if (!(table instanceof HTMLTableElement)) return false;
+    if (table.dataset.uiTable === "false") return false;
+    if (table.closest(".ant-table")) return false;
+    return true;
+  });
+  tables.forEach((table) => hydrateSingleTable(table));
   scheduleLayoutRefresh();
 }
 

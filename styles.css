@@ -219,6 +219,31 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .inventory-table-scroll::-webkit-scrollbar-thumb:hover,
 .products-grid-scroll::-webkit-scrollbar-thumb:hover,
 .forecast-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(15,27,45,0.35)}
+.ui-table-scroll{
+  scrollbar-width:none !important;
+}
+.ui-table-scroll::-webkit-scrollbar{
+  width:0 !important;
+  height:0 !important;
+}
+.ui-scroll-control{
+  padding:2px 4px;
+  border:1px solid rgba(15,27,45,0.1);
+  border-radius:999px;
+  background:rgba(243,247,250,0.95);
+}
+.ui-scroll-control-top{margin-bottom:6px;}
+.ui-scroll-control-bottom{margin-top:6px;}
+.ui-scroll-range{
+  width:100%;
+  margin:0;
+  accent-color:#2fb79c;
+  cursor:ew-resize;
+}
+.ui-scroll-range:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
 .data-table-table{min-width:100%; border-collapse:collapse}
 .data-table-table th{font-size:12px; text-transform:none; letter-spacing:0; font-weight:600; color:var(--table-header-text); background:#f8fafc}
 .data-table-table td{padding:10px 12px; font-variant-numeric:tabular-nums}
@@ -624,7 +649,28 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .products-actions .btn{min-height:44px;}
 .category-controls{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
 .category-controls input{min-height:40px; padding:6px 10px; border:1px solid rgba(15,27,45,0.2); border-radius:8px; min-width:220px;}
-.view-toggle{display:flex; gap:8px; align-items:center;}
+.view-toggle,
+.forecast-view-toggle,
+.dashboard-toggle[role="group"]{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  padding:4px;
+  border:1px solid rgba(15,27,45,0.12);
+  border-radius:12px;
+  background:rgba(243,247,250,0.95);
+}
+.view-toggle .btn,
+.forecast-view-toggle .btn,
+.dashboard-toggle[role="group"] .btn{
+  min-height:34px;
+  box-shadow:none;
+}
+.forecast-view-toggle .btn.secondary{
+  background:var(--mint-500);
+  color:#fff;
+  border-color:var(--mint-500);
+}
 .view-toggle .btn.is-active{background:var(--mint-500); border-color:var(--mint-500); color:#fff;}
 .products-list-table{table-layout:fixed; width:100%;}
 .products-list-table th{position:sticky; top:0; z-index:1;}
@@ -652,6 +698,49 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .products-list-table th.col-template,.products-list-table td.col-template{width:90px;}
 .products-list-table th.col-tags,.products-list-table td.col-tags{width:200px;}
 .products-list-table th.col-actions,.products-list-table td.col-actions{width:170px;}
+.products-list-antd .ant-table-wrapper{width:100%;}
+.products-scroll-control{
+  padding:2px 4px;
+  border:1px solid rgba(15,27,45,0.1);
+  border-radius:999px;
+  background:rgba(243,247,250,0.95);
+}
+.products-scroll-control-top{margin-bottom:6px;}
+.products-scroll-control-bottom{margin-top:6px;}
+.products-scroll-range{
+  width:100%;
+  margin:0;
+  accent-color:#2fb79c;
+  cursor:ew-resize;
+}
+.products-scroll-range:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
+.products-list-table-antd .ant-table-thead > tr > th{font-size:12px; font-weight:600;}
+.products-list-table-antd .ant-table-tbody > tr > td{vertical-align:middle;}
+.products-list-table-antd .ant-table-content{overflow-x:auto !important;}
+.products-list-table-antd .ant-table-content{
+  scrollbar-width:none;
+}
+.products-list-table-antd .ant-table-content::-webkit-scrollbar{
+  width:0;
+  height:0;
+}
+.products-list-table-antd .ant-table-sticky-scroll{
+  display:none !important;
+}
+.products-list-table-antd .ant-table-cell-fix-right,
+.products-list-table-antd .ant-table-cell-fix-left{background:#fff;}
+.products-list-table-antd .ant-table-row:hover .ant-table-cell-fix-right,
+.products-list-table-antd .ant-table-row:hover .ant-table-cell-fix-left{background:#f8fafc;}
+.products-list-table-antd .ant-table-cell{font-size:13px;}
+.products-list-table-antd .ant-table-row.product-product-row > td{background:#fff;}
+.products-list-table-antd .ant-table-row.product-group-row > td{
+  background:rgba(15,27,45,0.07);
+  border-top:1px solid rgba(15,27,45,0.14);
+  border-bottom:1px solid rgba(15,27,45,0.14);
+}
 .product-tags{display:flex; align-items:center; gap:4px; flex-wrap:nowrap; min-width:0; overflow:hidden;}
 .product-tag-pill{display:inline-flex; align-items:center; max-width:110px; padding:2px 6px; border-radius:999px; background:#e2e8f0; color:#475569; font-size:11px; line-height:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .product-actions-menu{position:fixed; z-index:120; display:flex; flex-direction:column; gap:4px; min-width:180px; padding:6px; border-radius:12px; border:1px solid rgba(15,27,45,0.12); background:#fff; box-shadow:0 10px 28px rgba(15,27,45,0.18);}

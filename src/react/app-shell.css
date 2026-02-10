@@ -1,0 +1,77 @@
+.app-shell {
+  min-height: 100vh;
+  background: radial-gradient(1200px 800px at 20% -10%, #e8f7f2 0%, #f0fbf7 60%);
+}
+
+.app-sider {
+  border-right: 1px solid rgba(15, 27, 45, 0.08);
+  box-shadow: 0 10px 24px rgba(15, 27, 45, 0.06), 0 2px 8px rgba(15, 27, 45, 0.04);
+  z-index: 10;
+}
+
+.app-sidebar-header {
+  padding: 18px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-sidebar-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-menu {
+  border-inline-end: none !important;
+  padding: 4px 8px 14px;
+}
+
+.is-collapsed-hidden {
+  display: none !important;
+}
+
+.app-header {
+  background: #ffffff !important;
+  border-bottom: 1px solid rgba(15, 27, 45, 0.08);
+  display: flex;
+  align-items: center;
+  padding: 0 20px !important;
+}
+
+.app-content {
+  padding-top: 22px;
+}
+
+.legacy-route-host {
+  position: relative;
+  min-height: 180px;
+}
+
+.legacy-route-loading {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0;
+}
+
+.legacy-route-alert {
+  margin-bottom: 14px;
+}
+
+.app-table-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 960px) {
+  .app-header {
+    padding: 0 14px !important;
+  }
+
+  .app-content {
+    padding-top: 12px;
+  }
+}
