@@ -1469,37 +1469,43 @@ function buildDashboardHTML(state) {
   return `
     <section class="dashboard">
       <div class="dashboard-header">
-        <div>
-          <h2>Dashboard</h2>
-          <p class="muted">Planwerte werden durch Ist ersetzt, sobald Zahlungen verbucht sind. Drilldowns zeigen PO/FO-Events.</p>
+        <div class="dashboard-topline">
+          <div class="dashboard-title-block">
+            <h2>Dashboard</h2>
+            <p class="muted">Planwerte werden durch Ist ersetzt, sobald Zahlungen verbucht sind. Drilldowns zeigen PO/FO-Events.</p>
+          </div>
+          <div class="dashboard-range-slot">
+            ${rangeSelect}
+          </div>
         </div>
-      </div>
-      <div class="dashboard-controls">
-        <div class="dashboard-toggle" role="group" aria-label="Expand">
-          <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
-          <button type="button" class="btn secondary" data-expand="expand">Alles auf</button>
+        <div class="dashboard-toolbar">
+          <div class="dashboard-toggle" role="group" aria-label="Expand">
+            <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
+            <button type="button" class="btn secondary" data-expand="expand">Alles auf</button>
+          </div>
+          <div class="dashboard-toolbar-filters">
+            <label class="dashboard-toggle dashboard-checkbox">
+              <input type="checkbox" id="dashboard-hide-empty" ${dashboardState.hideEmptyMonths ? "checked" : ""} />
+              <span>Leere Monate ausblenden</span>
+            </label>
+            <label class="dashboard-toggle dashboard-checkbox">
+              <input type="checkbox" id="dashboard-limit-balance" ${dashboardState.limitBalanceToGreen ? "checked" : ""} />
+              <span>Kontostand nur bis letztem grünen Monat</span>
+            </label>
+          </div>
+          <div class="dashboard-toolbar-legend muted">
+            <button type="button" class="legend-trigger" id="dashboard-legend-info">
+              <span class="coverage-indicator coverage-green"></span> Vollständig
+              <span class="coverage-indicator coverage-light"></span> Weitgehend
+              <span class="coverage-indicator coverage-orange"></span> Teilweise
+              <span class="coverage-indicator coverage-red"></span> Unzureichend
+              <span class="legend-more">Details</span>
+            </button>
+            <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
+          </div>
         </div>
-        <label class="dashboard-toggle dashboard-checkbox">
-          <input type="checkbox" id="dashboard-hide-empty" ${dashboardState.hideEmptyMonths ? "checked" : ""} />
-          <span>Leere Monate ausblenden</span>
-        </label>
-        <label class="dashboard-toggle dashboard-checkbox">
-          <input type="checkbox" id="dashboard-limit-balance" ${dashboardState.limitBalanceToGreen ? "checked" : ""} />
-          <span>Kontostand nur bis letztem grünen Monat</span>
-        </label>
-        ${rangeSelect}
       </div>
       ${coverageNotice}
-      <div class="dashboard-legend muted">
-        <button type="button" class="legend-trigger" id="dashboard-legend-info">
-          <span class="coverage-indicator coverage-green"></span> Vollständig
-          <span class="coverage-indicator coverage-light"></span> Weitgehend
-          <span class="coverage-indicator coverage-orange"></span> Teilweise
-          <span class="coverage-indicator coverage-red"></span> Unzureichend
-          <span class="legend-more">Details</span>
-        </button>
-        <span class="legend-item"><span class="legend-paid"></span> Zahlung im aktuellen Monat bezahlt</span>
-      </div>
       <div class="dashboard-table-wrap">
         <div class="dashboard-table-scroll">
           <table class="table-compact dashboard-tree-table" role="table" data-ui-table="true" data-sticky-cols="1">

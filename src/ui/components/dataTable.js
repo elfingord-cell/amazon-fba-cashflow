@@ -177,14 +177,19 @@ function resolveHorizontalScrollElement(scrollContainer) {
   return candidates.find((candidate) => candidate instanceof HTMLElement) || null;
 }
 
-function ensureHorizontalScrollControls(table, scrollContainer) {
+function ensureHorizontalScrollControls(table, scrollContainer, mode = "native-dual") {
   if (!(table instanceof HTMLTableElement)) return;
   if (!(scrollContainer instanceof HTMLElement)) return;
   const scrollEl = resolveHorizontalScrollElement(scrollContainer);
   if (!(scrollEl instanceof HTMLElement)) return;
 
   const existing = tableScrollSync.get(table);
-  if (existing && existing.scrollContainer === scrollContainer && existing.scrollEl === scrollEl) {
+  if (
+    existing
+    && existing.scrollContainer === scrollContainer
+    && existing.scrollEl === scrollEl
+    && existing.mode === mode
+  ) {
     existing.update();
     return;
   }
@@ -200,53 +205,88 @@ function ensureHorizontalScrollControls(table, scrollContainer) {
   const parent = scrollContainer.parentElement;
   if (!parent) return;
 
-  const topControl = createEl("div", { class: "ui-scroll-control ui-scroll-control-top", "aria-hidden": "true" }, [
-    createEl("input", { class: "ui-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
-  ]);
-  const bottomControl = createEl("div", { class: "ui-scroll-control ui-scroll-control-bottom", "aria-hidden": "true" }, [
-    createEl("input", { class: "ui-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
-  ]);
-  const topInput = topControl.querySelector(".ui-scroll-range");
-  const bottomInput = bottomControl.querySelector(".ui-scroll-range");
-  if (!(topInput instanceof HTMLInputElement) || !(bottomInput instanceof HTMLInputElement)) return;
-
-  parent.insertBefore(topControl, scrollContainer);
-  parent.insertBefore(bottomControl, scrollContainer.nextSibling);
+  let topControl = null;
+  let topTrack = null;
+  let topInner = null;
+  let bottomControl = null;
+  let bottomTrack = null;
+  let bottomInner = null;
+  if (mode === "native-dual") {
+    topControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-top", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-native-track" }, [
+        createEl("div", { class: "ui-scrollbar-native-inner" }),
+      ]),
+    ]);
+    bottomControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-bottom-control", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-native-track" }, [
+        createEl("div", { class: "ui-scrollbar-native-inner" }),
+      ]),
+    ]);
+    topTrack = topControl.querySelector(".ui-scrollbar-native-track");
+    topInner = topControl.querySelector(".ui-scrollbar-native-inner");
+    bottomTrack = bottomControl.querySelector(".ui-scrollbar-native-track");
+    bottomInner = bottomControl.querySelector(".ui-scrollbar-native-inner");
+    if (
+      !(topTrack instanceof HTMLElement)
+      || !(topInner instanceof HTMLElement)
+      || !(bottomTrack instanceof HTMLElement)
+      || !(bottomInner instanceof HTMLElement)
+    ) return;
+    parent.insertBefore(topControl, scrollContainer);
+    parent.insertBefore(bottomControl, scrollContainer.nextSibling);
+  }
 
   let syncing = false;
   const update = () => {
     const max = Math.max(0, Math.ceil(scrollEl.scrollWidth - scrollEl.clientWidth));
-    topInput.max = String(max);
-    bottomInput.max = String(max);
     const current = Math.min(max, Math.max(0, Math.round(scrollEl.scrollLeft)));
-    topInput.value = String(current);
-    bottomInput.value = String(current);
-    const disabled = max <= 0;
-    topInput.disabled = disabled;
-    bottomInput.disabled = disabled;
+    if (mode === "native-dual") scrollEl.classList.add("ui-scrollbar-managed");
+    else scrollEl.classList.remove("ui-scrollbar-managed");
+    if (topInner) {
+      topInner.style.width = `${Math.max(scrollEl.scrollWidth, scrollEl.clientWidth)}px`;
+    }
+    if (bottomInner) {
+      bottomInner.style.width = `${Math.max(scrollEl.scrollWidth, scrollEl.clientWidth)}px`;
+    }
+    if (topControl) {
+      topControl.classList.toggle("is-overflow", max > 0);
+    }
+    if (bottomControl) {
+      bottomControl.classList.toggle("is-overflow", max > 0);
+    }
+    if (topTrack && !syncing) {
+      topTrack.scrollLeft = current;
+    }
+    if (bottomTrack && !syncing) {
+      bottomTrack.scrollLeft = current;
+    }
   };
 
-  const syncFromInput = (value) => {
+  const syncFromTrack = (track) => {
     if (syncing) return;
+    if (!(track instanceof HTMLElement)) return;
     syncing = true;
-    scrollEl.scrollLeft = Number(value || 0);
+    scrollEl.scrollLeft = track.scrollLeft;
     syncing = false;
   };
 
   const syncFromScroll = () => {
     if (syncing) return;
     syncing = true;
-    const value = String(Math.round(scrollEl.scrollLeft));
-    topInput.value = value;
-    bottomInput.value = value;
+    if (topTrack instanceof HTMLElement) topTrack.scrollLeft = scrollEl.scrollLeft;
+    if (bottomTrack instanceof HTMLElement) bottomTrack.scrollLeft = scrollEl.scrollLeft;
     syncing = false;
   };
 
-  const onTopInput = () => syncFromInput(topInput.value);
-  const onBottomInput = () => syncFromInput(bottomInput.value);
+  const onTopTrackScroll = () => syncFromTrack(topTrack);
+  const onBottomTrackScroll = () => syncFromTrack(bottomTrack);
 
-  topInput.addEventListener("input", onTopInput);
-  bottomInput.addEventListener("input", onBottomInput);
+  if (topTrack) {
+    topTrack.addEventListener("scroll", onTopTrackScroll, { passive: true });
+  }
+  if (bottomTrack) {
+    bottomTrack.addEventListener("scroll", onBottomTrackScroll, { passive: true });
+  }
   scrollEl.addEventListener("scroll", syncFromScroll, { passive: true });
   window.addEventListener("resize", update);
   const resizeObserver = typeof ResizeObserver === "function"
@@ -258,16 +298,22 @@ function ensureHorizontalScrollControls(table, scrollContainer) {
   }
 
   const cleanup = () => {
-    topInput.removeEventListener("input", onTopInput);
-    bottomInput.removeEventListener("input", onBottomInput);
+    if (topTrack) {
+      topTrack.removeEventListener("scroll", onTopTrackScroll);
+    }
+    if (bottomTrack) {
+      bottomTrack.removeEventListener("scroll", onBottomTrackScroll);
+    }
     scrollEl.removeEventListener("scroll", syncFromScroll);
     window.removeEventListener("resize", update);
     if (resizeObserver) resizeObserver.disconnect();
-    topControl.remove();
-    bottomControl.remove();
+    scrollEl.classList.remove("ui-scrollbar-managed");
+    if (topControl) topControl.remove();
+    if (bottomControl) bottomControl.remove();
   };
 
   tableScrollSync.set(table, {
+    mode,
     scrollContainer,
     scrollEl,
     update,
@@ -378,11 +424,20 @@ function refreshSingleTable(table) {
   applyStickyColumns(table);
   applyOverflowTooltips(table);
   const syncState = tableScrollSync.get(table);
-  if (syncState) {
+  const mode = String(table.dataset.scrollbarMode || "native-dual");
+  if (syncState && syncState.mode === mode) {
     syncState.update();
   } else {
+    if (syncState) {
+      try {
+        syncState.cleanup();
+      } catch {
+        // no-op
+      }
+      tableScrollSync.delete(table);
+    }
     const scrollContainer = ensureScrollContainer(table);
-    ensureHorizontalScrollControls(table, scrollContainer);
+    ensureHorizontalScrollControls(table, scrollContainer, mode);
   }
 }
 
@@ -390,8 +445,9 @@ function hydrateSingleTable(table) {
   if (!table) return;
   table.classList.add("ui-data-table", "table-compact");
   if (!table.dataset.uiTable) table.dataset.uiTable = "true";
+  if (!table.dataset.scrollbarMode) table.dataset.scrollbarMode = "native-dual";
   const scrollContainer = ensureScrollContainer(table);
-  ensureHorizontalScrollControls(table, scrollContainer);
+  ensureHorizontalScrollControls(table, scrollContainer, table.dataset.scrollbarMode);
   normalizeNativeTitles(table);
   applyAbbreviationTooltips(table);
   hydratedTables.add(table);
@@ -425,6 +481,7 @@ export function createDataTable({
   className = "",
   rowAttrs,
   stickyColumns = 0,
+  scrollbarMode = "native-dual",
 }) {
   const wrapper = createEl("div", { class: `data-table ${className}`.trim() });
   if (toolbar) {
@@ -435,6 +492,7 @@ export function createDataTable({
     class: "data-table-table ui-data-table table-compact",
     "data-ui-table": "true",
     "data-sticky-columns": Number.isFinite(Number(stickyColumns)) ? String(Number(stickyColumns)) : "0",
+    "data-scrollbar-mode": scrollbarMode || "native-dual",
   });
   const thead = createEl("thead", {}, [
     createEl("tr", {}, columns.map(col => {

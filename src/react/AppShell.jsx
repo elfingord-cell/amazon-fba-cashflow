@@ -1,6 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, ConfigProvider, Layout, Menu, Typography } from "antd";
-import { MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
+import { Button, ConfigProvider, Input, Layout, Menu, Modal, Typography } from "antd";
+import {
+  BankOutlined,
+  BugOutlined,
+  CalculatorOutlined,
+  CreditCardOutlined,
+  DashboardOutlined,
+  DeploymentUnitOutlined,
+  DollarOutlined,
+  FormOutlined,
+  InboxOutlined,
+  LineChartOutlined,
+  LogoutOutlined,
+  ProjectOutlined,
+  SettingOutlined,
+  ShoppingCartOutlined,
+  TagsOutlined,
+  TeamOutlined,
+  UploadOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
 import { confirmNavigation } from "../hooks/useDirtyGuard.js";
 import { initDataHealthUI } from "../ui/dataHealthUi.js";
 import { initRemoteSync } from "../sync/remoteSync.js";
@@ -22,6 +41,28 @@ const { Header, Content, Sider } = Layout;
 const { Text } = Typography;
 
 const STATE_KEY = "amazon_fba_cashflow_v1";
+const MENU_ICON_MAP = {
+  dashboard: DashboardOutlined,
+  products: TagsOutlined,
+  forecast: LineChartOutlined,
+  inventory: InboxOutlined,
+  fo: DeploymentUnitOutlined,
+  po: ShoppingCartOutlined,
+  suppliers: TeamOutlined,
+  settings: SettingOutlined,
+  inputs: FormOutlined,
+  fixed: DollarOutlined,
+  tax: CalculatorOutlined,
+  export: UploadOutlined,
+  payments: CreditCardOutlined,
+  debug: BugOutlined,
+  plan: ProjectOutlined,
+};
+
+function renderMenuIcon(iconName) {
+  const Icon = MENU_ICON_MAP[iconName] || TagsOutlined;
+  return <Icon />;
+}
 
 function toMenuItems() {
   return MENU_SECTIONS.map((section) => ({
@@ -31,6 +72,7 @@ function toMenuItems() {
     children: section.children.map((item) => ({
       key: item.key,
       label: item.label,
+      icon: renderMenuIcon(item.icon),
     })),
   }));
 }
@@ -47,7 +89,6 @@ function routeTitle(base) {
 export function AppShell() {
   const dbSyncEnabled = isDbSyncEnabled();
   const dbConfigured = isSupabaseConfigured();
-  const [collapsed, setCollapsed] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [normalizedHash, setNormalizedHash] = useState(() => normalizeHash(window.location.hash));
   const [authEmail, setAuthEmail] = useState("");
@@ -56,6 +97,7 @@ export function AppShell() {
   const [authInfo, setAuthInfo] = useState("");
   const [authUser, setAuthUser] = useState(null);
   const [serverSession, setServerSession] = useState(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const pendingNavRef = useRef(null);
   const currentHashRef = useRef(normalizedHash);
@@ -177,6 +219,7 @@ export function AppShell() {
       setServerSession(session || null);
       setAuthPassword("");
       setAuthInfo("Angemeldet.");
+      setAuthModalOpen(false);
     } catch (error) {
       setAuthInfo(error?.message || "Login fehlgeschlagen");
     } finally {
@@ -236,106 +279,36 @@ export function AppShell() {
       <Layout className="app-shell">
         <Sider
           className="app-sider"
-          trigger={null}
-          collapsible
-          breakpoint="lg"
-          collapsed={collapsed}
-          onCollapse={setCollapsed}
           width={280}
         >
           <div className="sidebar-header app-sidebar-header">
             <div className="app-sidebar-top">
-              <Button
-                type="text"
-                className="sidebar-toggle"
-                aria-label="Navigation umschalten"
-                onClick={() => setCollapsed((value) => !value)}
-                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              />
-              {!collapsed ? <span className="sidebar-title">FBA Cashflow</span> : null}
+              <span className="app-brand-mark" aria-hidden="true">
+                <BankOutlined />
+              </span>
+              <span className="sidebar-title">FBA Cashflow</span>
             </div>
             <button
-              className={`data-health-badge ${collapsed ? "is-collapsed-hidden" : ""}`.trim()}
+              className="data-health-badge"
               id="data-health-badge"
               type="button"
             >
               Data Health: OK
             </button>
-            <div className={`sidebar-status ${collapsed ? "is-collapsed-hidden" : ""}`.trim()}>
+            <div className="sidebar-status">
               <span className="sync-status" id="sync-status" data-status="local-only">Local only</span>
               <label className="sync-toggle">
                 <input type="checkbox" id="sync-auto-toggle" />
                 <span>Auto-sync</span>
               </label>
             </div>
-            {dbSyncEnabled ? (
-              <div className={`sync-auth ${collapsed ? "is-collapsed-hidden" : ""}`.trim()}>
-                {authUser ? (
-                  <div className="sync-auth-user">
-                    <div className="sync-auth-user-id">{authUser.email || authUser.id}</div>
-                    <div className="sync-auth-user-meta">
-                      {serverSession?.role ? `${serverSession.role} · Workspace aktiv` : "Workspace unbekannt"}
-                    </div>
-                    <button
-                      type="button"
-                      className="btn ghost sync-auth-logout"
-                      onClick={handleLogout}
-                      disabled={authBusy}
-                    >
-                      Logout
-                    </button>
-                  </div>
-                ) : (
-                  <form className="sync-auth-form" onSubmit={handlePasswordLogin}>
-                    <input
-                      className="sync-auth-input"
-                      type="email"
-                      value={authEmail}
-                      onChange={(event) => setAuthEmail(event.target.value)}
-                      placeholder="E-Mail"
-                      autoComplete="email"
-                      disabled={authBusy || !dbConfigured}
-                    />
-                    <input
-                      className="sync-auth-input"
-                      type="password"
-                      value={authPassword}
-                      onChange={(event) => setAuthPassword(event.target.value)}
-                      placeholder="Passwort"
-                      autoComplete="current-password"
-                      disabled={authBusy || !dbConfigured}
-                    />
-                    <div className="sync-auth-actions">
-                      <button
-                        type="submit"
-                        className="btn sm"
-                        disabled={authBusy || !dbConfigured || !authEmail || !authPassword}
-                      >
-                        Login
-                      </button>
-                      <button
-                        type="button"
-                        className="btn sm secondary"
-                        onClick={handleMagicLink}
-                        disabled={authBusy || !dbConfigured || !authEmail}
-                      >
-                        Magic Link
-                      </button>
-                    </div>
-                  </form>
-                )}
-                {!dbConfigured ? (
-                  <div className="sync-auth-hint">Supabase Client Env fehlt.</div>
-                ) : null}
-                {authInfo ? <div className="sync-auth-hint">{authInfo}</div> : null}
-              </div>
-            ) : null}
           </div>
 
           <Menu
             mode="inline"
             className="app-menu"
             selectedKeys={[routeBase]}
+            inlineIndent={16}
             items={MENU_ITEMS}
             onClick={({ key }) => handleNavigate(String(key))}
           />
@@ -343,7 +316,19 @@ export function AppShell() {
 
         <Layout>
           <Header className="app-header">
-            <Text strong>{routeTitle(routeBase)}</Text>
+            <Text strong className="app-route-title">{routeTitle(routeBase)}</Text>
+            <div className="app-header-actions">
+              {dbSyncEnabled ? (
+                <Button
+                  className="app-auth-trigger"
+                  type={authUser ? "default" : "primary"}
+                  icon={<UserOutlined />}
+                  onClick={() => setAuthModalOpen(true)}
+                >
+                  {authUser ? "Workspace" : "Anmelden"}
+                </Button>
+              ) : null}
+            </div>
           </Header>
           <Content className={`app app-content ${routeIsWide ? "app-wide" : ""}`.trim()}>
             <LegacyRouteView
@@ -354,6 +339,74 @@ export function AppShell() {
           </Content>
         </Layout>
       </Layout>
+      <Modal
+        title="Shared Sync Login"
+        open={authModalOpen}
+        onCancel={() => setAuthModalOpen(false)}
+        footer={null}
+        destroyOnClose
+      >
+        <div className="sync-auth app-auth-modal">
+          {authUser ? (
+            <div className="sync-auth-user">
+              <div className="sync-auth-user-id">{authUser.email || authUser.id}</div>
+              <div className="sync-auth-user-meta">
+                {serverSession?.role ? `${serverSession.role} · Workspace aktiv` : "Workspace unbekannt"}
+              </div>
+              <Button
+                type="default"
+                icon={<LogoutOutlined />}
+                onClick={handleLogout}
+                loading={authBusy}
+              >
+                Logout
+              </Button>
+            </div>
+          ) : (
+            <form className="sync-auth-form" onSubmit={handlePasswordLogin}>
+              <Input
+                className="sync-auth-input"
+                type="email"
+                value={authEmail}
+                onChange={(event) => setAuthEmail(event.target.value)}
+                placeholder="E-Mail"
+                autoComplete="email"
+                disabled={authBusy || !dbConfigured}
+              />
+              <Input.Password
+                className="sync-auth-input"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                placeholder="Passwort"
+                autoComplete="current-password"
+                disabled={authBusy || !dbConfigured}
+              />
+              <div className="sync-auth-actions">
+                <Button
+                  htmlType="submit"
+                  type="primary"
+                  loading={authBusy}
+                  disabled={!dbConfigured || !authEmail || !authPassword}
+                >
+                  Login
+                </Button>
+                <Button
+                  type="default"
+                  onClick={handleMagicLink}
+                  loading={authBusy}
+                  disabled={!dbConfigured || !authEmail}
+                >
+                  Magic Link
+                </Button>
+              </div>
+            </form>
+          )}
+          {!dbConfigured ? (
+            <div className="sync-auth-hint">Supabase Client Env fehlt.</div>
+          ) : null}
+          {authInfo ? <div className="sync-auth-hint">{authInfo}</div> : null}
+        </div>
+      </Modal>
     </ConfigProvider>
   );
 }

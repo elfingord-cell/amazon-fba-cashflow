@@ -1777,12 +1777,16 @@ function buildHistoryTable(state, sku) {
     ];
 
     const wrapper = createEl("div", { class: "table-wrap products-list products-list-antd" });
-    const topScrollControl = createEl("div", { class: "products-scroll-control products-scroll-control-top", "aria-hidden": "true" }, [
-      createEl("input", { class: "products-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
+    const topScrollControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-top products-native-scroll", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-native-track" }, [
+        createEl("div", { class: "ui-scrollbar-native-inner" }),
+      ]),
     ]);
     const mountPoint = createEl("div", { class: "products-list-react-mount" });
-    const bottomScrollControl = createEl("div", { class: "products-scroll-control products-scroll-control-bottom", "aria-hidden": "true" }, [
-      createEl("input", { class: "products-scroll-range", type: "range", min: "0", max: "0", value: "0", step: "1", tabindex: "-1" }),
+    const bottomScrollControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-bottom-control products-native-scroll", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-native-track" }, [
+        createEl("div", { class: "ui-scrollbar-native-inner" }),
+      ]),
     ]);
     wrapper.append(topScrollControl, mountPoint, bottomScrollControl);
     root.__productsListReactRoot = createRoot(mountPoint);
@@ -1805,39 +1809,45 @@ function buildHistoryTable(state, sku) {
         (node) => node && (node.scrollWidth - node.clientWidth) > 0
       ) || scrollCandidates[0] || null;
       const table = mountPoint.querySelector(".ant-table-content table, .ant-table-body table");
-      const topRange = topScrollControl.querySelector(".products-scroll-range");
-      const bottomRange = bottomScrollControl.querySelector(".products-scroll-range");
-      if (!scrollContent || !table || !topRange || !bottomRange) return;
+      const topTrack = topScrollControl.querySelector(".ui-scrollbar-native-track");
+      const topInner = topScrollControl.querySelector(".ui-scrollbar-native-inner");
+      const bottomTrack = bottomScrollControl.querySelector(".ui-scrollbar-native-track");
+      const bottomInner = bottomScrollControl.querySelector(".ui-scrollbar-native-inner");
+      if (!scrollContent || !table || !topTrack || !topInner || !bottomTrack || !bottomInner) return;
       let syncing = false;
       const updateRanges = () => {
         const max = Math.max(0, Math.ceil(scrollContent.scrollWidth - scrollContent.clientWidth));
-        topRange.max = String(max);
-        bottomRange.max = String(max);
+        topInner.style.width = `${Math.max(scrollContent.scrollWidth, scrollContent.clientWidth)}px`;
+        bottomInner.style.width = `${Math.max(scrollContent.scrollWidth, scrollContent.clientWidth)}px`;
         const current = Math.min(max, Math.max(0, Math.round(scrollContent.scrollLeft)));
-        topRange.value = String(current);
-        bottomRange.value = String(current);
-        topRange.disabled = max <= 0;
-        bottomRange.disabled = max <= 0;
+        topTrack.scrollLeft = current;
+        bottomTrack.scrollLeft = current;
+        topScrollControl.classList.toggle("is-overflow", max > 0);
+        bottomScrollControl.classList.toggle("is-overflow", max > 0);
       };
-      const syncFromRange = (nextValue) => {
+      const syncFromTop = () => {
         if (syncing) return;
         syncing = true;
-        scrollContent.scrollLeft = Number(nextValue || 0);
+        scrollContent.scrollLeft = topTrack.scrollLeft;
+        syncing = false;
+      };
+      const syncFromBottom = () => {
+        if (syncing) return;
+        syncing = true;
+        scrollContent.scrollLeft = bottomTrack.scrollLeft;
         syncing = false;
       };
       const syncFromTable = () => {
         if (syncing) return;
         syncing = true;
-        const value = String(Math.round(scrollContent.scrollLeft));
-        topRange.value = value;
-        bottomRange.value = value;
+        topTrack.scrollLeft = scrollContent.scrollLeft;
+        bottomTrack.scrollLeft = scrollContent.scrollLeft;
         syncing = false;
       };
-      const onTopInput = () => syncFromRange(topRange.value);
-      const onBottomInput = () => syncFromRange(bottomRange.value);
+      scrollContent.classList.add("ui-scrollbar-managed");
       updateRanges();
-      topRange.addEventListener("input", onTopInput);
-      bottomRange.addEventListener("input", onBottomInput);
+      topTrack.addEventListener("scroll", syncFromTop, { passive: true });
+      bottomTrack.addEventListener("scroll", syncFromBottom, { passive: true });
       scrollContent.addEventListener("scroll", syncFromTable, { passive: true });
       window.addEventListener("resize", updateRanges);
       const resizeObserver = typeof ResizeObserver === "function"
@@ -1848,10 +1858,11 @@ function buildHistoryTable(state, sku) {
         resizeObserver.observe(table);
       }
       root.__productsListScrollCleanup = () => {
-        topRange.removeEventListener("input", onTopInput);
-        bottomRange.removeEventListener("input", onBottomInput);
+        topTrack.removeEventListener("scroll", syncFromTop);
+        bottomTrack.removeEventListener("scroll", syncFromBottom);
         scrollContent.removeEventListener("scroll", syncFromTable);
         window.removeEventListener("resize", updateRanges);
+        scrollContent.classList.remove("ui-scrollbar-managed");
         if (resizeObserver) resizeObserver.disconnect();
       };
     });

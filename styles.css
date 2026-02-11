@@ -196,7 +196,7 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .forecast-table-wrap{
   overflow-x:scroll;
   overflow-y:visible;
-  scrollbar-gutter:stable both-edges;
+  scrollbar-gutter:stable;
 }
 .table-wrap::-webkit-scrollbar,
 .table-scroll::-webkit-scrollbar,
@@ -230,31 +230,35 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .inventory-table-scroll::-webkit-scrollbar-thumb:hover,
 .products-grid-scroll::-webkit-scrollbar-thumb:hover,
 .forecast-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(15,27,45,0.35)}
-.ui-table-scroll{
-  scrollbar-width:none !important;
-  scrollbar-gutter:auto !important;
-}
-.ui-table-scroll::-webkit-scrollbar{
-  width:0 !important;
-  height:0 !important;
-}
-.ui-scroll-control{
-  padding:2px 4px;
+.ui-scrollbar-native{
   border:1px solid rgba(15,27,45,0.1);
   border-radius:999px;
   background:rgba(243,247,250,0.95);
+  padding:2px 4px;
 }
-.ui-scroll-control-top{margin-bottom:6px;}
-.ui-scroll-control-bottom{margin-top:6px;}
-.ui-scroll-range{
-  width:100%;
-  margin:0;
-  accent-color:#2fb79c;
-  cursor:ew-resize;
+.ui-scrollbar-native-top{margin-bottom:6px;}
+.ui-scrollbar-native-bottom-control{margin-top:6px;}
+.ui-scrollbar-native-track{
+  overflow-x:scroll;
+  overflow-y:hidden;
+  height:12px;
+  scrollbar-gutter:stable;
 }
-.ui-scroll-range:disabled{
-  opacity:.45;
-  cursor:not-allowed;
+.ui-scrollbar-native-inner{
+  height:1px;
+  min-width:100%;
+}
+.ui-scrollbar-native-track::-webkit-scrollbar{height:10px}
+.ui-scrollbar-native-track::-webkit-scrollbar-track{background:rgba(15,27,45,0.06); border-radius:999px}
+.ui-scrollbar-native-track::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.25); border-radius:999px}
+.ui-scrollbar-native-track::-webkit-scrollbar-thumb:hover{background:rgba(15,27,45,0.35)}
+.ui-scrollbar-native-track{scrollbar-width:thin}
+.ui-scrollbar-managed{
+  scrollbar-width:none !important;
+}
+.ui-scrollbar-managed::-webkit-scrollbar{
+  width:0 !important;
+  height:0 !important;
 }
 .data-table-table{min-width:100%; border-collapse:collapse}
 .data-table-table th{font-size:12px; text-transform:none; letter-spacing:0; font-weight:600; color:var(--table-header-text); background:#f8fafc}
@@ -266,17 +270,20 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .pos{color:#15803d;}
 .neg{color:#b91c1c;}
 .dashboard{width:100%;}
-.dashboard-header{margin-bottom:10px;}
-.dashboard-controls{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px;}
-.dashboard-controls .dashboard-toggle{display:flex; gap:8px; flex-wrap:wrap;}
-.dashboard-controls .dashboard-checkbox{align-items:center; gap:6px; font-size:12px; color:var(--muted);}
-.dashboard-controls .dashboard-checkbox input{width:16px; height:16px;}
-.dashboard-controls .dashboard-checkbox input[type="number"]{width:72px; height:32px; font-size:12px;}
+.dashboard-header{display:flex; flex-direction:column; gap:12px; margin-bottom:10px;}
+.dashboard-topline{display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;}
+.dashboard-title-block{min-width:280px;}
+.dashboard-range-slot{margin-left:auto;}
+.dashboard-toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+.dashboard-toolbar .dashboard-toggle{display:flex; gap:8px; flex-wrap:wrap;}
+.dashboard-toolbar-filters{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+.dashboard-toolbar-filters .dashboard-checkbox{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin:0;}
+.dashboard-toolbar-filters .dashboard-checkbox input{width:16px; height:16px; margin:0;}
 .dashboard-range{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);}
 .dashboard-range select{height:34px; font-size:13px; min-width:160px;}
-.dashboard-legend{display:flex; align-items:center; gap:12px; font-size:12px; margin-bottom:8px;}
-.dashboard-legend .legend-item{display:inline-flex; align-items:center; gap:4px;}
-.dashboard-legend .legend-paid{display:inline-block; width:12px; height:8px; border-radius:6px; background:rgba(47,143,107,0.18); border:1px solid rgba(47,143,107,0.35);}
+.dashboard-toolbar-legend{display:flex; align-items:center; gap:12px; font-size:12px; margin-left:auto; flex-wrap:wrap;}
+.dashboard-toolbar-legend .legend-item{display:inline-flex; align-items:center; gap:4px;}
+.dashboard-toolbar-legend .legend-paid{display:inline-block; width:12px; height:8px; border-radius:6px; background:rgba(47,143,107,0.18); border:1px solid rgba(47,143,107,0.35);}
 .dashboard-coverage-notice{display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px dashed rgba(196,140,0,0.4); border-radius:10px; background:rgba(255,231,180,0.2); font-size:13px; margin-bottom:12px;}
 .dashboard-coverage-notice .btn{padding:4px 10px; font-size:12px;}
 .dashboard-table-wrap{border:1px solid var(--table-border); border-radius:12px; background:#fff;}
@@ -711,34 +718,14 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .products-list-table th.col-tags,.products-list-table td.col-tags{width:200px;}
 .products-list-table th.col-actions,.products-list-table td.col-actions{width:170px;}
 .products-list-antd .ant-table-wrapper{width:100%;}
-.products-scroll-control{
-  padding:2px 4px;
-  border:1px solid rgba(15,27,45,0.1);
-  border-radius:999px;
-  background:rgba(243,247,250,0.95);
-}
-.products-scroll-control-top{margin-bottom:6px;}
-.products-scroll-control-bottom{margin-top:6px;}
-.products-scroll-range{
-  width:100%;
-  margin:0;
-  accent-color:#2fb79c;
-  cursor:ew-resize;
-}
-.products-scroll-range:disabled{
-  opacity:.45;
-  cursor:not-allowed;
-}
 .products-list-table-antd .ant-table-thead > tr > th{font-size:12px; font-weight:600;}
 .products-list-table-antd .ant-table-tbody > tr > td{vertical-align:middle;}
 .products-list-table-antd .ant-table-content{overflow-x:auto !important;}
-.products-list-table-antd .ant-table-content{
-  scrollbar-width:none;
-}
-.products-list-table-antd .ant-table-content::-webkit-scrollbar{
-  width:0;
-  height:0;
-}
+.products-list-table-antd .ant-table-content{scrollbar-width:thin;}
+.products-list-table-antd .ant-table-content::-webkit-scrollbar{height:10px}
+.products-list-table-antd .ant-table-content::-webkit-scrollbar-track{background:rgba(15,27,45,0.06); border-radius:999px}
+.products-list-table-antd .ant-table-content::-webkit-scrollbar-thumb{background:rgba(15,27,45,0.25); border-radius:999px}
+.products-list-table-antd .ant-table-content::-webkit-scrollbar-thumb:hover{background:rgba(15,27,45,0.35)}
 .products-list-table-antd .ant-table-sticky-scroll{
   display:none !important;
 }
