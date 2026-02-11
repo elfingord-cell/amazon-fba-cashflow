@@ -6,7 +6,14 @@ import {
   STORAGE_KEY,
   LAST_COMMIT_KEY,
 } from "../data/storageLocal.js";
-import { fetchRemoteState, pushRemoteState, ConflictError } from "../storage/remoteState.js";
+import {
+  fetchRemoteState,
+  pushRemoteState,
+  ConflictError,
+  AuthRequiredError,
+  ConfigurationError,
+} from "../storage/remoteState.js";
+import { hasSupabaseClientConfig, isDbSyncEnabled } from "../storage/syncBackend.js";
 import { openConfirmDialog } from "../ui/utils/confirmDialog.js";
 
 const REMOTE_REV_KEY = "remoteRev";
@@ -146,13 +153,31 @@ export function initRemoteSync() {
   let dirty = false;
   let conflict = false;
   let offline = false;
+  let authRequired = false;
+  let configError = false;
   let suppressNextSync = false;
   let blockAutoSync = false;
   let pollTimer = null;
 
+  if (isDbSyncEnabled() && !hasSupabaseClientConfig()) {
+    configError = true;
+    showBanner({
+      message: "Supabase env fehlt (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).",
+      type: "danger",
+    });
+  }
+
   const setStatus = (status) => updateStatusPill(statusEl, status);
 
   const updateStatus = () => {
+    if (configError) {
+      setStatus("config-error");
+      return;
+    }
+    if (authRequired) {
+      setStatus("auth-required");
+      return;
+    }
     if (offline) {
       setStatus("offline");
       return;
@@ -170,6 +195,45 @@ export function initRemoteSync() {
     } else {
       setStatus("synced");
     }
+  };
+
+  const clearSyncErrors = () => {
+    authRequired = false;
+    configError = false;
+    offline = false;
+  };
+
+  const handleSyncError = (err, fallbackToast = true) => {
+    if (err instanceof AuthRequiredError) {
+      authRequired = true;
+      offline = false;
+      conflict = false;
+      updateStatus();
+      showBanner({
+        message: "Shared sync requires login. Bitte im Sidebar anmelden.",
+        type: "warning",
+      });
+      return;
+    }
+
+    if (err instanceof ConfigurationError) {
+      configError = true;
+      authRequired = false;
+      offline = false;
+      conflict = false;
+      updateStatus();
+      showBanner({
+        message: "Supabase env fehlt (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).",
+        type: "danger",
+      });
+      return;
+    }
+
+    offline = true;
+    authRequired = false;
+    configError = false;
+    updateStatus();
+    if (fallbackToast) createToast("Offline");
   };
 
   const rememberRemote = (rev, updatedAt, data) => {
@@ -193,9 +257,8 @@ export function initRemoteSync() {
           ifMatchRev = latest.rev || null;
           if (!ifMatchRev) return;
         }
-      } catch {
-        offline = true;
-        updateStatus();
+      } catch (err) {
+        handleSyncError(err, false);
         return;
       }
     }
@@ -208,7 +271,7 @@ export function initRemoteSync() {
       remoteExists = true;
       dirty = false;
       conflict = false;
-      offline = false;
+      clearSyncErrors();
       rememberRemote(response.rev, response.updatedAt, payload);
       updateStatus();
       showBanner(null);
@@ -219,9 +282,7 @@ export function initRemoteSync() {
         updateStatus();
         openConflictModal(err.details);
       } else {
-        offline = true;
-        updateStatus();
-        createToast("Offline");
+        handleSyncError(err);
       }
     }
   };
@@ -288,13 +349,13 @@ export function initRemoteSync() {
         remoteExists = true;
         conflict = false;
         dirty = false;
+        clearSyncErrors();
         rememberRemote(remote.rev, remote.updatedAt);
         updateStatus();
         createToast("Updated from remote");
       }
-    } catch {
-      offline = true;
-      updateStatus();
+    } catch (err) {
+      handleSyncError(err);
     }
   };
 
@@ -311,7 +372,7 @@ export function initRemoteSync() {
       remoteExists = true;
       conflict = false;
       dirty = false;
-      offline = false;
+      clearSyncErrors();
       rememberRemote(response.rev, response.updatedAt, payload);
       updateStatus();
       createToast("Remote overwritten");
@@ -321,8 +382,7 @@ export function initRemoteSync() {
         updateStatus();
         openConflictModal(err.details);
       } else {
-        offline = true;
-        updateStatus();
+        handleSyncError(err);
       }
     }
   };
@@ -378,20 +438,24 @@ export function initRemoteSync() {
           variant: "btn",
           onClick: async () => {
             showBanner(null);
-            const latest = await fetchRemoteState();
-            if (latest?.exists && latest.rev) {
-              openConfirmDialog({
-                title: "Overwrite remote?",
-                message: "Shared state exists. Overwrite with imported data?",
-                confirmLabel: "Overwrite",
-                cancelLabel: "Cancel",
-                onConfirm: async () => {
-                  await forceOverwriteRemote();
-                },
-              });
-              return;
+            try {
+              const latest = await fetchRemoteState();
+              if (latest?.exists && latest.rev) {
+                openConfirmDialog({
+                  title: "Overwrite remote?",
+                  message: "Shared state exists. Overwrite with imported data?",
+                  confirmLabel: "Overwrite",
+                  cancelLabel: "Cancel",
+                  onConfirm: async () => {
+                    await forceOverwriteRemote();
+                  },
+                });
+                return;
+              }
+              await publishLocalState(true);
+            } catch (err) {
+              handleSyncError(err);
             }
-            await publishLocalState(true);
           },
         },
       ],
@@ -401,7 +465,7 @@ export function initRemoteSync() {
   const reconcileInitialState = async () => {
     try {
       const remote = await fetchRemoteState();
-      offline = false;
+      clearSyncErrors();
       if (remote?.exists) {
         remoteExists = true;
         const localLastCommitAt = localStorage.getItem(LAST_COMMIT_KEY);
@@ -420,9 +484,8 @@ export function initRemoteSync() {
         handleRemoteMissing();
       }
       updateStatus();
-    } catch {
-      offline = true;
-      updateStatus();
+    } catch (err) {
+      handleSyncError(err, false);
     }
   };
 
@@ -441,7 +504,7 @@ export function initRemoteSync() {
       remoteExists = true;
       dirty = false;
       conflict = false;
-      offline = false;
+      clearSyncErrors();
       rememberRemote(response.rev, response.updatedAt, state);
       updateStatus();
       createToast("Synced");
@@ -451,8 +514,7 @@ export function initRemoteSync() {
         updateStatus();
         openConflictModal(err.details);
       } else {
-        offline = true;
-        updateStatus();
+        handleSyncError(err, false);
       }
     }
   };
@@ -466,7 +528,7 @@ export function initRemoteSync() {
         return;
       }
       remoteExists = true;
-      offline = false;
+      clearSyncErrors();
       if (remote.rev && remote.rev !== remoteRev) {
         if (!dirty) {
           suppressNextSync = true;
@@ -478,9 +540,8 @@ export function initRemoteSync() {
           handleRemoteUpdatedWhileDirty(remote);
         }
       }
-    } catch {
-      offline = true;
-      updateStatus();
+    } catch (err) {
+      handleSyncError(err, false);
     }
   };
 
@@ -528,7 +589,20 @@ export function initRemoteSync() {
     updateStatus();
   };
 
+  const handleAuthChanged = () => {
+    authRequired = false;
+    conflict = false;
+    offline = false;
+    reconcileInitialState();
+    if (isAutoSyncEnabled() && dirty) {
+      attemptPush(loadState());
+    } else {
+      updateStatus();
+    }
+  };
+
   window.addEventListener("remote-sync:local-import", handleLocalImportEvent);
+  window.addEventListener("remote-sync:auth-changed", handleAuthChanged);
 
   reconcileInitialState();
   pollTimer = window.setInterval(() => {
@@ -542,6 +616,7 @@ export function initRemoteSync() {
     teardown() {
       if (pollTimer) window.clearInterval(pollTimer);
       window.removeEventListener("remote-sync:local-import", handleLocalImportEvent);
+      window.removeEventListener("remote-sync:auth-changed", handleAuthChanged);
       if (bannerContainer) bannerContainer.innerHTML = "";
     },
   };

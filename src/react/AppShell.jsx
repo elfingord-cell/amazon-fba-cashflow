@@ -4,6 +4,16 @@ import { MenuFoldOutlined, MenuUnfoldOutlined } from "@ant-design/icons";
 import { confirmNavigation } from "../hooks/useDirtyGuard.js";
 import { initDataHealthUI } from "../ui/dataHealthUi.js";
 import { initRemoteSync } from "../sync/remoteSync.js";
+import { isDbSyncEnabled } from "../storage/syncBackend.js";
+import {
+  fetchServerSession,
+  getCurrentUser,
+  isSupabaseConfigured,
+  signInWithMagicLink,
+  signInWithPassword,
+  signOut,
+  onAuthSessionChange,
+} from "../storage/authSession.js";
 import { LegacyRouteView } from "./LegacyRouteView.jsx";
 import { MENU_SECTIONS, WIDE_ROUTES, normalizeHash, resolveRoute } from "./routes.js";
 import { antdTheme } from "./theme.js";
@@ -35,9 +45,17 @@ function routeTitle(base) {
 }
 
 export function AppShell() {
+  const dbSyncEnabled = isDbSyncEnabled();
+  const dbConfigured = isSupabaseConfigured();
   const [collapsed, setCollapsed] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [normalizedHash, setNormalizedHash] = useState(() => normalizeHash(window.location.hash));
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authInfo, setAuthInfo] = useState("");
+  const [authUser, setAuthUser] = useState(null);
+  const [serverSession, setServerSession] = useState(null);
 
   const pendingNavRef = useRef(null);
   const currentHashRef = useRef(normalizedHash);
@@ -105,8 +123,97 @@ export function AppShell() {
 
   useEffect(() => {
     initDataHealthUI();
-    initRemoteSync();
+    const remoteSync = initRemoteSync();
+    return () => {
+      remoteSync?.teardown?.();
+    };
   }, []);
+
+  useEffect(() => {
+    if (!dbSyncEnabled) return () => {};
+
+    const refresh = async () => {
+      try {
+        const user = await getCurrentUser();
+        setAuthUser(user || null);
+        if (!user) {
+          setServerSession(null);
+          return;
+        }
+        const session = await fetchServerSession();
+        setServerSession(session || null);
+      } catch (error) {
+        const message = error?.message || "Auth status unavailable";
+        setAuthInfo(message);
+      }
+    };
+
+    const onAuthChanged = () => {
+      refresh();
+    };
+
+    refresh();
+    const unsubscribe = onAuthSessionChange(() => {
+      refresh();
+    });
+    window.addEventListener("remote-sync:auth-changed", onAuthChanged);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("remote-sync:auth-changed", onAuthChanged);
+    };
+  }, [dbSyncEnabled]);
+
+  const handlePasswordLogin = async (event) => {
+    event.preventDefault();
+    if (!dbSyncEnabled) return;
+    setAuthInfo("");
+    setAuthBusy(true);
+    try {
+      await signInWithPassword(authEmail, authPassword);
+      const user = await getCurrentUser();
+      const session = await fetchServerSession();
+      setAuthUser(user || null);
+      setServerSession(session || null);
+      setAuthPassword("");
+      setAuthInfo("Angemeldet.");
+    } catch (error) {
+      setAuthInfo(error?.message || "Login fehlgeschlagen");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleMagicLink = async () => {
+    if (!dbSyncEnabled) return;
+    setAuthInfo("");
+    setAuthBusy(true);
+    try {
+      await signInWithMagicLink(authEmail);
+      setAuthInfo("Magic Link gesendet.");
+    } catch (error) {
+      setAuthInfo(error?.message || "Magic Link fehlgeschlagen");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!dbSyncEnabled) return;
+    setAuthInfo("");
+    setAuthBusy(true);
+    try {
+      await signOut();
+      setAuthUser(null);
+      setServerSession(null);
+      setAuthPassword("");
+      setAuthInfo("Abgemeldet.");
+    } catch (error) {
+      setAuthInfo(error?.message || "Logout fehlgeschlagen");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
 
   const handleNavigate = (nextBase) => {
     const targetHash = normalizeHash(nextBase);
@@ -161,6 +268,68 @@ export function AppShell() {
                 <span>Auto-sync</span>
               </label>
             </div>
+            {dbSyncEnabled ? (
+              <div className={`sync-auth ${collapsed ? "is-collapsed-hidden" : ""}`.trim()}>
+                {authUser ? (
+                  <div className="sync-auth-user">
+                    <div className="sync-auth-user-id">{authUser.email || authUser.id}</div>
+                    <div className="sync-auth-user-meta">
+                      {serverSession?.role ? `${serverSession.role} · Workspace aktiv` : "Workspace unbekannt"}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn ghost sync-auth-logout"
+                      onClick={handleLogout}
+                      disabled={authBusy}
+                    >
+                      Logout
+                    </button>
+                  </div>
+                ) : (
+                  <form className="sync-auth-form" onSubmit={handlePasswordLogin}>
+                    <input
+                      className="sync-auth-input"
+                      type="email"
+                      value={authEmail}
+                      onChange={(event) => setAuthEmail(event.target.value)}
+                      placeholder="E-Mail"
+                      autoComplete="email"
+                      disabled={authBusy || !dbConfigured}
+                    />
+                    <input
+                      className="sync-auth-input"
+                      type="password"
+                      value={authPassword}
+                      onChange={(event) => setAuthPassword(event.target.value)}
+                      placeholder="Passwort"
+                      autoComplete="current-password"
+                      disabled={authBusy || !dbConfigured}
+                    />
+                    <div className="sync-auth-actions">
+                      <button
+                        type="submit"
+                        className="btn sm"
+                        disabled={authBusy || !dbConfigured || !authEmail || !authPassword}
+                      >
+                        Login
+                      </button>
+                      <button
+                        type="button"
+                        className="btn sm secondary"
+                        onClick={handleMagicLink}
+                        disabled={authBusy || !dbConfigured || !authEmail}
+                      >
+                        Magic Link
+                      </button>
+                    </div>
+                  </form>
+                )}
+                {!dbConfigured ? (
+                  <div className="sync-auth-hint">Supabase Client Env fehlt.</div>
+                ) : null}
+                {authInfo ? <div className="sync-auth-hint">{authInfo}</div> : null}
+              </div>
+            ) : null}
           </div>
 
           <Menu

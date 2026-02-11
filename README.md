@@ -1,15 +1,38 @@
-# Amazon FBA · Cashflow Planung (Phase 1, static, local-first)
+# Amazon FBA Cashflow
 
-Technik: Rein statisch (ES-Modules), keine Build-Tools, keine externen APIs.  
-State: `localStorage` Namespace `amazon_fba_cashflow_v1`.  
-Export/Import: JSON im Reiter „Export/Import“.  
-Sync: Schnittstelle vorbereitet (`src/sync/adapter.js`), noch nicht implementiert.
+Vite + React Frontend mit Netlify Functions als BFF.
 
-## Schnellstart
-1. Alle Dateien in ein neues GitHub-Repo hochladen.
-2. Netlify: Add new site → Import from Git → Repo → Build command leer → Publish directory ".".
-3. Deploy. Seite lädt ohne Service Worker. Debug-Panel hilft beim Aufräumen.
+## Lokal starten
 
-## Commit/PR
-- Commit: `FBA-0001 feat: initial static modular app (no build tools)`  
-- PR-Titel: `FBA-0001: Initial static modular app`
+```bash
+npm install
+npm run dev
+```
+
+Vite startet standardmaessig auf `http://localhost:5173`.
+
+## Build
+
+```bash
+npm run build
+```
+
+`netlify.toml` nutzt:
+
+- Build command: `npm run build`
+- Publish dir: `dist`
+
+## Sync Backends
+
+Per Env steuerbar:
+
+- `VITE_SYNC_BACKEND=blobs` (legacy Blob snapshot sync)
+- `VITE_SYNC_BACKEND=db` (Supabase DB sync)
+- optional serverseitig: `SYNC_BACKEND=db`
+
+## Supabase DB Sync Setup
+
+Details in:
+
+- `docs/db-sync-supabase.md`
+- `supabase/migrations/20260210_workspace_sync.sql`
