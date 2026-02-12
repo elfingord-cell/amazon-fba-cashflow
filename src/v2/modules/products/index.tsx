@@ -14,8 +14,8 @@ import {
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { evaluateProductCompleteness } from "../../../lib/productCompleteness.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { buildProductGridRows, type ProductGridRow } from "../../domain/tableModels";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
 
@@ -29,19 +29,7 @@ const STATUS_OPTIONS = [
 const TRANSPORT_MODES = ["AIR", "RAIL", "SEA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
 
-interface ProductRow {
-  id: string;
-  sku: string;
-  alias: string;
-  supplierId: string;
-  categoryId: string | null;
-  status: "active" | "inactive";
-  avgSellingPriceGrossEUR: number | null;
-  sellerboardMarginPct: number | null;
-  moqUnits: number | null;
-  completeness: "blocked" | "warn" | "ok";
-  raw: Record<string, unknown>;
-}
+type ProductRow = ProductGridRow;
 
 interface ProductDraft {
   id?: string;
@@ -83,10 +71,6 @@ function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function normalizeStatus(value: unknown): "active" | "inactive" {
-  return String(value || "active") === "inactive" ? "inactive" : "active";
 }
 
 function completenessTag(status: "blocked" | "warn" | "ok"): JSX.Element {
@@ -138,6 +122,7 @@ export default function ProductsModule(): JSX.Element {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [form] = Form.useForm<ProductDraft>();
+  const stateObject = state as unknown as Record<string, unknown>;
 
   const categories = useMemo(() => {
     return (Array.isArray(state.productCategories) ? state.productCategories : [])
@@ -161,41 +146,14 @@ export default function ProductsModule(): JSX.Element {
   const supplierLabelById = useMemo(() => new Map(suppliers.map((entry) => [entry.id, entry.name])), [suppliers]);
 
   const rows = useMemo(() => {
-    const products = Array.isArray(state.products) ? state.products : [];
-    const mapped = products.map((entry) => {
-      const product = entry as Record<string, unknown>;
-      const completeness = evaluateProductCompleteness(product, { state })?.status || "blocked";
-      return {
-        id: String(product.id || randomId("prod")),
-        sku: String(product.sku || ""),
-        alias: String(product.alias || ""),
-        supplierId: String(product.supplierId || ""),
-        categoryId: product.categoryId ? String(product.categoryId) : null,
-        status: normalizeStatus(product.status),
-        avgSellingPriceGrossEUR: asNumber(product.avgSellingPriceGrossEUR),
-        sellerboardMarginPct: asNumber(product.sellerboardMarginPct),
-        moqUnits: asNumber(product.moqUnits),
-        completeness: completeness as "blocked" | "warn" | "ok",
-        raw: product,
-      } satisfies ProductRow;
+    return buildProductGridRows({
+      state: stateObject,
+      search,
+      statusFilter,
+      categoryLabelById,
+      supplierLabelById,
     });
-    const needle = search.trim().toLowerCase();
-    return mapped
-      .filter((row) => {
-        if (statusFilter !== "all" && row.status !== statusFilter) return false;
-        if (!needle) return true;
-        const haystack = [
-          row.sku,
-          row.alias,
-          row.supplierId,
-          row.categoryId || "",
-          supplierLabelById.get(row.supplierId) || "",
-          categoryLabelById.get(row.categoryId || "") || "",
-        ].join(" ").toLowerCase();
-        return haystack.includes(needle);
-      })
-      .sort((a, b) => a.sku.localeCompare(b.sku));
-  }, [categoryLabelById, search, state, statusFilter, supplierLabelById]);
+  }, [categoryLabelById, search, stateObject, statusFilter, supplierLabelById]);
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => [
     { header: "SKU", accessorKey: "sku" },

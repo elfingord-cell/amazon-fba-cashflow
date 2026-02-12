@@ -12,9 +12,11 @@
     "test:parity:migration": "npm run test:parity:migration:build && npm run test:parity:migration:run",
     "test:parity:payments:run": "node --test tests/v2/payments-export.parity.test.cjs",
     "test:parity:payments": "npm run test:parity:migration:build && npm run test:parity:payments:run",
+    "test:parity:performance:run": "node --test tests/v2/performance.parity.test.cjs",
+    "test:parity:performance": "npm run test:parity:migration:build && npm run test:parity:performance:run",
     "test:parity:sync:run": "node --test tests/v2/sync.parity.test.cjs tests/v2/auth-session.parity.test.mjs",
     "test:parity:sync": "npm run test:parity:migration:build && npm run test:parity:sync:run",
-    "test:parity:v2": "npm run test:parity:migration:build && npm run test:parity:migration:run && npm run test:parity:sync:run && npm run test:parity:payments:run",
+    "test:parity:v2": "npm run test:parity:migration:build && npm run test:parity:migration:run && npm run test:parity:sync:run && npm run test:parity:payments:run && npm run test:parity:performance:run",
     "test:parity": "node --test src/domain/parity.golden.test.js src/domain/cashflow.fixcost.test.js src/domain/inventoryProjection.test.js src/domain/outflowStack.test.js src/domain/vatPreview.test.js src/domain/foSuggestion.test.js && npm run test:parity:v2"
   },
   "dependencies": {

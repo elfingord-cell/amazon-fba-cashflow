@@ -12,6 +12,7 @@
   "include": [
     "src/v2/migration/**/*.ts",
     "src/v2/domain/paymentJournal.ts",
+    "src/v2/domain/tableModels.ts",
     "src/v2/state/**/*.ts",
     "src/v2/sync/types.ts",
     "src/data/storageLocal.js",

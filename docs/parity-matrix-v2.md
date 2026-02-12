@@ -22,7 +22,7 @@ Stand: 2026-02-12
 | 10 | Sync-Konfliktfall: Reload/Export/Overwrite Ende-zu-Ende | automated | `tests/v2/sync.parity.test.cjs` (`conflict flow ...`) |
 | 11 | Offline-Fallback und Re-Sync nach Reconnect | automated | `tests/v2/sync.parity.test.cjs` (`offline fallback ...`) |
 | 12 | Payments Export CSV/PDF enthält konsistente Summen/Status | automated | `tests/v2/payments-export.parity.test.cjs` |
-| 13 | Performance bei grosser Produkt-/Forecast-Tabelle bleibt interaktiv | pending | Performance-Benchmark/Synthetic dataset offen |
+| 13 | Performance bei grosser Produkt-/Forecast-Tabelle bleibt interaktiv | automated | `tests/v2/performance.parity.test.cjs` |
 | 14 | Responsiveness zentrale Flows Desktop/Mobile | pending | visuelle/interaction Smoke offen |
 
 ## Golden Dataset
@@ -34,3 +34,4 @@ Stand: 2026-02-12
 - Migrationsteil einzeln: `npm run test:parity:migration`
 - Sync/Auth einzeln: `npm run test:parity:sync`
 - Payments Export einzeln: `npm run test:parity:payments`
+- Performance einzeln: `npm run test:parity:performance`

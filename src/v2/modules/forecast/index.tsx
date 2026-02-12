@@ -17,33 +17,30 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import { parseVentoryCsv } from "../../../ui/forecastCsv.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
-import { currentMonthKey, formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
+import { currentMonthKey, formatMonthLabel, normalizeMonthKey } from "../../domain/months";
+import {
+  type ForecastRecord,
+  type ForecastViewMode,
+  type ManualMap,
+  type ForecastProductRow as ProductRow,
+  buildCategoryLabelMap,
+  buildForecastMonths,
+  buildForecastProducts,
+  buildForecastRevenueByMonth,
+  deriveForecastValue,
+  filterForecastProducts,
+  getEffectiveUnits,
+  getImportValue,
+  isForecastProductActive,
+  normalizeManualMap,
+  serializeManualMap,
+} from "../../domain/tableModels";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Text, Title } = Typography;
 
-type ForecastViewMode = "units" | "revenue" | "profit";
 type ForecastRangeMode = "next6" | "next12" | "next18" | "all";
-
-interface ForecastRecord {
-  sku: string;
-  month: string;
-  units: number | null;
-  revenueEur: number | null;
-  profitEur: number | null;
-}
-
-interface ProductRow {
-  sku: string;
-  alias: string;
-  categoryLabel: string;
-  isActive: boolean;
-  avgSellingPriceGrossEUR: number | null;
-  sellerboardMarginPct: number | null;
-}
-
-type ManualMap = Record<string, Record<string, number>>;
 
 const RANGE_OPTIONS: Array<{ value: ForecastRangeMode; label: string; count: number | null }> = [
   { value: "next6", label: "Nächste 6", count: 6 },
@@ -90,78 +87,6 @@ function formatDisplay(value: number | null, digits = 0): string {
   });
 }
 
-function isProductActive(product: Record<string, unknown>): boolean {
-  if (typeof product.active === "boolean") return product.active;
-  const status = String(product.status || "").trim().toLowerCase();
-  if (!status) return true;
-  return status === "active" || status === "aktiv";
-}
-
-function normalizeManualMap(source: unknown): ManualMap {
-  const out: ManualMap = {};
-  if (!source || typeof source !== "object") return out;
-  Object.entries(source as Record<string, unknown>).forEach(([sku, monthMap]) => {
-    if (!monthMap || typeof monthMap !== "object") return;
-    const nextMonthMap: Record<string, number> = {};
-    Object.entries(monthMap as Record<string, unknown>).forEach(([monthRaw, value]) => {
-      const month = normalizeMonthKey(monthRaw);
-      const parsed = parseDeNumber(value);
-      if (!month || !Number.isFinite(parsed)) return;
-      nextMonthMap[month] = parsed;
-    });
-    if (Object.keys(nextMonthMap).length) {
-      out[sku] = nextMonthMap;
-    }
-  });
-  return out;
-}
-
-function serializeManualMap(source: ManualMap): Record<string, Record<string, number>> {
-  const out: Record<string, Record<string, number>> = {};
-  Object.entries(source || {}).forEach(([sku, monthMap]) => {
-    const nextMonthMap: Record<string, number> = {};
-    Object.entries(monthMap || {}).forEach(([month, value]) => {
-      if (!normalizeMonthKey(month)) return;
-      if (!Number.isFinite(value)) return;
-      nextMonthMap[month] = value;
-    });
-    if (Object.keys(nextMonthMap).length) out[sku] = nextMonthMap;
-  });
-  return out;
-}
-
-function getImportValue(forecastImport: Record<string, unknown>, sku: string, month: string): ForecastRecord | null {
-  const skuMap = forecastImport?.[sku] as Record<string, unknown> | undefined;
-  if (!skuMap || typeof skuMap !== "object") return null;
-  const row = skuMap[month] as Record<string, unknown> | undefined;
-  if (!row || typeof row !== "object") return null;
-  return {
-    sku,
-    month,
-    units: parseDeNumber(row.units),
-    revenueEur: parseDeNumber(row.revenueEur),
-    profitEur: parseDeNumber(row.profitEur),
-  };
-}
-
-function getEffectiveUnits(manual: ManualMap, forecastImport: Record<string, unknown>, sku: string, month: string): number | null {
-  const manualValue = manual?.[sku]?.[month];
-  if (Number.isFinite(manualValue)) return manualValue;
-  return getImportValue(forecastImport, sku, month)?.units ?? null;
-}
-
-function deriveValue(view: ForecastViewMode, units: number | null, product: ProductRow): number | null {
-  if (!Number.isFinite(units as number)) return null;
-  if (view === "units") return Number(units);
-  const price = product.avgSellingPriceGrossEUR;
-  if (!Number.isFinite(price as number)) return null;
-  const revenue = Number(units) * Number(price);
-  if (view === "revenue") return revenue;
-  const margin = product.sellerboardMarginPct;
-  if (!Number.isFinite(margin as number)) return null;
-  return revenue * (Number(margin) / 100);
-}
-
 export default function ForecastModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [search, setSearch] = useState("");
@@ -183,6 +108,7 @@ export default function ForecastModule(): JSX.Element {
   const settings = (state.settings || {}) as Record<string, unknown>;
   const forecast = (state.forecast || {}) as Record<string, unknown>;
   const forecastImport = (forecast.forecastImport || {}) as Record<string, unknown>;
+  const stateObject = state as unknown as Record<string, unknown>;
 
   useEffect(() => {
     setManualDraft(normalizeManualMap((forecast.forecastManual || {}) as Record<string, unknown>));
@@ -190,10 +116,7 @@ export default function ForecastModule(): JSX.Element {
   }, [forecast.forecastManual]);
 
   const allMonths = useMemo(() => {
-    const startMonth = normalizeMonthKey(settings.startMonth) || currentMonthKey();
-    const horizon = Number(settings.horizonMonths);
-    const count = Number.isFinite(horizon) && horizon > 0 ? Math.round(horizon) : 18;
-    return monthRange(startMonth, count);
+    return buildForecastMonths(settings);
   }, [settings.horizonMonths, settings.startMonth]);
 
   const visibleMonths = useMemo(() => {
@@ -203,67 +126,32 @@ export default function ForecastModule(): JSX.Element {
   }, [allMonths, range]);
 
   const categoriesById = useMemo(() => {
-    const map = new Map<string, string>();
-    (Array.isArray(state.productCategories) ? state.productCategories : []).forEach((entry) => {
-      const row = entry as Record<string, unknown>;
-      const id = String(row.id || "");
-      if (!id) return;
-      map.set(id, String(row.name || "Ohne Kategorie"));
-    });
-    return map;
-  }, [state.productCategories]);
+    return buildCategoryLabelMap(stateObject);
+  }, [stateObject]);
 
   const products = useMemo(() => {
-    return (Array.isArray(state.products) ? state.products : [])
-      .map((entry) => {
-        const product = entry as Record<string, unknown>;
-        const sku = String(product.sku || "").trim();
-        if (!sku) return null;
-        return {
-          sku,
-          alias: String(product.alias || sku),
-          categoryLabel: categoriesById.get(String(product.categoryId || "")) || "Ohne Kategorie",
-          isActive: isProductActive(product),
-          avgSellingPriceGrossEUR: parseDeNumber(product.avgSellingPriceGrossEUR),
-          sellerboardMarginPct: parseDeNumber(product.sellerboardMarginPct),
-        } satisfies ProductRow;
-      })
-      .filter(Boolean) as ProductRow[];
-  }, [categoriesById, state.products]);
+    return buildForecastProducts(stateObject, categoriesById);
+  }, [categoriesById, stateObject]);
 
   const filteredProducts = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return products
-      .filter((product) => {
-        if (onlyActive && !product.isActive) return false;
-        if (needle) {
-          const haystack = [product.sku, product.alias, product.categoryLabel].join(" ").toLowerCase();
-          if (!haystack.includes(needle)) return false;
-        }
-        if (onlyWithForecast) {
-          const hasValue = visibleMonths.some((month) => {
-            const value = getEffectiveUnits(manualDraft, forecastImport, product.sku, month);
-            return Number.isFinite(value as number) && Number(value) > 0;
-          });
-          if (!hasValue) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => a.sku.localeCompare(b.sku));
+    return filterForecastProducts({
+      products,
+      search,
+      onlyActive,
+      onlyWithForecast,
+      visibleMonths,
+      manualDraft,
+      forecastImport,
+    });
   }, [forecastImport, manualDraft, onlyActive, onlyWithForecast, products, search, visibleMonths]);
 
   const revenueByMonth = useMemo(() => {
-    const map = new Map<string, number>();
-    allMonths.forEach((month) => map.set(month, 0));
-    products.forEach((product) => {
-      allMonths.forEach((month) => {
-        const units = getEffectiveUnits(manualDraft, forecastImport, product.sku, month);
-        const revenue = deriveValue("revenue", units, product);
-        if (!Number.isFinite(revenue as number)) return;
-        map.set(month, (map.get(month) || 0) + Number(revenue));
-      });
+    return buildForecastRevenueByMonth({
+      allMonths,
+      products,
+      manualDraft,
+      forecastImport,
     });
-    return map;
   }, [allMonths, forecastImport, manualDraft, products]);
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
@@ -322,7 +210,7 @@ export default function ForecastModule(): JSX.Element {
           );
         }
 
-        const derived = deriveValue(view, effectiveUnits, row.original);
+        const derived = deriveForecastValue(view, effectiveUnits, row.original);
         return (
           <div>
             <div>{formatDisplay(derived, 2)}</div>
@@ -412,7 +300,7 @@ export default function ForecastModule(): JSX.Element {
         const sku = record.sku;
         const product = productBySku.get(sku);
         if (!product) return;
-        if (importOnlyActive && !isProductActive(product)) return;
+        if (importOnlyActive && !isForecastProductActive(product)) return;
         const month = normalizeMonthKey(record.month);
         if (!month) return;
         if (!importTarget[sku] || typeof importTarget[sku] !== "object") {
