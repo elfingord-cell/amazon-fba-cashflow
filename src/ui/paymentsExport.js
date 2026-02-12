@@ -522,7 +522,11 @@ export function render(root) {
   const scopeControl = buildSegmented("payment-scope", scopeOptions, "both");
   const formatControl = buildSegmented("payment-format", formatOptions, "csv");
 
-  const table = el("table", { class: "table payments-export-table", "data-ui-table": "true" });
+  const table = el("table", {
+    class: "table-compact ui-data-table payments-export-table",
+    "data-ui-table": "true",
+    "data-sticky-cols": "1",
+  });
   const thead = el("thead", {}, [
     el("tr", {}, [
       el("th", {}, ["Monat"]),

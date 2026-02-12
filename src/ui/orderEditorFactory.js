@@ -1517,7 +1517,11 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
     });
   }
 
-  const table = el("table", { class: "table-compact" });
+  const table = el("table", {
+    class: "table-compact ui-data-table po-list-table",
+    "data-ui-table": "true",
+    "data-sticky-cols": "1",
+  });
   const sortToggle = (key) => {
     if (!options.onUpdate) return;
     const nextDir = sortKey !== key ? "asc" : (sortDir === "asc" ? "desc" : (sortDir === "desc" ? null : "asc"));
@@ -1762,7 +1766,10 @@ function renderItemsTable(container, record, onChange, dataListId) {
     body.append(row);
   });
 
-  const table = el("table", { class: "po-items-table" }, [header, body]);
+  const table = el("table", {
+    class: "table-compact ui-data-table po-items-table",
+    "data-ui-table": "true",
+  }, [header, body]);
   container.append(table, dl);
 }
 
@@ -2000,7 +2007,10 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings,
   const previewEvents = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
   const previewMap = new Map(previewEvents.map(evt => [evt.id, evt]));
 
-  const table = el("table", {}, [
+  const table = el("table", {
+    class: "table-compact ui-data-table po-milestones-table",
+    "data-ui-table": "true",
+  }, [
     el("thead", {}, [
       el("tr", {}, [
         el("th", {}, ["Label"]),
@@ -2215,7 +2225,10 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings,
     el("p", { class: "muted" }, ["Markiere Zahlungen als bezahlt und ergänze Ist-Daten für die Buchhaltung."]),
   ]);
 
-  const paymentTable = el("table", { class: "po-payments-table" }, [
+  const paymentTable = el("table", {
+    class: "table-compact ui-data-table po-payments-table",
+    "data-ui-table": "true",
+  }, [
     el("thead", {}, [
       el("tr", {}, [
         el("th", {}, ["Typ"]),
@@ -2297,7 +2310,10 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings,
     const folderBtn = el("a", { class: "btn secondary sm", target: "_blank", rel: "noopener noreferrer" }, ["Open Folder"]);
 
     const selectedSummary = el("div", { class: "po-payment-summary muted" });
-    const allocationTable = el("table", { class: "table po-payment-allocation" }, [
+    const allocationTable = el("table", {
+      class: "table-compact ui-data-table po-payment-allocation",
+      "data-ui-table": "true",
+    }, [
       el("thead", {}, [
         el("tr", {}, [
           el("th", {}, ["Event"]),
@@ -3611,7 +3627,10 @@ export function renderOrderModule(root, config) {
     const diffZone = el("div", { class: "po-history-diff" });
     const wrapper = el("div", { class: "po-history" }, [
       el("p", { class: "muted" }, [usingSupplier ? "Sortiert nach Datum (neueste zuerst)." : "Keine passende Lieferantenhistorie – zeige jüngste POs dieser SKU." ]),
-      el("table", { class: "po-history-table" }, [
+      el("table", {
+        class: "table-compact ui-data-table po-history-table",
+        "data-ui-table": "true",
+      }, [
         el("thead", {}, [
           el("tr", {}, [
             el("th", {}, ["PO-Nr."]),

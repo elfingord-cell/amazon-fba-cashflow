@@ -971,6 +971,7 @@ export default function render(root) {
       columns,
       rows: listRows,
       rowKey: row => row.fo.id,
+      stickyColumns: 1,
       rowAttrs: row => ({ dataset: { id: row.fo.id } }),
       renderCell: (row, col) => {
         const { fo } = row;
@@ -2100,7 +2101,10 @@ export default function render(root) {
       el("section", { class: "card" }, [
         el("h3", {}, ["Payments"]),
         el("div", { class: "table-wrap" }, [
-          el("table", { class: "table fo-payments-table" }, [
+          el("table", {
+            class: "table-compact ui-data-table fo-payments-table",
+            "data-ui-table": "true",
+          }, [
             el("thead", {}, [
               el("tr", {}, [
                 el("th", {}, ["Label"]),

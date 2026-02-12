@@ -1777,15 +1777,15 @@ function buildHistoryTable(state, sku) {
     ];
 
     const wrapper = createEl("div", { class: "table-wrap products-list products-list-antd" });
-    const topScrollControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-top products-native-scroll", "aria-hidden": "true" }, [
-      createEl("div", { class: "ui-scrollbar-native-track" }, [
-        createEl("div", { class: "ui-scrollbar-native-inner" }),
+    const topScrollControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-top products-custom-scroll", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-custom-rail" }, [
+        createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
       ]),
     ]);
     const mountPoint = createEl("div", { class: "products-list-react-mount" });
-    const bottomScrollControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-bottom-control products-native-scroll", "aria-hidden": "true" }, [
-      createEl("div", { class: "ui-scrollbar-native-track" }, [
-        createEl("div", { class: "ui-scrollbar-native-inner" }),
+    const bottomScrollControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-bottom products-custom-scroll", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-custom-rail" }, [
+        createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
       ]),
     ]);
     wrapper.append(topScrollControl, mountPoint, bottomScrollControl);
@@ -1809,45 +1809,116 @@ function buildHistoryTable(state, sku) {
         (node) => node && (node.scrollWidth - node.clientWidth) > 0
       ) || scrollCandidates[0] || null;
       const table = mountPoint.querySelector(".ant-table-content table, .ant-table-body table");
-      const topTrack = topScrollControl.querySelector(".ui-scrollbar-native-track");
-      const topInner = topScrollControl.querySelector(".ui-scrollbar-native-inner");
-      const bottomTrack = bottomScrollControl.querySelector(".ui-scrollbar-native-track");
-      const bottomInner = bottomScrollControl.querySelector(".ui-scrollbar-native-inner");
-      if (!scrollContent || !table || !topTrack || !topInner || !bottomTrack || !bottomInner) return;
+      const topRail = topScrollControl.querySelector(".ui-scrollbar-custom-rail");
+      const topThumb = topScrollControl.querySelector(".ui-scrollbar-custom-thumb");
+      const bottomRail = bottomScrollControl.querySelector(".ui-scrollbar-custom-rail");
+      const bottomThumb = bottomScrollControl.querySelector(".ui-scrollbar-custom-thumb");
+      if (!scrollContent || !table || !topRail || !topThumb || !bottomRail || !bottomThumb) return;
+      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+      const MIN_THUMB_PX = 48;
+      const state = {
+        max: 0,
+        top: { span: 1, thumb: 1, left: 0 },
+        bottom: { span: 1, thumb: 1, left: 0 },
+      };
       let syncing = false;
+      const metricsFor = (rail) => {
+        const max = Math.max(0, Math.ceil(scrollContent.scrollWidth - scrollContent.clientWidth));
+        const track = Math.max(1, Math.floor(rail.clientWidth || 1));
+        const ratio = scrollContent.clientWidth / Math.max(scrollContent.scrollWidth, 1);
+        const thumb = max <= 0
+          ? track
+          : Math.min(track, Math.max(MIN_THUMB_PX, Math.round(track * ratio)));
+        const span = Math.max(1, track - thumb);
+        return { max, thumb, span };
+      };
+      const applyThumb = (thumb, left, width) => {
+        thumb.style.width = `${Math.max(1, Math.round(width))}px`;
+        thumb.style.transform = `translateX(${Math.round(left)}px)`;
+        thumb.dataset.left = String(left);
+      };
       const updateRanges = () => {
         const max = Math.max(0, Math.ceil(scrollContent.scrollWidth - scrollContent.clientWidth));
-        topInner.style.width = `${Math.max(scrollContent.scrollWidth, scrollContent.clientWidth)}px`;
-        bottomInner.style.width = `${Math.max(scrollContent.scrollWidth, scrollContent.clientWidth)}px`;
-        const current = Math.min(max, Math.max(0, Math.round(scrollContent.scrollLeft)));
-        topTrack.scrollLeft = current;
-        bottomTrack.scrollLeft = current;
+        state.max = max;
+        const topMetrics = metricsFor(topRail);
+        const bottomMetrics = metricsFor(bottomRail);
+        state.top.span = topMetrics.span;
+        state.top.thumb = topMetrics.thumb;
+        state.bottom.span = bottomMetrics.span;
+        state.bottom.thumb = bottomMetrics.thumb;
+        const current = clamp(Math.round(scrollContent.scrollLeft), 0, max);
+        const topLeft = max <= 0 ? 0 : (current / max) * topMetrics.span;
+        const bottomLeft = max <= 0 ? 0 : (current / max) * bottomMetrics.span;
+        state.top.left = topLeft;
+        state.bottom.left = bottomLeft;
+        applyThumb(topThumb, topLeft, topMetrics.thumb);
+        applyThumb(bottomThumb, bottomLeft, bottomMetrics.thumb);
         topScrollControl.classList.toggle("is-overflow", max > 0);
         bottomScrollControl.classList.toggle("is-overflow", max > 0);
       };
-      const syncFromTop = () => {
+      const scrollFromRail = (left, key) => {
         if (syncing) return;
+        const meta = key === "top" ? state.top : state.bottom;
+        if (state.max <= 0) return;
+        const nextLeft = clamp(left, 0, meta.span);
+        const ratio = meta.span <= 0 ? 0 : (nextLeft / meta.span);
         syncing = true;
-        scrollContent.scrollLeft = topTrack.scrollLeft;
+        scrollContent.scrollLeft = ratio * state.max;
         syncing = false;
       };
-      const syncFromBottom = () => {
-        if (syncing) return;
-        syncing = true;
-        scrollContent.scrollLeft = bottomTrack.scrollLeft;
-        syncing = false;
+      const bindRailDrag = (key, rail, thumb) => {
+        let dragging = false;
+        let startX = 0;
+        let startLeft = 0;
+        const onMove = (event) => {
+          if (!dragging) return;
+          event.preventDefault();
+          const delta = event.clientX - startX;
+          scrollFromRail(startLeft + delta, key);
+        };
+        const onEnd = () => {
+          if (!dragging) return;
+          dragging = false;
+          thumb.classList.remove("is-dragging");
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onEnd);
+          window.removeEventListener("pointercancel", onEnd);
+        };
+        const onThumbDown = (event) => {
+          if (state.max <= 0) return;
+          event.preventDefault();
+          dragging = true;
+          thumb.classList.add("is-dragging");
+          startX = event.clientX;
+          startLeft = Number(thumb.dataset.left || 0);
+          window.addEventListener("pointermove", onMove);
+          window.addEventListener("pointerup", onEnd);
+          window.addEventListener("pointercancel", onEnd);
+        };
+        const onRailDown = (event) => {
+          if (state.max <= 0) return;
+          if (event.target === thumb) return;
+          const rect = rail.getBoundingClientRect();
+          const meta = key === "top" ? state.top : state.bottom;
+          const clickLeft = event.clientX - rect.left - (meta.thumb / 2);
+          scrollFromRail(clickLeft, key);
+        };
+        thumb.addEventListener("pointerdown", onThumbDown);
+        rail.addEventListener("pointerdown", onRailDown);
+        return () => {
+          onEnd();
+          thumb.removeEventListener("pointerdown", onThumbDown);
+          rail.removeEventListener("pointerdown", onRailDown);
+        };
       };
+      const cleanupTopRail = bindRailDrag("top", topRail, topThumb);
+      const cleanupBottomRail = bindRailDrag("bottom", bottomRail, bottomThumb);
       const syncFromTable = () => {
         if (syncing) return;
-        syncing = true;
-        topTrack.scrollLeft = scrollContent.scrollLeft;
-        bottomTrack.scrollLeft = scrollContent.scrollLeft;
-        syncing = false;
+        updateRanges();
       };
       scrollContent.classList.add("ui-scrollbar-managed");
       updateRanges();
-      topTrack.addEventListener("scroll", syncFromTop, { passive: true });
-      bottomTrack.addEventListener("scroll", syncFromBottom, { passive: true });
       scrollContent.addEventListener("scroll", syncFromTable, { passive: true });
       window.addEventListener("resize", updateRanges);
       const resizeObserver = typeof ResizeObserver === "function"
@@ -1858,8 +1929,8 @@ function buildHistoryTable(state, sku) {
         resizeObserver.observe(table);
       }
       root.__productsListScrollCleanup = () => {
-        topTrack.removeEventListener("scroll", syncFromTop);
-        bottomTrack.removeEventListener("scroll", syncFromBottom);
+        cleanupTopRail();
+        cleanupBottomRail();
         scrollContent.removeEventListener("scroll", syncFromTable);
         window.removeEventListener("resize", updateRanges);
         scrollContent.classList.remove("ui-scrollbar-managed");

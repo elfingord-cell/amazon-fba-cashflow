@@ -153,7 +153,7 @@ function scheduleLayoutRefresh() {
 }
 
 function ensureScrollContainer(table) {
-  const existing = table.closest(".data-table-scroll, .ui-table-scroll, .table-scroll, .table-wrap, .dashboard-table-scroll, .inventory-table-scroll, .products-grid-scroll");
+  const existing = table.closest(".data-table-scroll, .ui-table-scroll, .table-scroll, .table-wrap, .dashboard-table-scroll, .inventory-table-scroll, .products-grid-scroll, .po-table-wrap");
   if (existing && existing.contains(table)) {
     existing.classList.add("data-table-scroll", "ui-table-scroll");
     return existing;
@@ -205,88 +205,159 @@ function ensureHorizontalScrollControls(table, scrollContainer, mode = "native-d
   const parent = scrollContainer.parentElement;
   if (!parent) return;
 
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const MIN_THUMB_PX = 48;
+  const railState = {
+    max: 0,
+    top: { track: 1, thumb: 1, span: 1, left: 0 },
+    bottom: { track: 1, thumb: 1, span: 1, left: 0 },
+  };
+
   let topControl = null;
-  let topTrack = null;
-  let topInner = null;
   let bottomControl = null;
-  let bottomTrack = null;
-  let bottomInner = null;
+  let topRail = null;
+  let bottomRail = null;
+  let topThumb = null;
+  let bottomThumb = null;
+
   if (mode === "native-dual") {
-    topControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-top", "aria-hidden": "true" }, [
-      createEl("div", { class: "ui-scrollbar-native-track" }, [
-        createEl("div", { class: "ui-scrollbar-native-inner" }),
+    topControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-top", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-custom-rail" }, [
+        createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
       ]),
     ]);
-    bottomControl = createEl("div", { class: "ui-scrollbar-native ui-scrollbar-native-bottom-control", "aria-hidden": "true" }, [
-      createEl("div", { class: "ui-scrollbar-native-track" }, [
-        createEl("div", { class: "ui-scrollbar-native-inner" }),
+    bottomControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-bottom", "aria-hidden": "true" }, [
+      createEl("div", { class: "ui-scrollbar-custom-rail" }, [
+        createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
       ]),
     ]);
-    topTrack = topControl.querySelector(".ui-scrollbar-native-track");
-    topInner = topControl.querySelector(".ui-scrollbar-native-inner");
-    bottomTrack = bottomControl.querySelector(".ui-scrollbar-native-track");
-    bottomInner = bottomControl.querySelector(".ui-scrollbar-native-inner");
+    topRail = topControl.querySelector(".ui-scrollbar-custom-rail");
+    bottomRail = bottomControl.querySelector(".ui-scrollbar-custom-rail");
+    topThumb = topControl.querySelector(".ui-scrollbar-custom-thumb");
+    bottomThumb = bottomControl.querySelector(".ui-scrollbar-custom-thumb");
     if (
-      !(topTrack instanceof HTMLElement)
-      || !(topInner instanceof HTMLElement)
-      || !(bottomTrack instanceof HTMLElement)
-      || !(bottomInner instanceof HTMLElement)
+      !(topRail instanceof HTMLElement)
+      || !(bottomRail instanceof HTMLElement)
+      || !(topThumb instanceof HTMLElement)
+      || !(bottomThumb instanceof HTMLElement)
     ) return;
     parent.insertBefore(topControl, scrollContainer);
     parent.insertBefore(bottomControl, scrollContainer.nextSibling);
   }
 
-  let syncing = false;
-  const update = () => {
+  const getRailMetrics = (railElement) => {
     const max = Math.max(0, Math.ceil(scrollEl.scrollWidth - scrollEl.clientWidth));
-    const current = Math.min(max, Math.max(0, Math.round(scrollEl.scrollLeft)));
-    if (mode === "native-dual") scrollEl.classList.add("ui-scrollbar-managed");
-    else scrollEl.classList.remove("ui-scrollbar-managed");
-    if (topInner) {
-      topInner.style.width = `${Math.max(scrollEl.scrollWidth, scrollEl.clientWidth)}px`;
-    }
-    if (bottomInner) {
-      bottomInner.style.width = `${Math.max(scrollEl.scrollWidth, scrollEl.clientWidth)}px`;
-    }
-    if (topControl) {
-      topControl.classList.toggle("is-overflow", max > 0);
-    }
-    if (bottomControl) {
-      bottomControl.classList.toggle("is-overflow", max > 0);
-    }
-    if (topTrack && !syncing) {
-      topTrack.scrollLeft = current;
-    }
-    if (bottomTrack && !syncing) {
-      bottomTrack.scrollLeft = current;
-    }
+    const track = Math.max(1, Math.floor(railElement?.clientWidth || 1));
+    const ratio = scrollEl.clientWidth / Math.max(scrollEl.scrollWidth, 1);
+    const thumb = max <= 0
+      ? track
+      : Math.min(track, Math.max(MIN_THUMB_PX, Math.round(track * ratio)));
+    const span = Math.max(1, track - thumb);
+    return { max, track, thumb, span };
   };
 
-  const syncFromTrack = (track) => {
+  const applyThumb = (thumbElement, nextLeft, nextWidth) => {
+    if (!(thumbElement instanceof HTMLElement)) return;
+    thumbElement.style.width = `${Math.max(1, Math.round(nextWidth))}px`;
+    thumbElement.style.transform = `translateX(${Math.round(nextLeft)}px)`;
+    thumbElement.dataset.left = String(nextLeft);
+  };
+
+  let syncing = false;
+
+  const update = () => {
+    const max = Math.max(0, Math.ceil(scrollEl.scrollWidth - scrollEl.clientWidth));
+    railState.max = max;
+    if (mode === "native-dual") {
+      scrollEl.classList.add("ui-scrollbar-managed");
+    } else {
+      scrollEl.classList.remove("ui-scrollbar-managed");
+      return;
+    }
+    const topMetrics = getRailMetrics(topRail);
+    const bottomMetrics = getRailMetrics(bottomRail);
+    railState.top = { ...topMetrics, left: 0 };
+    railState.bottom = { ...bottomMetrics, left: 0 };
+
+    const current = clamp(Math.round(scrollEl.scrollLeft), 0, max);
+    const topLeft = max <= 0 ? 0 : (current / max) * topMetrics.span;
+    const bottomLeft = max <= 0 ? 0 : (current / max) * bottomMetrics.span;
+    railState.top.left = topLeft;
+    railState.bottom.left = bottomLeft;
+    applyThumb(topThumb, topLeft, topMetrics.thumb);
+    applyThumb(bottomThumb, bottomLeft, bottomMetrics.thumb);
+    if (topControl) topControl.classList.toggle("is-overflow", max > 0);
+    if (bottomControl) bottomControl.classList.toggle("is-overflow", max > 0);
+  };
+
+  const scrollFromRailPosition = (positionLeft, key) => {
     if (syncing) return;
-    if (!(track instanceof HTMLElement)) return;
+    const meta = key === "top" ? railState.top : railState.bottom;
+    if (!meta || railState.max <= 0) return;
+    const nextLeft = clamp(positionLeft, 0, meta.span);
+    const ratio = meta.span <= 0 ? 0 : (nextLeft / meta.span);
     syncing = true;
-    scrollEl.scrollLeft = track.scrollLeft;
+    scrollEl.scrollLeft = ratio * railState.max;
     syncing = false;
   };
+
+  const bindRail = (key, railElement, thumbElement) => {
+    if (!(railElement instanceof HTMLElement) || !(thumbElement instanceof HTMLElement)) {
+      return () => {};
+    }
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartLeft = 0;
+    const onPointerMove = (event) => {
+      if (!dragging) return;
+      event.preventDefault();
+      const delta = event.clientX - dragStartX;
+      scrollFromRailPosition(dragStartLeft + delta, key);
+    };
+    const onPointerEnd = () => {
+      if (!dragging) return;
+      dragging = false;
+      thumbElement.classList.remove("is-dragging");
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerEnd);
+      window.removeEventListener("pointercancel", onPointerEnd);
+    };
+    const onThumbPointerDown = (event) => {
+      if (railState.max <= 0) return;
+      event.preventDefault();
+      dragging = true;
+      thumbElement.classList.add("is-dragging");
+      dragStartX = event.clientX;
+      dragStartLeft = Number(thumbElement.dataset.left || 0);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerEnd);
+      window.addEventListener("pointercancel", onPointerEnd);
+    };
+    const onRailPointerDown = (event) => {
+      if (railState.max <= 0) return;
+      if (event.target === thumbElement) return;
+      const rect = railElement.getBoundingClientRect();
+      const meta = key === "top" ? railState.top : railState.bottom;
+      const clickLeft = event.clientX - rect.left - (meta.thumb / 2);
+      scrollFromRailPosition(clickLeft, key);
+    };
+    thumbElement.addEventListener("pointerdown", onThumbPointerDown);
+    railElement.addEventListener("pointerdown", onRailPointerDown);
+    return () => {
+      onPointerEnd();
+      thumbElement.removeEventListener("pointerdown", onThumbPointerDown);
+      railElement.removeEventListener("pointerdown", onRailPointerDown);
+    };
+  };
+
+  const cleanupTopRail = bindRail("top", topRail, topThumb);
+  const cleanupBottomRail = bindRail("bottom", bottomRail, bottomThumb);
 
   const syncFromScroll = () => {
     if (syncing) return;
-    syncing = true;
-    if (topTrack instanceof HTMLElement) topTrack.scrollLeft = scrollEl.scrollLeft;
-    if (bottomTrack instanceof HTMLElement) bottomTrack.scrollLeft = scrollEl.scrollLeft;
-    syncing = false;
+    update();
   };
 
-  const onTopTrackScroll = () => syncFromTrack(topTrack);
-  const onBottomTrackScroll = () => syncFromTrack(bottomTrack);
-
-  if (topTrack) {
-    topTrack.addEventListener("scroll", onTopTrackScroll, { passive: true });
-  }
-  if (bottomTrack) {
-    bottomTrack.addEventListener("scroll", onBottomTrackScroll, { passive: true });
-  }
   scrollEl.addEventListener("scroll", syncFromScroll, { passive: true });
   window.addEventListener("resize", update);
   const resizeObserver = typeof ResizeObserver === "function"
@@ -298,12 +369,8 @@ function ensureHorizontalScrollControls(table, scrollContainer, mode = "native-d
   }
 
   const cleanup = () => {
-    if (topTrack) {
-      topTrack.removeEventListener("scroll", onTopTrackScroll);
-    }
-    if (bottomTrack) {
-      bottomTrack.removeEventListener("scroll", onBottomTrackScroll);
-    }
+    cleanupTopRail();
+    cleanupBottomRail();
     scrollEl.removeEventListener("scroll", syncFromScroll);
     window.removeEventListener("resize", update);
     if (resizeObserver) resizeObserver.disconnect();
