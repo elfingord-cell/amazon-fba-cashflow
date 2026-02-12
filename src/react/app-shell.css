@@ -91,6 +91,10 @@
   min-width: 122px;
 }
 
+.app-v2-trigger {
+  min-width: 72px;
+}
+
 .app-content {
   padding-top: 18px;
 }

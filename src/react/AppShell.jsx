@@ -318,6 +318,15 @@ export function AppShell() {
           <Header className="app-header">
             <Text strong className="app-route-title">{routeTitle(routeBase)}</Text>
             <div className="app-header-actions">
+              <Button
+                className="app-v2-trigger"
+                type="default"
+                onClick={() => {
+                  window.location.hash = "#/v2/dashboard";
+                }}
+              >
+                V2
+              </Button>
               {dbSyncEnabled ? (
                 <Button
                   className="app-auth-trigger"
