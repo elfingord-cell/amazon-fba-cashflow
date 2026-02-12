@@ -1,6 +1,6 @@
 import { Card, Tabs, Typography } from "antd";
-import { LegacyMount } from "../../components/LegacyMount";
 import { ImportWizard } from "./ImportWizard";
+import { WorkspaceTransferPanel } from "./WorkspaceTransferPanel";
 
 const { Paragraph, Title } = Typography;
 
@@ -10,23 +10,23 @@ export default function ExportImportPage(): JSX.Element {
       <Card className="v2-intro-card">
         <Title level={3}>Export / Import (V2)</Title>
         <Paragraph>
-          Neuer Migrationswizard fuer Legacy JSON mit Dry-Run und Apply sowie weiterhin Zugriff auf den bestehenden
-          Export/Import-Tab fuer Rueckwaertskompatibilitaet.
+          Neuer Migrationswizard fuer Legacy JSON mit Dry-Run/Apply sowie nativer Workspace JSON Transfer
+          (Export, Backup, Import, Vorschau, Validierung).
         </Paragraph>
       </Card>
 
       <Tabs
-        defaultActiveKey="wizard"
+        defaultActiveKey="transfer"
         items={[
           {
-            key: "wizard",
-            label: "V2 Migration Wizard",
-            children: <ImportWizard />,
+            key: "transfer",
+            label: "Workspace JSON Transfer",
+            children: <WorkspaceTransferPanel />,
           },
           {
-            key: "legacy",
-            label: "Legacy Export/Import",
-            children: <LegacyMount loader={() => import("../../../ui/export.js")} />,
+            key: "wizard",
+            label: "Legacy Migration Wizard",
+            children: <ImportWizard />,
           },
         ]}
       />

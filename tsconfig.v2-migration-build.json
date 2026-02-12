@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2020",
+    "outDir": ".test-build/migration",
+    "rootDir": "src",
+    "types": []
+  },
+  "include": [
+    "src/v2/migration/**/*.ts",
+    "src/v2/state/**/*.ts",
+    "src/v2/sync/types.ts",
+    "src/data/storageLocal.js",
+    "src/lib/dataHealth.js",
+    "src/utils/deepEqual.js",
+    "src/storage/**/*.js"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

@@ -1,7 +1,6 @@
 import { deepEqual } from "../../utils/deepEqual.js";
 import { ensureAppStateV2 } from "../state/appState";
 import type { AppStateV2, ImportMode } from "../state/types";
-import { createWorkspaceBackup } from "../sync/storageAdapters";
 import type { StorageAdapter } from "../sync/types";
 import type { DryRunBundle, ImportApplyResult, ImportDryRunReport, ImportIssue } from "./types";
 
@@ -150,35 +149,54 @@ function extendReport(baseReport: ImportDryRunReport, mergeIssues: ImportIssue[]
   };
 }
 
+export function resolveDryRunApplication(
+  bundle: DryRunBundle,
+  mode: ImportMode,
+  currentState: AppStateV2,
+): { nextState: AppStateV2; report: ImportDryRunReport } {
+  if (mode === "replace_workspace") {
+    return {
+      nextState: withApplyMetadata(bundle.mappedState, mode, bundle.report.sourceVersion),
+      report: bundle.report,
+    };
+  }
+
+  const merged = mergeUpsert(ensureAppStateV2(currentState), ensureAppStateV2(bundle.mappedState));
+  return {
+    nextState: withApplyMetadata(merged.next, mode, bundle.report.sourceVersion),
+    report: extendReport(bundle.report, merged.issues),
+  };
+}
+
+async function createWorkspaceBackupLazy(source: string, state: AppStateV2): Promise<string> {
+  const storageAdapters = await import("../sync/storageAdapters");
+  return storageAdapters.createWorkspaceBackup(source, state);
+}
+
 export async function applyDryRunBundle(
   bundle: DryRunBundle,
   mode: ImportMode,
   adapter: StorageAdapter,
+  options?: {
+    createBackup?: (source: string, state: AppStateV2) => Promise<string> | string;
+  },
 ): Promise<ImportApplyResult> {
   if (!bundle.report.canApply) {
     throw new Error("Dry-Run report is not applyable.");
   }
 
   const current = await adapter.load();
-  const backupId = createWorkspaceBackup("v2:migration:pre-apply", ensureAppStateV2(current));
+  const createBackup = options?.createBackup || createWorkspaceBackupLazy;
+  const backupId = await createBackup("v2:migration:pre-apply", ensureAppStateV2(current));
 
-  let nextState: AppStateV2;
-  let report: ImportDryRunReport = bundle.report;
+  const resolved = resolveDryRunApplication(bundle, mode, ensureAppStateV2(current));
 
-  if (mode === "replace_workspace") {
-    nextState = withApplyMetadata(bundle.mappedState, mode, bundle.report.sourceVersion);
-  } else {
-    const merged = mergeUpsert(ensureAppStateV2(current), ensureAppStateV2(bundle.mappedState));
-    nextState = withApplyMetadata(merged.next, mode, bundle.report.sourceVersion);
-    report = extendReport(bundle.report, merged.issues);
-  }
-
-  await adapter.save(nextState, { source: `v2:migration:${mode}` });
+  await adapter.save(resolved.nextState, { source: `v2:migration:${mode}` });
 
   return {
     mode,
     backupId,
-    report,
+    report: resolved.report,
     appliedAt: nowIso(),
   };
 }
