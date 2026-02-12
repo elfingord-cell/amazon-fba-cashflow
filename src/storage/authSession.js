@@ -1,6 +1,14 @@
-import { hasSupabaseClientConfig, getSupabaseClientConfig, isDbSyncEnabled } from "./syncBackend.js";
+import { hasSupabaseClientConfig, isDbSyncEnabled } from "./syncBackend.js";
+import {
+  normalizeRpcPayload,
+  supabaseAuthRequest,
+  supabaseRpc,
+  SupabaseHttpError,
+  SupabaseTimeoutError,
+} from "./supabaseApi.js";
 
 const SESSION_KEY = "supabaseAuthSession";
+const WORKSPACE_KEY = "supabaseWorkspaceSession";
 const AUTH_DRIFT_MS = 20000;
 const listeners = new Set();
 
@@ -16,20 +24,6 @@ function emitAuthChanged(detail = {}) {
       // no-op
     }
   });
-}
-
-function getConfigOrThrow() {
-  const cfg = getSupabaseClientConfig();
-  if (!cfg.url || !cfg.anonKey) {
-    throw new Error("Supabase ist nicht konfiguriert.");
-  }
-  return cfg;
-}
-
-function buildAuthUrl(path) {
-  const { url } = getConfigOrThrow();
-  const base = String(url || "").replace(/\/+$/, "");
-  return `${base}/auth/v1${path}`;
 }
 
 function saveSession(session) {
@@ -54,6 +48,28 @@ function readSession() {
   }
 }
 
+function saveWorkspaceSession(session) {
+  if (typeof window === "undefined") return;
+  if (!session) {
+    localStorage.removeItem(WORKSPACE_KEY);
+    return;
+  }
+  localStorage.setItem(WORKSPACE_KEY, JSON.stringify(session));
+}
+
+function readWorkspaceSession() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(WORKSPACE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function toSessionFromAuthPayload(payload) {
   if (!payload || typeof payload !== "object") return null;
   const expiresIn = Number(payload.expires_in || 3600);
@@ -66,8 +82,23 @@ function toSessionFromAuthPayload(payload) {
   };
 }
 
-async function parseJson(response) {
-  return response.json().catch(() => ({}));
+function toReadableAuthError(error, fallback) {
+  if (error instanceof SupabaseTimeoutError) {
+    return new Error("Supabase-Timeout. Bitte Netzwerk, URL und Projektstatus prüfen.");
+  }
+  if (error instanceof SupabaseHttpError) {
+    if (error.status === 400 || error.status === 422) {
+      return new Error(error.message || fallback);
+    }
+    if (error.status === 401 || error.status === 403) {
+      return new Error("Zugang abgelehnt. Bitte Login-Daten und Workspace-Zugriff prüfen.");
+    }
+    if (error.status >= 500) {
+      return new Error("Supabase ist aktuell nicht erreichbar. Bitte später erneut versuchen.");
+    }
+    return new Error(error.message || fallback);
+  }
+  return new Error(error?.message || fallback);
 }
 
 function extractSessionFromUrl() {
@@ -101,26 +132,69 @@ function extractSessionFromUrl() {
 
 async function refreshSession(session) {
   if (!session?.refresh_token) return session;
-  const { anonKey } = getConfigOrThrow();
-  const response = await fetch(buildAuthUrl("/token?grant_type=refresh_token"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: anonKey,
-    },
-    body: JSON.stringify({
-      refresh_token: session.refresh_token,
-    }),
-  });
-  if (!response.ok) {
+  try {
+    const payload = await supabaseAuthRequest("/token?grant_type=refresh_token", {
+      method: "POST",
+      body: {
+        refresh_token: session.refresh_token,
+      },
+    });
+    const nextSession = toSessionFromAuthPayload(payload);
+    saveSession(nextSession);
+    emitAuthChanged({ event: "token-refresh", session: nextSession, userId: nextSession?.user?.id || null });
+    return nextSession;
+  } catch {
     saveSession(null);
+    saveWorkspaceSession(null);
     return null;
   }
-  const payload = await parseJson(response);
-  const nextSession = toSessionFromAuthPayload(payload);
-  saveSession(nextSession);
-  emitAuthChanged({ event: "token-refresh", session: nextSession, userId: nextSession?.user?.id || null });
-  return nextSession;
+}
+
+async function resolveWorkspaceSession(accessToken) {
+  const payload = await supabaseRpc("app_auth_session_client", {}, { accessToken });
+  const data = normalizeRpcPayload(payload) || {};
+  if (!data.ok) {
+    if (data.reason === "UNAUTHENTICATED" || data.reason === "NOT_A_MEMBER") return null;
+    throw new Error(data.reason || "Workspace session unavailable");
+  }
+  const session = {
+    userId: data.userId || null,
+    workspaceId: data.workspaceId || null,
+    role: data.role || null,
+  };
+  saveWorkspaceSession(session);
+  return session;
+}
+
+async function ensureWorkspaceSession() {
+  if (!isDbSyncEnabled()) return null;
+  const session = await ensureSession();
+  if (!session?.access_token) {
+    saveWorkspaceSession(null);
+    return null;
+  }
+
+  const cached = readWorkspaceSession();
+  if (cached?.workspaceId && cached?.userId && cached.userId === session?.user?.id) {
+    return cached;
+  }
+
+  try {
+    return await resolveWorkspaceSession(session.access_token);
+  } catch (error) {
+    if (error instanceof SupabaseHttpError && (error.status === 401 || error.status === 403)) {
+      saveWorkspaceSession(null);
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function fetchCurrentUser(accessToken) {
+  return supabaseAuthRequest("/user", {
+    method: "GET",
+    accessToken,
+  });
 }
 
 async function ensureSession() {
@@ -156,45 +230,45 @@ export async function getAccessToken() {
   return session?.access_token || null;
 }
 
+export function getWorkspaceId() {
+  return readWorkspaceSession()?.workspaceId || null;
+}
+
 export async function getCurrentUser() {
   const session = await ensureSession();
   if (!session?.access_token) return null;
   if (session.user?.id) return session.user;
 
-  const { anonKey } = getConfigOrThrow();
-  const response = await fetch(buildAuthUrl("/user"), {
-    method: "GET",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${session.access_token}`,
-    },
-  });
-  if (!response.ok) return null;
-  const user = await parseJson(response);
-  const nextSession = { ...session, user };
-  saveSession(nextSession);
-  return user || null;
+  try {
+    const user = await fetchCurrentUser(session.access_token);
+    const nextSession = { ...session, user };
+    saveSession(nextSession);
+    return user || null;
+  } catch (error) {
+    if (error instanceof SupabaseHttpError && (error.status === 401 || error.status === 403)) {
+      saveSession(null);
+      saveWorkspaceSession(null);
+      emitAuthChanged({ event: "session-invalid", session: null, userId: null });
+      return null;
+    }
+    throw toReadableAuthError(error, "Benutzer konnte nicht geladen werden.");
+  }
 }
 
 export async function fetchServerSession() {
   if (!isDbSyncEnabled()) return null;
-  const token = await getAccessToken();
-  if (!token) return null;
-  const response = await fetch("/.netlify/functions/auth-session", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ accessToken: token }),
-  });
-  if (response.status === 401 || response.status === 403) return null;
-  if (!response.ok) {
-    const payload = await parseJson(response);
-    throw new Error(payload?.error || "Failed to resolve server session");
+  try {
+    const workspace = await ensureWorkspaceSession();
+    if (!workspace?.workspaceId) return null;
+    return {
+      ok: true,
+      userId: workspace.userId,
+      workspaceId: workspace.workspaceId,
+      role: workspace.role,
+    };
+  } catch (error) {
+    throw toReadableAuthError(error, "Workspace konnte nicht geladen werden.");
   }
-  const payload = await parseJson(response);
-  return payload?.ok ? payload : null;
 }
 
 export async function signInWithPassword(email, password) {
@@ -205,24 +279,22 @@ export async function signInWithPassword(email, password) {
     throw new Error("E-Mail und Passwort sind erforderlich.");
   }
 
-  const { anonKey } = getConfigOrThrow();
-  const response = await fetch(buildAuthUrl("/token?grant_type=password"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: anonKey,
-    },
-    body: JSON.stringify({
-      email: cleanEmail,
-      password: cleanPassword,
-    }),
-  });
-  const payload = await parseJson(response);
-  if (!response.ok) {
-    throw new Error(payload?.error_description || payload?.msg || "Login fehlgeschlagen");
+  let payload;
+  try {
+    payload = await supabaseAuthRequest("/token?grant_type=password", {
+      method: "POST",
+      body: {
+        email: cleanEmail,
+        password: cleanPassword,
+      },
+    });
+  } catch (error) {
+    throw toReadableAuthError(error, "Login fehlgeschlagen");
   }
+
   const session = toSessionFromAuthPayload(payload);
   saveSession(session);
+  saveWorkspaceSession(null);
   emitAuthChanged({ event: "password-sign-in", session, userId: session?.user?.id || null });
   return session;
 }
@@ -232,21 +304,16 @@ export async function signInWithMagicLink(email) {
   const cleanEmail = String(email || "").trim();
   if (!cleanEmail) throw new Error("E-Mail ist erforderlich.");
 
-  const { anonKey } = getConfigOrThrow();
-  const response = await fetch(buildAuthUrl("/otp"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: anonKey,
-    },
-    body: JSON.stringify({
-      email: cleanEmail,
-      create_user: false,
-    }),
-  });
-  const payload = await parseJson(response);
-  if (!response.ok) {
-    throw new Error(payload?.error_description || payload?.msg || "Magic Link fehlgeschlagen");
+  try {
+    await supabaseAuthRequest("/otp", {
+      method: "POST",
+      body: {
+        email: cleanEmail,
+        create_user: false,
+      },
+    });
+  } catch (error) {
+    throw toReadableAuthError(error, "Magic Link fehlgeschlagen");
   }
   return true;
 }
@@ -254,20 +321,17 @@ export async function signInWithMagicLink(email) {
 export async function signOut() {
   const session = await ensureSession();
   if (session?.access_token) {
-    const { anonKey } = getConfigOrThrow();
     try {
-      await fetch(buildAuthUrl("/logout"), {
+      await supabaseAuthRequest("/logout", {
         method: "POST",
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        accessToken: session.access_token,
       });
     } catch {
       // no-op
     }
   }
   saveSession(null);
+  saveWorkspaceSession(null);
   emitAuthChanged({ event: "sign-out", session: null, userId: null });
 }
 

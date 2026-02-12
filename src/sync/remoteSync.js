@@ -210,7 +210,7 @@ export function initRemoteSync() {
       conflict = false;
       updateStatus();
       showBanner({
-        message: "Shared sync requires login. Bitte im Sidebar anmelden.",
+        message: err?.message || "Shared sync requires login. Bitte im Sidebar anmelden.",
         type: "warning",
       });
       return;

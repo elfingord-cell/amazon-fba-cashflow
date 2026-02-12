@@ -30,9 +30,10 @@ Per Env steuerbar:
 - `VITE_SYNC_BACKEND=db` (Supabase DB sync)
 - optional serverseitig: `SYNC_BACKEND=db`
 
-## Supabase DB Sync Setup
+## Supabase DB Sync Setup (direkt)
 
 Details in:
 
 - `docs/db-sync-supabase.md`
 - `supabase/migrations/20260210_workspace_sync.sql`
+- `supabase/migrations/20260212_client_rpc_auth.sql`

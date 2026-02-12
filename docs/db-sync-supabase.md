@@ -1,9 +1,11 @@
-# DB Sync Migration (Supabase + Netlify Functions)
+# DB Sync Setup (Direkt gegen Supabase)
 
 ## 1) Supabase vorbereiten
 
 1. Neues Supabase Projekt erstellen.
-2. SQL aus `supabase/migrations/20260210_workspace_sync.sql` im SQL Editor ausfuehren.
+2. SQL aus beiden Migrationen im SQL Editor ausfuehren:
+   - `supabase/migrations/20260210_workspace_sync.sql`
+   - `supabase/migrations/20260212_client_rpc_auth.sql`
 3. Einen Workspace und den Owner-User anlegen:
 
 ```sql
@@ -26,35 +28,27 @@ on conflict (workspace_id, user_id) do update set role = excluded.role;
 
 `<OWNER_USER_ID>` und `<EDITOR_USER_ID>` bekommst du in Supabase Auth Users.
 
-## 2) Netlify Env Vars setzen
+## 2) Client Env Vars setzen (Vite)
 
-Server-seitig (Functions):
-
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SYNC_BACKEND=db` (optional auch `VITE_SYNC_BACKEND=db`)
-
-Client-seitig (Vite):
-
+- `VITE_SYNC_BACKEND=db`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-## 3) Optional: bestehende JSON einmalig importieren
+Damit funktioniert Login + Shared Sync direkt aus dem Browser (z. B. bei Vercel oder Netlify Static Hosting), ohne Netlify Functions als Pflicht-Komponente.
 
-1. In der App JSON exportieren.
-2. Mit Auth-Token einen POST auf `/.netlify/functions/db-migrate-import` senden:
+## 3) Deployment-Hinweise
 
-```json
-{
-  "state": { "...": "bestehender App State" }
-}
-```
+- Stelle sicher, dass die drei `VITE_*` Variablen im Deployment gesetzt sind.
+- In Supabase Auth sollte deine Deployment-Domain unter `Site URL` / Redirects erlaubt sein (wichtig fuer Magic Link).
+- Bei mehreren Workspaces wird ohne explizite Auswahl der erste Membership-Workspace verwendet.
 
-Die Function schreibt den Snapshot in `workspace_state`, incrementiert `rev` und materialisiert die normalisierten Tabellen.
+## 4) Optional: bestehende JSON einmalig importieren
 
-## 4) Backend-Fallback
+Die App publisht den lokalen Stand automatisch in den Shared State, sobald ein Workspace vorhanden ist. Ein separater Import-Endpunkt ist damit in der Regel nicht noetig.
 
-- `VITE_SYNC_BACKEND=db` -> neue DB Endpunkte (`db-bootstrap`, `db-sync`)
+## 5) Backend-Fallback
+
+- `VITE_SYNC_BACKEND=db` -> Supabase Auth + Supabase RPC Sync
 - `VITE_SYNC_BACKEND=blobs` -> altes Blob-Verhalten (`state-get`, `state-put`)
 
 So kannst du bei Problemen jederzeit auf Blob-Sync zurueckschalten.
