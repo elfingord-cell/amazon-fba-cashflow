@@ -21,7 +21,7 @@ Stand: 2026-02-12
 | 9 | Multi-User Rollen, Login/Logout, Session-Recovery | automated | `tests/v2/auth-session.parity.test.mjs` |
 | 10 | Sync-Konfliktfall: Reload/Export/Overwrite Ende-zu-Ende | automated | `tests/v2/sync.parity.test.cjs` (`conflict flow ...`) |
 | 11 | Offline-Fallback und Re-Sync nach Reconnect | automated | `tests/v2/sync.parity.test.cjs` (`offline fallback ...`) |
-| 12 | Payments Export CSV/PDF enthält konsistente Summen/Status | partial | Fachlogik in `src/v2/domain/paymentJournal.ts`, expliziter Export-E2E offen |
+| 12 | Payments Export CSV/PDF enthält konsistente Summen/Status | automated | `tests/v2/payments-export.parity.test.cjs` |
 | 13 | Performance bei grosser Produkt-/Forecast-Tabelle bleibt interaktiv | pending | Performance-Benchmark/Synthetic dataset offen |
 | 14 | Responsiveness zentrale Flows Desktop/Mobile | pending | visuelle/interaction Smoke offen |
 
@@ -33,3 +33,4 @@ Stand: 2026-02-12
 - Paritaetslauf (stabil, ohne bekannte Alt-Failures): `npm run test:parity`
 - Migrationsteil einzeln: `npm run test:parity:migration`
 - Sync/Auth einzeln: `npm run test:parity:sync`
+- Payments Export einzeln: `npm run test:parity:payments`

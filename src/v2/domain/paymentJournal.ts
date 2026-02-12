@@ -209,7 +209,10 @@ function resolveActualAmountForLine(input: {
   if (input.row.status !== "PAID") return { amountActualEur: null, issues };
   if (!input.row.paidDate) issues.push("PAID_WITHOUT_DATE");
 
-  if (Number.isFinite(Number(input.paymentRow?.paidEurActual))) {
+  const hasDirectActual = input.paymentRow?.paidEurActual != null
+    && input.paymentRow?.paidEurActual !== ""
+    && Number.isFinite(Number(input.paymentRow?.paidEurActual));
+  if (hasDirectActual) {
     if (isActualAmountValid(input.paymentRow.paidEurActual, input.row.amountPlannedEur)) {
       return { amountActualEur: Number(input.paymentRow.paidEurActual), issues };
     }
@@ -568,4 +571,3 @@ export function openPaymentJournalPrintView(rows: PaymentJournalRow[], filters: 
   popup.document.write(html);
   popup.document.close();
 }
-

@@ -11,10 +11,12 @@
   },
   "include": [
     "src/v2/migration/**/*.ts",
+    "src/v2/domain/paymentJournal.ts",
     "src/v2/state/**/*.ts",
     "src/v2/sync/types.ts",
     "src/data/storageLocal.js",
     "src/lib/dataHealth.js",
+    "src/ui/orderEditorFactory.js",
     "src/utils/deepEqual.js",
     "src/storage/**/*.js"
   ],
