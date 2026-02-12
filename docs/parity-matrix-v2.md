@@ -14,7 +14,7 @@ Stand: 2026-02-12
 | 2 | JSON-Apply `replace_workspace` ergibt exakt gemappten Zielstate | automated | `tests/v2/migration.parity.test.cjs` (`migration apply: replace_workspace ...`) |
 | 3 | JSON-Apply `merge_upsert` ueberschreibt keine geschuetzten Felder unerwartet | automated | `tests/v2/migration.parity.test.cjs` (`migration apply: merge_upsert ...`) |
 | 4 | Import mit partiell defekten Daten importiert verwertbare Datensätze und reportet Rest | automated | `tests/v2/migration.parity.test.cjs` (`migration dry-run: partial defects ...`) |
-| 5 | PO/FO Zahlungslogik liefert gleiche Summen wie Legacy | partial | `src/domain/outflowStack.test.js`, `src/domain/foSuggestion.test.js` |
+| 5 | PO/FO Zahlungslogik liefert gleiche Summen wie Legacy | automated | `tests/v2/po-fo-payments.parity.test.cjs` + Basistests `src/domain/outflowStack.test.js`, `src/domain/foSuggestion.test.js` |
 | 6 | Dashboard Plan/Ist-Werte stimmen gegen Referenzdaten | automated | `src/domain/parity.golden.test.js` (Test `dashboard plan/ist`) |
 | 7 | Inventory-Projektion (Units/DOH) stimmt gegen Golden Cases | automated | `src/domain/parity.golden.test.js`, `src/domain/inventoryProjection.test.js` |
 | 8 | USt-Vorschau-Rechnung stimmt gegen Golden Cases | automated | `src/domain/parity.golden.test.js`, `src/domain/vatPreview.test.js` |
@@ -23,7 +23,7 @@ Stand: 2026-02-12
 | 11 | Offline-Fallback und Re-Sync nach Reconnect | automated | `tests/v2/sync.parity.test.cjs` (`offline fallback ...`) |
 | 12 | Payments Export CSV/PDF enthält konsistente Summen/Status | automated | `tests/v2/payments-export.parity.test.cjs` |
 | 13 | Performance bei grosser Produkt-/Forecast-Tabelle bleibt interaktiv | automated | `tests/v2/performance.parity.test.cjs` |
-| 14 | Responsiveness zentrale Flows Desktop/Mobile | partial | `tests/v2/responsiveness.parity.test.cjs` (responsive shell/toolbars/tables smoke), visuelle Interaction-Smoke auf echten Viewports weiterhin offen |
+| 14 | Responsiveness zentrale Flows Desktop/Mobile | partial | `tests/v2/responsiveness.parity.test.cjs` + Checkliste `docs/responsiveness-smoke-v2.md`, visuelle Interaction-Smoke auf echten Viewports weiterhin offen |
 
 ## Golden Dataset
 - Referenzstate: `src/domain/fixtures/parityGoldenState.js`
@@ -34,5 +34,6 @@ Stand: 2026-02-12
 - Migrationsteil einzeln: `npm run test:parity:migration`
 - Sync/Auth einzeln: `npm run test:parity:sync`
 - Payments Export einzeln: `npm run test:parity:payments`
+- PO/FO Zahlungsparitaet einzeln: `npm run test:parity:pofo`
 - Performance einzeln: `npm run test:parity:performance`
 - Responsiveness-Smoketests einzeln: `npm run test:parity:responsive`

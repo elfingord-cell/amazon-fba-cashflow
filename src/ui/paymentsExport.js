@@ -181,7 +181,10 @@ function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecor
   if (row.status !== "PAID") return { amountActualEur: null, issues };
   if (!row.paidDate) issues.push("PAID_WITHOUT_DATE");
 
-  if (Number.isFinite(Number(paymentRow?.paidEurActual))) {
+  const hasDirectActual = paymentRow?.paidEurActual != null
+    && paymentRow?.paidEurActual !== ""
+    && Number.isFinite(Number(paymentRow?.paidEurActual));
+  if (hasDirectActual) {
     if (isActualAmountValid(paymentRow.paidEurActual, row.amountPlannedEur)) {
       return { amountActualEur: Number(paymentRow.paidEurActual), issues };
     }
@@ -237,10 +240,7 @@ function resolveActualAmountForLine({ row, paymentRow, paymentRows, paymentRecor
   return { amountActualEur: null, issues };
 }
 
-function buildPaymentJournalRows({ month, scope }) {
-  const state = loadState();
-  const settings = getSettings();
-  const products = getProductsSnapshot();
+function buildPaymentJournalRowsCore({ state, settings, products, month, scope }) {
   const supplierNameMap = buildSupplierNameMap(state);
   const skuAliasMap = buildSkuAliasMap(products);
   const poRecords = Array.isArray(state.pos) ? state.pos : [];
@@ -367,6 +367,24 @@ function buildPaymentJournalRows({ month, scope }) {
     const right = b.dueDate || b.paidDate || "";
     return left.localeCompare(right);
   });
+}
+
+export function buildPaymentJournalRowsFromState(state, { month = "", scope = "both" } = {}, options = {}) {
+  const sourceState = state && typeof state === "object" ? state : {};
+  const settings = options.settings || getSettings();
+  const products = options.products || getProductsSnapshot();
+  return buildPaymentJournalRowsCore({
+    state: sourceState,
+    settings,
+    products,
+    month,
+    scope,
+  });
+}
+
+function buildPaymentJournalRows({ month, scope }) {
+  const state = loadState();
+  return buildPaymentJournalRowsFromState(state, { month, scope });
 }
 
 function buildCsvRows(rows) {
