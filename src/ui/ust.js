@@ -206,9 +206,9 @@ function openVatDetailModal(root, row, detailKey) {
   }
 
   const tableWrap = document.createElement("div");
-  tableWrap.className = "vat-detail-table-wrap";
+  tableWrap.className = "vat-detail-table-wrap ui-table-shell ui-scroll-host";
   const table = document.createElement("table");
-  table.className = "table-compact vat-detail-table";
+  table.className = "table-compact ui-table-standard vat-detail-table";
   table.innerHTML = `
     <thead>
       <tr>
@@ -350,8 +350,8 @@ function renderTable(root, data) {
         <p class="muted">19 % DE, Gebührenquote, Fixkosten-VSt und EUSt-Erstattung pro Monat</p>
       </div>
     </div>
-    <div class="vat-preview-table-wrap table-wrap">
-      <table class="table-compact vat-preview-table" aria-label="USt Vorschau Tabelle">
+    <div class="vat-preview-table-wrap table-wrap ui-table-shell ui-scroll-host">
+      <table class="table-compact ui-table-standard vat-preview-table" aria-label="USt Vorschau Tabelle">
         <thead>
           <tr>
             <th>Monat</th>

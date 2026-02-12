@@ -1467,7 +1467,7 @@ function buildDashboardHTML(state) {
   const coverageNotice = "";
 
   return `
-    <section class="dashboard">
+    <section class="dashboard ui-page-shell">
       <div class="dashboard-header">
         <div class="dashboard-topline">
           <div class="dashboard-title-block">
@@ -1506,9 +1506,9 @@ function buildDashboardHTML(state) {
         </div>
       </div>
       ${coverageNotice}
-      <div class="dashboard-table-wrap">
-        <div class="dashboard-table-scroll">
-          <table class="table-compact dashboard-tree-table" role="table" data-ui-table="true" data-sticky-cols="1">
+      <div class="dashboard-table-wrap ui-table-shell">
+        <div class="dashboard-table-scroll ui-scroll-host">
+          <table class="table-compact ui-table-standard dashboard-tree-table" role="table" data-ui-table="true" data-sticky-cols="1">
             <thead>
               <tr>
                 <th scope="col" class="tree-header">Kategorie / Zeile</th>

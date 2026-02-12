@@ -2100,9 +2100,9 @@ export default function render(root) {
       ]),
       el("section", { class: "card" }, [
         el("h3", {}, ["Payments"]),
-        el("div", { class: "table-wrap" }, [
+        el("div", { class: "table-wrap ui-table-shell ui-scroll-host" }, [
           el("table", {
-            class: "table-compact ui-data-table fo-payments-table",
+            class: "table-compact ui-table-standard ui-data-table fo-payments-table",
             "data-ui-table": "true",
           }, [
             el("thead", {}, [

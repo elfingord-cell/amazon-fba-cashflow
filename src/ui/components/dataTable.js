@@ -177,7 +177,7 @@ function resolveHorizontalScrollElement(scrollContainer) {
   return candidates.find((candidate) => candidate instanceof HTMLElement) || null;
 }
 
-function ensureHorizontalScrollControls(table, scrollContainer, mode = "native-dual") {
+function ensureHorizontalScrollControls(table, scrollContainer, mode = "native") {
   if (!(table instanceof HTMLTableElement)) return;
   if (!(scrollContainer instanceof HTMLElement)) return;
   const scrollEl = resolveHorizontalScrollElement(scrollContainer);
@@ -491,7 +491,7 @@ function refreshSingleTable(table) {
   applyStickyColumns(table);
   applyOverflowTooltips(table);
   const syncState = tableScrollSync.get(table);
-  const mode = String(table.dataset.scrollbarMode || "native-dual");
+  const mode = String(table.dataset.scrollbarMode || "native");
   if (syncState && syncState.mode === mode) {
     syncState.update();
   } else {
@@ -512,7 +512,7 @@ function hydrateSingleTable(table) {
   if (!table) return;
   table.classList.add("ui-data-table", "table-compact");
   if (!table.dataset.uiTable) table.dataset.uiTable = "true";
-  if (!table.dataset.scrollbarMode) table.dataset.scrollbarMode = "native-dual";
+  if (!table.dataset.scrollbarMode) table.dataset.scrollbarMode = "native";
   const scrollContainer = ensureScrollContainer(table);
   ensureHorizontalScrollControls(table, scrollContainer, table.dataset.scrollbarMode);
   normalizeNativeTitles(table);
@@ -548,7 +548,7 @@ export function createDataTable({
   className = "",
   rowAttrs,
   stickyColumns = 0,
-  scrollbarMode = "native-dual",
+  scrollbarMode = "native",
 }) {
   const wrapper = createEl("div", { class: `data-table ${className}`.trim() });
   if (toolbar) {
@@ -559,7 +559,7 @@ export function createDataTable({
     class: "data-table-table ui-data-table table-compact",
     "data-ui-table": "true",
     "data-sticky-columns": Number.isFinite(Number(stickyColumns)) ? String(Number(stickyColumns)) : "0",
-    "data-scrollbar-mode": scrollbarMode || "native-dual",
+    "data-scrollbar-mode": scrollbarMode || "native",
   });
   const thead = createEl("thead", {}, [
     createEl("tr", {}, columns.map(col => {

@@ -140,8 +140,8 @@ function render(root) {
         <h2>Fixkosten (Stammdaten)</h2>
         <p class="muted">Definiere wiederkehrende Fixkosten, Frequenz und automatische Zahlungen.</p>
       </div>
-      <div class="table-scroll">
-        <table class="table fix-master-table">
+      <div class="table-scroll ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard fix-master-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -305,7 +305,7 @@ function render(root) {
       return `<p class="muted">Keine Instanzen.</p>`;
     }
     return `
-      <table class="table fix-instance-table">
+      <table class="table ui-table-standard fix-instance-table">
         <thead>
           <tr>
             <th>Position</th>

@@ -1518,7 +1518,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
   }
 
   const table = el("table", {
-    class: "table-compact ui-data-table po-list-table",
+    class: "table-compact ui-table-standard ui-data-table po-list-table",
     "data-ui-table": "true",
     "data-sticky-cols": "1",
   });
@@ -1767,7 +1767,7 @@ function renderItemsTable(container, record, onChange, dataListId) {
   });
 
   const table = el("table", {
-    class: "table-compact ui-data-table po-items-table",
+    class: "table-compact ui-table-standard ui-data-table po-items-table",
     "data-ui-table": "true",
   }, [header, body]);
   container.append(table, dl);
@@ -2008,7 +2008,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings,
   const previewMap = new Map(previewEvents.map(evt => [evt.id, evt]));
 
   const table = el("table", {
-    class: "table-compact ui-data-table po-milestones-table",
+    class: "table-compact ui-table-standard ui-data-table po-milestones-table",
     "data-ui-table": "true",
   }, [
     el("thead", {}, [
@@ -2226,7 +2226,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings,
   ]);
 
   const paymentTable = el("table", {
-    class: "table-compact ui-data-table po-payments-table",
+    class: "table-compact ui-table-standard ui-data-table po-payments-table",
     "data-ui-table": "true",
   }, [
     el("thead", {}, [
@@ -2311,7 +2311,7 @@ function renderMsTable(container, record, config, onChange, focusInfo, settings,
 
     const selectedSummary = el("div", { class: "po-payment-summary muted" });
     const allocationTable = el("table", {
-      class: "table-compact ui-data-table po-payment-allocation",
+      class: "table-compact ui-table-standard ui-data-table po-payment-allocation",
       "data-ui-table": "true",
     }, [
       el("thead", {}, [
@@ -3100,7 +3100,7 @@ export function renderOrderModule(root, config) {
             <button class="btn primary" type="button" id="${ids.newButton}">+ Neue PO</button>
           </div>
         </div>
-        <div id="${ids.list}" class="po-table-wrap"></div>
+        <div id="${ids.list}" class="po-table-wrap ui-table-shell ui-scroll-host"></div>
       </section>
       <div class="po-form-modal" id="${ids.modal}" aria-hidden="true">
         <div class="po-form-modal-panel">
@@ -3628,7 +3628,7 @@ export function renderOrderModule(root, config) {
     const wrapper = el("div", { class: "po-history" }, [
       el("p", { class: "muted" }, [usingSupplier ? "Sortiert nach Datum (neueste zuerst)." : "Keine passende Lieferantenhistorie – zeige jüngste POs dieser SKU." ]),
       el("table", {
-        class: "table-compact ui-data-table po-history-table",
+        class: "table-compact ui-table-standard ui-data-table po-history-table",
         "data-ui-table": "true",
       }, [
         el("thead", {}, [

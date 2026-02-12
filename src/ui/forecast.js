@@ -390,7 +390,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   const currentMonth = currentMonthKey();
   const currentYear = Number(currentMonth.split("-")[0]);
   const table = document.createElement("table");
-  table.className = "table-compact dashboard-tree-table forecast-tree-table";
+  table.className = "table-compact ui-table-standard forecast-tree-table";
   table.dataset.uiTable = "true";
   table.dataset.stickyCols = "1";
 
@@ -721,7 +721,7 @@ function render(el) {
   });
   const groups = buildCategoryGroups(filteredProducts, categories);
   const wrap = document.createElement('section');
-  wrap.className = 'panel';
+  wrap.className = 'panel ui-page-shell';
   wrap.innerHTML = `
     <header class="panel__header">
       <div>
@@ -772,7 +772,7 @@ function render(el) {
     </div>
   `;
   const tableHost = document.createElement('div');
-  tableHost.className = 'forecast-table-wrap dashboard-table-wrap';
+  tableHost.className = 'forecast-table-wrap ui-table-shell ui-scroll-host';
   if (!groups.length) {
     const empty = document.createElement("div");
     empty.className = "muted";

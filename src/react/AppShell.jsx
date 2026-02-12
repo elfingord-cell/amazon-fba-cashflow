@@ -34,7 +34,7 @@ import {
   onAuthSessionChange,
 } from "../storage/authSession.js";
 import { LegacyRouteView } from "./LegacyRouteView.jsx";
-import { MENU_SECTIONS, WIDE_ROUTES, normalizeHash, resolveRoute } from "./routes.js";
+import { MENU_SECTIONS, normalizeHash, resolveRoute } from "./routes.js";
 import { antdTheme } from "./theme.js";
 
 const { Header, Content, Sider } = Layout;
@@ -105,7 +105,6 @@ export function AppShell() {
   const resolved = useMemo(() => resolveRoute(normalizedHash), [normalizedHash]);
   const routeBase = resolved.base;
   const routeQuery = resolved.query;
-  const routeIsWide = WIDE_ROUTES.has(routeBase);
 
   useEffect(() => {
     currentHashRef.current = normalizedHash;
@@ -339,7 +338,7 @@ export function AppShell() {
               ) : null}
             </div>
           </Header>
-          <Content className={`app app-content ${routeIsWide ? "app-wide" : ""}`.trim()}>
+          <Content className="app app-content ui-page-shell">
             <LegacyRouteView
               routeBase={routeBase}
               routeQuery={routeQuery}

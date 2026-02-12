@@ -16,14 +16,7 @@ export const ROUTE_LOADERS = {
   "#debug": () => import("../ui/debug.js"),
 };
 
-export const WIDE_ROUTES = new Set([
-  "#dashboard",
-  "#po",
-  "#inventory",
-  "#forecast",
-  "#produkte",
-  "#payments-export",
-]);
+export const WIDE_ROUTES = new Set([]);
 
 export const MENU_SECTIONS = [
   {

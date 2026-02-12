@@ -22,7 +22,7 @@ export function TanStackGrid<T extends object>({ data, columns, className }: Tan
 
   return (
     <div className={className || "v2-stats-table-wrap"}>
-      <table className="v2-stats-table">
+      <table className="v2-stats-table ui-table-standard">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>

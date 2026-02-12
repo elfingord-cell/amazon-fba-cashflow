@@ -213,7 +213,7 @@ export function render(root) {
           updatedAt: null,
         };
 
-    const termsTable = el("table", { class: "table" }, [
+    const termsTable = el("table", { class: "table ui-table-standard" }, [
       el("thead", {}, [
         el("tr", {}, [
           el("th", {}, ["Label"]),
@@ -317,7 +317,7 @@ export function render(root) {
         return select;
       })(),
       el("h4", { style: "margin-top:16px" }, ["Payment Terms"]),
-      el("div", { class: "table-wrap" }, [termsTable]),
+      el("div", { class: "table-wrap ui-table-shell ui-scroll-host" }, [termsTable]),
       el("button", { class: "btn secondary", type: "button", id: "terms-add" }, ["+ Milestone"]),
       warning,
       el("h4", { style: "margin-top:20px" }, ["Produkte & Preise"]),

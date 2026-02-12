@@ -541,7 +541,7 @@ export function render(root) {
   const formatControl = buildSegmented("payment-format", formatOptions, "csv");
 
   const table = el("table", {
-    class: "table-compact ui-data-table payments-export-table",
+    class: "table-compact ui-table-standard ui-data-table payments-export-table",
     "data-ui-table": "true",
     "data-sticky-cols": "1",
   });
@@ -716,7 +716,7 @@ export function render(root) {
         ]),
         el("div", { class: "payments-export-actions" }, [exportBtn, previewBtn]),
       ]),
-      table,
+      el("div", { class: "table-wrap ui-table-shell ui-scroll-host" }, [table]),
     ]),
   );
 

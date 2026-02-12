@@ -71,7 +71,10 @@
 }
 
 .v2-content {
-  padding: 18px;
+  padding: 18px 24px 24px;
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
 }
 
 .v2-page {
@@ -101,14 +104,17 @@
 
 .v2-stats-table-wrap {
   overflow: auto;
+  scrollbar-gutter: stable;
   border: 1px solid rgba(15, 27, 45, 0.1);
-  border-radius: 10px;
+  border-radius: 12px;
+  background: #fff;
 }
 
 .v2-stats-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 640px;
+  table-layout: fixed;
   background: #fff;
 }
 

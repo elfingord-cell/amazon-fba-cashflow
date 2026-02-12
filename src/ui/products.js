@@ -198,7 +198,7 @@ function buildHistoryTable(state, sku) {
   if (!rows.length) {
     return createEl("p", { class: "empty-state" }, ["Keine Bestellhistorie verfügbar."]);
   }
-  const table = createEl("table", { class: "table", "data-ui-table": "true" });
+  const table = createEl("table", { class: "table ui-table-standard", "data-ui-table": "true" });
   const thead = createEl("thead", {}, [
     createEl("tr", {}, [
       createEl("th", {}, ["PO-Nr."]),
@@ -1776,7 +1776,7 @@ function buildHistoryTable(state, sku) {
       },
     ];
 
-    const wrapper = createEl("div", { class: "table-wrap products-list products-list-antd" });
+    const wrapper = createEl("div", { class: "table-wrap ui-table-shell ui-scroll-host products-list products-list-antd" });
     const topScrollControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-top products-custom-scroll", "aria-hidden": "true" }, [
       createEl("div", { class: "ui-scrollbar-custom-rail" }, [
         createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
@@ -2223,8 +2223,8 @@ function buildHistoryTable(state, sku) {
     }
 
     const wrapper = createEl("div", { class: "products-grid" });
-    const scroll = createEl("div", { class: "products-grid-scroll" });
-    const table = createEl("table", { class: "products-grid-table", "data-ui-table": "true", "data-sticky-cols": "1" });
+    const scroll = createEl("div", { class: "products-grid-scroll ui-table-shell ui-scroll-host" });
+    const table = createEl("table", { class: "products-grid-table ui-table-standard", "data-ui-table": "true", "data-sticky-cols": "1" });
     const colgroup = createEl("colgroup");
     const gridWidths = state?.settings?.productsTableColumns?.grid || [];
     fields.forEach((field, index) => {

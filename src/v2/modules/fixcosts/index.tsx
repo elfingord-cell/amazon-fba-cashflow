@@ -525,8 +525,8 @@ export default function FixcostsModule(): JSX.Element {
           <Button onClick={addRow}>Position hinzufuegen</Button>
         </Space>
 
-        <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table">
+        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+          <table className="v2-stats-table ui-table-standard">
             <thead>
               <tr>
                 <th>Name</th>
@@ -706,8 +706,8 @@ export default function FixcostsModule(): JSX.Element {
                       Auto-Markierung ignorieren
                     </Button>
                   </Space>
-                  <div className="v2-stats-table-wrap">
-                    <table className="v2-stats-table">
+                  <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+                    <table className="v2-stats-table ui-table-standard">
                       <thead>
                         <tr>
                           <th>Position</th>

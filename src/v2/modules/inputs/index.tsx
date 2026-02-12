@@ -279,8 +279,8 @@ export default function InputsModule(): JSX.Element {
             Monat
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table">
+        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+          <table className="v2-stats-table ui-table-standard">
             <thead>
               <tr>
                 <th>Monat</th>
@@ -380,8 +380,8 @@ export default function InputsModule(): JSX.Element {
             Extra
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table">
+        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+          <table className="v2-stats-table ui-table-standard">
             <thead>
               <tr>
                 <th>Datum</th>
@@ -458,8 +458,8 @@ export default function InputsModule(): JSX.Element {
             Dividende
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table">
+        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+          <table className="v2-stats-table ui-table-standard">
             <thead>
               <tr>
                 <th>Monat</th>
@@ -539,8 +539,8 @@ export default function InputsModule(): JSX.Element {
             Ist-Monat
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table">
+        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+          <table className="v2-stats-table ui-table-standard">
             <thead>
               <tr>
                 <th>Monat</th>

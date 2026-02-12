@@ -691,8 +691,8 @@ export default function PoModule(): JSX.Element {
                     )
                   }
                 </Text>
-                <div className="v2-stats-table-wrap">
-                  <table className="v2-stats-table">
+                <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+                  <table className="v2-stats-table ui-table-standard">
                     <thead>
                       <tr>
                         <th>ID</th>

@@ -490,8 +490,8 @@ export default function VatModule(): JSX.Element {
           <Space direction="vertical" style={{ width: "100%" }}>
             {detailContent.detail.formula ? <Text type="secondary">{detailContent.detail.formula}</Text> : null}
             {detailContent.detail.notes ? <Text type="secondary">{detailContent.detail.notes}</Text> : null}
-            <div className="v2-stats-table-wrap">
-              <table className="v2-stats-table">
+            <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+              <table className="v2-stats-table ui-table-standard">
                 <thead>
                   <tr>
                     <th>Posten</th>

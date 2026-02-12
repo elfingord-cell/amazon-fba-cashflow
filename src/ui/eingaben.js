@@ -168,7 +168,7 @@ export async function render(root) {
         <span class="income-source-tag income-source-forecast">Prognose</span>
         <span class="income-source-tag income-source-manual">Manuell</span>
       </div>
-      <table class="table">
+      <table class="table ui-table-standard">
         <thead><tr><th>Monat</th><th>Umsatz (€)</th><th>Payout (%)</th><th>Quelle</th><th></th></tr></thead>
         <tbody id="income-rows"></tbody>
       </table>
@@ -177,7 +177,7 @@ export async function render(root) {
 
     <section class="card">
       <h3>Extras (Ein-/Auszahlungen)</h3>
-      <table class="table">
+      <table class="table ui-table-standard">
         <thead><tr><th>Datum (TT.MM.JJJJ)</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
         <tbody id="extras-rows"></tbody>
       </table>
@@ -187,7 +187,7 @@ export async function render(root) {
     <section class="card">
       <h3>Fixkosten (Übersicht)</h3>
       <p class="muted">Pflege und Detailbearbeitung im Tab <strong>Fixkosten</strong>. Übersicht der geplanten Zahlungen im aktuellen Planungshorizont.</p>
-      <table class="table">
+      <table class="table ui-table-standard">
         <thead><tr><th>Monat</th><th>Summe (€)</th><th>Bezahlt (€)</th><th>Offen (€)</th></tr></thead>
         <tbody id="fix-summary-rows"></tbody>
       </table>
@@ -196,7 +196,7 @@ export async function render(root) {
 
     <section class="card">
       <h3>Dividenden & KapESt</h3>
-      <table class="table">
+      <table class="table ui-table-standard">
         <thead><tr><th>Monat</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
         <tbody id="dividend-rows"></tbody>
       </table>
@@ -221,7 +221,7 @@ export async function render(root) {
           </div>
         </div>
       </div>
-      <table class="table">
+      <table class="table ui-table-standard">
         <thead>
           <tr>
             <th>Monat</th>

@@ -677,7 +677,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
     }).join("");
 
   return `
-    <table class="table-compact inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="3">
+    <table class="table-compact ui-table-standard inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="3">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
@@ -1054,7 +1054,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
   const monthHeaders = months.map(month => `<th class="num">${formatMonthLabel(month)}</th>`).join("");
 
   return `
-    <table class="table-compact inventory-table inventory-projection-table" data-ui-table="true" data-sticky-cols="5">
+    <table class="table-compact ui-table-standard inventory-table inventory-projection-table" data-ui-table="true" data-sticky-cols="5">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
@@ -1198,8 +1198,8 @@ export function render(root) {
           ${missingEkCount ? `<span class="inventory-export-warning">⚠︎ EK fehlt (${missingEkCount})</span>` : ""}
         </div>
       </div>
-      <div class="inventory-table-wrap">
-        <div class="inventory-table-scroll">
+      <div class="inventory-table-wrap ui-table-shell">
+        <div class="inventory-table-scroll ui-scroll-host">
           ${buildSnapshotTable({
             state,
             view,
@@ -1244,8 +1244,8 @@ export function render(root) {
           </label>
         </div>
       </div>
-      <div class="inventory-table-wrap">
-        <div class="inventory-table-scroll">
+      <div class="inventory-table-wrap ui-table-shell">
+        <div class="inventory-table-scroll ui-scroll-host">
           ${buildProjectionTable({ state, view, snapshot, products, categories, months })}
         </div>
       </div>

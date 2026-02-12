@@ -215,8 +215,8 @@ export function render(root) {
           <button class="btn secondary" id="category-add">Hinzufügen</button>
         </div>
       </div>
-      <div class="table-wrap">
-        <table class="table" id="category-table">
+      <div class="table-wrap ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard" id="category-table">
           <thead>
             <tr>
               <th>Name</th>

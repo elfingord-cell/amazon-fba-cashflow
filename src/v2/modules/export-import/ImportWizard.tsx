@@ -54,8 +54,8 @@ function StatsTable({ rows }: { rows: ImportSectionStats[] }): JSX.Element {
   });
 
   return (
-    <div className="v2-stats-table-wrap">
-      <table className="v2-stats-table">
+    <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
+      <table className="v2-stats-table ui-table-standard">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
