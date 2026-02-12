@@ -393,6 +393,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   table.className = "table-compact ui-table-standard forecast-tree-table";
   table.dataset.uiTable = "true";
   table.dataset.stickyCols = "1";
+  table.dataset.stickyOwner = "manual";
 
   const monthColumnClass = (index) => `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
 
@@ -721,9 +722,9 @@ function render(el) {
   });
   const groups = buildCategoryGroups(filteredProducts, categories);
   const wrap = document.createElement('section');
-  wrap.className = 'panel ui-page-shell';
+  wrap.className = 'card ui-page-shell forecast-page';
   wrap.innerHTML = `
-    <header class="panel__header">
+    <header class="panel__header ui-page-head">
       <div>
         <p class="eyebrow">Werkzeuge</p>
         <h1>Absatzprognose (Ventory)</h1>
@@ -761,8 +762,8 @@ function render(el) {
         </label>
       </div>
       <div class="forecast-toolbar-row">
-        <button class="btn secondary" type="button" data-expand="expand">Alle auf</button>
-        <button class="btn secondary" type="button" data-expand="collapse">Alle zu</button>
+        <button class="btn secondary" type="button" data-expand="expand">Alles auf</button>
+        <button class="btn secondary" type="button" data-expand="collapse">Alles zu</button>
         <button class="btn" type="button" data-forecast-transfer>Umsatz übertragen</button>
         <label class="toggle">
           <input type="checkbox" ${state.forecast.settings.useForecast ? "checked" : ""} data-forecast-toggle />

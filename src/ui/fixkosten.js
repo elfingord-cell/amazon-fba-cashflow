@@ -233,15 +233,15 @@ function render(root) {
             <td>
               <label class="checkbox">
                 <input type="checkbox" data-field="autoPaid" ${row.autoPaid ? "checked" : ""} />
-                <span>Automatisch bezahlen am Fälligkeitstag</span>
+                <span>Automatisch bezahlt</span>
               </label>
             </td>
             <td>
               <input type="text" data-field="notes" value="${row.notes || ""}" placeholder="Notiz" />
             </td>
             <td class="actions">
-              <button class="btn" data-action="duplicate">Duplizieren</button>
-              <button class="btn danger" data-action="delete">Löschen</button>
+              <button class="btn sm" data-action="duplicate">Duplizieren</button>
+              <button class="btn sm danger" data-action="delete">Löschen</button>
             </td>
           </tr>
         `;

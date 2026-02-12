@@ -146,7 +146,11 @@ export async function render(root) {
 
   root.innerHTML = `
     <section class="card">
-      <h2>Eingaben</h2>
+      <div class="ui-page-head">
+        <div>
+          <h2>Eingaben</h2>
+        </div>
+      </div>
       <div class="grid two">
         <label>
           Opening Balance (€)
@@ -168,38 +172,46 @@ export async function render(root) {
         <span class="income-source-tag income-source-forecast">Prognose</span>
         <span class="income-source-tag income-source-manual">Manuell</span>
       </div>
-      <table class="table ui-table-standard">
-        <thead><tr><th>Monat</th><th>Umsatz (€)</th><th>Payout (%)</th><th>Quelle</th><th></th></tr></thead>
-        <tbody id="income-rows"></tbody>
-      </table>
+      <div class="table-wrap ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard">
+          <thead><tr><th>Monat</th><th>Umsatz (€)</th><th>Payout (%)</th><th>Quelle</th><th></th></tr></thead>
+          <tbody id="income-rows"></tbody>
+        </table>
+      </div>
       <button class="btn" id="income-add">+ Monat hinzufügen</button>
     </section>
 
     <section class="card">
       <h3>Extras (Ein-/Auszahlungen)</h3>
-      <table class="table ui-table-standard">
-        <thead><tr><th>Datum (TT.MM.JJJJ)</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
-        <tbody id="extras-rows"></tbody>
-      </table>
+      <div class="table-wrap ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard">
+          <thead><tr><th>Datum (TT.MM.JJJJ)</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
+          <tbody id="extras-rows"></tbody>
+        </table>
+      </div>
       <button class="btn" id="extra-add">+ Extra hinzufügen</button>
     </section>
 
     <section class="card">
       <h3>Fixkosten (Übersicht)</h3>
       <p class="muted">Pflege und Detailbearbeitung im Tab <strong>Fixkosten</strong>. Übersicht der geplanten Zahlungen im aktuellen Planungshorizont.</p>
-      <table class="table ui-table-standard">
-        <thead><tr><th>Monat</th><th>Summe (€)</th><th>Bezahlt (€)</th><th>Offen (€)</th></tr></thead>
-        <tbody id="fix-summary-rows"></tbody>
-      </table>
+      <div class="table-wrap ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard">
+          <thead><tr><th>Monat</th><th>Summe (€)</th><th>Bezahlt (€)</th><th>Offen (€)</th></tr></thead>
+          <tbody id="fix-summary-rows"></tbody>
+        </table>
+      </div>
       <a class="btn secondary" href="#fixkosten">Zum Fixkosten-Tab</a>
     </section>
 
     <section class="card">
       <h3>Dividenden & KapESt</h3>
-      <table class="table ui-table-standard">
-        <thead><tr><th>Monat</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
-        <tbody id="dividend-rows"></tbody>
-      </table>
+      <div class="table-wrap ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard">
+          <thead><tr><th>Monat</th><th>Label</th><th>Betrag (€)</th><th></th></tr></thead>
+          <tbody id="dividend-rows"></tbody>
+        </table>
+      </div>
       <button class="btn" id="dividend-add">+ Dividenden-Zeile</button>
     </section>
 
@@ -221,17 +233,19 @@ export async function render(root) {
           </div>
         </div>
       </div>
-      <table class="table ui-table-standard">
-        <thead>
-          <tr>
-            <th>Monat</th>
-            <th>Realer Umsatz (€)</th>
-            <th>Reale Auszahlungsquote (%)</th>
-            <th>Realer Kontostand Monatsende (€)</th>
-          </tr>
-        </thead>
-        <tbody id="monthly-actuals-rows"></tbody>
-      </table>
+      <div class="table-wrap ui-table-shell ui-scroll-host">
+        <table class="table ui-table-standard">
+          <thead>
+            <tr>
+              <th>Monat</th>
+              <th>Realer Umsatz (€)</th>
+              <th>Reale Auszahlungsquote (%)</th>
+              <th>Realer Kontostand Monatsende (€)</th>
+            </tr>
+          </thead>
+          <tbody id="monthly-actuals-rows"></tbody>
+        </table>
+      </div>
     </section>
   `;
 

@@ -1762,7 +1762,7 @@ function buildHistoryTable(state, sku) {
           return h("div", { className: "table-actions" }, [
             h("button", { className: "btn secondary sm", type: "button", onClick: () => showEditor(product) }, "Bearbeiten"),
             h("button", {
-              className: "btn ghost sm",
+              className: "btn secondary sm",
               type: "button",
               "aria-haspopup": "menu",
               "aria-expanded": "false",
@@ -1777,18 +1777,8 @@ function buildHistoryTable(state, sku) {
     ];
 
     const wrapper = createEl("div", { class: "table-wrap ui-table-shell ui-scroll-host products-list products-list-antd" });
-    const topScrollControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-top products-custom-scroll", "aria-hidden": "true" }, [
-      createEl("div", { class: "ui-scrollbar-custom-rail" }, [
-        createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
-      ]),
-    ]);
     const mountPoint = createEl("div", { class: "products-list-react-mount" });
-    const bottomScrollControl = createEl("div", { class: "ui-scrollbar-custom ui-scrollbar-custom-bottom products-custom-scroll", "aria-hidden": "true" }, [
-      createEl("div", { class: "ui-scrollbar-custom-rail" }, [
-        createEl("button", { class: "ui-scrollbar-custom-thumb", type: "button", tabindex: "-1" }),
-      ]),
-    ]);
-    wrapper.append(topScrollControl, mountPoint, bottomScrollControl);
+    wrapper.append(mountPoint);
     root.__productsListReactRoot = createRoot(mountPoint);
     root.__productsListReactRoot.render(
       h(AppDataTable, {
@@ -1799,144 +1789,7 @@ function buildHistoryTable(state, sku) {
         rowClassName: (record) => (record.isGroup ? "product-group-row" : "product-product-row"),
       })
     );
-    requestAnimationFrame(() => {
-      const cleanupExisting = root.__productsListScrollCleanup;
-      if (typeof cleanupExisting === "function") cleanupExisting();
-      const scrollCandidates = Array.from(
-        mountPoint.querySelectorAll(".ant-table-content, .ant-table-body")
-      );
-      const scrollContent = scrollCandidates.find(
-        (node) => node && (node.scrollWidth - node.clientWidth) > 0
-      ) || scrollCandidates[0] || null;
-      const table = mountPoint.querySelector(".ant-table-content table, .ant-table-body table");
-      const topRail = topScrollControl.querySelector(".ui-scrollbar-custom-rail");
-      const topThumb = topScrollControl.querySelector(".ui-scrollbar-custom-thumb");
-      const bottomRail = bottomScrollControl.querySelector(".ui-scrollbar-custom-rail");
-      const bottomThumb = bottomScrollControl.querySelector(".ui-scrollbar-custom-thumb");
-      if (!scrollContent || !table || !topRail || !topThumb || !bottomRail || !bottomThumb) return;
-      const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-      const MIN_THUMB_PX = 48;
-      const state = {
-        max: 0,
-        top: { span: 1, thumb: 1, left: 0 },
-        bottom: { span: 1, thumb: 1, left: 0 },
-      };
-      let syncing = false;
-      const metricsFor = (rail) => {
-        const max = Math.max(0, Math.ceil(scrollContent.scrollWidth - scrollContent.clientWidth));
-        const track = Math.max(1, Math.floor(rail.clientWidth || 1));
-        const ratio = scrollContent.clientWidth / Math.max(scrollContent.scrollWidth, 1);
-        const thumb = max <= 0
-          ? track
-          : Math.min(track, Math.max(MIN_THUMB_PX, Math.round(track * ratio)));
-        const span = Math.max(1, track - thumb);
-        return { max, thumb, span };
-      };
-      const applyThumb = (thumb, left, width) => {
-        thumb.style.width = `${Math.max(1, Math.round(width))}px`;
-        thumb.style.transform = `translateX(${Math.round(left)}px)`;
-        thumb.dataset.left = String(left);
-      };
-      const updateRanges = () => {
-        const max = Math.max(0, Math.ceil(scrollContent.scrollWidth - scrollContent.clientWidth));
-        state.max = max;
-        const topMetrics = metricsFor(topRail);
-        const bottomMetrics = metricsFor(bottomRail);
-        state.top.span = topMetrics.span;
-        state.top.thumb = topMetrics.thumb;
-        state.bottom.span = bottomMetrics.span;
-        state.bottom.thumb = bottomMetrics.thumb;
-        const current = clamp(Math.round(scrollContent.scrollLeft), 0, max);
-        const topLeft = max <= 0 ? 0 : (current / max) * topMetrics.span;
-        const bottomLeft = max <= 0 ? 0 : (current / max) * bottomMetrics.span;
-        state.top.left = topLeft;
-        state.bottom.left = bottomLeft;
-        applyThumb(topThumb, topLeft, topMetrics.thumb);
-        applyThumb(bottomThumb, bottomLeft, bottomMetrics.thumb);
-        topScrollControl.classList.toggle("is-overflow", max > 0);
-        bottomScrollControl.classList.toggle("is-overflow", max > 0);
-      };
-      const scrollFromRail = (left, key) => {
-        if (syncing) return;
-        const meta = key === "top" ? state.top : state.bottom;
-        if (state.max <= 0) return;
-        const nextLeft = clamp(left, 0, meta.span);
-        const ratio = meta.span <= 0 ? 0 : (nextLeft / meta.span);
-        syncing = true;
-        scrollContent.scrollLeft = ratio * state.max;
-        syncing = false;
-      };
-      const bindRailDrag = (key, rail, thumb) => {
-        let dragging = false;
-        let startX = 0;
-        let startLeft = 0;
-        const onMove = (event) => {
-          if (!dragging) return;
-          event.preventDefault();
-          const delta = event.clientX - startX;
-          scrollFromRail(startLeft + delta, key);
-        };
-        const onEnd = () => {
-          if (!dragging) return;
-          dragging = false;
-          thumb.classList.remove("is-dragging");
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onEnd);
-          window.removeEventListener("pointercancel", onEnd);
-        };
-        const onThumbDown = (event) => {
-          if (state.max <= 0) return;
-          event.preventDefault();
-          dragging = true;
-          thumb.classList.add("is-dragging");
-          startX = event.clientX;
-          startLeft = Number(thumb.dataset.left || 0);
-          window.addEventListener("pointermove", onMove);
-          window.addEventListener("pointerup", onEnd);
-          window.addEventListener("pointercancel", onEnd);
-        };
-        const onRailDown = (event) => {
-          if (state.max <= 0) return;
-          if (event.target === thumb) return;
-          const rect = rail.getBoundingClientRect();
-          const meta = key === "top" ? state.top : state.bottom;
-          const clickLeft = event.clientX - rect.left - (meta.thumb / 2);
-          scrollFromRail(clickLeft, key);
-        };
-        thumb.addEventListener("pointerdown", onThumbDown);
-        rail.addEventListener("pointerdown", onRailDown);
-        return () => {
-          onEnd();
-          thumb.removeEventListener("pointerdown", onThumbDown);
-          rail.removeEventListener("pointerdown", onRailDown);
-        };
-      };
-      const cleanupTopRail = bindRailDrag("top", topRail, topThumb);
-      const cleanupBottomRail = bindRailDrag("bottom", bottomRail, bottomThumb);
-      const syncFromTable = () => {
-        if (syncing) return;
-        updateRanges();
-      };
-      scrollContent.classList.add("ui-scrollbar-managed");
-      updateRanges();
-      scrollContent.addEventListener("scroll", syncFromTable, { passive: true });
-      window.addEventListener("resize", updateRanges);
-      const resizeObserver = typeof ResizeObserver === "function"
-        ? new ResizeObserver(() => updateRanges())
-        : null;
-      if (resizeObserver) {
-        resizeObserver.observe(scrollContent);
-        resizeObserver.observe(table);
-      }
-      root.__productsListScrollCleanup = () => {
-        cleanupTopRail();
-        cleanupBottomRail();
-        scrollContent.removeEventListener("scroll", syncFromTable);
-        window.removeEventListener("resize", updateRanges);
-        scrollContent.classList.remove("ui-scrollbar-managed");
-        if (resizeObserver) resizeObserver.disconnect();
-      };
-    });
+    root.__productsListScrollCleanup = null;
     return wrapper;
   }
 
@@ -2449,12 +2302,12 @@ function buildHistoryTable(state, sku) {
     root.innerHTML = "";
     const filtered = applyFilter(products, searchTerm, completenessFilter, abcFilter);
     const bannerCount = products.filter(prod => prod.alias.startsWith("Ohne Alias")).length;
-    const header = createEl("div", { class: "products-header" });
+    const header = createEl("div", { class: "products-header ui-page-head" });
     const title = createEl("h2", {}, ["Produkte"]);
     const actions = createEl("div", { class: "products-actions" });
     const createBtn = createEl("button", { class: "btn", type: "button", onclick: () => showEditor(null) }, ["+ Produkt anlegen"]);
-    const expandBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(false); render(); } }, ["Alles aufklappen"]);
-    const collapseBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(true); render(); } }, ["Alles zuklappen"]);
+    const expandBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(false); render(); } }, ["Alles auf"]);
+    const collapseBtn = createEl("button", { class: "btn secondary", type: "button", onclick: () => { setAllCategoriesCollapsed(true); render(); } }, ["Alles zu"]);
     const search = createEl("input", {
       type: "search",
       placeholder: "Suche nach Alias, SKU, Supplier",

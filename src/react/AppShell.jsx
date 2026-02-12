@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, ConfigProvider, Input, Layout, Menu, Modal, Typography } from "antd";
+import { Button, ConfigProvider, Input, Layout, Menu, Modal } from "antd";
 import {
   BankOutlined,
   BugOutlined,
@@ -38,7 +38,6 @@ import { MENU_SECTIONS, normalizeHash, resolveRoute } from "./routes.js";
 import { antdTheme } from "./theme.js";
 
 const { Header, Content, Sider } = Layout;
-const { Text } = Typography;
 
 const STATE_KEY = "amazon_fba_cashflow_v1";
 const MENU_ICON_MAP = {
@@ -77,14 +76,6 @@ function toMenuItems() {
   }));
 }
 const MENU_ITEMS = toMenuItems();
-
-function routeTitle(base) {
-  for (const section of MENU_SECTIONS) {
-    const item = section.children.find((entry) => entry.key === base);
-    if (item) return item.label;
-  }
-  return "Dashboard";
-}
 
 export function AppShell() {
   const dbSyncEnabled = isDbSyncEnabled();
@@ -315,7 +306,7 @@ export function AppShell() {
 
         <Layout>
           <Header className="app-header">
-            <Text strong className="app-route-title">{routeTitle(routeBase)}</Text>
+            <span className="app-header-context">Legacy App</span>
             <div className="app-header-actions">
               <Button
                 className="app-v2-trigger"

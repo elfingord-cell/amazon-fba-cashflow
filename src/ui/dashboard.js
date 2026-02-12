@@ -1469,7 +1469,7 @@ function buildDashboardHTML(state) {
   return `
     <section class="dashboard ui-page-shell">
       <div class="dashboard-header">
-        <div class="dashboard-topline">
+        <div class="dashboard-topline ui-page-head">
           <div class="dashboard-title-block">
             <h2>Dashboard</h2>
             <p class="muted">Planwerte werden durch Ist ersetzt, sobald Zahlungen verbucht sind. Drilldowns zeigen PO/FO-Events.</p>
@@ -1478,10 +1478,10 @@ function buildDashboardHTML(state) {
             ${rangeSelect}
           </div>
         </div>
-        <div class="dashboard-toolbar">
-          <div class="dashboard-toggle" role="group" aria-label="Expand">
-            <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
+        <div class="dashboard-toolbar ui-toolbar">
+          <div class="dashboard-toggle ui-actions-inline" role="group" aria-label="Expand">
             <button type="button" class="btn secondary" data-expand="expand">Alles auf</button>
+            <button type="button" class="btn secondary" data-expand="collapse">Alles zu</button>
           </div>
           <div class="dashboard-toolbar-filters">
             <label class="dashboard-toggle dashboard-checkbox">
@@ -1508,7 +1508,7 @@ function buildDashboardHTML(state) {
       ${coverageNotice}
       <div class="dashboard-table-wrap ui-table-shell">
         <div class="dashboard-table-scroll ui-scroll-host">
-          <table class="table-compact ui-table-standard dashboard-tree-table" role="table" data-ui-table="true" data-sticky-cols="1">
+          <table class="table-compact ui-table-standard dashboard-tree-table" role="table" data-ui-table="true" data-sticky-cols="1" data-sticky-owner="manual">
             <thead>
               <tr>
                 <th scope="col" class="tree-header">Kategorie / Zeile</th>

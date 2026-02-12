@@ -96,9 +96,11 @@ export function render(root) {
 
   root.innerHTML = `
     <section class="card">
-      <h2>Settings</h2>
-      <div class="table-card-header">
-        <span class="muted">Eigenschaften</span>
+      <div class="ui-page-head">
+        <div>
+          <h2>Settings</h2>
+          <span class="muted">Eigenschaften</span>
+        </div>
         <button class="btn primary" id="settings-save" disabled>Speichern</button>
       </div>
     </section>

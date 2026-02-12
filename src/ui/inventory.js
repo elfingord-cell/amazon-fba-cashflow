@@ -641,7 +641,6 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
         <tr class="inventory-row ${collapsed ? "is-collapsed" : ""}" data-sku="${escapeHtml(sku)}" data-category="${escapeHtml(group.id)}">
           <td class="inventory-col-sku sticky-cell">${escapeHtml(sku)}</td>
           <td class="inventory-col-alias sticky-cell">${escapeHtml(product.alias || "—")}</td>
-          <td class="inventory-col-category sticky-cell">${escapeHtml(group.name)}</td>
           <td class="num">
             <input class="inventory-input" inputmode="decimal" data-field="amazonUnits" value="${escapeHtml(amazonDraft ?? String(item?.amazonUnits ?? 0))}" />
             <span class="inventory-input-hint">Nur ganze Einheiten</span>
@@ -665,7 +664,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
 
     return `
         <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
-          <th class="inventory-col-sku sticky-cell" colspan="3">
+          <th class="inventory-col-sku sticky-cell" colspan="2">
             <button type="button" class="tree-toggle" data-category="${escapeHtml(group.id)}">${collapsed ? "▸" : "▾"}</button>
             <span class="tree-label">${escapeHtml(group.name)}</span>
             <span class="muted">(${group.items.length})</span>
@@ -677,12 +676,11 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
     }).join("");
 
   return `
-    <table class="table-compact ui-table-standard inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="3">
+    <table class="table-compact ui-table-standard inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="2" data-sticky-owner="manual">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
           <th class="inventory-col-alias sticky-header">Alias</th>
-          <th class="inventory-col-category sticky-header">Kategorie</th>
           <th class="num">Amazon Units</th>
           <th class="num">3PL Units</th>
           <th class="num">Total Units</th>
@@ -694,7 +692,7 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
         </tr>
       </thead>
       <tbody>
-        ${rows || `<tr><td class="muted" colspan="11">Keine Produkte gefunden.</td></tr>`}
+        ${rows || `<tr><td class="muted" colspan="10">Keine Produkte gefunden.</td></tr>`}
       </tbody>
     </table>
   `;
@@ -1054,7 +1052,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
   const monthHeaders = months.map(month => `<th class="num">${formatMonthLabel(month)}</th>`).join("");
 
   return `
-    <table class="table-compact ui-table-standard inventory-table inventory-projection-table" data-ui-table="true" data-sticky-cols="5">
+    <table class="table-compact ui-table-standard inventory-table inventory-projection-table" data-ui-table="true" data-sticky-cols="5" data-sticky-owner="manual">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
@@ -1165,7 +1163,7 @@ export function render(root) {
 
   root.innerHTML = `
     <section class="card inventory-card">
-      <div class="inventory-header">
+      <div class="inventory-header ui-page-head">
         <div>
           <h2>Inventory</h2>
           <p class="muted">Month-end Snapshots und Bestandsplanung. Lokal gespeichert.</p>
@@ -1174,14 +1172,14 @@ export function render(root) {
           <input type="search" placeholder="SKU oder Alias suchen" value="${escapeHtml(view.search)}" />
         </div>
       </div>
-      <div class="inventory-toolbar">
+      <div class="inventory-toolbar ui-toolbar-row">
         <label class="inventory-field">
           <span class="muted">Snapshot Monat</span>
           <select id="inventory-month"></select>
         </label>
         <button class="btn secondary" id="inventory-copy">Copy from previous month</button>
-        <button class="btn secondary" id="inventory-expand-all">Alles aufklappen</button>
-        <button class="btn secondary" id="inventory-collapse-all">Alles zuklappen</button>
+        <button class="btn secondary" id="inventory-expand-all">Alles auf</button>
+        <button class="btn secondary" id="inventory-collapse-all">Alles zu</button>
         <span class="muted small">${previousSnapshot ? `Vorheriger Snapshot: ${formatMonthLabel(previousSnapshot.month)}` : "Kein vorheriger Snapshot vorhanden."}</span>
       </div>
       <div class="inventory-export">
@@ -1215,7 +1213,7 @@ export function render(root) {
     </section>
 
     <section class="card inventory-card">
-      <div class="inventory-header">
+      <div class="inventory-header ui-page-head">
         <div>
           <h3>Projection (next ${projectionOptions.includes(projectionMonths) ? projectionMonths : 12} months)</h3>
           <p class="muted">End-of-Month verfügbares Lager in DE (Amazon + 3PL).</p>

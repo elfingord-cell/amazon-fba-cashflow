@@ -400,7 +400,7 @@ function renderTable(root, data) {
       <td class="num"><button class="vat-detail-trigger" type="button" data-detail-key="eustErstattung" data-month="${row.month}" title="Details anzeigen">${fmt(row.eustRefund)}</button></td>
       <td class="num vat-payable ${payableClass}"><button class="vat-detail-trigger ${payableClass}" type="button" data-detail-key="zahllast" data-month="${row.month}" title="Details anzeigen">${fmt(row.payable)}</button></td>
       <td class="vat-preview-action">
-        <button type="button" class="btn ghost sm" data-toggle="${row.month}" aria-expanded="false">Bearbeiten</button>
+        <button type="button" class="btn secondary sm" data-toggle="${row.month}" aria-expanded="false">Bearbeiten</button>
       </td>
     `;
     const detailRow = document.createElement("tr");

@@ -1412,9 +1412,9 @@ function renderList(container, records, config, onEdit, onDelete, options = {}) 
         case "transport":
           return `${rec.transport || "sea"} · ${rec.transitDays || 0}d`;
         case "actions":
-          return el("div", { class: "table-actions" }, [
-            el("button", { class: "btn", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
-            el("button", { class: "btn danger", onclick: () => onDelete(rec) }, ["Löschen"]),
+          return el("div", { class: "table-actions ui-table-actions-nowrap" }, [
+            el("button", { class: "btn sm", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
+            el("button", { class: "btn danger sm", onclick: () => onDelete(rec) }, ["Löschen"]),
           ]);
         default:
           return "—";
@@ -1560,7 +1560,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
       el("th", { style: "width:120px" }, [
         el("button", { class: "po-sort-btn", type: "button", onclick: () => sortToggle("transport") }, ["Transport ", sortIcon("transport")]),
       ]),
-      el("th", { style: "width:120px" }, ["Aktionen"]),
+      el("th", { style: "width:210px" }, ["Aktionen"]),
     ]),
   ]);
   const tbody = el("tbody");
@@ -1622,7 +1622,7 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
       ]),
       el("td", { class: "cell-ellipsis", title: "Zahlungen" }, [renderPaymentBadges(rec)]),
       el("td", { class: "cell-ellipsis", title: transport }, [transport]),
-      el("td", { class: "cell-ellipsis" }, [
+      el("td", { class: "po-actions-cell" }, [
         el("div", { class: "po-table-actions" }, [
           el("button", { class: "btn sm", type: "button", title: "Bearbeiten", onclick: () => onEdit(rec) }, ["Bearbeiten"]),
           el("button", {

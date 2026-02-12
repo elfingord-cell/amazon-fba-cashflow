@@ -71,19 +71,102 @@
 }
 
 .v2-content {
-  padding: 18px 24px 24px;
+  padding: 16px var(--page-gutter-x, 24px) 22px;
   width: 100%;
-  max-width: 1560px;
+  max-width: var(--app-max-width, 1560px);
   margin: 0 auto;
 }
 
 .v2-page {
   display: grid;
-  gap: 16px;
+  gap: 14px;
 }
 
 .v2-intro-card {
   border-radius: 14px;
+}
+
+.v2-shell .ant-card {
+  border-radius: var(--radius-lg, 16px);
+  border-color: rgba(15, 27, 45, 0.08);
+}
+
+.v2-shell .ant-card .ant-card-body {
+  padding: 14px 16px;
+}
+
+.v2-shell .ant-btn {
+  height: var(--control-height-md, 36px);
+  border-radius: 10px;
+  padding-inline: 12px;
+}
+
+.v2-shell .ant-btn.ant-btn-sm {
+  height: var(--control-height-sm, 30px);
+}
+
+.v2-shell .ant-input,
+.v2-shell .ant-input-affix-wrapper,
+.v2-shell .ant-select-selector,
+.v2-shell .ant-picker {
+  min-height: var(--control-height-md, 36px) !important;
+  border-radius: 10px !important;
+}
+
+.v2-shell .ant-select-selection-item,
+.v2-shell .ant-select-selection-placeholder {
+  line-height: calc(var(--control-height-md, 36px) - 2px) !important;
+}
+
+.v2-shell .ant-checkbox-inner {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+.v2-shell .ant-table-wrapper .ant-table-container {
+  border-radius: 12px !important;
+  border: 1px solid rgba(15, 27, 45, 0.1);
+}
+
+.v2-shell .ant-table-content {
+  overflow-x: auto !important;
+  scrollbar-gutter: stable;
+}
+
+.v2-shell .ant-table-content::-webkit-scrollbar {
+  height: 8px;
+}
+
+.v2-shell .ant-table-content::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, rgba(15, 23, 42, 0.1));
+  border-radius: 999px;
+}
+
+.v2-shell .ant-table-content::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #9aa4b2);
+  border-radius: 999px;
+}
+
+.v2-shell .ant-table-content::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #7f8a99);
+}
+
+.v2-shell .ant-table-thead > tr > th {
+  background: var(--table-header-bg, #f3f7fa);
+  color: var(--table-header-text, #4b5563);
+  font-size: 12px;
+  font-weight: 600;
+  padding: var(--table-row-padding-y, 8px) var(--table-row-padding-x, 12px);
+  height: var(--table-row-height, 40px);
+  white-space: nowrap;
+}
+
+.v2-shell .ant-table-tbody > tr > td {
+  padding: var(--table-row-padding-y, 8px) var(--table-row-padding-x, 12px);
+  height: var(--table-row-height, 40px);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .v2-legacy-host {
@@ -178,7 +261,7 @@
 }
 
 .v2-form-row .ant-form-item {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 @media (max-width: 992px) {

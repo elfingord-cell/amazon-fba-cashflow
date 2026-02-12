@@ -984,7 +984,7 @@ export default function render(root) {
               el("small", { class: "muted" }, [row.skuLabel]),
             ]);
           case "supplier":
-            return el("button", { class: "btn ghost fo-link", type: "button", dataset: { action: "supplier" } }, [row.supplierLabel]);
+            return el("button", { class: "btn secondary sm", type: "button", dataset: { action: "supplier" } }, [row.supplierLabel]);
           case "units":
             return Number(fo.units || 0).toLocaleString("de-DE");
           case "target":
@@ -1013,10 +1013,10 @@ export default function render(root) {
           case "status":
             return el("span", { class: row.statusClass }, [row.statusLabel]);
           case "actions":
-            return el("div", { class: "table-actions" }, [
-              el("button", { class: "btn", type: "button", dataset: { action: "edit" } }, ["View/Edit"]),
-              el("button", { class: "btn secondary", type: "button", dataset: { action: "convert" }, disabled: row.status === "CONVERTED" ? "true" : null }, ["Convert to PO"]),
-              el("button", { class: "btn danger", type: "button", dataset: { action: "delete" } }, ["Delete"]),
+            return el("div", { class: "table-actions ui-table-actions-nowrap" }, [
+              el("button", { class: "btn sm", type: "button", dataset: { action: "edit" } }, ["View/Edit"]),
+              el("button", { class: "btn secondary sm", type: "button", dataset: { action: "convert" }, disabled: row.status === "CONVERTED" ? "true" : null }, ["Convert to PO"]),
+              el("button", { class: "btn danger sm", type: "button", dataset: { action: "delete" } }, ["Delete"]),
             ]);
           default:
             return "—";

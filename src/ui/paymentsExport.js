@@ -698,7 +698,11 @@ export function render(root) {
   root.innerHTML = "";
   root.append(
     el("section", { class: "card" }, [
-      el("h2", {}, ["Payment Exports"]),
+      el("div", { class: "ui-page-head" }, [
+        el("div", {}, [
+          el("h2", {}, ["Payment Exports"]),
+        ]),
+      ]),
       el("div", { class: "payments-export-toolbar" }, [
         el("div", { class: "payments-export-filters" }, [
           el("label", { class: "payments-export-field" }, [

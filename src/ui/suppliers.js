@@ -163,6 +163,7 @@ export function render(root) {
     ];
     tableHost.innerHTML = "";
     tableHost.append(createDataTable({
+      className: "suppliers-table",
       columns,
       rows,
       rowKey: row => row.id,
@@ -187,9 +188,9 @@ export function render(root) {
           case "updated":
             return supplier.updatedAt ? new Date(supplier.updatedAt).toLocaleDateString("de-DE") : "—";
           case "actions":
-            return el("div", { class: "table-actions" }, [
-              el("button", { class: "btn", type: "button", dataset: { action: "edit" } }, ["Bearbeiten"]),
-              el("button", { class: "btn danger", type: "button", dataset: { action: "delete" } }, ["Löschen"]),
+            return el("div", { class: "table-actions ui-table-actions-nowrap" }, [
+              el("button", { class: "btn sm", type: "button", dataset: { action: "edit" } }, ["Bearbeiten"]),
+              el("button", { class: "btn sm danger", type: "button", dataset: { action: "delete" } }, ["Löschen"]),
             ]);
           default:
             return "—";

@@ -421,12 +421,14 @@ function applyNumericAlignment(table) {
 }
 
 function applyStickyColumns(table) {
+  const stickyOwner = String(table.dataset.stickyOwner || "auto");
   const stickyCols = Number(table.dataset.stickyCols || table.dataset.stickyColumns || 0);
   table.querySelectorAll(".ui-sticky-col").forEach(cell => {
     cell.classList.remove("ui-sticky-col");
     cell.style.removeProperty("--ui-sticky-left");
     cell.style.removeProperty("--ui-sticky-z");
   });
+  if (stickyOwner === "manual") return;
   if (!Number.isFinite(stickyCols) || stickyCols <= 0) return;
   const refRow = table.tHead?.rows?.[table.tHead.rows.length - 1] || table.rows?.[0];
   if (!refRow) return;
@@ -513,6 +515,7 @@ function hydrateSingleTable(table) {
   table.classList.add("ui-data-table", "table-compact");
   if (!table.dataset.uiTable) table.dataset.uiTable = "true";
   if (!table.dataset.scrollbarMode) table.dataset.scrollbarMode = "native";
+  if (!table.dataset.stickyOwner) table.dataset.stickyOwner = "auto";
   const scrollContainer = ensureScrollContainer(table);
   ensureHorizontalScrollControls(table, scrollContainer, table.dataset.scrollbarMode);
   normalizeNativeTitles(table);
@@ -549,6 +552,7 @@ export function createDataTable({
   rowAttrs,
   stickyColumns = 0,
   scrollbarMode = "native",
+  stickyOwner = "auto",
 }) {
   const wrapper = createEl("div", { class: `data-table ${className}`.trim() });
   if (toolbar) {
@@ -560,6 +564,7 @@ export function createDataTable({
     "data-ui-table": "true",
     "data-sticky-columns": Number.isFinite(Number(stickyColumns)) ? String(Number(stickyColumns)) : "0",
     "data-scrollbar-mode": scrollbarMode || "native",
+    "data-sticky-owner": stickyOwner || "auto",
   });
   const thead = createEl("thead", {}, [
     createEl("tr", {}, columns.map(col => {
