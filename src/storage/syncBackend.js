@@ -1,9 +1,24 @@
-const RAW_BACKEND = String(import.meta.env.VITE_SYNC_BACKEND || "blobs")
-  .trim()
-  .toLowerCase();
+function readEnv(key) {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta?.env && import.meta.env[key] != null) {
+      return import.meta.env[key];
+    }
+  } catch {
+    // no-op
+  }
+
+  if (typeof process !== "undefined" && process?.env && process.env[key] != null) {
+    return process.env[key];
+  }
+
+  return "";
+}
 
 export function getSyncBackend() {
-  return RAW_BACKEND === "db" ? "db" : "blobs";
+  const backend = String(readEnv("VITE_SYNC_BACKEND") || "blobs")
+    .trim()
+    .toLowerCase();
+  return backend === "db" ? "db" : "blobs";
 }
 
 export function isDbSyncEnabled() {
@@ -12,8 +27,8 @@ export function isDbSyncEnabled() {
 
 export function getSupabaseClientConfig() {
   return {
-    url: String(import.meta.env.VITE_SUPABASE_URL || "").trim(),
-    anonKey: String(import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim(),
+    url: String(readEnv("VITE_SUPABASE_URL") || "").trim(),
+    anonKey: String(readEnv("VITE_SUPABASE_ANON_KEY") || "").trim(),
   };
 }
 

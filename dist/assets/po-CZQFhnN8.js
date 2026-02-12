@@ -1,1 +1,0 @@
-import{u as r}from"./index-12pF4-sN.js";const n={slug:"po",entityKey:"pos",entityLabel:"PO",numberField:"poNo",listTitle:"Purchase Orders",formTitle:"PO bearbeiten/anlegen",numberLabel:"PO-Nummer",numberPlaceholder:"z. B. 25007",newButtonLabel:"Neue PO"};function t(e){return r(e,n)}const l={render:t};export{l as default,t as render};

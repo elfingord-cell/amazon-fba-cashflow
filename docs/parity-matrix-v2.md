@@ -18,9 +18,9 @@ Stand: 2026-02-12
 | 6 | Dashboard Plan/Ist-Werte stimmen gegen Referenzdaten | automated | `src/domain/parity.golden.test.js` (Test `dashboard plan/ist`) |
 | 7 | Inventory-Projektion (Units/DOH) stimmt gegen Golden Cases | automated | `src/domain/parity.golden.test.js`, `src/domain/inventoryProjection.test.js` |
 | 8 | USt-Vorschau-Rechnung stimmt gegen Golden Cases | automated | `src/domain/parity.golden.test.js`, `src/domain/vatPreview.test.js` |
-| 9 | Multi-User Rollen, Login/Logout, Session-Recovery | pending | UI/Session-E2E offen |
-| 10 | Sync-Konfliktfall: Reload/Export/Overwrite Ende-zu-Ende | pending | Remote-Sync-E2E offen |
-| 11 | Offline-Fallback und Re-Sync nach Reconnect | pending | Session/Adapter-E2E offen |
+| 9 | Multi-User Rollen, Login/Logout, Session-Recovery | automated | `tests/v2/auth-session.parity.test.mjs` |
+| 10 | Sync-Konfliktfall: Reload/Export/Overwrite Ende-zu-Ende | automated | `tests/v2/sync.parity.test.cjs` (`conflict flow ...`) |
+| 11 | Offline-Fallback und Re-Sync nach Reconnect | automated | `tests/v2/sync.parity.test.cjs` (`offline fallback ...`) |
 | 12 | Payments Export CSV/PDF enthält konsistente Summen/Status | partial | Fachlogik in `src/v2/domain/paymentJournal.ts`, expliziter Export-E2E offen |
 | 13 | Performance bei grosser Produkt-/Forecast-Tabelle bleibt interaktiv | pending | Performance-Benchmark/Synthetic dataset offen |
 | 14 | Responsiveness zentrale Flows Desktop/Mobile | pending | visuelle/interaction Smoke offen |
@@ -32,3 +32,4 @@ Stand: 2026-02-12
 ## Testprofil
 - Paritaetslauf (stabil, ohne bekannte Alt-Failures): `npm run test:parity`
 - Migrationsteil einzeln: `npm run test:parity:migration`
+- Sync/Auth einzeln: `npm run test:parity:sync`

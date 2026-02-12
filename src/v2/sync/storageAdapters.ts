@@ -1,11 +1,4 @@
 import { loadState, commitState } from "../../data/storageLocal.js";
-import {
-  AuthRequiredError,
-  ConfigurationError,
-  ConflictError,
-  fetchRemoteState,
-  pushRemoteState,
-} from "../../storage/remoteState.js";
 import { ensureAppStateV2 } from "../state/appState";
 import type { AppStateV2 } from "../state/types";
 import type { StorageAdapter, WorkspaceBackupEntry } from "./types";
@@ -21,12 +14,47 @@ function randomId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+interface RemoteBootstrapState {
+  exists?: boolean;
+  rev?: string | null;
+  data?: unknown;
+}
+
+interface RemotePushResult {
+  rev?: string | null;
+}
+
+interface RemoteStateApi {
+  fetchRemoteState(): Promise<RemoteBootstrapState | null>;
+  pushRemoteState(input: {
+    ifMatchRev: string | null;
+    updatedBy: string;
+    data: AppStateV2;
+  }): Promise<RemotePushResult>;
+}
+
+function hasErrorName(error: unknown, names: string[]): boolean {
+  return Boolean(error instanceof Error && names.includes(error.name));
+}
+
+function isConflictError(error: unknown): boolean {
+  return hasErrorName(error, ["ConflictError"]);
+}
+
 function isFallbackError(error: unknown): boolean {
   return (
-    error instanceof AuthRequiredError
-    || error instanceof ConfigurationError
+    hasErrorName(error, ["AuthRequiredError", "ConfigurationError", "SupabaseTimeoutError"])
     || (error instanceof Error && /auth|workspace|supabase/i.test(error.message))
+    || (error instanceof Error && /network|offline|fetch|timeout|failed to fetch/i.test(error.message))
   );
+}
+
+async function loadRemoteStateApi(): Promise<RemoteStateApi> {
+  const mod = await import("../../storage/remoteState.js");
+  return {
+    fetchRemoteState: mod.fetchRemoteState,
+    pushRemoteState: mod.pushRemoteState,
+  };
 }
 
 function readBackups(): WorkspaceBackupEntry[] {
@@ -76,9 +104,15 @@ export class LocalStorageAdapter implements StorageAdapter {
 
 export class SupabaseStorageAdapter implements StorageAdapter {
   private lastRev: string | null = null;
+  private readonly remoteApiLoader: () => Promise<RemoteStateApi>;
+
+  constructor(options?: { remoteApiLoader?: () => Promise<RemoteStateApi> }) {
+    this.remoteApiLoader = options?.remoteApiLoader || loadRemoteStateApi;
+  }
 
   async load(): Promise<AppStateV2> {
-    const remote = await fetchRemoteState();
+    const remoteApi = await this.remoteApiLoader();
+    const remote = await remoteApi.fetchRemoteState();
     if (remote?.exists && remote.data) {
       this.lastRev = remote.rev || null;
       return ensureAppStateV2(remote.data);
@@ -89,16 +123,17 @@ export class SupabaseStorageAdapter implements StorageAdapter {
 
   async save(next: AppStateV2, meta: { source: string }): Promise<void> {
     const payload = ensureAppStateV2(next);
+    const remoteApi = await this.remoteApiLoader();
     try {
-      const result = await pushRemoteState({
+      const result = await remoteApi.pushRemoteState({
         ifMatchRev: this.lastRev,
         updatedBy: meta.source || "v2:supabase-save",
         data: payload,
       });
       this.lastRev = result.rev || null;
     } catch (error) {
-      if (error instanceof ConflictError) {
-        const latest = await fetchRemoteState();
+      if (isConflictError(error)) {
+        const latest = await remoteApi.fetchRemoteState();
         this.lastRev = latest?.rev || null;
       }
       throw error;
@@ -107,8 +142,13 @@ export class SupabaseStorageAdapter implements StorageAdapter {
 }
 
 export class SupabaseFirstStorageAdapter implements StorageAdapter {
-  private readonly local = new LocalStorageAdapter();
-  private readonly remote = new SupabaseStorageAdapter();
+  private readonly local: StorageAdapter;
+  private readonly remote: StorageAdapter;
+
+  constructor(options?: { local?: StorageAdapter; remote?: StorageAdapter }) {
+    this.local = options?.local || new LocalStorageAdapter();
+    this.remote = options?.remote || new SupabaseStorageAdapter();
+  }
 
   async load(): Promise<AppStateV2> {
     try {
