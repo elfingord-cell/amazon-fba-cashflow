@@ -96,6 +96,17 @@
   font-weight: 600;
 }
 
+.v2-forecast-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 120px;
+}
+
+.v2-negative {
+  color: #b42318;
+  font-weight: 600;
+}
+
 @media (max-width: 1024px) {
   .v2-content {
     padding: 14px;
