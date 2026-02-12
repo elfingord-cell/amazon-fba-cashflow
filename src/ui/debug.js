@@ -7,7 +7,7 @@ function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-function buildDemoState(){
+export function buildDemoState(){
   const demo = createEmptyState();
 
   demo.settings = {
