@@ -23,7 +23,7 @@ Stand: 2026-02-12
 | 11 | Offline-Fallback und Re-Sync nach Reconnect | automated | `tests/v2/sync.parity.test.cjs` (`offline fallback ...`) |
 | 12 | Payments Export CSV/PDF enthält konsistente Summen/Status | automated | `tests/v2/payments-export.parity.test.cjs` |
 | 13 | Performance bei grosser Produkt-/Forecast-Tabelle bleibt interaktiv | automated | `tests/v2/performance.parity.test.cjs` |
-| 14 | Responsiveness zentrale Flows Desktop/Mobile | pending | visuelle/interaction Smoke offen |
+| 14 | Responsiveness zentrale Flows Desktop/Mobile | partial | `tests/v2/responsiveness.parity.test.cjs` (responsive shell/toolbars/tables smoke), visuelle Interaction-Smoke auf echten Viewports weiterhin offen |
 
 ## Golden Dataset
 - Referenzstate: `src/domain/fixtures/parityGoldenState.js`
@@ -35,3 +35,4 @@ Stand: 2026-02-12
 - Sync/Auth einzeln: `npm run test:parity:sync`
 - Payments Export einzeln: `npm run test:parity:payments`
 - Performance einzeln: `npm run test:parity:performance`
+- Responsiveness-Smoketests einzeln: `npm run test:parity:responsive`

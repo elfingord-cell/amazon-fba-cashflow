@@ -436,13 +436,13 @@ export default function InventoryModule(): JSX.Element {
             value={selectedMonth}
             onChange={(value) => setSelectedMonth(value)}
             options={monthOptions.map((month) => ({ value: month, label: month }))}
-            style={{ width: 140 }}
+            style={{ width: 140, maxWidth: "100%" }}
           />
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Suche SKU, Alias, Kategorie"
-            style={{ width: 320 }}
+            style={{ width: 320, maxWidth: "100%" }}
           />
           <Checkbox checked={onlyActive} onChange={(event) => setOnlyActive(event.target.checked)}>
             Nur aktive Produkte

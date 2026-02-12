@@ -333,12 +333,12 @@ export default function ProductsModule(): JSX.Element {
         <Paragraph>
           Produktstammdaten mit Completeness-Status, Kategorie/Supplier-Zuordnung und Kern-Kalkulationsfeldern.
         </Paragraph>
-        <Space>
+        <Space wrap>
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Suche SKU, Alias, Supplier, Kategorie"
-            style={{ width: 340 }}
+            style={{ width: 340, maxWidth: "100%" }}
           />
           <Select
             value={statusFilter}
@@ -348,7 +348,7 @@ export default function ProductsModule(): JSX.Element {
               { value: "active", label: "Aktiv" },
               { value: "inactive", label: "Inaktiv" },
             ]}
-            style={{ width: 140 }}
+            style={{ width: 140, maxWidth: "100%" }}
           />
           <Button
             type="primary"
@@ -386,7 +386,7 @@ export default function ProductsModule(): JSX.Element {
             <Input />
           </Form.Item>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="sku" label="SKU" style={{ flex: 1 }} rules={[{ required: true, message: "SKU fehlt." }]}>
               <Input />
             </Form.Item>
@@ -396,9 +396,9 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="status" label="Status" style={{ width: 140 }}>
               <Select options={STATUS_OPTIONS} />
             </Form.Item>
-          </Space>
+          </div>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="categoryId" label="Kategorie" style={{ flex: 1 }}>
               <Select
                 allowClear
@@ -411,9 +411,9 @@ export default function ProductsModule(): JSX.Element {
                 options={suppliers.map((entry) => ({ value: entry.id, label: entry.name }))}
               />
             </Form.Item>
-          </Space>
+          </div>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="avgSellingPriceGrossEUR" label="Ø VK-Preis (Brutto EUR)" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
             </Form.Item>
@@ -423,9 +423,9 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="moqUnits" label="MOQ Units" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} />
             </Form.Item>
-          </Space>
+          </div>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="safetyStockDohOverride" label="Safety Stock DOH Override" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} />
             </Form.Item>
@@ -435,9 +435,9 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="moqOverrideUnits" label="MOQ Override Units" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} />
             </Form.Item>
-          </Space>
+          </div>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="landedUnitCostEur" label="Einstandspreis (EUR)" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
             </Form.Item>
@@ -447,10 +447,10 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="productionLeadTimeDaysDefault" label="Production Lead Time (Tage)" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} />
             </Form.Item>
-          </Space>
+          </div>
 
           <Title level={5}>Template (Kernfelder)</Title>
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="templateUnitPriceUsd" label="Stueckpreis (USD)" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
             </Form.Item>
@@ -460,9 +460,9 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="templateCurrency" label="Currency" style={{ flex: 1 }}>
               <Select options={CURRENCIES.map((currency) => ({ value: currency, label: currency }))} />
             </Form.Item>
-          </Space>
+          </div>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="templateProductionDays" label="Produktionstage" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} />
             </Form.Item>
@@ -472,9 +472,9 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="templateFreightEur" label="Fracht (EUR)" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
             </Form.Item>
-          </Space>
+          </div>
 
-          <Space style={{ width: "100%" }} align="start">
+          <div className="v2-form-row">
             <Form.Item name="templateDutyPct" label="Zoll %" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} max={100} step={0.01} />
             </Form.Item>
@@ -484,7 +484,7 @@ export default function ProductsModule(): JSX.Element {
             <Form.Item name="templateFxRate" label="FX Rate" style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} step={0.0001} />
             </Form.Item>
-          </Space>
+          </div>
 
           <Form.Item name="templateDdp" valuePropName="checked">
             <Checkbox>DDP aktiv</Checkbox>

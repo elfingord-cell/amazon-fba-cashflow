@@ -203,7 +203,7 @@ export default function PaymentsExportModule(): JSX.Element {
           Zahlungsjournal mit Scope/Monatsfilter sowie CSV-Export und PDF-Print-View.
         </Paragraph>
         <Space wrap>
-          <div>
+          <div className="v2-toolbar-field">
             <Text>Monat</Text>
             <Select
               value={monthFilter}
@@ -215,10 +215,10 @@ export default function PaymentsExportModule(): JSX.Element {
                   label: `${month} (${formatMonthLabel(month)})`,
                 })),
               ]}
-              style={{ width: 220 }}
+              style={{ width: 220, maxWidth: "100%" }}
             />
           </div>
-          <div>
+          <div className="v2-toolbar-field">
             <Text>Scope</Text>
             <Radio.Group
               value={scope}
@@ -232,7 +232,7 @@ export default function PaymentsExportModule(): JSX.Element {
               ]}
             />
           </div>
-          <div>
+          <div className="v2-toolbar-field">
             <Text>Format</Text>
             <Radio.Group
               value={format}

@@ -372,13 +372,13 @@ export default function ForecastModule(): JSX.Element {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Suche SKU, Alias, Kategorie"
-            style={{ width: 320 }}
+            style={{ width: 320, maxWidth: "100%" }}
           />
           <Select
             value={range}
             onChange={(value) => setRange(value)}
             options={RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
-            style={{ width: 140 }}
+            style={{ width: 140, maxWidth: "100%" }}
           />
           <Radio.Group value={view} onChange={(event) => setView(event.target.value as ForecastViewMode)}>
             <Radio.Button value="units">Units</Radio.Button>

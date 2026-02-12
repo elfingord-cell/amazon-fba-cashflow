@@ -1,6 +1,6 @@
-import { useMemo } from "react";
-import { Layout, Menu, Space, Tag, Typography, Button } from "antd";
-import { BankOutlined, RollbackOutlined } from "@ant-design/icons";
+import { useMemo, useState } from "react";
+import { Layout, Menu, Space, Tag, Typography, Button, Drawer, Grid } from "antd";
+import { BankOutlined, MenuOutlined, RollbackOutlined } from "@ant-design/icons";
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { V2_ROUTES } from "./routeCatalog";
 import { useSyncSession } from "../sync/session";
@@ -14,10 +14,21 @@ function sectionLabel(section: string): string {
   return "Werkzeuge";
 }
 
+function formatUserLabel(userId: string | null, compact: boolean): string {
+  if (!userId) return "Nicht angemeldet";
+  if (!compact) return `User: ${userId}`;
+  if (userId.length <= 18) return `User: ${userId}`;
+  return `User: ${userId.slice(0, 6)}...${userId.slice(-6)}`;
+}
+
 function V2Layout(): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const syncSession = useSyncSession();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const screens = Grid.useBreakpoint();
+  const isDesktop = Boolean(screens.lg);
+  const isMobile = !isDesktop;
 
   const activeKey = useMemo(() => {
     const parts = location.pathname.split("/").filter(Boolean);
@@ -50,29 +61,47 @@ function V2Layout(): JSX.Element {
 
   return (
     <Layout className="v2-shell">
-      <Sider
-        width={290}
-        className="v2-sider"
-        breakpoint="lg"
-        collapsedWidth={0}
-      >
-        <div className="v2-brand">
-          <BankOutlined />
-          <span>FBA Cashflow V2</span>
-        </div>
-        <Menu
-          mode="inline"
-          selectedKeys={[activeKey]}
-          items={menuItems as never}
-          onClick={({ key }) => {
-            navigate(`/v2/${String(key)}`);
-          }}
-        />
-      </Sider>
+      {isDesktop ? (
+        <Sider width={290} className="v2-sider">
+          <div className="v2-brand">
+            <BankOutlined />
+            <span>FBA Cashflow V2</span>
+          </div>
+          <Menu
+            mode="inline"
+            selectedKeys={[activeKey]}
+            items={menuItems as never}
+            onClick={({ key }) => {
+              navigate(`/v2/${String(key)}`);
+            }}
+          />
+        </Sider>
+      ) : null}
       <Layout>
         <Header className="v2-header">
-          <Space align="center" size={16}>
-            <Title level={4} style={{ margin: 0 }}>Parallel V2</Title>
+          <div className="v2-header-main">
+            <Space align="center" size={12} wrap>
+              {isMobile ? (
+                <Button
+                  icon={<MenuOutlined />}
+                  onClick={() => setMobileMenuOpen(true)}
+                  className="v2-menu-toggle"
+                >
+                  Navigation
+                </Button>
+              ) : null}
+              <Title level={4} className="v2-header-title">Parallel V2</Title>
+              <Button
+                icon={<RollbackOutlined />}
+                onClick={() => {
+                  window.location.hash = "#dashboard";
+                }}
+              >
+                Legacy App
+              </Button>
+            </Space>
+          </div>
+          <div className="v2-header-meta">
             <Tag color={syncSession.online ? "green" : "red"}>
               {syncSession.online ? "Online" : "Offline"}
             </Tag>
@@ -80,18 +109,34 @@ function V2Layout(): JSX.Element {
               {syncSession.workspaceId ? `Workspace: ${syncSession.workspaceId}` : "Local fallback"}
             </Tag>
             <Text type="secondary">
-              {syncSession.userId ? `User: ${syncSession.userId}` : "Nicht angemeldet"}
+              {formatUserLabel(syncSession.userId, isMobile)}
             </Text>
-          </Space>
-          <Button
-            icon={<RollbackOutlined />}
-            onClick={() => {
-              window.location.hash = "#dashboard";
-            }}
-          >
-            Legacy App
-          </Button>
+          </div>
         </Header>
+        {isMobile ? (
+          <Drawer
+            title="Navigation"
+            placement="left"
+            open={mobileMenuOpen}
+            onClose={() => setMobileMenuOpen(false)}
+            width={290}
+            styles={{ body: { padding: 0 } }}
+          >
+            <div className="v2-drawer-brand">
+              <BankOutlined />
+              <span>FBA Cashflow V2</span>
+            </div>
+            <Menu
+              mode="inline"
+              selectedKeys={[activeKey]}
+              items={menuItems as never}
+              onClick={({ key }) => {
+                navigate(`/v2/${String(key)}`);
+                setMobileMenuOpen(false);
+              }}
+            />
+          </Drawer>
+        ) : null}
         <Content className="v2-content">
           <Outlet />
         </Content>
