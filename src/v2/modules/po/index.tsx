@@ -6,7 +6,6 @@ import {
   Checkbox,
   Form,
   Input,
-  InputNumber,
   Modal,
   Select,
   Space,
@@ -17,6 +16,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
 import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { DeNumberInput } from "../../components/DeNumberInput";
 import { computeScheduleFromOrderDate, nowIso, PO_ANCHORS, randomId } from "../../domain/orderUtils";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
@@ -146,6 +146,58 @@ function milestoneSum(milestones: PoMilestoneDraft[]): number {
   return Math.round((milestones || []).reduce((sum, row) => sum + Number(row.percent || 0), 0) * 100) / 100;
 }
 
+function toNumberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function templateFields(product: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const template = (product?.template && typeof product.template === "object")
+    ? product.template as Record<string, unknown>
+    : {};
+  const fields = (template.fields && typeof template.fields === "object")
+    ? template.fields as Record<string, unknown>
+    : template;
+  return fields || {};
+}
+
+function resolvePoProductPrefill(input: {
+  product: Record<string, unknown> | null;
+  settings: Record<string, unknown>;
+  units: number;
+}): Partial<PoFormValues> {
+  const product = input.product || {};
+  const settings = input.settings || {};
+  const template = templateFields(product);
+
+  const transport = String(template.transportMode || "SEA").toLowerCase() as "sea" | "rail" | "air";
+  const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
+  const transitDays = toNumberOrNull(template.transitDays)
+    ?? toNumberOrNull(transportLeadMap[transport])
+    ?? 45;
+  const prodDays = toNumberOrNull(product.productionLeadTimeDaysDefault ?? template.productionDays)
+    ?? toNumberOrNull(settings.defaultProductionLeadTimeDays)
+    ?? 60;
+  const unitCostUsd = toNumberOrNull(template.unitPriceUsd) ?? 0;
+  const fxOverride = toNumberOrNull(template.fxRate ?? settings.fxRate) ?? 0;
+  const logisticsPerUnit = toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur) ?? 0;
+  const freightEur = Math.max(0, Math.round(logisticsPerUnit * Math.max(0, Number(input.units || 0)) * 100) / 100);
+
+  return {
+    transport,
+    prodDays: Math.max(0, Math.round(prodDays)),
+    transitDays: Math.max(0, Math.round(transitDays)),
+    unitCostUsd,
+    unitExtraUsd: 0,
+    extraFlatUsd: 0,
+    freightEur,
+    dutyRatePct: toNumberOrNull(product.dutyRatePct ?? template.dutyPct ?? settings.dutyRatePct) ?? 0,
+    eustRatePct: toNumberOrNull(product.eustRatePct ?? template.vatImportPct ?? settings.eustRatePct) ?? 0,
+    fxOverride,
+    ddp: template.ddp === true,
+  };
+}
+
 function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | null): Record<string, unknown> {
   const now = nowIso();
   const milestones = (values.milestones || []).map((row) => ({
@@ -216,7 +268,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       .filter((entry) => entry.id);
   }, [state.suppliers]);
 
-  const supplierById = useMemo(() => new Map(supplierRows.map((entry) => [entry.id, entry.name])), [supplierRows]);
+  const supplierNameById = useMemo(() => new Map(supplierRows.map((entry) => [entry.id, entry.name])), [supplierRows]);
 
   const productRows = useMemo(() => {
     return (Array.isArray(state.products) ? state.products : [])
@@ -225,11 +277,12 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         sku: String(entry.sku || ""),
         alias: String(entry.alias || entry.sku || ""),
         supplierId: String(entry.supplierId || ""),
+        raw: entry,
       }))
       .filter((entry) => entry.sku);
   }, [state.products]);
 
-  const productBySku = useMemo(() => new Map(productRows.map((entry) => [entry.sku, entry.alias])), [productRows]);
+  const productBySku = useMemo(() => new Map(productRows.map((entry) => [entry.sku, entry])), [productRows]);
 
   const rows = useMemo(() => {
     const paymentRecords = Array.isArray(state.payments) ? state.payments : [];
@@ -270,8 +323,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           id: String(po.id || ""),
           poNo: String(po.poNo || ""),
           sku: String(po.sku || ""),
-          alias: productBySku.get(String(po.sku || "")) || String(po.sku || "—"),
-          supplierName: supplierById.get(String(po.supplierId || "")) || "—",
+          alias: productBySku.get(String(po.sku || ""))?.alias || String(po.sku || "—"),
+          supplierName: supplierNameById.get(String(po.supplierId || "")) || "—",
           orderDate: po.orderDate ? String(po.orderDate) : null,
           etdDate: etdDate || null,
           etaDate: etaDate || null,
@@ -294,7 +347,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         ].join(" ").toLowerCase().includes(needle);
       })
       .sort((a, b) => String(a.poNo || "").localeCompare(String(b.poNo || "")));
-  }, [includeArchived, poSettings, productBySku, search, state.payments, state.pos, supplierById]);
+  }, [includeArchived, poSettings, productBySku, search, state.payments, state.pos, supplierNameById]);
 
   const columns = useMemo<ColumnDef<PoRow>[]>(() => [
     { header: "PO", accessorKey: "poNo", meta: { width: 98 } },
@@ -393,29 +446,41 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     }
   }, [draftPoRecord, poSettings, state.payments]);
 
-  function buildDefaultDraft(existing?: Record<string, unknown> | null): PoFormValues {
-    const transportLead = ((settings.transportLeadTimesDays || {}) as Record<string, unknown>);
+  function buildDefaultDraft(
+    existing?: Record<string, unknown> | null,
+    prefill?: Partial<PoFormValues>,
+  ): PoFormValues {
+    const firstProduct = productRows[0] || null;
+    const seedSku = String(prefill?.sku || existing?.sku || firstProduct?.sku || "");
+    const product = productBySku.get(seedSku) || firstProduct;
+    const units = Number(prefill?.units ?? existing?.units ?? 0);
+    const defaults = resolvePoProductPrefill({
+      product: product?.raw || null,
+      settings,
+      units,
+    });
+
     return {
       id: existing?.id ? String(existing.id) : undefined,
       poNo: String(existing?.poNo || ""),
-      sku: String(existing?.sku || productRows[0]?.sku || ""),
-      supplierId: String(existing?.supplierId || supplierRows[0]?.id || ""),
-      orderDate: String(existing?.orderDate || new Date().toISOString().slice(0, 10)),
-      etdManual: String(existing?.etdManual || ""),
-      etaManual: String(existing?.etaManual || ""),
-      units: Number(existing?.units || 0),
-      unitCostUsd: Number(existing?.unitCostUsd || 0),
+      sku: seedSku,
+      supplierId: String(prefill?.supplierId || existing?.supplierId || product?.supplierId || supplierRows[0]?.id || ""),
+      orderDate: String(prefill?.orderDate || existing?.orderDate || new Date().toISOString().slice(0, 10)),
+      etdManual: String(prefill?.etdManual || existing?.etdManual || ""),
+      etaManual: String(prefill?.etaManual || existing?.etaManual || ""),
+      units,
+      unitCostUsd: Number(existing?.unitCostUsd ?? defaults.unitCostUsd ?? 0),
       unitExtraUsd: Number(existing?.unitExtraUsd || 0),
       extraFlatUsd: Number(existing?.extraFlatUsd || 0),
-      prodDays: Number(existing?.prodDays || 60),
-      transitDays: Number(existing?.transitDays || transportLead.sea || 45),
-      transport: (String(existing?.transport || "sea").toLowerCase() as "sea" | "rail" | "air"),
-      freightEur: Number(existing?.freightEur || 0),
-      dutyRatePct: Number(existing?.dutyRatePct ?? settings.dutyRatePct ?? 0),
+      prodDays: Number(existing?.prodDays ?? defaults.prodDays ?? 60),
+      transitDays: Number(existing?.transitDays ?? defaults.transitDays ?? 45),
+      transport: (String(existing?.transport || defaults.transport || "sea").toLowerCase() as "sea" | "rail" | "air"),
+      freightEur: Number(existing?.freightEur ?? defaults.freightEur ?? 0),
+      dutyRatePct: Number(existing?.dutyRatePct ?? defaults.dutyRatePct ?? settings.dutyRatePct ?? 0),
       dutyIncludeFreight: existing?.dutyIncludeFreight !== false,
-      eustRatePct: Number(existing?.eustRatePct ?? settings.eustRatePct ?? 0),
-      fxOverride: Number(existing?.fxOverride ?? settings.fxRate ?? 0),
-      ddp: existing?.ddp === true,
+      eustRatePct: Number(existing?.eustRatePct ?? defaults.eustRatePct ?? settings.eustRatePct ?? 0),
+      fxOverride: Number(existing?.fxOverride ?? defaults.fxOverride ?? settings.fxRate ?? 0),
+      ddp: existing?.ddp === true ? true : Boolean(defaults.ddp),
       archived: existing?.archived === true,
       milestones: Array.isArray(existing?.milestones)
         ? (existing?.milestones as Record<string, unknown>[]).map((row) => ({
@@ -429,10 +494,38 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     };
   }
 
+  function applyProductDefaults(skuValue: string, unitsOverride?: number): void {
+    if (editingId) return;
+    const sku = String(skuValue || "").trim();
+    if (!sku) return;
+    const product = productBySku.get(sku) || null;
+    if (!product) return;
+    const current = form.getFieldsValue();
+    const defaults = resolvePoProductPrefill({
+      product: product.raw,
+      settings,
+      units: Number(unitsOverride ?? current.units ?? 0),
+    });
+    const supplierId = String(product.supplierId || current.supplierId || "");
+    form.setFieldsValue({
+      supplierId,
+      transport: defaults.transport,
+      prodDays: defaults.prodDays,
+      transitDays: defaults.transitDays,
+      unitCostUsd: defaults.unitCostUsd,
+      freightEur: defaults.freightEur,
+      dutyRatePct: defaults.dutyRatePct,
+      eustRatePct: defaults.eustRatePct,
+      fxOverride: defaults.fxOverride,
+      ddp: defaults.ddp,
+    });
+  }
+
   function openCreateModal(prefill?: Partial<PoFormValues>): void {
     setEditingId(null);
+    const draft = buildDefaultDraft(null, prefill);
     form.setFieldsValue({
-      ...buildDefaultDraft(null),
+      ...draft,
       ...(prefill || {}),
     });
     setModalOpen(true);
@@ -576,6 +669,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                   value: product.sku,
                   label: `${product.alias} (${product.sku})`,
                 }))}
+                onChange={(nextSku) => {
+                  applyProductDefaults(String(nextSku || ""));
+                }}
               />
             </Form.Item>
             <Form.Item name="supplierId" label="Supplier" style={{ minWidth: 220, flex: 1 }}>
@@ -610,40 +706,40 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               />
             </Form.Item>
             <Form.Item name="prodDays" label="Prod Days" style={{ width: 140 }}>
-              <InputNumber style={{ width: "100%" }} min={0} />
+              <DeNumberInput mode="int" min={0} />
             </Form.Item>
             <Form.Item name="transitDays" label="Transit Days" style={{ width: 140 }}>
-              <InputNumber style={{ width: "100%" }} min={0} />
+              <DeNumberInput mode="int" min={0} />
             </Form.Item>
           </Space>
 
           <Space style={{ width: "100%" }} align="start" wrap>
             <Form.Item name="units" label="Units" style={{ width: 130 }}>
-              <InputNumber style={{ width: "100%" }} min={0} />
+              <DeNumberInput mode="int" min={0} />
             </Form.Item>
             <Form.Item name="unitCostUsd" label="Unit Cost USD" style={{ width: 170 }}>
-              <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
+              <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
             <Form.Item name="unitExtraUsd" label="Unit Extra USD" style={{ width: 170 }}>
-              <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
+              <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
             <Form.Item name="extraFlatUsd" label="Extra Flat USD" style={{ width: 170 }}>
-              <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
+              <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
             <Form.Item name="fxOverride" label="FX Override" style={{ width: 150 }}>
-              <InputNumber style={{ width: "100%" }} min={0} step={0.0001} />
+              <DeNumberInput mode="fx" min={0} />
             </Form.Item>
           </Space>
 
           <Space style={{ width: "100%" }} align="start" wrap>
             <Form.Item name="freightEur" label="Freight EUR" style={{ width: 170 }}>
-              <InputNumber style={{ width: "100%" }} min={0} step={0.01} />
+              <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
             <Form.Item name="dutyRatePct" label="Duty %" style={{ width: 140 }}>
-              <InputNumber style={{ width: "100%" }} min={0} max={100} step={0.1} />
+              <DeNumberInput mode="percent" min={0} max={100} />
             </Form.Item>
             <Form.Item name="eustRatePct" label="EUSt %" style={{ width: 140 }}>
-              <InputNumber style={{ width: "100%" }} min={0} max={100} step={0.1} />
+              <DeNumberInput mode="percent" min={0} max={100} />
             </Form.Item>
             <Form.Item name="dutyIncludeFreight" valuePropName="checked" style={{ marginTop: 31 }}>
               <Checkbox>Duty inkl. Freight</Checkbox>
@@ -682,7 +778,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                         style={{ width: 100 }}
                         rules={[{ required: true, message: "%" }]}
                       >
-                        <InputNumber min={0} max={100} style={{ width: "100%" }} />
+                        <DeNumberInput mode="percent" min={0} max={100} />
                       </Form.Item>
                       <Form.Item
                         {...field}
@@ -697,7 +793,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                         name={[field.name, "lagDays"]}
                         style={{ width: 120 }}
                       >
-                        <InputNumber style={{ width: "100%" }} />
+                        <DeNumberInput mode="int" />
                       </Form.Item>
                       <Button danger onClick={() => remove(field.name)}>X</Button>
                     </Space>

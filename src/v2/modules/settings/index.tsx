@@ -6,7 +6,6 @@ import {
   Col,
   Form,
   Input,
-  InputNumber,
   Modal,
   Row,
   Select,
@@ -16,6 +15,7 @@ import {
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { validateAll } from "../../../lib/dataHealth.js";
+import { DeNumberInput } from "../../components/DeNumberInput";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
@@ -303,17 +303,17 @@ export default function SettingsModule(): JSX.Element {
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item label="Air (Tage)" name="air" rules={[{ required: true }]}>
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
               <Form.Item label="Rail (Tage)" name="rail" rules={[{ required: true }]}>
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
               <Form.Item label="Sea (Tage)" name="sea" rules={[{ required: true }]}>
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
           </Row>
@@ -321,7 +321,7 @@ export default function SettingsModule(): JSX.Element {
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item label="Buffer Days" name="defaultBufferDays" rules={[{ required: true }]}>
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
@@ -339,17 +339,17 @@ export default function SettingsModule(): JSX.Element {
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item label="FX Kurs (USD je EUR)" name="fxRate">
-                <InputNumber style={{ width: "100%" }} min={0} step={0.0001} />
+                <DeNumberInput mode="fx" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
               <Form.Item label="FX Kurs (EUR je USD)" name="eurUsdRate">
-                <InputNumber style={{ width: "100%" }} min={0} step={0.0001} />
+                <DeNumberInput mode="fx" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
               <Form.Item label="MOQ Default (Units)" name="moqDefaultUnits">
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
           </Row>
@@ -357,12 +357,12 @@ export default function SettingsModule(): JSX.Element {
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item label="Safety Stock DOH" name="safetyStockDohDefault">
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
               <Form.Item label="FO Coverage DOH" name="foCoverageDohDefault">
-                <InputNumber style={{ width: "100%" }} min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
@@ -434,7 +434,7 @@ export default function SettingsModule(): JSX.Element {
             <Input />
           </Form.Item>
           <Form.Item name="sortOrder" label="Sortierung" rules={[{ required: true }]}>
-            <InputNumber min={0} style={{ width: "100%" }} />
+            <DeNumberInput mode="int" min={0} />
           </Form.Item>
         </Form>
       </Modal>
