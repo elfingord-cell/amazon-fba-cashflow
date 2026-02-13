@@ -722,6 +722,7 @@ export function computeFoRecommendationForSku(input: {
   product: Record<string, unknown> | null;
   settings: Record<string, unknown>;
   horizonMonths?: number;
+  requiredArrivalMonth?: string | null;
 }): Record<string, unknown> | null {
   const { context } = input;
   if (!context.baselineMonth) return null;
@@ -757,11 +758,13 @@ export function computeFoRecommendationForSku(input: {
     sku,
     baselineMonth: context.baselineMonth,
     projection,
+    plannedSalesBySku: context.plannedSalesBySku,
     safetyStockDays: safetyDays,
     coverageDays,
     leadTimeDays: Number(input.leadTimeDays || 0),
     cnyPeriod: input.settings?.cny,
     inboundWithoutEtaCount: context.inboundWithoutEtaCount,
     moqUnits,
+    requiredArrivalMonth: input.requiredArrivalMonth,
   }) as Record<string, unknown>;
 }

@@ -92,3 +92,35 @@ test("no demand leads to no FO needed", () => {
 
   assert.strictEqual(recommendation.status, "no_fo_needed");
 });
+
+test("coverage-window units are based on target arrival month and respect MOQ floor", () => {
+  const sku = "SKU-5";
+  const projection = buildSkuProjection({
+    sku,
+    baselineMonth: "2025-01",
+    stock0: 100,
+    forecastByMonth: { "2025-02": 300, "2025-03": 310, "2025-04": 300 },
+    inboundByMonth: {},
+    horizonMonths: 4,
+  });
+
+  const recommendation = computeFoRecommendation({
+    sku,
+    baselineMonth: "2025-01",
+    projection,
+    plannedSalesBySku: { [sku]: { "2025-03": 310, "2025-04": 300 } },
+    safetyStockDays: 60,
+    coverageDays: 60,
+    leadTimeDays: 30,
+    requiredArrivalMonth: "2025-03",
+    moqUnits: 800,
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.strictEqual(recommendation.selectedArrivalMonth, "2025-03");
+  assert.strictEqual(recommendation.requiredArrivalDate, "2025-03-01");
+  assert.strictEqual(recommendation.coverageDaysForOrder, 60);
+  assert.strictEqual(recommendation.recommendedUnitsRaw, 600);
+  assert.strictEqual(recommendation.recommendedUnits, 800);
+  assert.strictEqual(recommendation.moqApplied, true);
+});

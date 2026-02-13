@@ -255,12 +255,14 @@ export function computeFoRecommendation({
   sku,
   baselineMonth,
   projection,
+  plannedSalesBySku = {},
   safetyStockDays = 60,
   coverageDays = 90,
   leadTimeDays = 0,
   cnyPeriod,
   inboundWithoutEtaCount = 0,
   moqUnits = 0,
+  requiredArrivalMonth = null,
 }) {
   if (!baselineMonth) {
     return {
@@ -281,7 +283,18 @@ export function computeFoRecommendation({
     };
   }
 
-  const requiredArrivalDate = monthKeyToDate(firstRisk.month);
+  const projectionByMonth = new Map(
+    (projection?.months || []).map((entry) => [entry.month, entry]),
+  );
+  const selectedArrivalMonth = (
+    requiredArrivalMonth
+    && projectionByMonth.has(requiredArrivalMonth)
+    && compareMonthKeys(requiredArrivalMonth, baselineMonth) > 0
+  )
+    ? requiredArrivalMonth
+    : firstRisk.month;
+  const selectedProjectionMonth = projectionByMonth.get(selectedArrivalMonth) || firstRisk;
+  const requiredArrivalDate = monthKeyToDate(selectedArrivalMonth);
   const orderDate = addDays(requiredArrivalDate, -Number(leadTimeDays || 0));
   const overlapDays = countOverlapDays(
     orderDate,
@@ -292,10 +305,20 @@ export function computeFoRecommendation({
   const orderDateAdjusted = overlapDays > 0
     ? addDays(orderDate, -overlapDays)
     : orderDate;
-  const targetCoverageDays = Number(safetyStockDays || 0) + Number(coverageDays || 0);
-  const targetUnits = firstRisk.avgDailyDemand * targetCoverageDays;
-  const stockAtArrival = firstRisk.startStock;
-  let recommendedUnits = Math.max(0, Math.ceil(targetUnits - stockAtArrival));
+  const targetCoverageDays = Math.max(1, Number(coverageDays || 0));
+  const coverageDemand = integrateDemand({
+    plansBySku: plannedSalesBySku,
+    sku,
+    startDate: requiredArrivalDate,
+    endDate: addDays(requiredArrivalDate, targetCoverageDays),
+    warnings: [],
+  });
+  const coverageDemandUnits = Number.isFinite(coverageDemand?.demandUnits)
+    ? Number(coverageDemand.demandUnits)
+    : (Number(selectedProjectionMonth?.avgDailyDemand || 0) * targetCoverageDays);
+  const stockAtArrival = Number(selectedProjectionMonth?.startStock || 0);
+  const recommendedUnitsRaw = Math.max(0, Math.ceil(coverageDemandUnits));
+  let recommendedUnits = recommendedUnitsRaw;
   let moqApplied = false;
   if (recommendedUnits > 0 && moqUnits > 0 && recommendedUnits < moqUnits) {
     recommendedUnits = moqUnits;
@@ -307,17 +330,22 @@ export function computeFoRecommendation({
     status: "ok",
     baselineMonth,
     criticalMonth: firstRisk.month,
+    selectedArrivalMonth,
     requiredArrivalDate: formatIsoDate(requiredArrivalDate),
     orderDate: formatIsoDate(orderDate),
     orderDateAdjusted: formatIsoDate(orderDateAdjusted),
     overlapDays,
+    coverageDaysForOrder: targetCoverageDays,
+    coverageDemandUnits,
+    recommendedUnitsRaw,
     recommendedUnits,
     safetyStockDays,
     coverageDays,
     moqUnits,
     moqApplied,
+    moqLiftUnits: moqApplied ? Math.max(0, recommendedUnits - recommendedUnitsRaw) : 0,
     stockAtArrival,
-    avgDailyDemand: firstRisk.avgDailyDemand,
+    avgDailyDemand: selectedProjectionMonth?.avgDailyDemand ?? firstRisk.avgDailyDemand,
     issues: buildIssueList(projection, inboundWithoutEtaCount),
   };
 }

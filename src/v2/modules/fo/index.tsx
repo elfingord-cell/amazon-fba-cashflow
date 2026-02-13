@@ -516,8 +516,28 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       product,
       settings,
       horizonMonths: 12,
+      requiredArrivalMonth: draftValues?.targetDeliveryDate
+        ? String(draftValues.targetDeliveryDate).slice(0, 7)
+        : null,
     });
   }, [draftValues, productRows, recommendationContext, settings]);
+
+  const livePaymentPreviewRows = useMemo(() => {
+    if (!draftValues) return [];
+    return buildFoPayments({
+      supplierTerms: Array.isArray(draftValues.paymentTerms) ? draftValues.paymentTerms : [],
+      schedule: liveSchedule,
+      unitPrice: draftValues.unitPrice,
+      units: draftValues.units,
+      currency: draftValues.currency,
+      freight: draftValues.freight,
+      freightCurrency: draftValues.freightCurrency,
+      dutyRatePct: draftValues.dutyRatePct,
+      eustRatePct: draftValues.eustRatePct,
+      fxRate: draftValues.fxRate,
+      incoterm: draftValues.incoterm,
+    });
+  }, [draftValues, liveSchedule]);
 
   const supplierPercentSum = useMemo(
     () => sumSupplierPercent(draftValues?.paymentTerms || []),
@@ -1014,8 +1034,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                   <Text>Baseline: {String(liveRecommendation.baselineMonth || "—")}</Text>
                   <Text>Status: {String(liveRecommendation.status || "—")}</Text>
                   <Text>
+                    Reichweite-Bedarf ({formatNumber(liveRecommendation.coverageDaysForOrder, 0)} Tage): {formatNumber(liveRecommendation.coverageDemandUnits, 0)}
+                  </Text>
+                  <Text>
                     Empfohlene Units: {formatNumber(liveRecommendation.recommendedUnits, 0)}
                   </Text>
+                  {liveRecommendation.moqApplied ? (
+                    <Text type="warning">
+                      MOQ-Aufrundung: {formatNumber(liveRecommendation.recommendedUnitsRaw, 0)} → {formatNumber(liveRecommendation.recommendedUnits, 0)}
+                    </Text>
+                  ) : null}
                   <Text>
                     Arrival: {formatDate(liveRecommendation.requiredArrivalDate)}
                   </Text>
@@ -1102,6 +1130,50 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 </Space>
               )}
             </Form.List>
+            <div style={{ marginTop: 12 }}>
+              <Text strong>Zahlungsfälligkeiten (Preview)</Text>
+              <div className="v2-stats-table-wrap" style={{ marginTop: 8 }}>
+                <table className="v2-stats-table" data-layout="auto">
+                  <thead>
+                    <tr>
+                      <th>Typ</th>
+                      <th>Label</th>
+                      <th>Betrag</th>
+                      <th>Währung</th>
+                      <th>Fällig</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {livePaymentPreviewRows.length ? (
+                      livePaymentPreviewRows.map((row) => {
+                        const categoryLabel = row.category === "supplier"
+                          ? "Supplier"
+                          : row.category === "freight"
+                            ? "Shipping"
+                            : row.category === "duty"
+                              ? "Zoll"
+                              : row.category === "eust"
+                                ? "EUSt"
+                                : "EUSt Erstattung";
+                        return (
+                          <tr key={row.id}>
+                            <td>{categoryLabel}</td>
+                            <td>{row.label}</td>
+                            <td>{formatNumber(row.amount, 2)}</td>
+                            <td>{row.currency}</td>
+                            <td>{formatDate(row.dueDate)}</td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={5}>Keine Zahlungszeilen.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </Card>
         </Form>
       </Modal>

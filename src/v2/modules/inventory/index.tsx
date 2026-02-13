@@ -718,9 +718,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       product,
       settings,
       horizonMonths: Math.max(6, projectionMonths),
+      requiredArrivalMonth: month,
     }) as Record<string, unknown> | null;
 
     const recommendationUnits = Number(recommendation?.recommendedUnits || 0);
+    const recommendationUnitsRaw = Number(recommendation?.recommendedUnitsRaw || 0);
     const fallbackUnits = Math.max(0, Math.ceil(Number(data.safetyUnits || 0) - Number(data.endAvailable || 0)));
     const recommendedUnits = Math.max(0, Math.round(Number.isFinite(recommendationUnits) && recommendationUnits > 0
       ? recommendationUnits
@@ -789,6 +791,16 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         <Text>
           Vorschlag: <strong>{formatInt(intent.recommendedUnits)}</strong>
         </Text>
+        {Number(intent.recommendation?.coverageDaysForOrder || 0) > 0 ? (
+          <Text type="secondary">
+            Bedarf ({formatInt(intent.recommendation?.coverageDaysForOrder)} Tage): {formatInt(intent.recommendation?.coverageDemandUnits)}
+          </Text>
+        ) : null}
+        {intent.recommendation?.moqApplied ? (
+          <Text type="warning">
+            MOQ angewendet: kalkulatorisch {formatInt(intent.recommendation?.recommendedUnitsRaw)} → MOQ {formatInt(intent.recommendation?.recommendedUnits)}
+          </Text>
+        ) : null}
         <div className="v2-actions-inline">
           <Button size="small" onClick={() => navigateToOrderIntent("fo")}>FO erstellen</Button>
           <Button size="small" type="primary" onClick={() => navigateToOrderIntent("po")}>PO erstellen</Button>
