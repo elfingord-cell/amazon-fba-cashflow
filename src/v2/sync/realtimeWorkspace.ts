@@ -19,10 +19,21 @@ type RealtimePostgresChangesPayload<T> = {
   [key: string]: unknown;
 };
 
+type RealtimeBroadcastPayload = {
+  event?: string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 type RealtimeChannel = {
   on: (...args: unknown[]) => RealtimeChannel;
   subscribe: (callback: (status: REALTIME_SUBSCRIBE_STATES) => void) => RealtimeChannel;
   track: (payload: Record<string, unknown>) => Promise<unknown>;
+  send?: (payload: {
+    type: "broadcast";
+    event: string;
+    payload: Record<string, unknown>;
+  }) => Promise<unknown>;
   unsubscribe: () => Promise<unknown>;
   presenceState: () => Record<string, unknown>;
 };
@@ -46,6 +57,7 @@ export interface WorkspaceRealtimeChange {
 export interface WorkspacePresenceEntry {
   userId: string | null;
   userEmail: string | null;
+  userDisplayName: string | null;
   fieldKey: string | null;
   route: string | null;
   startedAt: string | null;
@@ -54,17 +66,26 @@ export interface WorkspacePresenceEntry {
   key: string;
 }
 
+export interface WorkspaceBroadcastEvent {
+  workspaceId: string;
+  event: string;
+  payload: Record<string, unknown>;
+  sentAt: string;
+}
+
 interface WorkspaceListener {
   id: number;
   workspaceId: string;
   onRemoteChange?: (event: WorkspaceRealtimeChange) => void;
   onConnectionState?: (state: WorkspaceConnectionState) => void;
   onPresenceChange?: (entries: WorkspacePresenceEntry[]) => void;
+  onBroadcast?: (event: WorkspaceBroadcastEvent) => void;
 }
 
 interface PresencePayload {
   userId: string | null;
   userEmail: string | null;
+  userDisplayName?: string | null;
   fieldKey: string | null;
   route: string | null;
   startedAt: string | null;
@@ -115,6 +136,12 @@ function emitRemoteChange(event: WorkspaceRealtimeChange): void {
   });
 }
 
+function emitBroadcast(event: WorkspaceBroadcastEvent): void {
+  listenersForWorkspace(event.workspaceId).forEach((entry) => {
+    entry.onBroadcast?.(event);
+  });
+}
+
 function flattenPresenceState(raw: Record<string, unknown>): WorkspacePresenceEntry[] {
   const next: WorkspacePresenceEntry[] = [];
   Object.entries(raw || {}).forEach(([key, value]) => {
@@ -125,6 +152,7 @@ function flattenPresenceState(raw: Record<string, unknown>): WorkspacePresenceEn
         key,
         userId: payload.userId ? String(payload.userId) : null,
         userEmail: payload.userEmail ? String(payload.userEmail) : null,
+        userDisplayName: payload.userDisplayName ? String(payload.userDisplayName) : null,
         fieldKey: payload.fieldKey ? String(payload.fieldKey) : null,
         route: payload.route ? String(payload.route) : null,
         startedAt: payload.startedAt ? String(payload.startedAt) : null,
@@ -142,6 +170,11 @@ function emitPresence(entries: WorkspacePresenceEntry[]): void {
   listenersForWorkspace(activeWorkspaceId).forEach((entry) => {
     entry.onPresenceChange?.(entries);
   });
+}
+
+function normalizeBroadcastPayload(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return input as Record<string, unknown>;
 }
 
 async function trackPresenceNow(): Promise<void> {
@@ -269,6 +302,16 @@ async function ensureWorkspaceChannel(workspaceId: string, options?: { forceRecr
         });
       },
     )
+    .on("broadcast", { event: "*" }, (payload: RealtimeBroadcastPayload) => {
+      const eventName = String(payload?.event || "").trim();
+      if (!eventName) return;
+      emitBroadcast({
+        workspaceId: targetWorkspace,
+        event: eventName,
+        payload: normalizeBroadcastPayload(payload?.payload),
+        sentAt: nowIso(),
+      });
+    })
     .on("presence", { event: "sync" }, () => {
       const state = channel.presenceState();
       emitPresence(flattenPresenceState(state));
@@ -318,6 +361,7 @@ export function subscribeWorkspaceChanges(options: {
   onRemoteChange?: (event: WorkspaceRealtimeChange) => void;
   onConnectionState?: (state: WorkspaceConnectionState) => void;
   onPresenceChange?: (entries: WorkspacePresenceEntry[]) => void;
+  onBroadcast?: (event: WorkspaceBroadcastEvent) => void;
 }): () => void {
   const workspaceId = String(options.workspaceId || "").trim();
   if (!workspaceId) {
@@ -331,6 +375,7 @@ export function subscribeWorkspaceChanges(options: {
     onRemoteChange: options.onRemoteChange,
     onConnectionState: options.onConnectionState,
     onPresenceChange: options.onPresenceChange,
+    onBroadcast: options.onBroadcast,
   });
 
   if (activeWorkspaceId === workspaceId) {
@@ -350,6 +395,7 @@ export function publishPresence(payload: PresencePayload): void {
   lastPresencePayload = {
     userId: payload.userId ? String(payload.userId) : null,
     userEmail: payload.userEmail ? String(payload.userEmail) : null,
+    userDisplayName: payload.userDisplayName ? String(payload.userDisplayName) : null,
     fieldKey: payload.fieldKey ? String(payload.fieldKey) : null,
     route: payload.route ? String(payload.route) : null,
     startedAt: payload.startedAt ? String(payload.startedAt) : null,
@@ -368,6 +414,28 @@ export function clearPresenceField(): void {
     heartbeatAt: nowIso(),
   };
   void trackPresenceNow();
+}
+
+export async function publishWorkspaceBroadcast(input: {
+  workspaceId: string;
+  event: string;
+  payload: Record<string, unknown>;
+}): Promise<boolean> {
+  const workspaceId = String(input.workspaceId || "").trim();
+  const event = String(input.event || "").trim();
+  if (!workspaceId || !event || !activeChannel || activeWorkspaceId !== workspaceId || !activeChannel.send) {
+    return false;
+  }
+  try {
+    await activeChannel.send({
+      type: "broadcast",
+      event,
+      payload: input.payload || {},
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function startFallbackPolling(options: {

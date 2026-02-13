@@ -3,6 +3,7 @@ import { loadState, STORAGE_KEY } from "../../data/storageLocal.js";
 import { getRuntimeConfig } from "../../storage/runtimeConfig.js";
 import { isLocalEditActive } from "../sync/presence";
 import {
+  publishWorkspaceBroadcast,
   startFallbackPolling,
   subscribeWorkspaceChanges,
   type WorkspaceConnectionState,
@@ -13,9 +14,15 @@ import type { AppStateV2 } from "./types";
 
 const IMPORT_MARKER_PREFIX = "v2_shared_workspace_import_v1:";
 const REMOTE_PULL_DEBOUNCE_MS = 340;
+const WORKSPACE_SNAPSHOT_EVENT = "v2:workspace-state-snapshot";
 
 function cloneState(input: AppStateV2): AppStateV2 {
   return ensureAppStateV2(structuredClone(input));
+}
+
+function emitWorkspaceSnapshot(state: AppStateV2): void {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  window.dispatchEvent(new CustomEvent(WORKSPACE_SNAPSHOT_EVENT, { detail: state }));
 }
 
 function readImportMarker(workspaceId: string): string {
@@ -157,19 +164,20 @@ export function useWorkspaceState(): WorkspaceStateController {
     syncSession.workspaceId,
   ]);
 
-  const pullRemoteNow = useCallback(async () => {
+  const pullRemoteNow = useCallback(async (options?: { skipLocalGrace?: boolean }) => {
     if (isRemotePullingRef.current) return;
     if (!syncSession.hasWorkspaceAccess || !syncSession.workspaceId) return;
+    const skipLocalGrace = Boolean(options?.skipLocalGrace);
     const cfg = getRuntimeConfig();
     const graceMs = Math.max(0, Number(cfg.editGraceMs || 1200));
-    if (isLocalEditActive(graceMs)) {
+    if (!skipLocalGrace && isLocalEditActive(graceMs)) {
       const delay = Math.max(graceMs + 80, REMOTE_PULL_DEBOUNCE_MS);
       if (remotePullTimerRef.current != null) {
         window.clearTimeout(remotePullTimerRef.current);
       }
       remotePullTimerRef.current = window.setTimeout(() => {
         remotePullTimerRef.current = null;
-        void pullRemoteNow();
+        void pullRemoteNow({ skipLocalGrace: true });
       }, delay);
       return;
     }
@@ -180,6 +188,7 @@ export function useWorkspaceState(): WorkspaceStateController {
       if (!mountedRef.current) return;
       setState(loaded);
       stateRef.current = loaded;
+      emitWorkspaceSnapshot(loaded);
     } catch (loadError) {
       if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Workspace konnte nicht aktualisiert werden.");
@@ -188,14 +197,15 @@ export function useWorkspaceState(): WorkspaceStateController {
     }
   }, [adapter, syncSession.hasWorkspaceAccess, syncSession.workspaceId]);
 
-  const scheduleRemotePull = useCallback((delayMs = REMOTE_PULL_DEBOUNCE_MS) => {
+  const scheduleRemotePull = useCallback((delayMs = REMOTE_PULL_DEBOUNCE_MS, options?: { skipLocalGrace?: boolean }) => {
     if (!syncSession.hasWorkspaceAccess || !syncSession.workspaceId) return;
+    const skipLocalGrace = Boolean(options?.skipLocalGrace);
     if (remotePullTimerRef.current != null) {
       window.clearTimeout(remotePullTimerRef.current);
     }
     remotePullTimerRef.current = window.setTimeout(() => {
       remotePullTimerRef.current = null;
-      void pullRemoteNow();
+      void pullRemoteNow({ skipLocalGrace });
     }, Math.max(0, Number(delayMs) || REMOTE_PULL_DEBOUNCE_MS));
   }, [pullRemoteNow, syncSession.hasWorkspaceAccess, syncSession.workspaceId]);
 
@@ -234,12 +244,14 @@ export function useWorkspaceState(): WorkspaceStateController {
       if (!mountedRef.current) return;
       setState(loaded);
       stateRef.current = loaded;
+      emitWorkspaceSnapshot(loaded);
     } catch (loadError) {
       if (!mountedRef.current) return;
       setError(loadError instanceof Error ? loadError.message : "Workspace konnte nicht geladen werden.");
       const fallback = createEmptyAppStateV2();
       setState(fallback);
       stateRef.current = fallback;
+      emitWorkspaceSnapshot(fallback);
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -260,18 +272,30 @@ export function useWorkspaceState(): WorkspaceStateController {
     setError("");
     setState(next);
     stateRef.current = next;
+    emitWorkspaceSnapshot(next);
     try {
       await adapter.save(next, { source });
+      if (syncSession.workspaceId) {
+        void publishWorkspaceBroadcast({
+          workspaceId: syncSession.workspaceId,
+          event: "state_saved",
+          payload: {
+            source,
+            at: new Date().toISOString(),
+          },
+        });
+      }
       setLastSavedAt(new Date().toISOString());
     } catch (saveError) {
       setState(previous);
       stateRef.current = previous;
+      emitWorkspaceSnapshot(previous);
       setError(saveError instanceof Error ? saveError.message : "Speichern fehlgeschlagen.");
       throw saveError;
     } finally {
       setSaving(false);
     }
-  }, [adapter]);
+  }, [adapter, syncSession.workspaceId]);
 
   useEffect(() => {
     void reload();
@@ -294,7 +318,12 @@ export function useWorkspaceState(): WorkspaceStateController {
 
     const unsubscribe = subscribeWorkspaceChanges({
       workspaceId: syncSession.workspaceId,
-      onRemoteChange: () => scheduleRemotePull(REMOTE_PULL_DEBOUNCE_MS),
+      onRemoteChange: () => scheduleRemotePull(120),
+      onBroadcast: (event) => {
+        if (event.event === "state_saved") {
+          scheduleRemotePull(80);
+        }
+      },
       onConnectionState: (state) => {
         connectionStateRef.current = state;
         if (state === "subscribed") {

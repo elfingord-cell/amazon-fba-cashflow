@@ -35,6 +35,8 @@ import {
   subscribeWorkspaceChanges,
 } from "../sync/realtimeWorkspace";
 import { applyPresenceHints, attachPresenceFocusTracking } from "../sync/presence";
+import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../domain/collaboration";
+import { loadState } from "../../data/storageLocal.js";
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -143,6 +145,11 @@ function V2Layout(): JSX.Element {
   const [authForm] = Form.useForm<AuthFormValues>();
   const [connectionState, setConnectionState] = useState<WorkspaceConnectionState>("idle");
   const [presenceEntries, setPresenceEntries] = useState<WorkspacePresenceEntry[]>([]);
+  const [displayNameMap, setDisplayNameMap] = useState<Record<string, string>>(() => {
+    const initial = loadState() as Record<string, unknown>;
+    const settings = (initial?.settings || {}) as Record<string, unknown>;
+    return readCollaborationDisplayNames(settings);
+  });
   const screens = Grid.useBreakpoint();
   const isDesktop = Boolean(screens.lg);
   const isMobile = !isDesktop;
@@ -161,6 +168,12 @@ function V2Layout(): JSX.Element {
     [presenceEntries, syncSession.userId],
   );
   const primaryRemoteEditor = remoteEditors[0] || null;
+  const ownDisplayName = useMemo(() => {
+    return resolveCollaborationUserLabel({
+      userId: syncSession.userId,
+      userEmail: syncSession.email,
+    }, displayNameMap);
+  }, [displayNameMap, syncSession.email, syncSession.userId]);
 
   function normalizeRoutePath(path: string): string {
     return String(path || "").replace(/\/\*$/, "").replace(/^\/+/, "").replace(/\/+$/, "");
@@ -215,6 +228,19 @@ function V2Layout(): JSX.Element {
   }, [menuRoutes]);
 
   useEffect(() => {
+    const onSnapshot = (event: Event) => {
+      const custom = event as CustomEvent<Record<string, unknown>>;
+      const detail = (custom?.detail || {}) as Record<string, unknown>;
+      const settings = (detail.settings || {}) as Record<string, unknown>;
+      setDisplayNameMap(readCollaborationDisplayNames(settings));
+    };
+    window.addEventListener("v2:workspace-state-snapshot", onSnapshot as EventListener);
+    return () => {
+      window.removeEventListener("v2:workspace-state-snapshot", onSnapshot as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!syncSession.workspaceId || !syncSession.hasWorkspaceAccess || !syncSession.userId) {
       setConnectionState("idle");
       setPresenceEntries([]);
@@ -234,6 +260,7 @@ function V2Layout(): JSX.Element {
     const detachTracking = attachPresenceFocusTracking({
       userId: syncSession.userId,
       userEmail: syncSession.email,
+      userDisplayName: ownDisplayName,
       workspaceId: syncSession.workspaceId,
       routeResolver: () => window.location.hash || "",
     });
@@ -248,6 +275,7 @@ function V2Layout(): JSX.Element {
     syncSession.hasWorkspaceAccess,
     syncSession.userId,
     syncSession.workspaceId,
+    ownDisplayName,
   ]);
 
   async function handleAuthSubmit(mode: "login" | "register"): Promise<void> {
@@ -334,7 +362,7 @@ function V2Layout(): JSX.Element {
                 type={syncSession.isAuthenticated ? "default" : "primary"}
                 onClick={() => setAuthModalOpen(true)}
               >
-                {syncSession.isAuthenticated ? "Konto" : "Anmelden"}
+                {syncSession.isAuthenticated ? "Konto / Workspace" : "Anmelden"}
               </Button>
               {syncSession.isAuthenticated ? (
                 <Button
@@ -361,7 +389,11 @@ function V2Layout(): JSX.Element {
             </Tag>
             {primaryRemoteEditor ? (
               <Tag color="orange">
-                {primaryRemoteEditor.userEmail || primaryRemoteEditor.userId || "Kollege"} bearbeitet gerade
+                {resolveCollaborationUserLabel({
+                  userId: primaryRemoteEditor.userId,
+                  userEmail: primaryRemoteEditor.userEmail,
+                  userDisplayName: primaryRemoteEditor.userDisplayName,
+                }, displayNameMap)} bearbeitet gerade
               </Tag>
             ) : null}
             <Text type="secondary">

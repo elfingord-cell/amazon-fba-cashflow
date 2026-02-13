@@ -19,6 +19,8 @@ import { DeNumberInput } from "../../components/DeNumberInput";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
+import { normalizeEmailKey, readCollaborationDisplayNames } from "../../domain/collaboration";
+import { useSyncSession } from "../../sync/session";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -50,6 +52,11 @@ interface CategoryRow {
   name: string;
   sortOrder: number;
   productCount: number;
+}
+
+interface CollaborationNameRow {
+  email: string;
+  displayName: string;
 }
 
 function toNumber(value: unknown, fallback: number): number {
@@ -127,6 +134,7 @@ function isEditableNode(target: EventTarget | null): boolean {
 
 export default function SettingsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const syncSession = useSyncSession();
   const settings = (state.settings || {}) as Record<string, unknown>;
   const [form] = Form.useForm<SettingsDraft>();
   const watchedFxRate = Form.useWatch("fxRate", form);
@@ -141,6 +149,10 @@ export default function SettingsModule(): JSX.Element {
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastSavedHashRef = useRef("");
   const [autoSaveHint, setAutoSaveHint] = useState("");
+  const [nameForm] = Form.useForm<CollaborationNameRow>();
+  const [editingNameEmail, setEditingNameEmail] = useState<string | null>(null);
+  const [newDisplayNameEmail, setNewDisplayNameEmail] = useState("");
+  const [newDisplayName, setNewDisplayName] = useState("");
 
   useEffect(() => {
     const nextSeed = settingsDraftFromState(settings);
@@ -178,6 +190,16 @@ export default function SettingsModule(): JSX.Element {
       })
       .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
   }, [state.productCategories, state.products]);
+
+  const collaborationNameRows = useMemo<CollaborationNameRow[]>(() => {
+    const map = readCollaborationDisplayNames(settings);
+    const rows = Object.entries(map).map(([email, displayName]) => ({ email, displayName }));
+    const currentEmail = normalizeEmailKey(syncSession.email);
+    if (currentEmail && !rows.some((row) => normalizeEmailKey(row.email) === currentEmail)) {
+      rows.push({ email: currentEmail, displayName: "" });
+    }
+    return rows.sort((a, b) => a.email.localeCompare(b.email));
+  }, [settings, syncSession.email]);
 
   const healthIssues = useMemo(() => {
     const result = validateAll({
@@ -280,7 +302,7 @@ export default function SettingsModule(): JSX.Element {
     setAutoSaveHint(`Gespeichert: ${new Date().toLocaleTimeString("de-DE")}`);
   }
 
-  function scheduleAutoSave(): void {
+  function scheduleAutoSave(delayMs = 420): void {
     if (autoSaveTimerRef.current != null) {
       window.clearTimeout(autoSaveTimerRef.current);
     }
@@ -299,8 +321,90 @@ export default function SettingsModule(): JSX.Element {
         .catch(() => {
           // Validation errors are shown by Form; autosave will retry on next blur/change.
         });
-    }, 420);
+    }, Math.max(80, Number(delayMs) || 420));
   }
+
+  async function upsertDisplayName(inputEmail: string, inputDisplayName: string): Promise<void> {
+    const email = normalizeEmailKey(inputEmail);
+    const displayName = String(inputDisplayName || "").trim();
+    if (!email || !displayName) {
+      throw new Error("Bitte E-Mail und Anzeigenamen setzen.");
+    }
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const baseSettings = (next.settings || {}) as Record<string, unknown>;
+      const currentMap = readCollaborationDisplayNames(baseSettings);
+      currentMap[email] = displayName;
+      next.settings = {
+        ...baseSettings,
+        collaborationDisplayNames: currentMap,
+        lastUpdatedAt: nowIso(),
+      };
+      return next;
+    }, "v2:settings:collaboration-name-upsert");
+  }
+
+  async function removeDisplayName(inputEmail: string): Promise<void> {
+    const email = normalizeEmailKey(inputEmail);
+    if (!email) return;
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const baseSettings = (next.settings || {}) as Record<string, unknown>;
+      const currentMap = readCollaborationDisplayNames(baseSettings);
+      if (!currentMap[email]) return next;
+      delete currentMap[email];
+      next.settings = {
+        ...baseSettings,
+        collaborationDisplayNames: currentMap,
+        lastUpdatedAt: nowIso(),
+      };
+      return next;
+    }, "v2:settings:collaboration-name-remove");
+  }
+
+  const collaborationNameColumns = useMemo<ColumnDef<CollaborationNameRow>[]>(() => [
+    {
+      header: "E-Mail",
+      accessorKey: "email",
+      meta: { width: 320 },
+    },
+    {
+      header: "Anzeigename",
+      accessorKey: "displayName",
+      meta: { width: 210 },
+      cell: ({ row }) => row.original.displayName || "—",
+    },
+    {
+      header: "Aktionen",
+      meta: { width: 190 },
+      cell: ({ row }) => (
+        <div className="v2-actions-nowrap">
+          <Button
+            size="small"
+            onClick={() => {
+              setEditingNameEmail(row.original.email);
+              nameForm.setFieldsValue({
+                email: row.original.email,
+                displayName: row.original.displayName,
+              });
+            }}
+          >
+            Bearbeiten
+          </Button>
+          <Button
+            size="small"
+            danger
+            disabled={!row.original.displayName}
+            onClick={() => {
+              void removeDisplayName(row.original.email);
+            }}
+          >
+            Loeschen
+          </Button>
+        </div>
+      ),
+    },
+  ], [nameForm, removeDisplayName]);
 
   async function handleAddCategory(): Promise<void> {
     const name = newCategoryName.trim();
@@ -372,18 +476,17 @@ export default function SettingsModule(): JSX.Element {
 
       <Card>
         <Form<SettingsDraft>
+          name="v2-settings-form"
           form={form}
           layout="vertical"
           initialValues={draftSeed}
           onValuesChange={() => {
             setAutoSaveHint("Ungespeicherte Aenderungen");
+            scheduleAutoSave(360);
           }}
           onBlurCapture={(event) => {
             if (!isEditableNode(event.target)) return;
-            scheduleAutoSave();
-          }}
-          onFinish={(values) => {
-            void handleSaveSettings(values);
+            scheduleAutoSave(120);
           }}
         >
           <Row gutter={16}>
@@ -474,10 +577,45 @@ export default function SettingsModule(): JSX.Element {
             </Col>
           </Row>
 
-          <Button type="primary" htmlType="submit" loading={saving}>
-            Settings speichern
-          </Button>
         </Form>
+      </Card>
+
+      <Card>
+        <Title level={4}>Team Anzeige-Namen</Title>
+        <Paragraph>
+          Hinterlege optionale Vornamen pro E-Mail. Diese Namen werden in Live-Presence und Modal-Hinweisen angezeigt.
+        </Paragraph>
+        <Space style={{ marginBottom: 12 }} wrap>
+          <Input
+            value={newDisplayNameEmail}
+            onChange={(event) => setNewDisplayNameEmail(event.target.value)}
+            placeholder="E-Mail"
+            style={{ width: 280 }}
+          />
+          <Input
+            value={newDisplayName}
+            onChange={(event) => setNewDisplayName(event.target.value)}
+            placeholder="Anzeigename (z. B. Pierre)"
+            style={{ width: 220 }}
+          />
+          <Button
+            onClick={() => {
+              void upsertDisplayName(newDisplayNameEmail, newDisplayName)
+                .then(() => {
+                  setNewDisplayNameEmail("");
+                  setNewDisplayName("");
+                });
+            }}
+          >
+            Speichern
+          </Button>
+        </Space>
+        <TanStackGrid
+          data={collaborationNameRows}
+          columns={collaborationNameColumns}
+          minTableWidth={880}
+          tableLayout="auto"
+        />
       </Card>
 
       <Card>
@@ -529,6 +667,37 @@ export default function SettingsModule(): JSX.Element {
           </Form.Item>
           <Form.Item name="sortOrder" label="Sortierung" rules={[{ required: true }]}>
             <DeNumberInput mode="int" min={0} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Anzeigename bearbeiten"
+        open={Boolean(editingNameEmail)}
+        onCancel={() => setEditingNameEmail(null)}
+        onOk={() => {
+          void nameForm.validateFields().then((values) => {
+            void upsertDisplayName(values.email, values.displayName).then(() => {
+              setEditingNameEmail(null);
+              nameForm.resetFields();
+            });
+          }).catch(() => {});
+        }}
+      >
+        <Form form={nameForm} layout="vertical">
+          <Form.Item
+            name="email"
+            label="E-Mail"
+            rules={[{ required: true, message: "E-Mail fehlt." }]}
+          >
+            <Input disabled />
+          </Form.Item>
+          <Form.Item
+            name="displayName"
+            label="Anzeigename"
+            rules={[{ required: true, message: "Anzeigename fehlt." }]}
+          >
+            <Input placeholder="z. B. Pierre" />
           </Form.Item>
         </Form>
       </Modal>

@@ -18,8 +18,11 @@ import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { computeScheduleFromOrderDate, nowIso, PO_ANCHORS, randomId } from "../../domain/orderUtils";
+import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
+import { useSyncSession } from "../../sync/session";
+import { useModalCollaboration } from "../../sync/modalCollaboration";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -248,6 +251,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const location = useLocation();
   const navigate = useNavigate();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const syncSession = useSyncSession();
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -256,6 +260,26 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
+  const displayNameMap = useMemo(() => readCollaborationDisplayNames(settings), [settings]);
+  const ownDisplayName = useMemo(() => {
+    return resolveCollaborationUserLabel({
+      userId: syncSession.userId,
+      userEmail: syncSession.email,
+    }, displayNameMap);
+  }, [displayNameMap, syncSession.email, syncSession.userId]);
+  const modalScope = useMemo(
+    () => `po:edit:${String(editingId || "new")}`,
+    [editingId],
+  );
+  const modalCollab = useModalCollaboration({
+    workspaceId: syncSession.workspaceId,
+    modalScope,
+    isOpen: modalOpen,
+    userId: syncSession.userId,
+    userEmail: syncSession.email,
+    userDisplayName: ownDisplayName,
+    displayNames: displayNameMap,
+  });
   const poSettings = useMemo(() => poSettingsFromState(stateObj), [state.settings]);
 
   const supplierRows = useMemo(() => {
@@ -446,6 +470,11 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     }
   }, [draftPoRecord, poSettings, state.payments]);
 
+  useEffect(() => {
+    if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
+    form.setFieldsValue(modalCollab.remoteDraftPatch as Partial<PoFormValues>);
+  }, [form, modalCollab.readOnly, modalCollab.remoteDraftPatch, modalCollab.remoteDraftVersion, modalOpen]);
+
   function buildDefaultDraft(
     existing?: Record<string, unknown> | null,
     prefill?: Partial<PoFormValues>,
@@ -538,6 +567,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   }
 
   async function savePo(values: PoFormValues): Promise<void> {
+    if (modalCollab.readOnly) {
+      throw new Error("Diese PO wird gerade von einem anderen Nutzer bearbeitet.");
+    }
     if (!values.poNo.trim()) {
       throw new Error("PO Nummer ist erforderlich.");
     }
@@ -566,6 +598,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       next.pos = list;
       return next;
     }, editingId ? "v2:po:update" : "v2:po:create");
+    modalCollab.clearDraft();
 
     setModalOpen(false);
     setEditingId(null);
@@ -609,7 +642,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         ) : null}
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
-            <Button type="primary" onClick={openCreateModal}>Neue PO</Button>
+            <Button type="primary" onClick={() => openCreateModal()}>Neue PO</Button>
             <Checkbox checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)}>
               Archiv anzeigen
             </Checkbox>
@@ -643,12 +676,49 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         title={editingId ? "PO bearbeiten" : "PO anlegen"}
         open={modalOpen}
         width={1120}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          modalCollab.clearDraft();
+          setModalOpen(false);
+        }}
         onOk={() => {
+          if (modalCollab.readOnly) {
+            Modal.warning({
+              title: "Nur Lesemodus",
+              content: `${modalCollab.remoteUserLabel || "Kollege"} bearbeitet diese PO. Bitte Bearbeitung übernehmen oder warten.`,
+            });
+            return;
+          }
           void form.validateFields().then((values) => savePo(values)).catch(() => {});
         }}
       >
-        <Form form={form} layout="vertical">
+        {modalCollab.banner ? (
+          <Alert
+            style={{ marginBottom: 10 }}
+            type={modalCollab.banner.tone}
+            showIcon
+            message={modalCollab.banner.text}
+            action={modalCollab.readOnly ? (
+              <Button size="small" onClick={modalCollab.takeOver}>
+                Bearbeitung uebernehmen
+              </Button>
+            ) : null}
+          />
+        ) : null}
+        {modalCollab.readOnly && modalCollab.remoteDraftVersion > 0 ? (
+          <Tag color="orange" style={{ marginBottom: 10 }}>
+            Entwurf von {modalCollab.remoteUserLabel || "Kollege"} wird live gespiegelt.
+          </Tag>
+        ) : null}
+        <Form
+          name="v2-po-modal"
+          form={form}
+          layout="vertical"
+          disabled={modalCollab.readOnly}
+          onValuesChange={(changedValues) => {
+            if (modalCollab.readOnly) return;
+            modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
+          }}
+        >
           <Form.Item name="id" hidden>
             <Input />
           </Form.Item>

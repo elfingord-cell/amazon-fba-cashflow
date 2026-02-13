@@ -49,6 +49,10 @@
 13. Defaults/Overrides werden mit klarer Quelle angezeigt; nicht gesetzte Policies fallen auf Settings/Supplier zurueck statt irrefuehrender `0`.
 14. FX in Settings ist vereinheitlicht: `USD je EUR` editierbar, `EUR je USD` read-only abgeleitet.
 15. V2-Formen zeigen keine sichtbaren Doppelrahmen mehr in AntD-Modals/Inputs.
+16. Kollaboration v3: Settings speichern auto on blur/change (kein manueller Block-Save), Realtime-Push triggert unmittelbaren Pull in anderen Sessions.
+17. Kollaboration v3: Products/PO/FO/Suppliers zeigen bei Dual-Modal einen Rollenbanner (`Editor` vs `Lesemodus`) und erlauben kontrollierte `Bearbeitung uebernehmen`.
+18. Kollaboration v3: Modal-Entwuerfe werden live gespiegelt; finaler Persist bleibt explizit auf `OK`.
+19. Kollaboration v3: Presence-Hinweise verwenden zentral gepflegte Anzeigenamen (`Settings -> Team Anzeige-Namen`) mit E-Mail-Fallback.
 
 ## Akzeptanz gegen Kriterien
 1. `0 Blocker`: PASS.
@@ -56,3 +60,10 @@
 3. `npm run build`: PASS.
 4. `npm run test:parity`: PASS.
 5. Medium/Low-Reste dokumentiert: PASS (siehe `docs/ui-reset-findings.md`).
+
+## Kollaboration Smoke (2 Browser)
+1. Browser A fokussiert Feld in Settings -> Browser B sieht orange Presence inkl. Name/E-Mail.
+2. Browser A aendert `Air (Tage)` -> Browser B sieht Wert ohne Tab-Wechsel.
+3. Browser A oeffnet Produkt-Modal -> Browser B oeffnet gleiches Produkt und startet in Lesemodus mit Hinweisbanner.
+4. Browser B klickt `Bearbeitung uebernehmen` -> Rollen wechseln sichtbar in beiden Modals.
+5. Browser A tippt in Modal-Feld -> Browser B sieht Draft-Wert live markiert; `OK` persistiert final fuer beide.

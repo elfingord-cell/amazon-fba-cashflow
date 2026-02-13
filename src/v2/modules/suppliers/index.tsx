@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -16,6 +16,9 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
+import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
+import { useSyncSession } from "../../sync/session";
+import { useModalCollaboration } from "../../sync/modalCollaboration";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -90,9 +93,31 @@ function summaryTerms(terms: PaymentTerm[]): string {
 
 export default function SuppliersModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const syncSession = useSyncSession();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm<SupplierDraft>();
+  const settings = (state.settings || {}) as Record<string, unknown>;
+  const displayNameMap = useMemo(() => readCollaborationDisplayNames(settings), [settings]);
+  const ownDisplayName = useMemo(() => {
+    return resolveCollaborationUserLabel({
+      userId: syncSession.userId,
+      userEmail: syncSession.email,
+    }, displayNameMap);
+  }, [displayNameMap, syncSession.email, syncSession.userId]);
+  const modalScope = useMemo(
+    () => `suppliers:edit:${String(editingId || "new")}`,
+    [editingId],
+  );
+  const modalCollab = useModalCollaboration({
+    workspaceId: syncSession.workspaceId,
+    modalScope,
+    isOpen: modalOpen,
+    userId: syncSession.userId,
+    userEmail: syncSession.email,
+    userDisplayName: ownDisplayName,
+    displayNames: displayNameMap,
+  });
 
   const rows = useMemo(() => {
     const suppliers = Array.isArray(state.suppliers) ? state.suppliers : [];
@@ -180,7 +205,15 @@ export default function SuppliersModule(): JSX.Element {
     },
   ], [form, saveWith]);
 
+  useEffect(() => {
+    if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
+    form.setFieldsValue(modalCollab.remoteDraftPatch as Partial<SupplierDraft>);
+  }, [form, modalCollab.readOnly, modalCollab.remoteDraftPatch, modalCollab.remoteDraftVersion, modalOpen]);
+
   async function handleSave(values: SupplierDraft): Promise<void> {
+    if (modalCollab.readOnly) {
+      throw new Error("Dieser Lieferant wird gerade von einem anderen Nutzer bearbeitet.");
+    }
     const terms = normalizePaymentTerms(values.paymentTermsDefault as unknown[]);
     const percentSum = terms.reduce((sum, row) => sum + row.percent, 0);
     if (Math.round(percentSum) !== 100) {
@@ -225,6 +258,7 @@ export default function SuppliersModule(): JSX.Element {
       next.suppliers = suppliers;
       return next;
     }, editingId ? "v2:suppliers:update" : "v2:suppliers:create");
+    modalCollab.clearDraft();
     setModalOpen(false);
     setEditingId(null);
     form.resetFields();
@@ -282,13 +316,50 @@ export default function SuppliersModule(): JSX.Element {
       <Modal
         title={editingId ? "Lieferant bearbeiten" : "Lieferant hinzufuegen"}
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          modalCollab.clearDraft();
+          setModalOpen(false);
+        }}
         onOk={() => {
+          if (modalCollab.readOnly) {
+            Modal.warning({
+              title: "Nur Lesemodus",
+              content: `${modalCollab.remoteUserLabel || "Kollege"} bearbeitet diesen Lieferanten. Bitte Bearbeitung übernehmen oder warten.`,
+            });
+            return;
+          }
           void form.validateFields().then((values) => handleSave(values)).catch(() => {});
         }}
         width={980}
       >
-        <Form form={form} layout="vertical">
+        {modalCollab.banner ? (
+          <Alert
+            style={{ marginBottom: 10 }}
+            type={modalCollab.banner.tone}
+            showIcon
+            message={modalCollab.banner.text}
+            action={modalCollab.readOnly ? (
+              <Button size="small" onClick={modalCollab.takeOver}>
+                Bearbeitung uebernehmen
+              </Button>
+            ) : null}
+          />
+        ) : null}
+        {modalCollab.readOnly && modalCollab.remoteDraftVersion > 0 ? (
+          <Tag color="orange" style={{ marginBottom: 10 }}>
+            Entwurf von {modalCollab.remoteUserLabel || "Kollege"} wird live gespiegelt.
+          </Tag>
+        ) : null}
+        <Form
+          name="v2-suppliers-modal"
+          form={form}
+          layout="vertical"
+          disabled={modalCollab.readOnly}
+          onValuesChange={(changedValues) => {
+            if (modalCollab.readOnly) return;
+            modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
+          }}
+        >
           <Form.Item name="id" hidden>
             <Input />
           </Form.Item>

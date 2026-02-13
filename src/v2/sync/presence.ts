@@ -4,6 +4,7 @@ import { clearPresenceField, publishPresence } from "./realtimeWorkspace";
 interface AttachPresenceTrackingOptions {
   userId: string;
   userEmail: string | null;
+  userDisplayName?: string | null;
   workspaceId: string;
   routeResolver: () => string;
 }
@@ -91,6 +92,7 @@ export function attachPresenceFocusTracking(options: AttachPresenceTrackingOptio
     publishPresence({
       userId: options.userId,
       userEmail: options.userEmail,
+      userDisplayName: options.userDisplayName || null,
       fieldKey,
       route,
       startedAt,
@@ -179,7 +181,7 @@ export function applyPresenceHints(entries: WorkspacePresenceEntry[], currentUse
       if (!entryRoute || !baseFieldKey) return;
       if (normalizeRoute(entryRoute) !== route) return;
 
-      const label = entry.userEmail || entry.userId || "Kollege";
+      const label = entry.userDisplayName || entry.userEmail || entry.userId || "Kollege";
       const hint = `${label} bearbeitet dieses Feld gerade`;
       findTargetsForBaseField(baseFieldKey).forEach((node) => {
         if (!node.hasAttribute("data-v2-presence-prev-title") && node.hasAttribute("title")) {

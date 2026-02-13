@@ -19,6 +19,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { deriveShippingPerUnitEur } from "../../../domain/costing/shipping.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { resolveProductFieldResolution, type ResolvedField } from "../../domain/productFieldResolution";
 import { buildProductGridRows, type ProductGridRow } from "../../domain/tableModels";
@@ -29,6 +30,8 @@ import {
   hasModuleExpandedCategoryKeys,
   setModuleExpandedCategoryKeys,
 } from "../../state/uiPrefs";
+import { useSyncSession } from "../../sync/session";
+import { useModalCollaboration } from "../../sync/modalCollaboration";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -150,6 +153,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
 
 export default function ProductsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const syncSession = useSyncSession();
   const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("products");
   const [productsGridMode, setProductsGridMode] = useState<"management" | "logistics">("management");
   const [search, setSearch] = useState("");
@@ -162,6 +166,26 @@ export default function ProductsModule(): JSX.Element {
   const draftValues = Form.useWatch([], form) as ProductDraft | undefined;
   const stateObject = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
+  const displayNameMap = useMemo(() => readCollaborationDisplayNames(settings), [settings]);
+  const ownDisplayName = useMemo(() => {
+    return resolveCollaborationUserLabel({
+      userId: syncSession.userId,
+      userEmail: syncSession.email,
+    }, displayNameMap);
+  }, [displayNameMap, syncSession.email, syncSession.userId]);
+  const modalScope = useMemo(() => {
+    const entityId = String(editing?.id || "new");
+    return `products:edit:${entityId}`;
+  }, [editing?.id]);
+  const modalCollab = useModalCollaboration({
+    workspaceId: syncSession.workspaceId,
+    modalScope,
+    isOpen: modalOpen,
+    userId: syncSession.userId,
+    userEmail: syncSession.email,
+    userDisplayName: ownDisplayName,
+    displayNames: displayNameMap,
+  });
 
   const categories = useMemo(() => {
     return (Array.isArray(state.productCategories) ? state.productCategories : [])
@@ -454,8 +478,13 @@ export default function ProductsModule(): JSX.Element {
     }
   }, [form, logisticsManualOverride, modalOpen, shippingSuggestion.value]);
 
+  useEffect(() => {
+    if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
+    form.setFieldsValue(modalCollab.remoteDraftPatch as unknown as Partial<ProductDraft>);
+  }, [form, modalCollab.readOnly, modalCollab.remoteDraftPatch, modalCollab.remoteDraftVersion, modalOpen]);
+
   function resetField(field: keyof ProductDraft): void {
-    form.setFieldValue(field as string, null);
+    form.setFieldsValue({ [field]: null } as Partial<ProductDraft>);
     if (field === "logisticsPerUnitEur") {
       setLogisticsManualOverride(false);
       const suggested = Number(shippingSuggestion.value);
@@ -511,6 +540,9 @@ export default function ProductsModule(): JSX.Element {
   }
 
   async function handleSave(values: ProductDraft): Promise<void> {
+    if (modalCollab.readOnly) {
+      throw new Error("Dieses Produkt wird gerade von einem anderen Nutzer bearbeitet.");
+    }
     const sku = values.sku.trim();
     if (!sku) {
       throw new Error("SKU ist erforderlich.");
@@ -585,6 +617,7 @@ export default function ProductsModule(): JSX.Element {
       next.products = products;
       return next;
     }, editing ? "v2:products:update" : "v2:products:create");
+    modalCollab.clearDraft();
     setEditing(null);
     setModalOpen(false);
     setLogisticsManualOverride(false);
@@ -699,15 +732,50 @@ export default function ProductsModule(): JSX.Element {
         rootClassName="v2-form-modal"
         open={modalOpen}
         onCancel={() => {
+          modalCollab.clearDraft();
           setModalOpen(false);
           setLogisticsManualOverride(false);
         }}
         onOk={() => {
+          if (modalCollab.readOnly) {
+            Modal.warning({
+              title: "Nur Lesemodus",
+              content: `${modalCollab.remoteUserLabel || "Kollege"} bearbeitet dieses Produkt. Bitte Bearbeitung übernehmen oder warten.`,
+            });
+            return;
+          }
           void form.validateFields().then((values) => handleSave(values)).catch(() => {});
         }}
         width={1060}
       >
-        <Form<ProductDraft> form={form} layout="vertical">
+        {modalCollab.banner ? (
+          <Alert
+            style={{ marginBottom: 10 }}
+            type={modalCollab.banner.tone}
+            showIcon
+            message={modalCollab.banner.text}
+            action={modalCollab.readOnly ? (
+              <Button size="small" onClick={modalCollab.takeOver}>
+                Bearbeitung uebernehmen
+              </Button>
+            ) : null}
+          />
+        ) : null}
+        {modalCollab.readOnly && modalCollab.remoteDraftVersion > 0 ? (
+          <Tag color="orange" style={{ marginBottom: 10 }}>
+            Entwurf von {modalCollab.remoteUserLabel || "Kollege"} wird live gespiegelt.
+          </Tag>
+        ) : null}
+        <Form<ProductDraft>
+          name="v2-products-modal"
+          form={form}
+          layout="vertical"
+          disabled={modalCollab.readOnly}
+          onValuesChange={(changedValues) => {
+            if (modalCollab.readOnly) return;
+            modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
+          }}
+        >
           <Form.Item name="id" hidden>
             <Input />
           </Form.Item>

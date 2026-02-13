@@ -15,8 +15,11 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
+import { useSyncSession } from "../../sync/session";
+import { useModalCollaboration } from "../../sync/modalCollaboration";
 import {
   FO_STATUS_VALUES,
   INCOTERMS,
@@ -210,6 +213,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const location = useLocation();
   const navigate = useNavigate();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const syncSession = useSyncSession();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | FoStatus>("ALL");
   const [modalOpen, setModalOpen] = useState(false);
@@ -222,6 +226,26 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
+  const displayNameMap = useMemo(() => readCollaborationDisplayNames(settings), [settings]);
+  const ownDisplayName = useMemo(() => {
+    return resolveCollaborationUserLabel({
+      userId: syncSession.userId,
+      userEmail: syncSession.email,
+    }, displayNameMap);
+  }, [displayNameMap, syncSession.email, syncSession.userId]);
+  const modalScope = useMemo(
+    () => `fo:edit:${String(editingId || "new")}`,
+    [editingId],
+  );
+  const modalCollab = useModalCollaboration({
+    workspaceId: syncSession.workspaceId,
+    modalScope,
+    isOpen: modalOpen,
+    userId: syncSession.userId,
+    userEmail: syncSession.email,
+    userDisplayName: ownDisplayName,
+    displayNames: displayNameMap,
+  });
 
   const supplierRows = useMemo(() => {
     return (Array.isArray(state.suppliers) ? state.suppliers : [])
@@ -500,6 +524,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     [draftValues?.paymentTerms],
   );
 
+  useEffect(() => {
+    if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
+    form.setFieldsValue(modalCollab.remoteDraftPatch as Partial<FoFormValues>);
+  }, [form, modalCollab.readOnly, modalCollab.remoteDraftPatch, modalCollab.remoteDraftVersion, modalOpen]);
+
   function buildDefaultDraft(
     existing?: Record<string, unknown> | null,
     prefill?: Partial<FoFormValues>,
@@ -596,6 +625,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   }
 
   async function saveFo(values: FoFormValues): Promise<void> {
+    if (modalCollab.readOnly) {
+      throw new Error("Dieser FO wird gerade von einem anderen Nutzer bearbeitet.");
+    }
     const terms = (values.paymentTerms || []).map((row) => ({
       id: row.id,
       label: String(row.label || "Milestone"),
@@ -636,6 +668,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       next.fos = list;
       return next;
     }, editingId ? "v2:fo:update" : "v2:fo:create");
+    modalCollab.clearDraft();
     setModalOpen(false);
     setEditingId(null);
     form.resetFields();
@@ -747,7 +780,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         ) : null}
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
-            <Button type="primary" onClick={openCreateModal}>Create FO</Button>
+            <Button type="primary" onClick={() => openCreateModal()}>Create FO</Button>
             {saving ? <Tag color="processing">Speichern...</Tag> : null}
             {lastSavedAt ? (
               <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag>
@@ -789,12 +822,49 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         title={editingId ? "FO bearbeiten" : "FO anlegen"}
         open={modalOpen}
         width={1120}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          modalCollab.clearDraft();
+          setModalOpen(false);
+        }}
         onOk={() => {
+          if (modalCollab.readOnly) {
+            Modal.warning({
+              title: "Nur Lesemodus",
+              content: `${modalCollab.remoteUserLabel || "Kollege"} bearbeitet diesen FO. Bitte Bearbeitung übernehmen oder warten.`,
+            });
+            return;
+          }
           void form.validateFields().then((values) => saveFo(values)).catch(() => {});
         }}
       >
-        <Form form={form} layout="vertical">
+        {modalCollab.banner ? (
+          <Alert
+            style={{ marginBottom: 10 }}
+            type={modalCollab.banner.tone}
+            showIcon
+            message={modalCollab.banner.text}
+            action={modalCollab.readOnly ? (
+              <Button size="small" onClick={modalCollab.takeOver}>
+                Bearbeitung uebernehmen
+              </Button>
+            ) : null}
+          />
+        ) : null}
+        {modalCollab.readOnly && modalCollab.remoteDraftVersion > 0 ? (
+          <Tag color="orange" style={{ marginBottom: 10 }}>
+            Entwurf von {modalCollab.remoteUserLabel || "Kollege"} wird live gespiegelt.
+          </Tag>
+        ) : null}
+        <Form
+          name="v2-fo-modal"
+          form={form}
+          layout="vertical"
+          disabled={modalCollab.readOnly}
+          onValuesChange={(changedValues) => {
+            if (modalCollab.readOnly) return;
+            modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
+          }}
+        >
           <Form.Item name="id" hidden>
             <Input />
           </Form.Item>

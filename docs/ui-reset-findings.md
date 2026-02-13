@@ -129,6 +129,34 @@
 - `actual-before`: globale Input-Regeln verursachten in mehreren V2-Masken sichtbare Innen-/Aussenrahmen.
 - `status-now`: **resolved** (zusetzliche V2/Modal-spezifische Neutralisierung von Inner-Borders in `v2-shell.css`).
 
+18. `id`: `V2COLLAB-018`
+- `route`: `#/v2/settings`
+- `severity`: `high`
+- `expected`: Settings-Werte sollen ohne expliziten Save-Button kollaborativ synchron sein.
+- `actual-before`: Blockweiser Save-Button erzeugte inkonsistente Erwartung; Werte tauchten in anderer Session teils erst nach Navigation auf.
+- `status-now`: **resolved** (Autosave on blur/change + Broadcast-getriggerter Realtime-Pull).
+
+19. `id`: `V2COLLAB-019`
+- `route`: `#/v2/products`, `#/v2/orders/po`, `#/v2/orders/fo`, `#/v2/suppliers`
+- `severity`: `high`
+- `expected`: Bei geoeffnetem identischem Modal muessen beide Nutzer Rollen/Rechte klar sehen.
+- `actual-before`: nur Feldrahmen sichtbar; keine eindeutige Rollenfuehrung fuer duale Modal-Sessions.
+- `status-now`: **resolved** (Dual-Modal-Banner: Editor vs Lesemodus + `Bearbeitung uebernehmen`).
+
+20. `id`: `V2COLLAB-020`
+- `route`: `#/v2/products`, `#/v2/orders/po`, `#/v2/orders/fo`, `#/v2/suppliers`
+- `severity`: `high`
+- `expected`: Entwurfswerte im Modal sollen live fuer zweiten Nutzer sichtbar sein, finaler Commit aber explizit.
+- `actual-before`: Presence zeigte Aktivitaet, aber Feldinhalte wurden nicht live gespiegelt.
+- `status-now`: **resolved** (modal_draft_patch / modal_draft_clear mit finalem Persist auf `OK`).
+
+21. `id`: `V2COLLAB-021`
+- `route`: `#/v2/*`
+- `severity`: `medium`
+- `expected`: Presence-/Bearbeitungshinweise sollen bevorzugt Vornamen statt nur E-Mail zeigen.
+- `actual-before`: Hinweise nutzten ausschliesslich E-Mail/User-ID.
+- `status-now`: **resolved** (`Settings -> Team Anzeige-Namen` + Prioritaet `displayName > email`).
+
 ## Offene Low-Risiken
 1. `id`: `V2UI-R1`
 - `severity`: `low`
