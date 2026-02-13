@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -13,6 +13,7 @@ import {
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useLocation, useNavigate } from "react-router-dom";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
@@ -148,6 +149,8 @@ export interface FoModuleProps {
 }
 
 export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.Element {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | FoStatus>("ALL");
@@ -481,9 +484,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     };
   }
 
-  function openCreateModal(): void {
+  function openCreateModal(prefill?: Partial<FoFormValues>): void {
     setEditingId(null);
-    form.setFieldsValue(buildDefaultDraft(null));
+    form.setFieldsValue({
+      ...buildDefaultDraft(null),
+      ...(prefill || {}),
+    });
     setModalOpen(true);
   }
 
@@ -609,6 +615,26 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     setConvertOpen(false);
     setConvertTargetId(null);
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("source") !== "inventory_projection") return;
+    const sku = String(params.get("sku") || "").trim();
+    if (!sku) return;
+    const product = productBySku.get(sku) || null;
+    const suggestedUnits = Math.max(0, Math.round(Number(params.get("suggestedUnits") || 0)));
+    const requiredArrivalDate = String(params.get("requiredArrivalDate") || "");
+
+    const prefill: Partial<FoFormValues> = {
+      sku,
+      units: suggestedUnits,
+    };
+    if (product?.supplierId) prefill.supplierId = String(product.supplierId);
+    if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
+
+    openCreateModal(prefill);
+    navigate(location.pathname, { replace: true });
+  }, [location.pathname, location.search, navigate, productBySku]);
 
   return (
     <div className="v2-page">

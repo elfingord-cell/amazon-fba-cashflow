@@ -74,14 +74,58 @@ function getForecastUnits(state, sku, month) {
   return null;
 }
 
-function buildInboundUnitsMap(state, months) {
+function ensureInboundDetailsBucket(map, sku, month) {
+  if (!map.has(sku)) map.set(sku, new Map());
+  const skuMap = map.get(sku);
+  if (!skuMap.has(month)) {
+    skuMap.set(month, {
+      totalUnits: 0,
+      poUnits: 0,
+      foUnits: 0,
+      poItems: [],
+      foItems: [],
+    });
+  }
+  return skuMap.get(month);
+}
+
+function buildInboundDetailMaps(state, months) {
   const monthSet = new Set(months);
-  const inboundMap = new Map();
-  const addUnits = (sku, month, units) => {
-    if (!sku || !monthSet.has(month)) return;
-    if (!inboundMap.has(sku)) inboundMap.set(sku, new Map());
-    const skuMap = inboundMap.get(sku);
+  const inboundUnitsMap = new Map();
+  const inboundDetailsMap = new Map();
+  let inboundMissingDateCount = 0;
+
+  const addUnits = ({
+    sku,
+    month,
+    units,
+    source,
+    recordId,
+    recordNo,
+    arrivalDate,
+    arrivalSource,
+  }) => {
+    if (!sku || !monthSet.has(month) || !units) return;
+    if (!inboundUnitsMap.has(sku)) inboundUnitsMap.set(sku, new Map());
+    const skuMap = inboundUnitsMap.get(sku);
     skuMap.set(month, (skuMap.get(month) || 0) + units);
+
+    const bucket = ensureInboundDetailsBucket(inboundDetailsMap, sku, month);
+    const detail = {
+      id: String(recordId || ""),
+      ref: String(recordNo || "—"),
+      units,
+      arrivalDate: arrivalDate || null,
+      arrivalSource: arrivalSource || null,
+    };
+    if (source === "fo") {
+      bucket.foUnits += units;
+      bucket.foItems.push(detail);
+    } else {
+      bucket.poUnits += units;
+      bucket.poItems.push(detail);
+    }
+    bucket.totalUnits += units;
   };
 
   (state?.pos || []).forEach(po => {
@@ -89,7 +133,11 @@ function buildInboundUnitsMap(state, months) {
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
     const etaDate = resolvePoEta(po);
     const etaMonth = etaDate ? toMonthKey(etaDate) : null;
-    if (!etaMonth) return;
+    if (!etaMonth) {
+      inboundMissingDateCount += 1;
+      return;
+    }
+    const etaIso = etaDate.toISOString().slice(0, 10);
     const items = Array.isArray(po.items) && po.items.length ? po.items : [{ sku: po.sku, units: po.units }];
     items.forEach(item => {
       const sku = normalizeSku(item?.sku || po?.sku);
@@ -98,7 +146,16 @@ function buildInboundUnitsMap(state, months) {
       const parsed = parseDeNumber(raw);
       const units = Number.isFinite(parsed) ? Math.round(parsed) : 0;
       if (!units) return;
-      addUnits(sku, etaMonth, units);
+      addUnits({
+        sku,
+        month: etaMonth,
+        units,
+        source: "po",
+        recordId: po.id,
+        recordNo: po.poNo || po.id,
+        arrivalDate: etaIso,
+        arrivalSource: "ETA",
+      });
     });
   });
 
@@ -106,7 +163,11 @@ function buildInboundUnitsMap(state, months) {
     if (!fo || !isFoCountable(fo)) return;
     const arrival = resolveFoArrival(fo);
     const arrivalMonth = arrival ? toMonthKey(arrival) : null;
-    if (!arrivalMonth) return;
+    if (!arrivalMonth) {
+      inboundMissingDateCount += 1;
+      return;
+    }
+    const arrivalIso = arrival.toISOString().slice(0, 10);
     const items = Array.isArray(fo.items) && fo.items.length ? fo.items : [{ sku: fo.sku, units: fo.units }];
     items.forEach(item => {
       const sku = normalizeSku(item?.sku || fo?.sku);
@@ -115,11 +176,24 @@ function buildInboundUnitsMap(state, months) {
       const parsed = parseDeNumber(raw);
       const units = Number.isFinite(parsed) ? Math.round(parsed) : 0;
       if (!units) return;
-      addUnits(sku, arrivalMonth, units);
+      addUnits({
+        sku,
+        month: arrivalMonth,
+        units,
+        source: "fo",
+        recordId: fo.id,
+        recordNo: fo.foNo || fo.id,
+        arrivalDate: arrivalIso,
+        arrivalSource: "DELIVERY",
+      });
     });
   });
 
-  return inboundMap;
+  return {
+    inboundUnitsMap,
+    inboundDetailsMap,
+    inboundMissingDateCount,
+  };
 }
 
 function getLatestSnapshot(state) {
@@ -178,13 +252,23 @@ export function computeInventoryProjection({
   months,
   products,
   snapshot,
+  snapshotMonth,
   projectionMode = "units",
 }) {
   const monthKeys = (Array.isArray(months) ? months : [])
     .map(month => normalizeMonthKey(month))
     .filter(Boolean);
   const productList = Array.isArray(products) ? products : (state?.products || []);
-  const resolvedSnapshot = snapshot || getLatestSnapshot(state);
+  const requestedSnapshotMonth = normalizeMonthKey(snapshotMonth || snapshot?.month);
+  const latestSnapshot = getLatestSnapshot(state);
+  const providedSnapshot = snapshot && Array.isArray(snapshot.items) ? snapshot : null;
+  const resolvedSnapshot = providedSnapshot || latestSnapshot;
+  const resolvedSnapshotMonth = normalizeMonthKey(resolvedSnapshot?.month);
+  const snapshotFallbackUsed = Boolean(
+    requestedSnapshotMonth
+    && resolvedSnapshotMonth
+    && requestedSnapshotMonth !== resolvedSnapshotMonth,
+  );
   const snapshotMap = new Map();
   if (resolvedSnapshot && Array.isArray(resolvedSnapshot.items)) {
     resolvedSnapshot.items.forEach(item => {
@@ -196,7 +280,11 @@ export function computeInventoryProjection({
     });
   }
 
-  const inboundUnitsMap = buildInboundUnitsMap(state, monthKeys);
+  const {
+    inboundUnitsMap,
+    inboundDetailsMap,
+    inboundMissingDateCount,
+  } = buildInboundDetailMaps(state, monthKeys);
   const perSkuMonth = new Map();
   const activeSkus = new Set();
   const normalizedMode = projectionMode === "doh" ? "doh" : "units";
@@ -214,7 +302,8 @@ export function computeInventoryProjection({
     monthKeys.forEach(month => {
       const forecastUnits = getForecastUnits(state, sku, month);
       const hasForecast = Number.isFinite(forecastUnits);
-      const inboundUnits = inboundUnitsMap.get(sku)?.get(month) || 0;
+      const inboundDetails = inboundDetailsMap.get(sku)?.get(month) || null;
+      const inboundUnits = inboundDetails?.totalUnits || inboundUnitsMap.get(sku)?.get(month) || 0;
       let endAvailable = null;
       if (!previousUnknown && hasForecast) {
         endAvailable = prevAvailable + inboundUnits - forecastUnits;
@@ -240,6 +329,7 @@ export function computeInventoryProjection({
         forecastUnits,
         hasForecast,
         inboundUnits,
+        inboundDetails,
         endAvailable,
         safetyDays,
         safetyUnits,
@@ -257,7 +347,12 @@ export function computeInventoryProjection({
     months: monthKeys,
     perSkuMonth,
     inboundUnitsMap,
+    inboundDetailsMap,
     snapshot: resolvedSnapshot,
+    resolvedSnapshotMonth,
+    snapshotFallbackUsed,
+    inboundMissingDateCount,
+    startAvailableBySku: snapshotMap,
     projectionMode: normalizedMode,
     activeSkus,
   };

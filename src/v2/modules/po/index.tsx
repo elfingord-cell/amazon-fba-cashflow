@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -14,6 +14,7 @@ import {
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useLocation, useNavigate } from "react-router-dom";
 import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { computeScheduleFromOrderDate, nowIso, PO_ANCHORS, randomId } from "../../domain/orderUtils";
@@ -192,6 +193,8 @@ export interface PoModuleProps {
 }
 
 export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.Element {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -221,6 +224,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       .map((entry) => ({
         sku: String(entry.sku || ""),
         alias: String(entry.alias || entry.sku || ""),
+        supplierId: String(entry.supplierId || ""),
       }))
       .filter((entry) => entry.sku);
   }, [state.products]);
@@ -425,9 +429,12 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     };
   }
 
-  function openCreateModal(): void {
+  function openCreateModal(prefill?: Partial<PoFormValues>): void {
     setEditingId(null);
-    form.setFieldsValue(buildDefaultDraft(null));
+    form.setFieldsValue({
+      ...buildDefaultDraft(null),
+      ...(prefill || {}),
+    });
     setModalOpen(true);
   }
 
@@ -471,6 +478,28 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setEditingId(null);
     form.resetFields();
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("source") !== "inventory_projection") return;
+    const sku = String(params.get("sku") || "").trim();
+    if (!sku) return;
+    const product = productRows.find((entry) => entry.sku === sku) || null;
+    const suggestedUnits = Math.max(0, Math.round(Number(params.get("suggestedUnits") || 0)));
+    const requiredArrivalDate = String(params.get("requiredArrivalDate") || "");
+    const recommendedOrderDate = String(params.get("recommendedOrderDate") || "");
+
+    const prefill: Partial<PoFormValues> = {
+      sku,
+      units: suggestedUnits,
+    };
+    if (product?.supplierId) prefill.supplierId = String(product.supplierId);
+    if (requiredArrivalDate) prefill.etaManual = requiredArrivalDate;
+    if (recommendedOrderDate) prefill.orderDate = recommendedOrderDate;
+
+    openCreateModal(prefill);
+    navigate(location.pathname, { replace: true });
+  }, [location.pathname, location.search, navigate, productRows]);
 
   return (
     <div className="v2-page">

@@ -41,6 +41,9 @@
 5. Fixkosten mit globalen Expand/Collapse-Aktionen (`Alles auf` / `Alles zu`) versehen.
 6. Prozess-IA umgesetzt: Operations/Masterdata/Monatsabschluss/Tools getrennt, `Plan` sichtbar, `Debug` unter Tools.
 7. Routing-Kompatibilität aktiv: alte V2-Pfade (`fo`, `po`, `inputs`, `fixcosts`, `vat`, `payments-export`, `accounting-export`, `inventory`) redirecten auf neue Zielrouten.
+8. Inventory-Projektion nutzt Snapshot-Anker aus letztem verfügbaren Snapshot und zeigt Fallback transparent an.
+9. Inventory-Projektion zeigt Risiko-KPI (`Unter Safety`, `OOS`, `kritischster Monat`, `fehlende ETA`) plus PO/FO-Inbound je Monat.
+10. Zellklick auf Risikozellen öffnet Bestellassistent und übergibt Prefill-Intent direkt nach `#/v2/orders/fo` oder `#/v2/orders/po`.
 
 ## Akzeptanz gegen Kriterien
 1. `0 Blocker`: PASS.

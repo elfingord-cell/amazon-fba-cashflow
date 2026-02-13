@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  computeInventoryProjection,
   getProjectionSafetyClass,
   resolveCoverageDays,
   resolveSafetyStockDays,
@@ -44,4 +45,67 @@ test("defaults apply in DOH mode and orange when below safety days", () => {
     getProjectionSafetyClass({ projectionMode: "doh", doh: 45, safetyDays: 60 }),
     "safety-low",
   );
+});
+
+test("projection resolves latest snapshot fallback and exposes PO/FO inbound details", () => {
+  const state = {
+    settings: { safetyStockDohDefault: 60 },
+    inventory: {
+      snapshots: [
+        {
+          month: "2026-01",
+          items: [
+            { sku: "SKU-A", amazonUnits: 120, threePLUnits: 30 },
+          ],
+        },
+      ],
+    },
+    forecast: {
+      forecastManual: {
+        "SKU-A": {
+          "2026-02": 50,
+        },
+      },
+    },
+    pos: [
+      {
+        id: "po-1",
+        poNo: "260001",
+        sku: "SKU-A",
+        units: 200,
+        etaManual: "2026-02-18",
+      },
+    ],
+    fos: [
+      {
+        id: "fo-1",
+        sku: "SKU-A",
+        units: 40,
+        targetDeliveryDate: "2026-02-05",
+        status: "PLANNED",
+      },
+    ],
+    products: [
+      { sku: "SKU-A", status: "active" },
+    ],
+  };
+
+  const projection = computeInventoryProjection({
+    state,
+    months: ["2026-02"],
+    products: state.products,
+    snapshot: null,
+    snapshotMonth: "2026-03",
+  });
+
+  assert.strictEqual(projection.resolvedSnapshotMonth, "2026-01");
+  assert.strictEqual(projection.snapshotFallbackUsed, true);
+  assert.strictEqual(projection.inboundUnitsMap.get("SKU-A").get("2026-02"), 240);
+
+  const inbound = projection.inboundDetailsMap.get("SKU-A").get("2026-02");
+  assert.equal(inbound.poUnits, 200);
+  assert.equal(inbound.foUnits, 40);
+  assert.equal(inbound.totalUnits, 240);
+  assert.equal(inbound.poItems[0].ref, "260001");
+  assert.equal(inbound.foItems[0].id, "fo-1");
 });

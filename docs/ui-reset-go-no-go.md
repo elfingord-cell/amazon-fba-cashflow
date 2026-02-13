@@ -24,6 +24,7 @@
 - Kommando: `npm run test:parity`
 - Ergebnis: erfolgreich.
 - Enthalten: Domain + V2 Migration/Sync/Payments/POFO/Performance/Responsive.
+- Zusätzlicher Nachweis: `src/domain/inventoryProjection.test.js` deckt Snapshot-Fallback und PO/FO-Inbound-Details explizit ab.
 
 ## Relevante Artefakte
 - `/Users/pierre/Library/CloudStorage/GoogleDrive-pierre.debotmiliau@gmail.com/.shortcut-targets-by-id/1t9g7LuoILhoKYwDrvKSQ9CSVvAGBBLD1/mahona/(24) Softwareprojekte/(01) Amazon FBA Cashflow/amazon-fba-cashflow/docs/ui-reset-acceptance.md`

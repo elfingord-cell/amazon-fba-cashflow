@@ -80,6 +80,27 @@
 - `actual-before`: Zustand ging nach Reload verloren.
 - `status-now`: **resolved** (persistente `UiPrefsV2.byModule[module].expandedCategoryKeys`).
 
+11. `id`: `V2INV-011`
+- `route`: `#/v2/inventory/projektion`
+- `severity`: `high`
+- `expected`: Projektion startet auf letztem Snapshot statt 0-Baseline und zeigt Fallback eindeutig.
+- `actual-before`: Default-Anker lief oft auf `currentMonth` ohne Snapshot, dadurch viele künstliche Negativbestände.
+- `status-now`: **resolved** (`resolvedSnapshotMonth` + `snapshotFallbackUsed`, Default auf letzten Snapshot).
+
+12. `id`: `V2INV-012`
+- `route`: `#/v2/inventory/projektion`
+- `severity`: `high`
+- `expected`: Risiken und Inbound-Herkunft (PO/FO) je Monat klar sichtbar.
+- `actual-before`: Leerspalte `Bestandsverlauf`, Inbound nur aggregiert als `+X in` ohne PO/FO-Trennung.
+- `status-now`: **resolved** (Ankerbestand/Safety/Coverage-Spalten, Risikoampel, getrennte PO/FO-Inbound-Marker mit Detail-Popover).
+
+13. `id`: `V2INV-013`
+- `route`: `#/v2/inventory/projektion` -> `#/v2/orders/*`
+- `severity`: `high`
+- `expected`: Zellklick soll direkt in FO/PO-Anlage mit Prefill führen.
+- `actual-before`: Kein direkter Hand-off aus der Projektion in Bestellungen.
+- `status-now`: **resolved** (Risikozellen öffnen Bestellassistent; `orders/fo` und `orders/po` parsen URL-Intent und öffnen Create-Modal mit Prefill).
+
 ## Offene Low-Risiken
 1. `id`: `V2UI-R1`
 - `severity`: `low`
