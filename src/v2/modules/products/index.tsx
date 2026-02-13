@@ -37,6 +37,7 @@ const { Paragraph, Text, Title } = Typography;
 
 const STATUS_OPTIONS = [
   { value: "active", label: "Aktiv" },
+  { value: "prelaunch", label: "Noch nicht gelauncht" },
   { value: "inactive", label: "Inaktiv" },
 ];
 
@@ -53,7 +54,7 @@ interface ProductDraft {
   goodsDescription: string;
   supplierId: string;
   categoryId: string | null;
-  status: "active" | "inactive";
+  status: "active" | "prelaunch" | "inactive";
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
   moqUnits: number | null;
@@ -157,7 +158,7 @@ export default function ProductsModule(): JSX.Element {
   const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("products");
   const [productsGridMode, setProductsGridMode] = useState<"management" | "logistics">("management");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "prelaunch" | "inactive">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [logisticsManualOverride, setLogisticsManualOverride] = useState(false);
@@ -263,6 +264,11 @@ export default function ProductsModule(): JSX.Element {
   }
 
   function toggleProductStatus(row: ProductRow): void {
+    const nextStatus = row.status === "active"
+      ? "inactive"
+      : row.status === "inactive"
+        ? "prelaunch"
+        : "active";
     void saveWith((current) => {
       const next = ensureAppStateV2(current);
       next.products = (Array.isArray(next.products) ? next.products : []).map((entry) => {
@@ -270,7 +276,7 @@ export default function ProductsModule(): JSX.Element {
         if (String(product.sku || "").toLowerCase() !== row.sku.toLowerCase()) return product;
         return {
           ...product,
-          status: product.status === "inactive" ? "active" : "inactive",
+          status: nextStatus,
           updatedAt: nowIso(),
         };
       });
@@ -304,8 +310,17 @@ export default function ProductsModule(): JSX.Element {
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
     const sharedColumns: ColumnDef<ProductRow>[] = [
-      { header: "SKU", accessorKey: "sku", meta: { width: 190 } },
-      { header: "Alias", accessorKey: "alias", meta: { width: 220 } },
+      {
+        header: "Alias",
+        accessorKey: "alias",
+        meta: { width: 260, minWidth: 260 },
+        cell: ({ row }) => (
+          <div className="v2-proj-alias">
+            <Text className="v2-proj-alias-main">{row.original.alias || row.original.sku}</Text>
+            <Text className="v2-proj-sku-secondary" type="secondary">{row.original.sku}</Text>
+          </div>
+        ),
+      },
       {
         header: "Supplier",
         meta: { width: 190 },
@@ -376,7 +391,9 @@ export default function ProductsModule(): JSX.Element {
         cell: ({ row }) => (
           row.original.status === "inactive"
             ? <Tag>Inaktiv</Tag>
-            : <Tag color="green">Aktiv</Tag>
+            : row.original.status === "prelaunch"
+              ? <Tag color="gold">Noch nicht gelauncht</Tag>
+              : <Tag color="green">Aktiv</Tag>
         ),
       },
       {
@@ -650,6 +667,7 @@ export default function ProductsModule(): JSX.Element {
                 options={[
                   { value: "all", label: "Alle" },
                   { value: "active", label: "Aktiv" },
+                  { value: "prelaunch", label: "Noch nicht gelauncht" },
                   { value: "inactive", label: "Inaktiv" },
                 ]}
                 style={{ width: 140, maxWidth: "100%" }}

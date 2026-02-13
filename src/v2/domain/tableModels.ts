@@ -2,7 +2,7 @@ import { parseDeNumber } from "../../lib/dataHealth.js";
 import { evaluateProductCompleteness } from "../../lib/productCompleteness.js";
 import { currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 
-export type ProductStatusFilter = "all" | "active" | "inactive";
+export type ProductStatusFilter = "all" | "active" | "prelaunch" | "inactive";
 export type ForecastViewMode = "units" | "revenue" | "profit";
 
 export interface ProductGridRow {
@@ -11,7 +11,7 @@ export interface ProductGridRow {
   alias: string;
   supplierId: string;
   categoryId: string | null;
-  status: "active" | "inactive";
+  status: "active" | "prelaunch" | "inactive";
   avgSellingPriceGrossEUR: number | null;
   templateUnitPriceUsd: number | null;
   landedUnitCostEur: number | null;
@@ -59,8 +59,11 @@ function templateFields(product: Record<string, unknown>): Record<string, unknow
   return fields || {};
 }
 
-function normalizeStatus(value: unknown): "active" | "inactive" {
-  return String(value || "active") === "inactive" ? "inactive" : "active";
+function normalizeStatus(value: unknown): "active" | "prelaunch" | "inactive" {
+  const normalized = String(value || "active").trim().toLowerCase();
+  if (normalized === "inactive") return "inactive";
+  if (normalized === "prelaunch" || normalized === "not_launched" || normalized === "planned") return "prelaunch";
+  return "active";
 }
 
 export function buildCategoryLabelMap(state: Record<string, unknown>): Map<string, string> {
@@ -142,7 +145,7 @@ export function isForecastProductActive(product: Record<string, unknown>): boole
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;
-  return status === "active" || status === "aktiv";
+  return status === "active" || status === "aktiv" || status === "prelaunch" || status === "not_launched" || status === "planned";
 }
 
 export function normalizeManualMap(source: unknown): ManualMap {
