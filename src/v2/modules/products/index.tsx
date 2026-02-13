@@ -7,7 +7,9 @@ import {
   Collapse,
   Form,
   Input,
+  message,
   Modal,
+  Segmented,
   Select,
   Space,
   Tag,
@@ -44,6 +46,8 @@ interface ProductDraft {
   id?: string;
   sku: string;
   alias: string;
+  hsCode: string;
+  goodsDescription: string;
   supplierId: string;
   categoryId: string | null;
   status: "active" | "inactive";
@@ -117,6 +121,8 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
     id: row?.id,
     sku: row?.sku || "",
     alias: row?.alias || "",
+    hsCode: String(row?.raw.hsCode || ""),
+    goodsDescription: String(row?.raw.goodsDescription || ""),
     supplierId: row?.supplierId || "",
     categoryId: row?.categoryId || null,
     status: row?.status || "active",
@@ -145,6 +151,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
 export default function ProductsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("products");
+  const [productsGridMode, setProductsGridMode] = useState<"management" | "logistics">("management");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [modalOpen, setModalOpen] = useState(false);
@@ -218,103 +225,164 @@ export default function ProductsModule(): JSX.Element {
     setModuleExpandedCategoryKeys("products", expandedCategories);
   }, [expandedCategories]);
 
-  const columns = useMemo<ColumnDef<ProductRow>[]>(() => [
-    { header: "SKU", accessorKey: "sku", meta: { width: 170 } },
-    { header: "Alias", accessorKey: "alias", meta: { width: 230 } },
-    {
-      header: "Supplier",
-      meta: { width: 190 },
-      cell: ({ row }) => (row.original.supplierId ? supplierLabelById.get(row.original.supplierId) || row.original.supplierId : "—"),
-    },
-    {
-      header: "Status",
-      meta: { width: 96 },
-      cell: ({ row }) => (
-        row.original.status === "inactive"
-          ? <Tag>Inaktiv</Tag>
-          : <Tag color="green">Aktiv</Tag>
-      ),
-    },
-    {
-      header: "Completeness",
-      meta: { width: 122 },
-      cell: ({ row }) => completenessTag(row.original.completeness),
-    },
-    {
-      header: "Ø VK (EUR)",
-      meta: { width: 116, align: "right" },
-      cell: ({ row }) => row.original.avgSellingPriceGrossEUR == null ? "—" : row.original.avgSellingPriceGrossEUR.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-    },
-    {
-      header: "Marge %",
-      meta: { width: 96, align: "right" },
-      cell: ({ row }) => row.original.sellerboardMarginPct == null ? "—" : row.original.sellerboardMarginPct.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 2 }),
-    },
-    {
-      header: "MOQ",
-      meta: { width: 84, align: "right" },
-      cell: ({ row }) => row.original.moqUnits == null ? "—" : String(Math.round(row.original.moqUnits)),
-    },
-    {
+  function formatMoney(value: number | null): string {
+    if (value == null || !Number.isFinite(value)) return "—";
+    return value.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function openEditModal(row: ProductRow): void {
+    const draft = productDraftFromRow(row);
+    setEditing(row);
+    form.setFieldsValue(draft);
+    setLogisticsManualOverride(draft.logisticsPerUnitEur != null);
+    setModalOpen(true);
+  }
+
+  function toggleProductStatus(row: ProductRow): void {
+    void saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      next.products = (Array.isArray(next.products) ? next.products : []).map((entry) => {
+        const product = entry as Record<string, unknown>;
+        if (String(product.sku || "").toLowerCase() !== row.sku.toLowerCase()) return product;
+        return {
+          ...product,
+          status: product.status === "inactive" ? "active" : "inactive",
+          updatedAt: nowIso(),
+        };
+      });
+      return next;
+    }, "v2:products:toggle-status");
+  }
+
+  function deleteProductRow(row: ProductRow): void {
+    Modal.confirm({
+      title: `Produkt "${row.sku}" loeschen?`,
+      onOk: async () => {
+        await saveWith((current) => {
+          const next = ensureAppStateV2(current);
+          next.products = (Array.isArray(next.products) ? next.products : [])
+            .filter((entry) => String((entry as Record<string, unknown>).sku || "").toLowerCase() !== row.sku.toLowerCase());
+          return next;
+        }, "v2:products:delete");
+      },
+    });
+  }
+
+  async function copyLogistics(row: ProductRow): Promise<void> {
+    const payload = `${row.hsCode || ""}\t${row.goodsDescription || ""}`;
+    try {
+      await navigator.clipboard.writeText(payload);
+      message.success("Kopiert");
+    } catch {
+      message.error("Kopieren fehlgeschlagen");
+    }
+  }
+
+  const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
+    const sharedColumns: ColumnDef<ProductRow>[] = [
+      { header: "SKU", accessorKey: "sku", meta: { width: 190 } },
+      { header: "Alias", accessorKey: "alias", meta: { width: 220 } },
+      {
+        header: "Supplier",
+        meta: { width: 190 },
+        cell: ({ row }) => (row.original.supplierId ? supplierLabelById.get(row.original.supplierId) || row.original.supplierId : "—"),
+      },
+    ];
+
+    const actionColumn: ColumnDef<ProductRow> = {
       header: "Aktionen",
-      meta: { width: 230, minWidth: 230 },
+      meta: { width: productsGridMode === "logistics" ? 274 : 230, minWidth: productsGridMode === "logistics" ? 274 : 230 },
       cell: ({ row }) => (
         <div className="v2-actions-nowrap">
+          {productsGridMode === "logistics" ? (
+            <Button
+              size="small"
+              onClick={() => { void copyLogistics(row.original); }}
+            >
+              Copy
+            </Button>
+          ) : null}
           <Button
             size="small"
-            onClick={() => {
-              const draft = productDraftFromRow(row.original);
-              setEditing(row.original);
-              form.setFieldsValue(draft);
-              setLogisticsManualOverride(draft.logisticsPerUnitEur != null);
-              setModalOpen(true);
-            }}
+            onClick={() => openEditModal(row.original)}
           >
             Bearbeiten
           </Button>
           <Button
             size="small"
-            onClick={() => {
-              void saveWith((current) => {
-                const next = ensureAppStateV2(current);
-                next.products = (Array.isArray(next.products) ? next.products : []).map((entry) => {
-                  const product = entry as Record<string, unknown>;
-                  if (String(product.sku || "").toLowerCase() !== row.original.sku.toLowerCase()) return product;
-                  return {
-                    ...product,
-                    status: product.status === "inactive" ? "active" : "inactive",
-                    updatedAt: nowIso(),
-                  };
-                });
-                return next;
-              }, "v2:products:toggle-status");
-            }}
+            onClick={() => toggleProductStatus(row.original)}
           >
             Status
           </Button>
           <Button
             size="small"
             danger
-            onClick={() => {
-              Modal.confirm({
-                title: `Produkt "${row.original.sku}" loeschen?`,
-                onOk: async () => {
-                  await saveWith((current) => {
-                    const next = ensureAppStateV2(current);
-                    next.products = (Array.isArray(next.products) ? next.products : [])
-                      .filter((entry) => String((entry as Record<string, unknown>).sku || "").toLowerCase() !== row.original.sku.toLowerCase());
-                    return next;
-                  }, "v2:products:delete");
-                },
-              });
-            }}
+            onClick={() => deleteProductRow(row.original)}
           >
             Loeschen
           </Button>
         </div>
       ),
-    },
-  ], [form, saveWith, supplierLabelById]);
+    };
+
+    if (productsGridMode === "logistics") {
+      return [
+        ...sharedColumns,
+        {
+          header: "HS-Code",
+          accessorKey: "hsCode",
+          meta: { width: 160 },
+          cell: ({ row }) => row.original.hsCode || "—",
+        },
+        {
+          header: "Warenbeschreibung",
+          accessorKey: "goodsDescription",
+          meta: { minWidth: 320, width: 420 },
+          cell: ({ row }) => row.original.goodsDescription || "—",
+        },
+        actionColumn,
+      ];
+    }
+
+    return [
+      ...sharedColumns,
+      {
+        header: "Status",
+        meta: { width: 96 },
+        cell: ({ row }) => (
+          row.original.status === "inactive"
+            ? <Tag>Inaktiv</Tag>
+            : <Tag color="green">Aktiv</Tag>
+        ),
+      },
+      {
+        header: "Completeness",
+        meta: { width: 122 },
+        cell: ({ row }) => completenessTag(row.original.completeness),
+      },
+      {
+        header: "Ø VK (EUR)",
+        meta: { width: 120, align: "right" },
+        cell: ({ row }) => formatMoney(row.original.avgSellingPriceGrossEUR),
+      },
+      {
+        header: "Ø EK (USD)",
+        meta: { width: 120, align: "right" },
+        cell: ({ row }) => formatMoney(row.original.templateUnitPriceUsd),
+      },
+      {
+        header: "Ø Einstand (EUR)",
+        meta: { width: 140, align: "right" },
+        cell: ({ row }) => formatMoney(row.original.landedUnitCostEur),
+      },
+      {
+        header: "Ø Shipping China->Lager/3PL (EUR/Stk)",
+        meta: { width: 220, align: "right" },
+        cell: ({ row }) => formatMoney(row.original.shippingPerUnitEur),
+      },
+      actionColumn,
+    ];
+  }, [form, productsGridMode, saveWith, supplierLabelById]);
 
   const resolvedDraft = useMemo(() => {
     const baseRaw = (editing?.raw || {}) as Record<string, unknown>;
@@ -327,6 +395,8 @@ export default function ProductsModule(): JSX.Element {
       ...baseRaw,
       sku: current.sku || baseRaw.sku || "",
       alias: current.alias || baseRaw.alias || "",
+      hsCode: current.hsCode || baseRaw.hsCode || "",
+      goodsDescription: current.goodsDescription || baseRaw.goodsDescription || "",
       supplierId: current.supplierId || baseRaw.supplierId || "",
       categoryId: current.categoryId ?? baseRaw.categoryId ?? null,
       moqUnits: current.moqUnits ?? baseRaw.moqUnits ?? null,
@@ -480,6 +550,8 @@ export default function ProductsModule(): JSX.Element {
         id: values.id || existing?.id || randomId("prod"),
         sku,
         alias: values.alias.trim() || sku,
+        hsCode: String(values.hsCode || "").trim(),
+        goodsDescription: String(values.goodsDescription || "").trim(),
         supplierId: values.supplierId || "",
         categoryId: values.categoryId || null,
         status: values.status || "active",
@@ -526,7 +598,7 @@ export default function ProductsModule(): JSX.Element {
           <div>
             <Title level={3}>Produkte</Title>
             <Paragraph>
-              Produktstammdaten mit Completeness-Status, Kategorie/Supplier-Zuordnung und Kern-Kalkulationsfeldern.
+              Produktstammdaten fuer Tagesbetrieb und Logistik-Workflow mit klarer Default-/Override-Anzeige.
             </Paragraph>
           </div>
         </div>
@@ -536,7 +608,7 @@ export default function ProductsModule(): JSX.Element {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Suche SKU, Alias, Supplier, Kategorie"
+                placeholder="Suche SKU, Alias, Supplier, Kategorie, HS-Code, Warenbeschreibung"
                 style={{ width: 340, maxWidth: "100%" }}
               />
               <Select
@@ -548,6 +620,14 @@ export default function ProductsModule(): JSX.Element {
                   { value: "inactive", label: "Inaktiv" },
                 ]}
                 style={{ width: 140, maxWidth: "100%" }}
+              />
+              <Segmented
+                value={productsGridMode}
+                onChange={(value) => setProductsGridMode(value as "management" | "logistics")}
+                options={[
+                  { value: "management", label: "Management" },
+                  { value: "logistics", label: "Logistik" },
+                ]}
               />
               <Button
                 type="primary"
@@ -605,7 +685,7 @@ export default function ProductsModule(): JSX.Element {
                 <TanStackGrid
                   data={group.rows}
                   columns={columns}
-                  minTableWidth={1380}
+                  minTableWidth={productsGridMode === "management" ? 1600 : 1240}
                   tableLayout="auto"
                 />
               ),
@@ -616,6 +696,7 @@ export default function ProductsModule(): JSX.Element {
 
       <Modal
         title={editing ? `Produkt bearbeiten: ${editing.sku}` : "Produkt hinzufuegen"}
+        rootClassName="v2-form-modal"
         open={modalOpen}
         onCancel={() => {
           setModalOpen(false);
@@ -634,7 +715,7 @@ export default function ProductsModule(): JSX.Element {
           <div className="v2-form-section">
             <div className="v2-form-section-head">
               <Title level={5} className="v2-form-section-title">Basis</Title>
-              <span className="v2-form-section-desc">Identitaet, Zuordnung und Aktivstatus.</span>
+              <span className="v2-form-section-desc">Identitaet, Zuordnung und Logistik-Referenzdaten.</span>
             </div>
             <div className="v2-form-row">
               <Form.Item name="sku" label="SKU" style={{ flex: 1 }} rules={[{ required: true, message: "SKU fehlt." }]}>
@@ -660,90 +741,54 @@ export default function ProductsModule(): JSX.Element {
                   options={suppliers.map((entry) => ({ value: entry.id, label: entry.name }))}
                 />
               </Form.Item>
+              <Form.Item name="hsCode" label="HS-Code" style={{ flex: 1 }}>
+                <Input placeholder="z. B. 3926.90.97" />
+              </Form.Item>
+            </div>
+            <div className="v2-form-row">
+              <Form.Item name="goodsDescription" label="Warenbeschreibung" style={{ gridColumn: "1 / -1" }}>
+                <Input.TextArea rows={2} placeholder="Kurzbeschreibung fuer Zoll / Logistiker" />
+              </Form.Item>
             </div>
           </div>
 
           <div className="v2-form-section">
             <div className="v2-form-section-head">
-              <Title level={5} className="v2-form-section-title">Vertrieb</Title>
-              <span className="v2-form-section-desc">Preis- und Margenparameter fuer Umsatz/Profit-Logik.</span>
+              <Title level={5} className="v2-form-section-title">Preise & Kosten (operativ)</Title>
+              <span className="v2-form-section-desc">Kerndaten fuer Planung sowie FO/PO-Prefill.</span>
             </div>
             <div className="v2-form-row">
-              <Form.Item name="avgSellingPriceGrossEUR" label="Ø VK-Preis (Brutto EUR)" style={{ flex: 1 }}>
+              <Form.Item name="avgSellingPriceGrossEUR" label="Durchschnittlicher Verkaufspreis (EUR)" style={{ flex: 1 }}>
                 <DeNumberInput mode="decimal" min={0} />
               </Form.Item>
-              <Form.Item name="sellerboardMarginPct" label="Sellerboard Marge %" style={{ flex: 1 }}>
-                <DeNumberInput mode="percent" min={0} max={100} />
-              </Form.Item>
-            </div>
-          </div>
-
-          <div className="v2-form-section">
-            <div className="v2-form-section-head">
-              <Title level={5} className="v2-form-section-title">Planungs-Policies</Title>
-              <span className="v2-form-section-desc">Defaults aus Settings, optional produktspezifisch uebersteuerbar.</span>
-            </div>
-            <div className="v2-form-row">
               <Form.Item
-                name="moqUnits"
-                label="MOQ Units"
+                name="templateUnitPriceUsd"
+                label={labelWithReset("Durchschnittlicher EK (USD)", "templateUnitPriceUsd")}
                 style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.moqEffective, { digits: 0 })}
+                extra={renderResolvedMeta(resolvedDraft.unitPriceUsd, { digits: 2 })}
               >
-                <DeNumberInput mode="int" min={0} />
+                <DeNumberInput mode="decimal" min={0} />
               </Form.Item>
-              <Form.Item
-                name="moqOverrideUnits"
-                label={labelWithReset("MOQ Override Units", "moqOverrideUnits")}
-                style={{ flex: 1 }}
-                extra={<span className="v2-field-meta">Nur fuer dieses Produkt. Leer = MOQ aus Produkt/Settings.</span>}
-              >
-                <DeNumberInput mode="int" min={0} />
-              </Form.Item>
-              <Form.Item
-                name="safetyStockDohOverride"
-                label={labelWithReset("Safety Stock DOH Override", "safetyStockDohOverride")}
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.safetyDohEffective, { digits: 0 })}
-              >
-                <DeNumberInput mode="int" min={0} />
-              </Form.Item>
-            </div>
-            <div className="v2-form-row">
-              <Form.Item
-                name="foCoverageDohOverride"
-                label={labelWithReset("FO Coverage DOH Override", "foCoverageDohOverride")}
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.coverageDohEffective, { digits: 0 })}
-              >
-                <DeNumberInput mode="int" min={0} />
-              </Form.Item>
-            </div>
-          </div>
-
-          <div className="v2-form-section">
-            <div className="v2-form-section-head">
-              <Title level={5} className="v2-form-section-title">Kosten</Title>
-              <span className="v2-form-section-desc">Einstand (Landed) plus Logistikanteil je Einheit fuer Planungs- und PO/FO-Prefill.</span>
-            </div>
-            <div className="v2-form-row">
               <Form.Item
                 name="landedUnitCostEur"
-                label="Einstandspreis (Landed Cost EUR)"
+                label="Durchschnittlicher Einstand (EUR)"
                 style={{ flex: 1 }}
-                extra={<span className="v2-field-meta">Gesamtkosten pro Einheit laut Ist-Daten (inkl. Importkosten je nach Quelle).</span>}
+                extra={<span className="v2-field-meta">Landed Cost je Einheit laut Ist-/Logistikdaten.</span>}
               >
                 <DeNumberInput mode="decimal" min={0} />
               </Form.Item>
+            </div>
+            <div className="v2-form-row">
               <Form.Item
                 name="logisticsPerUnitEur"
-                label={labelWithReset("Logistik/Stk (EUR)", "logisticsPerUnitEur")}
-                style={{ flex: 1 }}
+                label={labelWithReset("Ø Shipping China->Lager/3PL (EUR/Stk)", "logisticsPerUnitEur")}
+                style={{ gridColumn: "1 / -1" }}
                 extra={(
                   <span className="v2-field-meta">
                     <span>Effektiv: {formatNumber(asNumber(draftValues?.logisticsPerUnitEur), 2)} · Quelle: {logisticsManualOverride ? "Produkt-Override" : resolvedDraft.logisticsPerUnitEur.sourceLabel}</span>
                     <span>Vorschlag: {formatNumber(asNumber(shippingSuggestion.value), 2)} EUR/Stk (Formel: Landed - (USD/FX))</span>
-                    <span>Warenkosten aus USD/FX: {formatNumber(asNumber(shippingSuggestion.goodsCostEur), 2)} EUR/Stk</span>
+                    <span>Warenkosten-Anteil aus USD/FX: {formatNumber(asNumber(shippingSuggestion.goodsCostEur), 2)} EUR/Stk</span>
+                    <span>Kann je nach Datenbasis auch Zoll/EUSt/Importnebenkosten enthalten.</span>
                   </span>
                 )}
               >
@@ -753,6 +798,15 @@ export default function ProductsModule(): JSX.Element {
                   onChange={() => setLogisticsManualOverride(true)}
                 />
               </Form.Item>
+            </div>
+          </div>
+
+          <div className="v2-form-section">
+            <div className="v2-form-section-head">
+              <Title level={5} className="v2-form-section-title">Lieferzeit</Title>
+              <span className="v2-form-section-desc">Operative Hauptwerte fuer Produktions- und Transitdauer.</span>
+            </div>
+            <div className="v2-form-row">
               <Form.Item
                 name="productionLeadTimeDaysDefault"
                 label={labelWithReset("Production Lead Time (Tage)", "productionLeadTimeDaysDefault")}
@@ -761,22 +815,13 @@ export default function ProductsModule(): JSX.Element {
               >
                 <DeNumberInput mode="int" min={0} />
               </Form.Item>
-            </div>
-          </div>
-
-          <div className="v2-form-section">
-            <div className="v2-form-section-head">
-              <Title level={5} className="v2-form-section-title">Beschaffungs-Template</Title>
-              <span className="v2-form-section-desc">Kosten- und Transportdefaults fuer Orders, wenn kein produktspezifischer Override gesetzt ist.</span>
-            </div>
-            <div className="v2-form-row">
               <Form.Item
-                name="templateUnitPriceUsd"
-                label="Stueckpreis (USD)"
+                name="templateTransitDays"
+                label={labelWithReset("Transit-Tage", "templateTransitDays")}
                 style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.unitPriceUsd, { digits: 2 })}
+                extra={renderResolvedMeta(resolvedDraft.transitDays, { digits: 0 })}
               >
-                <DeNumberInput mode="decimal" min={0} />
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
               <Form.Item
                 name="templateTransportMode"
@@ -786,78 +831,129 @@ export default function ProductsModule(): JSX.Element {
               >
                 <Select options={TRANSPORT_MODES.map((mode) => ({ value: mode, label: mode }))} />
               </Form.Item>
-              <Form.Item
-                name="templateCurrency"
-                label="Currency"
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.currency, { kind: "text" })}
-              >
-                <Select options={CURRENCIES.map((currency) => ({ value: currency, label: currency }))} />
-              </Form.Item>
             </div>
-
-            <div className="v2-form-row">
-              <Form.Item
-                name="templateProductionDays"
-                label="Template Produktionstage"
-                style={{ flex: 1 }}
-                extra={<span className="v2-field-meta">Optionales Templatefeld fuer externe Vorlagen.</span>}
-              >
-                <DeNumberInput mode="int" min={0} />
-              </Form.Item>
-              <Form.Item
-                name="templateTransitDays"
-                label="Template Transit-Tage"
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.transitDays, { digits: 0 })}
-              >
-                <DeNumberInput mode="int" min={0} />
-              </Form.Item>
-              <Form.Item
-                name="templateFreightEur"
-                label="Template Logistik/Stk (EUR)"
-                style={{ flex: 1 }}
-                extra={<span className="v2-field-meta">Fallback fuer Kostenkette, wenn kein produktspezifischer Logistikwert gesetzt ist.</span>}
-              >
-                <DeNumberInput mode="decimal" min={0} />
-              </Form.Item>
-            </div>
-
-            <div className="v2-form-row">
-              <Form.Item
-                name="templateDutyPct"
-                label="Zoll %"
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.dutyPct, { digits: 2 })}
-              >
-                <DeNumberInput mode="percent" min={0} max={100} />
-              </Form.Item>
-              <Form.Item
-                name="templateVatImportPct"
-                label="EUSt %"
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.eustPct, { digits: 2 })}
-              >
-                <DeNumberInput mode="percent" min={0} max={100} />
-              </Form.Item>
-              <Form.Item
-                name="templateFxRate"
-                label={labelWithReset("FX Rate (USD je EUR)", "templateFxRate")}
-                style={{ flex: 1 }}
-                extra={renderResolvedMeta(resolvedDraft.fxRate, { digits: 4 })}
-              >
-                <DeNumberInput mode="fx" min={0} />
-              </Form.Item>
-            </div>
-
-            <Form.Item
-              name="templateDdp"
-              valuePropName="checked"
-              extra={renderResolvedMeta(resolvedDraft.ddp, { kind: "boolean" })}
-            >
-              <Checkbox>DDP aktiv (Door-to-Door, Importkosten im Lieferpreis)</Checkbox>
-            </Form.Item>
           </div>
+
+          <Collapse
+            className="v2-inline-collapse"
+            items={[
+              {
+                key: "advanced",
+                label: "Erweitert",
+                children: (
+                  <div className="v2-form-section v2-form-section-nested">
+                    <div className="v2-form-section-head">
+                      <Title level={5} className="v2-form-section-title">Policies & Beschaffungs-Template</Title>
+                      <span className="v2-form-section-desc">Optional: produktspezifische Overrides und tiefe Template-Defaults.</span>
+                    </div>
+                    <div className="v2-form-row">
+                      <Form.Item
+                        name="moqUnits"
+                        label={labelWithReset("MOQ Units", "moqUnits")}
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.moqEffective, { digits: 0 })}
+                      >
+                        <DeNumberInput mode="int" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="moqOverrideUnits"
+                        label={labelWithReset("MOQ Override Units", "moqOverrideUnits")}
+                        style={{ flex: 1 }}
+                        extra={<span className="v2-field-meta">Nur fuer dieses Produkt. Leer = Defaultkette.</span>}
+                      >
+                        <DeNumberInput mode="int" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="sellerboardMarginPct"
+                        label="Sellerboard Marge %"
+                        style={{ flex: 1 }}
+                        extra={<span className="v2-field-meta">Optional fuer Legacy-Kompatibilitaet / Reporting.</span>}
+                      >
+                        <DeNumberInput mode="percent" min={0} max={100} />
+                      </Form.Item>
+                    </div>
+                    <div className="v2-form-row">
+                      <Form.Item
+                        name="safetyStockDohOverride"
+                        label={labelWithReset("Safety Stock DOH Override", "safetyStockDohOverride")}
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.safetyDohEffective, { digits: 0 })}
+                      >
+                        <DeNumberInput mode="int" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="foCoverageDohOverride"
+                        label={labelWithReset("FO Coverage DOH Override", "foCoverageDohOverride")}
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.coverageDohEffective, { digits: 0 })}
+                      >
+                        <DeNumberInput mode="int" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="templateCurrency"
+                        label="Waehrung"
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.currency, { kind: "text" })}
+                      >
+                        <Select options={CURRENCIES.map((currency) => ({ value: currency, label: currency }))} />
+                      </Form.Item>
+                    </div>
+                    <div className="v2-form-row">
+                      <Form.Item
+                        name="templateProductionDays"
+                        label="Template Produktionstage"
+                        style={{ flex: 1 }}
+                        extra={<span className="v2-field-meta">Nur fuer Template-Fallbacks, falls keine operative Lead-Time gepflegt ist.</span>}
+                      >
+                        <DeNumberInput mode="int" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="templateFreightEur"
+                        label="Template Logistik/Stk (EUR)"
+                        style={{ flex: 1 }}
+                        extra={<span className="v2-field-meta">Fallback, wenn kein produktspezifischer Shipping-Wert gesetzt ist.</span>}
+                      >
+                        <DeNumberInput mode="decimal" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="templateFxRate"
+                        label={labelWithReset("FX Rate (USD je EUR)", "templateFxRate")}
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.fxRate, { digits: 4 })}
+                      >
+                        <DeNumberInput mode="fx" min={0} />
+                      </Form.Item>
+                    </div>
+                    <div className="v2-form-row">
+                      <Form.Item
+                        name="templateDutyPct"
+                        label="Zoll %"
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.dutyPct, { digits: 2 })}
+                      >
+                        <DeNumberInput mode="percent" min={0} max={100} />
+                      </Form.Item>
+                      <Form.Item
+                        name="templateVatImportPct"
+                        label="EUSt %"
+                        style={{ flex: 1 }}
+                        extra={renderResolvedMeta(resolvedDraft.eustPct, { digits: 2 })}
+                      >
+                        <DeNumberInput mode="percent" min={0} max={100} />
+                      </Form.Item>
+                      <Form.Item
+                        name="templateDdp"
+                        valuePropName="checked"
+                        extra={renderResolvedMeta(resolvedDraft.ddp, { kind: "boolean" })}
+                      >
+                        <Checkbox>DDP aktiv (Door-to-Door, Importkosten im Lieferpreis)</Checkbox>
+                      </Form.Item>
+                    </div>
+                  </div>
+                ),
+              },
+            ]}
+          />
         </Form>
       </Modal>
     </div>

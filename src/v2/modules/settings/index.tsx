@@ -63,17 +63,26 @@ function toOptionalNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function deriveEurUsdRate(fxRate: number | null): number | null {
+  if (!Number.isFinite(fxRate as number)) return null;
+  const safeFxRate = Number(fxRate);
+  if (safeFxRate <= 0) return null;
+  return 1 / safeFxRate;
+}
+
 function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
   const transport = (state.transportLeadTimesDays || {}) as Record<string, unknown>;
   const cny = (state.cny || {}) as Record<string, unknown>;
+  const fxRate = toOptionalNumber(state.fxRate);
+  const eurUsdRate = toOptionalNumber(state.eurUsdRate) ?? deriveEurUsdRate(fxRate);
   return {
     air: Math.max(0, toNumber(transport.air, 10)),
     rail: Math.max(0, toNumber(transport.rail, 25)),
     sea: Math.max(0, toNumber(transport.sea, 45)),
     defaultBufferDays: Math.max(0, toNumber(state.defaultBufferDays, 0)),
     defaultCurrency: String(state.defaultCurrency || "EUR"),
-    fxRate: toOptionalNumber(state.fxRate),
-    eurUsdRate: toOptionalNumber(state.eurUsdRate),
+    fxRate,
+    eurUsdRate,
     safetyStockDohDefault: Math.max(0, toNumber(state.safetyStockDohDefault, 60)),
     foCoverageDohDefault: Math.max(0, toNumber(state.foCoverageDohDefault, 90)),
     moqDefaultUnits: Math.max(0, Math.round(toNumber(state.moqDefaultUnits, 500))),
@@ -95,6 +104,11 @@ export default function SettingsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const settings = (state.settings || {}) as Record<string, unknown>;
   const [form] = Form.useForm<SettingsDraft>();
+  const watchedFxRate = Form.useWatch("fxRate", form);
+  const derivedEurUsdRate = useMemo(
+    () => deriveEurUsdRate(toOptionalNumber(watchedFxRate)),
+    [watchedFxRate],
+  );
   const [draftSeed, setDraftSeed] = useState(() => settingsDraftFromState(settings));
   const [newCategoryName, setNewCategoryName] = useState("");
   const [editingCategory, setEditingCategory] = useState<CategoryRow | null>(null);
@@ -195,6 +209,8 @@ export default function SettingsModule(): JSX.Element {
     if (values.cnyStart && values.cnyEnd && values.cnyStart > values.cnyEnd) {
       throw new Error("CNY Start darf nicht nach dem Ende liegen.");
     }
+    const fxRate = toOptionalNumber(values.fxRate);
+    const eurUsdRate = deriveEurUsdRate(fxRate);
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
       const baseSettings = (next.settings || {}) as Record<string, unknown>;
@@ -208,8 +224,8 @@ export default function SettingsModule(): JSX.Element {
         },
         defaultBufferDays: Math.max(0, Math.round(values.defaultBufferDays)),
         defaultCurrency: values.defaultCurrency,
-        fxRate: values.fxRate,
-        eurUsdRate: values.eurUsdRate,
+        fxRate,
+        eurUsdRate,
         safetyStockDohDefault: Math.max(0, Math.round(values.safetyStockDohDefault)),
         foCoverageDohDefault: Math.max(0, Math.round(values.foCoverageDohDefault)),
         moqDefaultUnits: Math.max(0, Math.round(values.moqDefaultUnits)),
@@ -343,8 +359,16 @@ export default function SettingsModule(): JSX.Element {
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
-              <Form.Item label="FX Kurs (EUR je USD)" name="eurUsdRate">
-                <DeNumberInput mode="fx" min={0} />
+              <Form.Item
+                label="FX Kurs (EUR je USD)"
+                extra="Automatisch aus USD je EUR berechnet."
+              >
+                <DeNumberInput
+                  mode="fx"
+                  min={0}
+                  value={derivedEurUsdRate ?? undefined}
+                  disabled
+                />
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>

@@ -557,6 +557,11 @@ function cleanAlias(alias, sku) {
   return fallback ? `Ohne Alias (${fallback})` : "Ohne Alias";
 }
 
+function cleanOptionalText(value) {
+  if (value == null) return "";
+  return String(value).trim();
+}
+
 function parseNumber(value) {
   return parseDeNumber(value);
 }
@@ -636,6 +641,8 @@ function migrateProducts(state) {
         status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
         tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
         categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
+        hsCode: cleanOptionalText(prod.hsCode ?? base.hsCode),
+        goodsDescription: cleanOptionalText(prod.goodsDescription ?? base.goodsDescription),
         avgSellingPriceGrossEUR: Number.isFinite(Number(prod.avgSellingPriceGrossEUR))
           ? Number(prod.avgSellingPriceGrossEUR)
           : (Number.isFinite(Number(base.avgSellingPriceGrossEUR)) ? Number(base.avgSellingPriceGrossEUR) : null),
@@ -696,6 +703,8 @@ function migrateProducts(state) {
         supplierId: "",
         status: "active",
         tags: [],
+        hsCode: "",
+        goodsDescription: "",
         template: null,
         avgSellingPriceGrossEUR: null,
         sellerboardMarginPct: null,
@@ -781,6 +790,8 @@ function normaliseProductInput(input) {
     : null;
   const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
   const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
+  const hsCode = cleanOptionalText(input.hsCode);
+  const goodsDescription = cleanOptionalText(input.goodsDescription);
   const template = normaliseTemplate(input.template);
   const vatRate = Number(String(input.vatRate ?? "19").replace(",", ".")) || 19;
   const jurisdiction = input.jurisdiction || "DE";
@@ -806,6 +817,8 @@ function normaliseProductInput(input) {
     categoryId,
     status,
     tags,
+    hsCode,
+    goodsDescription,
     template,
     vatRate,
     jurisdiction,
@@ -1155,6 +1168,8 @@ export function upsertProduct(input){
       categoryId: normalised.categoryId,
       status: normalised.status,
       tags: normalised.tags,
+      hsCode: normalised.hsCode,
+      goodsDescription: normalised.goodsDescription,
       template: normalised.template,
       moqUnits: normalised.moqUnits,
       safetyStockDohOverride: normalised.safetyStockDohOverride,
@@ -1177,6 +1192,8 @@ export function upsertProduct(input){
     target.categoryId = normalised.categoryId;
     target.status = normalised.status;
     target.tags = normalised.tags;
+    target.hsCode = normalised.hsCode;
+    target.goodsDescription = normalised.goodsDescription;
     target.template = normalised.template;
     target.moqUnits = normalised.moqUnits;
     target.safetyStockDohOverride = normalised.safetyStockDohOverride;

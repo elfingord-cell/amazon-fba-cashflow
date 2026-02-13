@@ -13,8 +13,13 @@ export interface ProductGridRow {
   categoryId: string | null;
   status: "active" | "inactive";
   avgSellingPriceGrossEUR: number | null;
+  templateUnitPriceUsd: number | null;
+  landedUnitCostEur: number | null;
+  shippingPerUnitEur: number | null;
   sellerboardMarginPct: number | null;
   moqUnits: number | null;
+  hsCode: string;
+  goodsDescription: string;
   completeness: "blocked" | "warn" | "ok";
   raw: Record<string, unknown>;
 }
@@ -42,6 +47,16 @@ function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function templateFields(product: Record<string, unknown>): Record<string, unknown> {
+  const template = (product.template && typeof product.template === "object")
+    ? product.template as Record<string, unknown>
+    : {};
+  const fields = (template.fields && typeof template.fields === "object")
+    ? template.fields as Record<string, unknown>
+    : template;
+  return fields || {};
 }
 
 function normalizeStatus(value: unknown): "active" | "inactive" {
@@ -80,6 +95,7 @@ export function buildProductGridRows(input: {
   const products = Array.isArray(input.state.products) ? input.state.products : [];
   const mapped = products.map((entry, index) => {
     const product = entry as Record<string, unknown>;
+    const template = templateFields(product);
     const sku = String(product.sku || "");
     const completeness = evaluateProductCompleteness(product, { state: input.state })?.status || "blocked";
     return {
@@ -90,8 +106,13 @@ export function buildProductGridRows(input: {
       categoryId: product.categoryId ? String(product.categoryId) : null,
       status: normalizeStatus(product.status),
       avgSellingPriceGrossEUR: asNumber(product.avgSellingPriceGrossEUR),
+      templateUnitPriceUsd: asNumber(template.unitPriceUsd),
+      landedUnitCostEur: asNumber(product.landedUnitCostEur),
+      shippingPerUnitEur: asNumber(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur),
       sellerboardMarginPct: asNumber(product.sellerboardMarginPct),
       moqUnits: asNumber(product.moqUnits),
+      hsCode: String(product.hsCode || "").trim(),
+      goodsDescription: String(product.goodsDescription || "").trim(),
       completeness: completeness as "blocked" | "warn" | "ok",
       raw: product,
     } satisfies ProductGridRow;
@@ -107,6 +128,8 @@ export function buildProductGridRows(input: {
         row.alias,
         row.supplierId,
         row.categoryId || "",
+        row.hsCode,
+        row.goodsDescription,
         input.supplierLabelById.get(row.supplierId) || "",
         input.categoryLabelById.get(row.categoryId || "") || "",
       ].join(" ").toLowerCase();

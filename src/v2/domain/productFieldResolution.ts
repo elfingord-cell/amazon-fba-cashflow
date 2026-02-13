@@ -104,6 +104,13 @@ function pickNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? Number(parsed) : null;
 }
 
+function pickPositiveNumber(value: unknown): number | null {
+  const parsed = toNumber(value);
+  if (!Number.isFinite(parsed)) return null;
+  const next = Number(parsed);
+  return next > 0 ? next : null;
+}
+
 export function resolveProductFieldResolution(input: {
   product: Record<string, unknown>;
   state: Record<string, unknown>;
@@ -121,17 +128,17 @@ export function resolveProductFieldResolution(input: {
     input.supplierId || String(product.supplierId || ""),
   );
 
-  const moqOverride = pickNumber(product.moqOverrideUnits);
-  const moqBase = pickNumber(product.moqUnits);
-  const moqDefault = pickNumber(settings.moqDefaultUnits);
+  const moqOverride = pickPositiveNumber(product.moqOverrideUnits);
+  const moqBase = pickPositiveNumber(product.moqUnits);
+  const moqDefault = pickPositiveNumber(settings.moqDefaultUnits);
   const moqEffective = moqOverride != null
     ? buildField(moqOverride, "product_override", "Produktspezifisches MOQ.")
     : (moqBase != null
       ? buildField(moqBase, "product_base", "Produktwert ohne Override.")
       : buildField(moqDefault, moqDefault != null ? "settings_default" : "none", "Default aus Settings (MOQ)."));
 
-  const safetyOverride = pickNumber(product.safetyStockDohOverride);
-  const safetyDefault = pickNumber(settings.safetyStockDohDefault);
+  const safetyOverride = pickPositiveNumber(product.safetyStockDohOverride);
+  const safetyDefault = pickPositiveNumber(settings.safetyStockDohDefault);
   const safetyDohEffective = safetyOverride != null
     ? buildField(safetyOverride, "product_override", "Produktspezifischer Safety-Wert.")
     : buildField(
@@ -140,8 +147,8 @@ export function resolveProductFieldResolution(input: {
       "Default aus Settings (Safety Stock DOH).",
     );
 
-  const coverageOverride = pickNumber(product.foCoverageDohOverride);
-  const coverageDefault = pickNumber(settings.foCoverageDohDefault);
+  const coverageOverride = pickPositiveNumber(product.foCoverageDohOverride);
+  const coverageDefault = pickPositiveNumber(settings.foCoverageDohDefault);
   const coverageDohEffective = coverageOverride != null
     ? buildField(coverageOverride, "product_override", "Produktspezifischer Coverage-Wert.")
     : buildField(
@@ -150,29 +157,35 @@ export function resolveProductFieldResolution(input: {
       "Default aus Settings (FO Coverage DOH).",
     );
 
+  const productLeadOverride = pickPositiveNumber(product.productionLeadTimeDaysDefault) != null;
   const productionLead = resolveProductionLeadTimeDays({
     product,
     productSupplier,
     supplier,
     settings,
   });
+  const productionLeadValue = pickPositiveNumber(productionLead.value);
   const productionLeadDays = buildField(
-    pickNumber(productionLead.value),
-    toFieldSource(productionLead.source, { override: pickNumber(product.productionLeadTimeDaysDefault) != null }),
+    productionLeadValue,
+    productionLeadValue != null
+      ? toFieldSource(productionLead.source, { override: productLeadOverride })
+      : "none",
     "Produktionszeit fuer Planung/Bestellung.",
   );
 
   const unitPrice = resolveUnitPriceUsd({ product, productSupplier });
+  const unitPriceValue = pickPositiveNumber(unitPrice.value);
   const unitPriceUsd = buildField(
-    pickNumber(unitPrice.value),
-    toFieldSource(unitPrice.source),
+    unitPriceValue,
+    unitPriceValue != null ? toFieldSource(unitPrice.source) : "none",
     "Stueckpreis in USD fuer Kostenkalkulation.",
   );
 
   const fx = resolveFxRate(product, settings);
+  const fxValue = pickPositiveNumber(fx.value);
   const fxRate = buildField(
-    pickNumber(fx.value),
-    toFieldSource(fx.source),
+    fxValue,
+    fxValue != null ? toFieldSource(fx.source) : "none",
     "FX in USD je EUR fuer Umrechnung.",
   );
 
@@ -182,11 +195,14 @@ export function resolveProductFieldResolution(input: {
     fxRate: fx.value,
     unitPriceUsd: unitPrice.value,
   });
+  const logisticsValue = pickPositiveNumber(logistics.value);
   const logisticsPerUnitEur = buildField(
-    pickNumber(logistics.value),
-    toFieldSource(logistics.source, {
-      override: pickNumber(product.logisticsPerUnitEur ?? product.freightPerUnitEur) != null,
-    }),
+    logisticsValue,
+    logisticsValue != null
+      ? toFieldSource(logistics.source, {
+        override: pickPositiveNumber(product.logisticsPerUnitEur ?? product.freightPerUnitEur) != null,
+      })
+      : "none",
     "Logistik-/Importanteil je Einheit in EUR.",
   );
 
@@ -205,9 +221,10 @@ export function resolveProductFieldResolution(input: {
     product,
     transportMode: transport,
   });
+  const transitValue = pickPositiveNumber(transit.value);
   const transitDays = buildField(
-    pickNumber(transit.value),
-    toFieldSource(transit.source),
+    transitValue,
+    transitValue != null ? toFieldSource(transit.source) : "none",
     "Transitzeit in Tagen fuer Planung.",
   );
 

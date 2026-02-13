@@ -101,6 +101,34 @@
 - `actual-before`: Kein direkter Hand-off aus der Projektion in Bestellungen.
 - `status-now`: **resolved** (Risikozellen öffnen Bestellassistent; `orders/fo` und `orders/po` parsen URL-Intent und öffnen Create-Modal mit Prefill).
 
+14. `id`: `V2PROD-014`
+- `route`: `#/v2/products`
+- `severity`: `high`
+- `expected`: Tagesbetrieb und Logistik-Use-Case sollen ohne Spaltenueberladung parallel funktionieren.
+- `actual-before`: ein Tabellenmodus mit gemischten Kennzahlen (`Marge`, `MOQ`) und fehlendem HS/Warenbeschreibung-Copy-Flow.
+- `status-now`: **resolved** (zwei Grid-Modi `Management`/`Logistik`, pro-SKU Copy `HS-Code<TAB>Warenbeschreibung`, operative Spalten bereinigt).
+
+15. `id`: `V2PROD-015`
+- `route`: `#/v2/products` (Produktmaske)
+- `severity`: `high`
+- `expected`: klare Feldlogik ohne doppelte Kosten-/Lead-Time-Semantik und ohne Matrix-Overload.
+- `actual-before`: doppelte/unklare Felder (`Kosten` vs `Template`, `Lead Time` mehrfach), MOQ im Hauptfluss.
+- `status-now`: **resolved** (Maske in `Basis`, `Preise & Kosten`, `Lieferzeit`, `Erweitert`; MOQ nur erweitert, Shipping/Landed/FX transparent).
+
+16. `id`: `V2PROD-016`
+- `route`: `#/v2/products`, `#/v2/settings`
+- `severity`: `high`
+- `expected`: klare Default-/Override-Quelle und konsistente FX-Fuehrung.
+- `actual-before`: irrefuehrende `0` als scheinbare Overrides; zwei editierbare FX-Felder mit gegenlaeufiger Pflege.
+- `status-now`: **resolved** (Policy-Resolution auf sinnvolle Fallbacks, `fxRate` als einziges Editfeld, `eurUsdRate` read-only abgeleitet).
+
+17. `id`: `V2FORM-017`
+- `route`: `#/v2/*` (Formen/Modals)
+- `severity`: `medium`
+- `expected`: keine doppelten Feldrahmen in AntD-Inputs.
+- `actual-before`: globale Input-Regeln verursachten in mehreren V2-Masken sichtbare Innen-/Aussenrahmen.
+- `status-now`: **resolved** (zusetzliche V2/Modal-spezifische Neutralisierung von Inner-Borders in `v2-shell.css`).
+
 ## Offene Low-Risiken
 1. `id`: `V2UI-R1`
 - `severity`: `low`

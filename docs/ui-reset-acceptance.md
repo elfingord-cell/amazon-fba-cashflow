@@ -44,6 +44,11 @@
 8. Inventory-Projektion nutzt Snapshot-Anker aus letztem verfügbaren Snapshot und zeigt Fallback transparent an.
 9. Inventory-Projektion zeigt Risiko-KPI (`Unter Safety`, `OOS`, `kritischster Monat`, `fehlende ETA`) plus PO/FO-Inbound je Monat.
 10. Zellklick auf Risikozellen öffnet Bestellassistent und übergibt Prefill-Intent direkt nach `#/v2/orders/fo` oder `#/v2/orders/po`.
+11. Produkte-Grid hat zwei Betriebsmodi: `Management` (operative Kernkennzahlen) und `Logistik` (`HS-Code`, `Warenbeschreibung`, Copy pro SKU).
+12. Produktmaske ist in `Basis`, `Preise & Kosten (operativ)`, `Lieferzeit` und `Erweitert` geschnitten; MOQ nur noch in `Erweitert`.
+13. Defaults/Overrides werden mit klarer Quelle angezeigt; nicht gesetzte Policies fallen auf Settings/Supplier zurueck statt irrefuehrender `0`.
+14. FX in Settings ist vereinheitlicht: `USD je EUR` editierbar, `EUR je USD` read-only abgeleitet.
+15. V2-Formen zeigen keine sichtbaren Doppelrahmen mehr in AntD-Modals/Inputs.
 
 ## Akzeptanz gegen Kriterien
 1. `0 Blocker`: PASS.
