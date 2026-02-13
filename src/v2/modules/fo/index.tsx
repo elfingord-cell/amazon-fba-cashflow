@@ -152,6 +152,12 @@ function toNumberOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toPositiveNumberOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function templateFields(product: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const template = (product?.template && typeof product.template === "object")
     ? product.template as Record<string, unknown>
@@ -179,13 +185,12 @@ function resolveFoProductPrefill(input: {
   const freight = Math.max(0, round2(logisticsPerUnit * Math.max(0, Number(input.units || 0))));
   const transportMode = String(template.transportMode || "SEA").toUpperCase();
   const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
-  const logisticsLead = toNumberOrNull(template.transitDays)
-    ?? toNumberOrNull(transportLeadMap[transportMode.toLowerCase()])
+  const logisticsLead = toPositiveNumberOrNull(template.transitDays)
+    ?? toPositiveNumberOrNull(transportLeadMap[transportMode.toLowerCase()])
     ?? 45;
-  const productionLead = toNumberOrNull(product.productionLeadTimeDaysDefault)
-    ?? toNumberOrNull(template.productionDays)
-    ?? toNumberOrNull(supplier.productionLeadTimeDaysDefault)
-    ?? toNumberOrNull(settings.defaultProductionLeadTimeDays)
+  const productionLead = toPositiveNumberOrNull(product.productionLeadTimeDaysDefault)
+    ?? toPositiveNumberOrNull(template.productionDays)
+    ?? toPositiveNumberOrNull(settings.defaultProductionLeadTimeDays)
     ?? 45;
   const ddp = template.ddp === true;
 
@@ -203,6 +208,41 @@ function resolveFoProductPrefill(input: {
     logisticsLeadTimeDays: Math.max(0, Math.round(logisticsLead)),
     bufferDays: Math.max(0, Math.round(toNumberOrNull(settings.defaultBufferDays) ?? 0)),
   };
+}
+
+function resolveLeadTimeSourceInfo(input: {
+  product: Record<string, unknown> | null;
+  settings: Record<string, unknown>;
+  transportMode?: string | null;
+}): {
+  production: string;
+  logistics: string;
+} {
+  const product = input.product || {};
+  const settings = input.settings || {};
+  const template = templateFields(product);
+  const effectiveTransport = String(input.transportMode || template.transportMode || "SEA").toUpperCase();
+  const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
+
+  let production = "Fallback";
+  if (toPositiveNumberOrNull(product.productionLeadTimeDaysDefault) != null) {
+    production = "Produkt-Override";
+  } else if (toPositiveNumberOrNull(template.productionDays) != null) {
+    production = "Beschaffungs-Template";
+  } else if (toPositiveNumberOrNull(settings.defaultProductionLeadTimeDays) != null) {
+    production = "Settings-Default";
+  }
+
+  let logistics = "Fallback";
+  if (toPositiveNumberOrNull(template.transitDays) != null) {
+    logistics = "Beschaffungs-Template";
+  } else if (toPositiveNumberOrNull(transportLeadMap[effectiveTransport.toLowerCase()]) != null) {
+    logistics = `Settings-Default (${effectiveTransport})`;
+  } else if (toPositiveNumberOrNull(transportLeadMap.sea) != null) {
+    logistics = "Settings-Default (SEA)";
+  }
+
+  return { production, logistics };
 }
 
 export interface FoModuleProps {
@@ -479,6 +519,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   ], [saveWith, state.pos]);
 
   const draftValues = Form.useWatch([], form) as FoFormValues | undefined;
+
+  const leadTimeSourceInfo = useMemo(() => {
+    const sku = String(draftValues?.sku || "").trim();
+    const selectedProduct = sku ? (productBySku.get(sku)?.raw || null) : null;
+    return resolveLeadTimeSourceInfo({
+      product: selectedProduct,
+      settings,
+      transportMode: draftValues?.transportMode || null,
+    });
+  }, [draftValues?.sku, draftValues?.transportMode, productBySku, settings]);
 
   const liveSchedule = useMemo(() => computeFoSchedule({
     targetDeliveryDate: draftValues?.targetDeliveryDate,
@@ -998,19 +1048,18 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 form.setFieldsValue({
                   incoterm: String(supplier?.incotermDefault || values.incoterm || "EXW").toUpperCase(),
                   currency: String(supplier?.currencyDefault || values.currency || settings.defaultCurrency || "EUR").toUpperCase(),
-                  productionLeadTimeDays: Number(
-                    supplier?.productionLeadTimeDaysDefault
-                    || values.productionLeadTimeDays
-                    || settings.defaultProductionLeadTimeDays
-                    || 45,
-                  ),
                   paymentTerms: terms,
                 });
               }}
             >
-              Supplier Defaults
+              Supplier Terms
             </Button>
           </Space>
+          <div style={{ marginTop: -2, marginBottom: 10 }}>
+            <Text type="secondary">
+              Quelle Leadtime: Produktion = {leadTimeSourceInfo.production} · Logistik = {leadTimeSourceInfo.logistics}
+            </Text>
+          </div>
 
           <Card size="small" style={{ marginBottom: 12 }}>
             <Space direction="vertical" size={4}>

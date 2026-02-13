@@ -83,6 +83,14 @@ function asNumber(value: unknown, fallback = 0): number {
   return Number(parsed);
 }
 
+function asPositiveNumber(value: unknown): number | null {
+  const parsed = parseDeNumber(value);
+  if (!Number.isFinite(parsed as number)) return null;
+  const numeric = Number(parsed);
+  if (numeric <= 0) return null;
+  return numeric;
+}
+
 function asPositive(value: unknown, fallback = 0): number {
   return Math.max(0, asNumber(value, fallback));
 }
@@ -728,22 +736,16 @@ export function computeFoRecommendationForSku(input: {
   if (!context.baselineMonth) return null;
   const sku = String(input.sku || "").trim();
   if (!sku) return null;
-  const safetyDays = Number(
-    input.product?.safetyStockDohOverride
-      ?? input.settings?.safetyStockDohDefault
-      ?? 60,
-  );
-  const coverageDays = Number(
-    input.product?.foCoverageDohOverride
-      ?? input.settings?.foCoverageDohDefault
-      ?? 90,
-  );
-  const moqUnits = Number(
-    input.product?.moqOverrideUnits
-      ?? input.product?.moqUnits
-      ?? input.settings?.moqDefaultUnits
-      ?? 0,
-  );
+  const safetyDays = asPositiveNumber(input.product?.safetyStockDohOverride)
+    ?? asPositiveNumber(input.settings?.safetyStockDohDefault)
+    ?? 60;
+  const coverageDays = asPositiveNumber(input.product?.foCoverageDohOverride)
+    ?? asPositiveNumber(input.settings?.foCoverageDohDefault)
+    ?? 90;
+  const moqUnits = asPositiveNumber(input.product?.moqOverrideUnits)
+    ?? asPositiveNumber(input.product?.moqUnits)
+    ?? asPositiveNumber(input.settings?.moqDefaultUnits)
+    ?? 0;
   const stock0 = context.closingStockBySku?.[sku]?.[context.baselineMonth] ?? 0;
   const projection = buildSkuProjection({
     sku,

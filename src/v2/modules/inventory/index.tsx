@@ -263,12 +263,16 @@ function monthStartIso(month: string): string | null {
   return `${month}-01`;
 }
 
+function parsePositiveNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function estimateLeadTimeDays(product: Record<string, unknown> | null, settings: Record<string, unknown>): number {
-  const production = Number(
-    product?.productionLeadTimeDaysDefault
-    ?? settings.defaultProductionLeadTimeDays
-    ?? 45,
-  );
+  const production = parsePositiveNumber(product?.productionLeadTimeDaysDefault)
+    ?? parsePositiveNumber(settings.defaultProductionLeadTimeDays)
+    ?? 45;
   const productTemplate = (product?.template as Record<string, unknown> | undefined)?.fields as Record<string, unknown> | undefined;
   const transportMode = String(
     productTemplate?.transportMode
@@ -276,15 +280,11 @@ function estimateLeadTimeDays(product: Record<string, unknown> | null, settings:
     ?? "sea",
   ).toLowerCase();
   const transportLeadTimes = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
-  const transit = Number(
-    transportLeadTimes[transportMode]
-    ?? transportLeadTimes.sea
-    ?? 45,
-  );
+  const transit = parsePositiveNumber(transportLeadTimes[transportMode])
+    ?? parsePositiveNumber(transportLeadTimes.sea)
+    ?? 45;
   const buffer = Number(settings.defaultBufferDays ?? 0);
-  return Math.max(0, Math.round((Number.isFinite(production) ? production : 45)
-    + (Number.isFinite(transit) ? transit : 45)
-    + (Number.isFinite(buffer) ? buffer : 0)));
+  return Math.max(0, Math.round(production + transit + (Number.isFinite(buffer) ? buffer : 0)));
 }
 
 function projectionModeHint(mode: ProjectionMode): string {
