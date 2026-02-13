@@ -18,6 +18,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import { parseVentoryCsv } from "../../../ui/forecastCsv.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { currentMonthKey, formatMonthLabel, normalizeMonthKey } from "../../domain/months";
 import {
   type ForecastRecord,
@@ -136,6 +137,7 @@ export default function ForecastModule(): JSX.Element {
   const categoriesById = useMemo(() => {
     return buildCategoryLabelMap(stateObject);
   }, [stateObject]);
+  const categoryOrderMap = useMemo(() => buildCategoryOrderMap(stateObject), [state.productCategories]);
 
   const products = useMemo(() => {
     return buildForecastProducts(stateObject, categoriesById);
@@ -160,14 +162,14 @@ export default function ForecastModule(): JSX.Element {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)?.push(row);
     });
-    return Array.from(groups.entries())
+    const mapped = Array.from(groups.entries())
       .map(([key, rows]) => ({
         key,
         label: key,
         rows: rows.sort((a, b) => a.sku.localeCompare(b.sku)),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [filteredProducts]);
+      }));
+    return sortCategoryGroups(mapped, categoryOrderMap);
+  }, [categoryOrderMap, filteredProducts]);
 
   useEffect(() => {
     setExpandedCategories((current) => {

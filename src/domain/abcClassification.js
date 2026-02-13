@@ -53,6 +53,9 @@ export function computeAbcClassification(state) {
   const months = getVisibleMonths(allMonths, "NEXT_6", currentMonthKey(), DASHBOARD_RANGE_OPTIONS);
   const bySku = new Map();
   const revenueEntries = [];
+  const fallbackEntries = [];
+  let totalRevenue = 0;
+  let totalRevenueUnits = 0;
 
   products.forEach(product => {
     const sku = String(product?.sku || "").trim();
@@ -67,7 +70,11 @@ export function computeAbcClassification(state) {
         if (Number.isFinite(units)) units6m += units;
       });
     }
-    const revenue6m = Number.isFinite(price) && price > 0 ? units6m * price : null;
+    const hasPrice = Number.isFinite(price) && price > 0;
+    const hasUnits = active && Number.isFinite(units6m) && units6m > 0;
+    const revenue6m = hasPrice && hasUnits ? units6m * price : null;
+    let abcBasis = "no_data";
+    let rankingMetric = null;
     const entry = {
       sku,
       active,
@@ -75,22 +82,45 @@ export function computeAbcClassification(state) {
       units6m: active ? units6m : null,
       revenue6m: active ? revenue6m : null,
       abcClass: null,
-      includedInRanking: active && Number.isFinite(price) && price > 0,
+      abcBasis,
+      rankingMetric,
+      includedInRanking: false,
     };
-    if (entry.includedInRanking) {
+
+    if (hasPrice && hasUnits && revenue6m != null) {
+      entry.abcBasis = "revenue_6m";
+      entry.rankingMetric = revenue6m;
+      entry.includedInRanking = true;
       revenueEntries.push(entry);
+      totalRevenue += revenue6m;
+      totalRevenueUnits += units6m;
+    } else if (hasUnits) {
+      entry.abcBasis = "units_6m_fallback";
+      fallbackEntries.push(entry);
     }
     bySku.set(normalizedSku, entry);
+    bySku.set(sku, entry);
   });
 
-  const totalRevenue = revenueEntries.reduce((acc, entry) => acc + (entry.revenue6m || 0), 0);
-  if (totalRevenue > 0) {
-    revenueEntries
+  const fallbackUnitPrice = totalRevenue > 0 && totalRevenueUnits > 0
+    ? totalRevenue / totalRevenueUnits
+    : 1;
+  fallbackEntries.forEach((entry) => {
+    const units = Number(entry.units6m || 0);
+    entry.rankingMetric = units * fallbackUnitPrice;
+    entry.includedInRanking = units > 0;
+  });
+
+  const rankedEntries = [...revenueEntries, ...fallbackEntries].filter((entry) => entry.includedInRanking);
+  const totalMetric = rankedEntries.reduce((acc, entry) => acc + Number(entry.rankingMetric || 0), 0);
+
+  if (totalMetric > 0) {
+    rankedEntries
       .slice()
-      .sort((a, b) => (b.revenue6m || 0) - (a.revenue6m || 0))
+      .sort((a, b) => Number(b.rankingMetric || 0) - Number(a.rankingMetric || 0))
       .reduce((acc, entry) => {
-        const next = acc + (entry.revenue6m || 0);
-        const share = next / totalRevenue;
+        const next = acc + Number(entry.rankingMetric || 0);
+        const share = next / totalMetric;
         if (share <= ABC_THRESHOLDS.A) {
           entry.abcClass = "A";
         } else if (share <= ABC_THRESHOLDS.B) {
@@ -101,10 +131,14 @@ export function computeAbcClassification(state) {
         return next;
       }, 0);
   } else {
-    revenueEntries.forEach(entry => {
+    rankedEntries.forEach(entry => {
       entry.abcClass = "C";
     });
   }
+
+  bySku.forEach((entry) => {
+    if (!entry.abcClass) entry.abcClass = "C";
+  });
 
   return {
     months,

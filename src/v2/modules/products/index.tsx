@@ -16,6 +16,7 @@ import {
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { buildProductGridRows, type ProductGridRow } from "../../domain/tableModels";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
@@ -152,6 +153,7 @@ export default function ProductsModule(): JSX.Element {
 
   const categoryLabelById = useMemo(() => new Map(categories.map((entry) => [entry.id, entry.name])), [categories]);
   const supplierLabelById = useMemo(() => new Map(suppliers.map((entry) => [entry.id, entry.name])), [suppliers]);
+  const categoryOrderMap = useMemo(() => buildCategoryOrderMap(stateObject), [state.productCategories]);
 
   const rows = useMemo(() => {
     return buildProductGridRows({
@@ -170,14 +172,14 @@ export default function ProductsModule(): JSX.Element {
       if (!groups.has(categoryLabel)) groups.set(categoryLabel, []);
       groups.get(categoryLabel)?.push(row);
     });
-    return Array.from(groups.entries())
+    const mapped = Array.from(groups.entries())
       .map(([category, items]) => ({
         key: category,
         label: category,
         rows: items.sort((a, b) => a.sku.localeCompare(b.sku)),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [categoryLabelById, rows]);
+      }));
+    return sortCategoryGroups(mapped, categoryOrderMap);
+  }, [categoryLabelById, categoryOrderMap, rows]);
 
   useEffect(() => {
     setExpandedCategories((current) => {

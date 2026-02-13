@@ -8,7 +8,6 @@ import {
   Collapse,
   Input,
   InputNumber,
-  Modal,
   Popover,
   Radio,
   Select,
@@ -33,6 +32,7 @@ import {
   monthRange,
   normalizeMonthKey,
 } from "../../domain/months";
+import { buildCategoryOrderMap, compareCategoryLabels, sortCategoryGroups } from "../../domain/categoryOrder";
 import {
   buildFoRecommendationContext,
   computeFoRecommendationForSku,
@@ -100,6 +100,7 @@ interface InventoryProductRow {
   alias: string;
   categoryLabel: string;
   abcClass: string | null;
+  abcBasis: "revenue_6m" | "units_6m_fallback" | "no_data";
   isActive: boolean;
   amazonUnits: number;
   threePLUnits: number;
@@ -116,10 +117,11 @@ interface CategoryGroup {
 }
 
 interface ProjectionActionIntent {
+  cellKey: string;
   row: InventoryProductRow;
   month: string;
   data: ProjectionCellData;
-  riskClass: "safety-negative" | "safety-low";
+  riskClass: "safety-negative" | "safety-low" | "normal";
   recommendedUnits: number;
   requiredArrivalDate: string | null;
   recommendedOrderDate: string | null;
@@ -131,6 +133,14 @@ interface ProjectionRiskSummary {
   oosSkus: number;
   criticalMonth: string | null;
   missingEta: number;
+}
+
+interface MonthUrgencyData {
+  month: string;
+  score: number;
+  oosCount: number;
+  underSafetyCount: number;
+  criticalSkus: Set<string>;
 }
 
 function ensureInventoryContainers(state: Record<string, unknown>): void {
@@ -225,20 +235,27 @@ function resolveLatestSnapshotMonth(state: Record<string, unknown>): string | nu
   return snapshots[snapshots.length - 1] || null;
 }
 
-function toCategoryGroups(rows: InventoryProductRow[]): CategoryGroup[] {
+function toCategoryGroups(
+  rows: InventoryProductRow[],
+  categoryOrderMap: Map<string, number>,
+): CategoryGroup[] {
   const groups = new Map<string, InventoryProductRow[]>();
   rows.forEach((row) => {
     const key = row.categoryLabel || "Ohne Kategorie";
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)?.push(row);
   });
-  return Array.from(groups.entries())
+  const mapped = Array.from(groups.entries())
     .map(([key, entries]) => ({
       key,
       label: key,
-      rows: entries.sort((a, b) => a.sku.localeCompare(b.sku)),
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+      rows: entries.sort((a, b) => {
+        const aliasCmp = a.alias.localeCompare(b.alias, "de-DE", { sensitivity: "base" });
+        if (aliasCmp !== 0) return aliasCmp;
+        return a.sku.localeCompare(b.sku, "de-DE", { sensitivity: "base" });
+      }),
+    }));
+  return sortCategoryGroups(mapped, categoryOrderMap);
 }
 
 function monthStartIso(month: string): string | null {
@@ -274,6 +291,27 @@ function projectionModeHint(mode: ProjectionMode): string {
   if (mode === "doh") return "DOH zeigt die Reichweite des projizierten Monatsendbestands in Tagen.";
   if (mode === "plan") return "Plan zeigt den geplanten Monatsabsatz (Forecast) je SKU.";
   return "Units zeigt den projizierten Monatsendbestand je SKU inklusive Inbound-Wirkung.";
+}
+
+function abcBasisHint(basis: InventoryProductRow["abcBasis"]): string {
+  if (basis === "revenue_6m") return "ABC-Basis: Umsatz (6 Monate)";
+  if (basis === "units_6m_fallback") return "ABC-Basis: Units-Fallback (6 Monate)";
+  return "ABC-Basis: keine Forecast-Daten";
+}
+
+function monthRiskWeight(abcClass: string | null, riskClass: "" | "safety-negative" | "safety-low"): number {
+  const abc = String(abcClass || "C").toUpperCase();
+  if (riskClass === "safety-negative") {
+    if (abc === "A") return 6;
+    if (abc === "B") return 4;
+    return 2;
+  }
+  if (riskClass === "safety-low") {
+    if (abc === "A") return 3;
+    if (abc === "B") return 2;
+    return 1;
+  }
+  return 0;
 }
 
 function buildInboundPopover(detail: InboundDetailCell | null): JSX.Element {
@@ -330,6 +368,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [projectionMonths, setProjectionMonths] = useState(12);
   const [snapshotExpandedCategories, setSnapshotExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("inventory_snapshot"));
   const [projectionExpandedCategories, setProjectionExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("inventory_projection"));
+  const [selectedUrgencyMonth, setSelectedUrgencyMonth] = useState<string | null>(null);
   const [actionIntent, setActionIntent] = useState<ProjectionActionIntent | null>(null);
 
   const showSnapshot = view !== "projection";
@@ -395,6 +434,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     });
     return map;
   }, [state.productCategories]);
+  const categoryOrderMap = useMemo(() => buildCategoryOrderMap(stateObject), [state.productCategories]);
 
   const abcBySku = useMemo(() => {
     const snapshot = computeAbcClassification(stateObject);
@@ -443,12 +483,15 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         const prevTotal = prevItem.amazonUnits + prevItem.threePLUnits;
         const safetyDays = resolveSafetyStockDays(product, stateObject);
         const coverageDays = resolveCoverageDays(product, stateObject);
-        const abcClass = abcBySku.get(sku)?.abcClass ?? null;
+        const abcEntry = abcBySku.get(sku.toLowerCase()) || abcBySku.get(sku) || null;
+        const abcClass = abcEntry?.abcClass ?? null;
+        const abcBasis = (abcEntry?.abcBasis || "no_data") as InventoryProductRow["abcBasis"];
         return {
           sku,
           alias,
           categoryLabel,
           abcClass,
+          abcBasis,
           isActive,
           amazonUnits: item.amazonUnits,
           threePLUnits: item.threePLUnits,
@@ -472,10 +515,19 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           .toLowerCase()
           .includes(needle);
       })
-      .sort((a, b) => `${a.categoryLabel}|${a.sku}`.localeCompare(`${b.categoryLabel}|${b.sku}`));
-  }, [baseRows, onlyActive, search]);
+      .sort((a, b) => {
+        const byCategory = compareCategoryLabels(a.categoryLabel, b.categoryLabel, categoryOrderMap);
+        if (byCategory !== 0) return byCategory;
+        const byAlias = a.alias.localeCompare(b.alias, "de-DE", { sensitivity: "base" });
+        if (byAlias !== 0) return byAlias;
+        return a.sku.localeCompare(b.sku, "de-DE", { sensitivity: "base" });
+      });
+  }, [baseRows, categoryOrderMap, onlyActive, search]);
 
-  const groupedRows = useMemo(() => toCategoryGroups(filteredRows), [filteredRows]);
+  const groupedRows = useMemo(
+    () => toCategoryGroups(filteredRows, categoryOrderMap),
+    [categoryOrderMap, filteredRows],
+  );
 
   useEffect(() => {
     if (!showSnapshot) return;
@@ -487,17 +539,6 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       return groupedRows.map((group) => group.key);
     });
   }, [groupedRows, hasStoredSnapshotPrefs, showSnapshot]);
-
-  useEffect(() => {
-    if (!showProjection) return;
-    setProjectionExpandedCategories((current) => {
-      if (!groupedRows.length) return [];
-      const valid = new Set(groupedRows.map((group) => group.key));
-      const filtered = current.filter((key) => valid.has(key));
-      if (filtered.length || hasStoredProjectionPrefs) return filtered;
-      return groupedRows.map((group) => group.key);
-    });
-  }, [groupedRows, hasStoredProjectionPrefs, showProjection]);
 
   useEffect(() => {
     setModuleExpandedCategoryKeys("inventory_snapshot", snapshotExpandedCategories);
@@ -588,7 +629,86 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     };
   }, [filteredRows, projection, projectionMode, projectionMonthList]);
 
-  function openProjectionAction(row: InventoryProductRow, month: string, data: ProjectionCellData, riskClass: "safety-negative" | "safety-low"): void {
+  const urgencyByMonth = useMemo<Map<string, MonthUrgencyData>>(() => {
+    const map = new Map<string, MonthUrgencyData>();
+    projectionMonthList.forEach((month) => {
+      map.set(month, {
+        month,
+        score: 0,
+        oosCount: 0,
+        underSafetyCount: 0,
+        criticalSkus: new Set<string>(),
+      });
+    });
+
+    filteredRows.forEach((row) => {
+      projectionMonthList.forEach((month) => {
+        const data = projection.perSkuMonth.get(row.sku)?.get(month) as ProjectionCellData | undefined;
+        if (!data) return;
+        const riskClass = getProjectionSafetyClass({
+          projectionMode,
+          endAvailable: data.endAvailable,
+          safetyUnits: data.safetyUnits,
+          doh: data.doh,
+          safetyDays: data.safetyDays,
+        }) as "" | "safety-negative" | "safety-low";
+        if (!riskClass) return;
+        const bucket = map.get(month);
+        if (!bucket) return;
+        bucket.score += monthRiskWeight(row.abcClass, riskClass);
+        bucket.underSafetyCount += 1;
+        if (riskClass === "safety-negative") bucket.oosCount += 1;
+        bucket.criticalSkus.add(row.sku);
+      });
+    });
+    return map;
+  }, [filteredRows, projection, projectionMode, projectionMonthList]);
+
+  const maxUrgencyScore = useMemo(() => {
+    const values = Array.from(urgencyByMonth.values()).map((entry) => Number(entry.score || 0));
+    if (!values.length) return 0;
+    return Math.max(...values, 0);
+  }, [urgencyByMonth]);
+
+  const projectionCriticalSkuSet = useMemo(() => {
+    if (!selectedUrgencyMonth) return null;
+    return urgencyByMonth.get(selectedUrgencyMonth)?.criticalSkus || new Set<string>();
+  }, [selectedUrgencyMonth, urgencyByMonth]);
+
+  const projectionGroupedRows = useMemo(() => {
+    if (!selectedUrgencyMonth || !projectionCriticalSkuSet || !projectionCriticalSkuSet.size) return groupedRows;
+    return groupedRows
+      .map((group) => ({
+        ...group,
+        rows: group.rows.filter((row) => projectionCriticalSkuSet.has(row.sku)),
+      }))
+      .filter((group) => group.rows.length > 0);
+  }, [groupedRows, projectionCriticalSkuSet, selectedUrgencyMonth]);
+
+  useEffect(() => {
+    if (selectedUrgencyMonth && !projectionMonthList.includes(selectedUrgencyMonth)) {
+      setSelectedUrgencyMonth(null);
+    }
+  }, [projectionMonthList, selectedUrgencyMonth]);
+
+  useEffect(() => {
+    if (!showProjection) return;
+    setProjectionExpandedCategories((current) => {
+      if (!projectionGroupedRows.length) return [];
+      const valid = new Set(projectionGroupedRows.map((group) => group.key));
+      const filtered = current.filter((key) => valid.has(key));
+      if (filtered.length || hasStoredProjectionPrefs) return filtered;
+      return projectionGroupedRows.map((group) => group.key);
+    });
+  }, [hasStoredProjectionPrefs, projectionGroupedRows, showProjection]);
+
+  function openProjectionAction(
+    row: InventoryProductRow,
+    month: string,
+    data: ProjectionCellData,
+    riskClass: "safety-negative" | "safety-low" | "normal",
+    cellKey: string,
+  ): void {
     const product = resolveProductBySku(Array.isArray(state.products) ? (state.products as Record<string, unknown>[]) : [], row.sku);
     const leadTimeDays = estimateLeadTimeDays(product, settings);
     const recommendation = computeFoRecommendationForSku({
@@ -617,6 +737,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     ) || null;
 
     setActionIntent({
+      cellKey,
       row,
       month,
       data,
@@ -647,13 +768,46 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     setActionIntent(null);
   }
 
+  function renderProjectionActionMenu(intent: ProjectionActionIntent): JSX.Element {
+    return (
+      <div className="v2-proj-action-menu">
+        <Text strong>{intent.row.alias}</Text>
+        <Text type="secondary">{intent.row.sku}</Text>
+        <Text type="secondary">{formatMonthLabel(intent.month)}</Text>
+        <Text>
+          Bestand EOM: <strong>{formatInt(intent.data.endAvailable)}</strong>
+        </Text>
+        <Text>
+          Safety: <strong>{formatInt(intent.data.safetyUnits)}</strong>
+        </Text>
+        <Text>
+          Ankunft: <strong>{formatDate(intent.requiredArrivalDate)}</strong>
+        </Text>
+        <Text>
+          Bestellen bis: <strong>{formatDate(intent.recommendedOrderDate)}</strong>
+        </Text>
+        <Text>
+          Vorschlag: <strong>{formatInt(intent.recommendedUnits)}</strong>
+        </Text>
+        <div className="v2-actions-inline">
+          <Button size="small" onClick={() => navigateToOrderIntent("fo")}>FO erstellen</Button>
+          <Button size="small" type="primary" onClick={() => navigateToOrderIntent("po")}>PO erstellen</Button>
+        </div>
+      </div>
+    );
+  }
+
   const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
     { header: "SKU", accessorKey: "sku", meta: { width: 158, minWidth: 158 } },
     { header: "Alias", accessorKey: "alias", meta: { width: 230, minWidth: 220 } },
     {
       header: "ABC",
       meta: { width: 72, align: "center" },
-      cell: ({ row }) => row.original.abcClass || "—",
+      cell: ({ row }) => (
+        <Tooltip title={abcBasisHint(row.original.abcBasis)}>
+          <span>{row.original.abcClass || "—"}</span>
+        </Tooltip>
+      ),
     },
     {
       header: "Amazon",
@@ -731,12 +885,27 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
   const projectionColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => {
     const base: ColumnDef<InventoryProductRow>[] = [
-      { header: "SKU", accessorKey: "sku", meta: { width: 158, minWidth: 158 } },
-      { header: "Alias", accessorKey: "alias", meta: { width: 230, minWidth: 220 } },
+      {
+        header: "Alias",
+        accessorKey: "alias",
+        meta: { width: 270, minWidth: 250 },
+        cell: ({ row }) => (
+          <div className="v2-proj-alias">
+            <div className="v2-proj-alias-main" title={row.original.alias}>{row.original.alias}</div>
+            <Text className="v2-proj-sku-secondary" type="secondary" title={row.original.sku}>
+              {row.original.sku}
+            </Text>
+          </div>
+        ),
+      },
       {
         header: "ABC",
         meta: { width: 68, align: "center" },
-        cell: ({ row }) => row.original.abcClass || "—",
+        cell: ({ row }) => (
+          <Tooltip title={abcBasisHint(row.original.abcBasis)}>
+            <span>{row.original.abcClass || "—"}</span>
+          </Tooltip>
+        ),
       },
       {
         header: "Safety DOH",
@@ -761,7 +930,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     const monthColumns = projectionMonthList.map((month) => ({
       id: month,
       header: formatMonthLabel(month),
-      meta: { minWidth: 118, width: 118, align: "right" },
+      meta: { minWidth: 106, width: 106, align: "right" },
       cell: ({ row }: { row: { original: InventoryProductRow } }) => {
         const data = projection.perSkuMonth.get(row.original.sku)?.get(month) as ProjectionCellData | undefined;
         if (!data) return "—";
@@ -775,55 +944,69 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           value = Number.isFinite(data.endAvailable as number) ? Number(data.endAvailable) : null;
         }
 
-        const riskClass = getProjectionSafetyClass({
+        const riskClassRaw = getProjectionSafetyClass({
           projectionMode,
           endAvailable: data.endAvailable,
           safetyUnits: data.safetyUnits,
           doh: data.doh,
           safetyDays: data.safetyDays,
         }) as "" | "safety-negative" | "safety-low";
+        const riskClass = riskClassRaw || "normal";
 
-        const isActionable = projectionMode !== "plan" && (riskClass === "safety-negative" || riskClass === "safety-low");
+        const isActionable = projectionMode !== "plan";
         const inbound = data.inboundDetails;
+        const cellKey = `${row.original.sku}|${month}`;
 
+        const isMenuOpen = actionIntent?.cellKey === cellKey;
         return (
-          <div
-            className={[
-              "v2-proj-cell",
-              riskClass ? `v2-proj-cell--${riskClass}` : "",
-              isActionable ? "v2-proj-cell--actionable" : "",
-            ].filter(Boolean).join(" ")}
-            role={isActionable ? "button" : undefined}
-            tabIndex={isActionable ? 0 : undefined}
-            onClick={isActionable ? () => openProjectionAction(row.original, month, data, riskClass) : undefined}
-            onKeyDown={isActionable ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                openProjectionAction(row.original, month, data, riskClass);
-              }
-            } : undefined}
+          <Popover
+            trigger={isActionable ? "click" : "hover"}
+            placement="rightTop"
+            open={isActionable ? isMenuOpen : undefined}
+            onOpenChange={(open) => {
+              if (!isActionable) return;
+              if (!open && isMenuOpen) setActionIntent(null);
+            }}
+            content={isMenuOpen && actionIntent ? renderProjectionActionMenu(actionIntent) : null}
           >
-            <div className="v2-proj-cell-main">{formatInt(value)}</div>
-            {projectionMode !== "plan" && Number.isFinite(data.safetyUnits as number) ? (
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                SB: {formatInt(data.safetyUnits)}
-              </Text>
-            ) : null}
-            {inbound && inbound.totalUnits > 0 ? (
-              <Popover content={buildInboundPopover(inbound)} trigger="hover" placement="topLeft">
-                <div className="v2-proj-inbound-row">
-                  {inbound.poUnits > 0 ? <Tag className="v2-proj-inbound v2-proj-inbound--po">PO +{formatInt(inbound.poUnits)}</Tag> : null}
-                  {inbound.foUnits > 0 ? <Tag className="v2-proj-inbound v2-proj-inbound--fo">FO +{formatInt(inbound.foUnits)}</Tag> : null}
-                </div>
-              </Popover>
-            ) : null}
-          </div>
+            <div
+              className={[
+                "v2-proj-cell",
+                riskClassRaw ? `v2-proj-cell--${riskClassRaw}` : "",
+                isActionable ? "v2-proj-cell--actionable" : "",
+              ].filter(Boolean).join(" ")}
+              role={isActionable ? "button" : undefined}
+              tabIndex={isActionable ? 0 : undefined}
+              onClick={isActionable ? () => openProjectionAction(row.original, month, data, riskClass, cellKey) : undefined}
+              onKeyDown={isActionable ? (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openProjectionAction(row.original, month, data, riskClass, cellKey);
+                }
+              } : undefined}
+            >
+              <div className="v2-proj-cell-main">{formatInt(value)}</div>
+              {projectionMode !== "plan" && Number.isFinite(data.safetyUnits as number) ? (
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  SB: {formatInt(data.safetyUnits)}
+                </Text>
+              ) : null}
+              {inbound && inbound.totalUnits > 0 ? (
+                <Popover content={buildInboundPopover(inbound)} trigger="hover" placement="topLeft">
+                  <div className="v2-proj-inbound-row">
+                    {inbound.poUnits > 0 ? <Tag className="v2-proj-inbound v2-proj-inbound--po">PO +{formatInt(inbound.poUnits)}</Tag> : null}
+                    {inbound.foUnits > 0 ? <Tag className="v2-proj-inbound v2-proj-inbound--fo">FO +{formatInt(inbound.foUnits)}</Tag> : null}
+                  </div>
+                </Popover>
+              ) : null}
+            </div>
+          </Popover>
         );
       },
     })) as ColumnDef<InventoryProductRow>[];
 
     return [...base, ...monthColumns];
-  }, [projection, projectionMode, projectionMonthList]);
+  }, [actionIntent, projection, projectionMode, projectionMonthList]);
 
   async function saveSnapshot(): Promise<void> {
     await saveWith((current) => {
@@ -1047,7 +1230,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
           <div className="v2-toolbar-row" style={{ marginTop: 10 }}>
             <Tag color={riskSummary.underSafetySkus > 0 ? "gold" : "green"}>
-              Unter Safety: {riskSummary.underSafetySkus}
+              SKUs unter Safety: {riskSummary.underSafetySkus}
             </Tag>
             <Tag color={riskSummary.oosSkus > 0 ? "red" : "green"}>
               OOS: {riskSummary.oosSkus}
@@ -1058,22 +1241,59 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             <Tag color={riskSummary.missingEta > 0 ? "orange" : "green"}>
               Fehlende ETA: {riskSummary.missingEta}
             </Tag>
+            <Tooltip title="Units = projizierter Monatsendbestand · DOH = Reichweite in Tagen · Plan = Forecast-Absatz · Safety = Vergleich gegen Safety-Schwelle je SKU/Monat">
+              <Tag color="default">Modus-Hilfe</Tag>
+            </Tooltip>
+          </div>
+
+          <div className="v2-proj-heatmap" style={{ marginTop: 10 }}>
+            {projectionMonthList.map((month) => {
+              const urgency = urgencyByMonth.get(month);
+              const score = Number(urgency?.score || 0);
+              const intensity = maxUrgencyScore > 0 ? Math.min(1, score / maxUrgencyScore) : 0;
+              const isActive = selectedUrgencyMonth === month;
+              return (
+                <button
+                  type="button"
+                  key={month}
+                  className={`v2-proj-heatmap-item${isActive ? " is-active" : ""}`}
+                  style={{
+                    background: `rgba(220, 38, 38, ${0.08 + (intensity * 0.3)})`,
+                    borderColor: isActive ? "rgba(220, 38, 38, 0.8)" : "rgba(15, 27, 45, 0.12)",
+                  }}
+                  onClick={() => setSelectedUrgencyMonth((current) => (current === month ? null : month))}
+                  title={`${formatMonthLabel(month)} · Score ${score} · OOS ${Number(urgency?.oosCount || 0)} · Unter Safety ${Number(urgency?.underSafetyCount || 0)}`}
+                >
+                  <span>{formatMonthLabel(month)}</span>
+                  <strong>{score}</strong>
+                </button>
+              );
+            })}
+            {selectedUrgencyMonth ? (
+              <Button size="small" onClick={() => setSelectedUrgencyMonth(null)}>
+                Filter löschen
+              </Button>
+            ) : null}
           </div>
 
           <div className="v2-toolbar-row" style={{ marginTop: 4 }}>
             <Tag className="v2-proj-legend v2-proj-legend--negative">OOS / {"<="} 0</Tag>
             <Tag className="v2-proj-legend v2-proj-legend--low">Unter Safety</Tag>
             <Tag className="v2-proj-legend">Inbound Marker: PO / FO</Tag>
-            <Text type="secondary">Risikozellen anklicken für `FO erstellen` / `PO erstellen`.</Text>
+            <Text type="secondary">Zelle anklicken für `FO erstellen` / `PO erstellen`.</Text>
           </div>
 
           <div className="v2-category-tools" style={{ marginTop: 10 }}>
-            <Text type="secondary">{filteredRows.length} Produkte in {groupedRows.length} Kategorien</Text>
+            <Text type="secondary">
+              {selectedUrgencyMonth
+                ? `${projectionGroupedRows.reduce((sum, group) => sum + group.rows.length, 0)} kritische Produkte in ${projectionGroupedRows.length} Kategorien (${formatMonthLabel(selectedUrgencyMonth)})`
+                : `${filteredRows.length} Produkte in ${groupedRows.length} Kategorien`}
+            </Text>
             <div className="v2-actions-inline">
               <Button
                 size="small"
-                onClick={() => setProjectionExpandedCategories(groupedRows.map((group) => group.key))}
-                disabled={!groupedRows.length}
+                onClick={() => setProjectionExpandedCategories(projectionGroupedRows.map((group) => group.key))}
+                disabled={!projectionGroupedRows.length}
               >
                 Alles auf
               </Button>
@@ -1087,14 +1307,14 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             </div>
           </div>
 
-          {!groupedRows.length ? (
+          {!projectionGroupedRows.length ? (
             <Text type="secondary">Keine Projektion für den aktuellen Filter.</Text>
           ) : (
             <Collapse
               className="v2-category-collapse"
               activeKey={projectionExpandedCategories}
               onChange={(nextKeys) => setProjectionExpandedCategories((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).map(String))}
-              items={groupedRows.map((group) => ({
+              items={projectionGroupedRows.map((group) => ({
                 key: group.key,
                 label: (
                   <Space>
@@ -1108,6 +1328,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                     columns={projectionColumns}
                     minTableWidth={Math.max(1080, 760 + (projectionMonthList.length * 118))}
                     tableLayout="fixed"
+                    crosshair="matrix"
                   />
                 ),
               }))}
@@ -1116,53 +1337,6 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         </Card>
       ) : null}
 
-      <Modal
-        title="Bestellassistent aus Projektion"
-        open={Boolean(actionIntent)}
-        onCancel={() => setActionIntent(null)}
-        footer={(
-          <Space>
-            <Button onClick={() => setActionIntent(null)}>Abbrechen</Button>
-            <Button onClick={() => navigateToOrderIntent("fo")}>FO erstellen</Button>
-            <Button type="primary" onClick={() => navigateToOrderIntent("po")}>PO erstellen</Button>
-          </Space>
-        )}
-      >
-        {actionIntent ? (
-          <Space direction="vertical" style={{ width: "100%" }}>
-            <Text>
-              <strong>{actionIntent.row.alias}</strong> ({actionIntent.row.sku}) · {formatMonthLabel(actionIntent.month)}
-            </Text>
-            <Text>
-              Erwarteter Monatsendbestand: <strong>{formatInt(actionIntent.data.endAvailable)}</strong>
-            </Text>
-            <Text>
-              Safety-Status: <Tag color={actionIntent.riskClass === "safety-negative" ? "red" : "gold"}>
-                {actionIntent.riskClass === "safety-negative" ? "OOS" : "Unter Safety"}
-              </Tag>
-            </Text>
-            <Text>
-              Empfohlene Ankunft: <strong>{formatDate(actionIntent.requiredArrivalDate)}</strong>
-            </Text>
-            <Text>
-              Empfohlener Bestelltermin: <strong>{formatDate(actionIntent.recommendedOrderDate)}</strong>
-            </Text>
-            <Text>
-              Empfohlene Bestellmenge: <strong>{formatInt(actionIntent.recommendedUnits)}</strong>
-            </Text>
-            {Array.isArray(actionIntent.recommendation?.issues) && actionIntent.recommendation?.issues?.length ? (
-              <Alert
-                type="warning"
-                showIcon
-                message="Qualitätshinweise"
-                description={(actionIntent.recommendation.issues as Record<string, unknown>[])
-                  .map((issue) => `${String(issue.code || "ISSUE")} (${Number(issue.count || 0)})`)
-                  .join(" · ")}
-              />
-            ) : null}
-          </Space>
-        ) : null}
-      </Modal>
     </div>
   );
 }
