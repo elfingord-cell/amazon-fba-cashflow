@@ -37,6 +37,11 @@ import {
   serializeManualMap,
 } from "../../domain/tableModels";
 import { ensureAppStateV2 } from "../../state/appState";
+import {
+  getModuleExpandedCategoryKeys,
+  hasModuleExpandedCategoryKeys,
+  setModuleExpandedCategoryKeys,
+} from "../../state/uiPrefs";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Text, Title } = Typography;
@@ -90,6 +95,7 @@ function formatDisplay(value: number | null, digits = 0): string {
 
 export default function ForecastModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("forecast");
   const [search, setSearch] = useState("");
   const [range, setRange] = useState<ForecastRangeMode>("next12");
   const [view, setView] = useState<ForecastViewMode>("units");
@@ -105,7 +111,7 @@ export default function ForecastModule(): JSX.Element {
   const [importSourceLabel, setImportSourceLabel] = useState("");
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferSelection, setTransferSelection] = useState<string[]>([]);
-  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("forecast"));
 
   const settings = (state.settings || {}) as Record<string, unknown>;
   const forecast = (state.forecast || {}) as Record<string, unknown>;
@@ -168,10 +174,14 @@ export default function ForecastModule(): JSX.Element {
       if (!groupedProducts.length) return [];
       const valid = new Set(groupedProducts.map((group) => group.key));
       const filtered = current.filter((key) => valid.has(key));
-      if (filtered.length) return filtered;
+      if (filtered.length || hasStoredExpandedPrefs) return filtered;
       return groupedProducts.map((group) => group.key);
     });
-  }, [groupedProducts]);
+  }, [groupedProducts, hasStoredExpandedPrefs]);
+
+  useEffect(() => {
+    setModuleExpandedCategoryKeys("forecast", expandedCategories);
+  }, [expandedCategories]);
 
   const revenueByMonth = useMemo(() => {
     return buildForecastRevenueByMonth({

@@ -12,7 +12,7 @@ export default function ExportImportPage(): JSX.Element {
           <div>
             <Title level={3}>Export / Import</Title>
             <Paragraph>
-              Neuer Migrationswizard fuer Legacy JSON mit Dry-Run/Apply sowie nativer Workspace JSON Transfer
+              Neuer Migrationswizard fuer Legacy JSON mit Dry-Run/Apply sowie Workspace JSON Transfer
               (Export, Backup, Import, Vorschau, Validierung).
             </Paragraph>
           </div>

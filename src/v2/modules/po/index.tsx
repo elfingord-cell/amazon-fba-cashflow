@@ -187,7 +187,11 @@ function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | nu
   };
 }
 
-export default function PoModule(): JSX.Element {
+export interface PoModuleProps {
+  embedded?: boolean;
+}
+
+export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [search, setSearch] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -471,14 +475,16 @@ export default function PoModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <div className="v2-page-head">
-          <div>
-            <Title level={3}>Purchase Orders</Title>
-            <Paragraph>
-              PO-Stammdaten, Milestones, Auto-Events und Payment-Status laufen nativ im V2 State.
-            </Paragraph>
+        {!embedded ? (
+          <div className="v2-page-head">
+            <div>
+              <Title level={3}>Purchase Orders</Title>
+              <Paragraph>
+                PO-Stammdaten, Milestones, Auto-Events und Payment-Status in einem konsistenten Arbeitsbereich.
+              </Paragraph>
+            </div>
           </div>
-        </div>
+        ) : null}
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
             <Button type="primary" onClick={openCreateModal}>Neue PO</Button>

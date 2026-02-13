@@ -2,7 +2,7 @@
 
 ## Stand
 - Datum: 2026-02-13
-- Quelle: reale V2-Abnahme nach dem Hardening-Pass.
+- Quelle: reale V2-Abnahme nach Hardening-Pass und Prozess-IA-Umstellung.
 - Schema: `id`, `route`, `severity`, `expected`, `actual-before`, `status-now`.
 
 ## Blocker/High
@@ -51,6 +51,34 @@
 - `expected`: globale Expand/Collapse-Aktionen in einheitlicher Sprache.
 - `actual-before`: keine durchgaengigen globalen Expand/Collapse-Actions.
 - `status-now`: **resolved** (`Alles auf` / `Alles zu` integriert).
+
+7. `id`: `V2UX-007`
+- `route`: `#/v2/sidebar`
+- `severity`: `high`
+- `expected`: workflow-orientierte Navigation ohne starke Kontextspruenge zwischen operativ/stammdaten/abschluss.
+- `actual-before`: rein modulgetriebene Navigation ohne klaren Prozesspfad.
+- `status-now`: **resolved** (Sektionen `Ueberblick`, `Operative Planung`, `Stammdaten`, `Monatsabschluss`, `Mehr / Tools`).
+
+8. `id`: `V2UX-008`
+- `route`: `#/v2/inventory`
+- `severity`: `high`
+- `expected`: Snapshot und Projektion getrennt nutzbar.
+- `actual-before`: gemischter vertikaler Multi-Table-Flow in einer Seite.
+- `status-now`: **resolved** (Split in `#/v2/inventory/snapshot` und `#/v2/inventory/projektion`).
+
+9. `id`: `V2UX-009`
+- `route`: `#/v2/fo`, `#/v2/po`
+- `severity`: `medium`
+- `expected`: gemeinsamer Bestellkontext mit schnellem FO/PO-Wechsel.
+- `actual-before`: getrennte Seiten ohne gemeinsamen Container.
+- `status-now`: **resolved** (`#/v2/orders/fo` und `#/v2/orders/po` unter gemeinsamem `Bestellungen`-Container).
+
+10. `id`: `V2UX-010`
+- `route`: `#/v2/products`, `#/v2/forecast`
+- `severity`: `medium`
+- `expected`: Kategorie-Expand/Collapse bleibt pro Modul zwischen Sessions erhalten.
+- `actual-before`: Zustand ging nach Reload verloren.
+- `status-now`: **resolved** (persistente `UiPrefsV2.byModule[module].expandedCategoryKeys`).
 
 ## Offene Low-Risiken
 1. `id`: `V2UI-R1`

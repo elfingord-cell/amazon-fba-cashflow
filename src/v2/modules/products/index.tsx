@@ -19,6 +19,11 @@ import { TanStackGrid } from "../../components/TanStackGrid";
 import { buildProductGridRows, type ProductGridRow } from "../../domain/tableModels";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
+import {
+  getModuleExpandedCategoryKeys,
+  hasModuleExpandedCategoryKeys,
+  setModuleExpandedCategoryKeys,
+} from "../../state/uiPrefs";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -118,11 +123,12 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
 
 export default function ProductsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("products");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
-  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("products"));
   const [form] = Form.useForm<ProductDraft>();
   const stateObject = state as unknown as Record<string, unknown>;
 
@@ -178,10 +184,14 @@ export default function ProductsModule(): JSX.Element {
       if (!groupedRows.length) return [];
       const validKeys = new Set(groupedRows.map((group) => group.key));
       const filtered = current.filter((key) => validKeys.has(key));
-      if (filtered.length) return filtered;
+      if (filtered.length || hasStoredExpandedPrefs) return filtered;
       return groupedRows.map((group) => group.key);
     });
-  }, [groupedRows]);
+  }, [groupedRows, hasStoredExpandedPrefs]);
+
+  useEffect(() => {
+    setModuleExpandedCategoryKeys("products", expandedCategories);
+  }, [expandedCategories]);
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => [
     { header: "SKU", accessorKey: "sku", meta: { width: 170 } },

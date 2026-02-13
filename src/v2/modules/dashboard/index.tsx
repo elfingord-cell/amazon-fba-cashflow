@@ -8,6 +8,7 @@ import { TanStackGrid } from "../../components/TanStackGrid";
 import { formatMonthLabel } from "../../domain/months";
 import { getEffectiveUnits, normalizeManualMap } from "../../domain/tableModels";
 import { useWorkspaceState } from "../../state/workspace";
+import { useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -126,6 +127,7 @@ function formatPercent(value: unknown): string {
 
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error } = useWorkspaceState();
+  const navigate = useNavigate();
   const [range, setRange] = useState<DashboardRange>("next6");
   const [selectedMaturityMonth, setSelectedMaturityMonth] = useState<string>("");
   const stateObject = state as unknown as Record<string, unknown>;
@@ -479,6 +481,14 @@ export default function DashboardModule(): JSX.Element {
               options={DASHBOARD_RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
               style={{ width: 180, maxWidth: "100%" }}
             />
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button onClick={() => navigate("/v2/forecast")}>Zur Absatzprognose</Button>
+            <Button onClick={() => navigate("/v2/inventory/projektion")}>Zur Bestandsprojektion</Button>
+            <Button onClick={() => navigate("/v2/orders/po")}>Zu Bestellungen</Button>
+            <Button onClick={() => navigate("/v2/abschluss/eingaben")}>Zum Abschluss</Button>
           </div>
         </div>
       </Card>

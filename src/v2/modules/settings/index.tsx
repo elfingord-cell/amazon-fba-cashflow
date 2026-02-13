@@ -276,7 +276,7 @@ export default function SettingsModule(): JSX.Element {
           <div>
             <Title level={3}>Settings</Title>
             <Paragraph>
-              Lead Times, Defaults, CNY-Fenster und Kategorien werden direkt auf dem V2 Workspace gespeichert.
+              Lead Times, Defaults, CNY-Fenster und Kategorien für die operative Planung.
             </Paragraph>
           </div>
         </div>

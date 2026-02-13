@@ -26,6 +26,11 @@ import { useWorkspaceState } from "../../state/workspace";
 const { Paragraph, Text, Title } = Typography;
 
 type ProjectionMode = "units" | "doh" | "plan";
+type InventoryView = "snapshot" | "projection" | "both";
+
+export interface InventoryModuleProps {
+  view?: InventoryView;
+}
 
 interface SnapshotItemDraft {
   amazonUnits: number;
@@ -118,7 +123,7 @@ function findPreviousSnapshot(state: Record<string, unknown>, month: string): Re
   return previous;
 }
 
-export default function InventoryModule(): JSX.Element {
+export default function InventoryModule({ view = "both" }: InventoryModuleProps = {}): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [selectedMonth, setSelectedMonth] = useState(() => currentMonthKey());
   const [snapshotDraft, setSnapshotDraft] = useState<SnapshotDraftMap>({});
@@ -127,6 +132,9 @@ export default function InventoryModule(): JSX.Element {
   const [search, setSearch] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
   const [projectionMonths, setProjectionMonths] = useState(12);
+
+  const showSnapshot = view !== "projection";
+  const showProjection = view !== "snapshot";
 
   const stateObject = state as unknown as Record<string, unknown>;
   const inventory = ((state.inventory || {}) as Record<string, unknown>);
@@ -439,9 +447,13 @@ export default function InventoryModule(): JSX.Element {
       <Card className="v2-intro-card">
         <div className="v2-page-head">
           <div>
-            <Title level={3}>Inventory</Title>
+            <Title level={3}>{showSnapshot && !showProjection ? "Bestandsaufnahme" : (showProjection && !showSnapshot ? "Bestandsprojektion" : "Inventory")}</Title>
             <Paragraph>
-              Snapshot-Erfassung und Projektion (Units / DOH / Plan) auf Basis der bestehenden Domain-Logik.
+              {showSnapshot && !showProjection
+                ? "Monatliche Snapshot-Erfassung mit Copy-Forward, Speicherung und CSV-Export."
+                : (showProjection && !showSnapshot
+                  ? "Bestandsprojektion auf Basis des gewählten Snapshots (Units / DOH / Plan) inklusive Inbound-Wirkung."
+                  : "Snapshot-Erfassung und Projektion (Units / DOH / Plan) auf Basis der bestehenden Domain-Logik.")}
             </Paragraph>
           </div>
         </div>
@@ -462,59 +474,74 @@ export default function InventoryModule(): JSX.Element {
             <Checkbox checked={onlyActive} onChange={(event) => setOnlyActive(event.target.checked)}>
               Nur aktive Produkte
             </Checkbox>
-            <Radio.Group value={projectionMode} onChange={(event) => setProjectionMode(event.target.value as ProjectionMode)}>
-              <Radio.Button value="units">Units</Radio.Button>
-              <Radio.Button value="doh">DOH</Radio.Button>
-              <Radio.Button value="plan">Plan</Radio.Button>
-            </Radio.Group>
-            <InputNumber
-              min={1}
-              max={36}
-              value={projectionMonths}
-              onChange={(value) => setProjectionMonths(Math.max(1, Math.round(Number(value) || 1)))}
-            />
+            {showProjection ? (
+              <>
+                <Radio.Group value={projectionMode} onChange={(event) => setProjectionMode(event.target.value as ProjectionMode)}>
+                  <Radio.Button value="units">Units</Radio.Button>
+                  <Radio.Button value="doh">DOH</Radio.Button>
+                  <Radio.Button value="plan">Plan</Radio.Button>
+                </Radio.Group>
+                <InputNumber
+                  min={1}
+                  max={36}
+                  value={projectionMonths}
+                  onChange={(value) => setProjectionMonths(Math.max(1, Math.round(Number(value) || 1)))}
+                />
+              </>
+            ) : null}
           </div>
-          <div className="v2-toolbar-row">
-            <Button onClick={() => { void copyFromPreviousMonth(); }}>
-              Vorherigen Monat kopieren
-            </Button>
-            <Button type="primary" onClick={() => { void saveSnapshot(); }} disabled={!snapshotDirty} loading={saving}>
-              Snapshot speichern
-            </Button>
-            <Button onClick={exportSnapshotCsv}>
-              Snapshot CSV
-            </Button>
-            {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
-            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-          </div>
+          {showSnapshot ? (
+            <div className="v2-toolbar-row">
+              <Button onClick={() => { void copyFromPreviousMonth(); }}>
+                Vorherigen Monat kopieren
+              </Button>
+              <Button type="primary" onClick={() => { void saveSnapshot(); }} disabled={!snapshotDirty} loading={saving}>
+                Snapshot speichern
+              </Button>
+              <Button onClick={exportSnapshotCsv}>
+                Snapshot CSV
+              </Button>
+              {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
+              {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+            </div>
+          ) : (
+            <div className="v2-toolbar-row">
+              <Tag color="blue">Anker-Snapshot: {selectedMonth}</Tag>
+              {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+            </div>
+          )}
         </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
-      <Card>
-        <Title level={4}>Snapshot {selectedMonth}</Title>
-        <TanStackGrid
-          data={filteredRows}
-          columns={snapshotColumns}
-          minTableWidth={980}
-          tableLayout="auto"
-        />
-      </Card>
+      {showSnapshot ? (
+        <Card>
+          <Title level={4}>Snapshot {selectedMonth}</Title>
+          <TanStackGrid
+            data={filteredRows}
+            columns={snapshotColumns}
+            minTableWidth={980}
+            tableLayout="auto"
+          />
+        </Card>
+      ) : null}
 
-      <Card>
-        <Title level={4}>Projektion ({projectionMode.toUpperCase()})</Title>
-        <Text type="secondary">
-          Zeitraum: {projectionMonthList[0] || "—"} bis {projectionMonthList[projectionMonthList.length - 1] || "—"}.
-        </Text>
-        <TanStackGrid
-          data={filteredRows}
-          columns={projectionColumns}
-          minTableWidth={Math.max(980, 500 + (projectionMonthList.length * 110))}
-          tableLayout="auto"
-        />
-      </Card>
+      {showProjection ? (
+        <Card>
+          <Title level={4}>Projektion ({projectionMode.toUpperCase()})</Title>
+          <Text type="secondary">
+            Zeitraum: {projectionMonthList[0] || "—"} bis {projectionMonthList[projectionMonthList.length - 1] || "—"}.
+          </Text>
+          <TanStackGrid
+            data={filteredRows}
+            columns={projectionColumns}
+            minTableWidth={Math.max(980, 500 + (projectionMonthList.length * 110))}
+            tableLayout="auto"
+          />
+        </Card>
+      ) : null}
     </div>
   );
 }

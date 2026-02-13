@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Layout, Menu, Space, Tag, Typography, Button, Drawer, Grid } from "antd";
 import { BankOutlined, MenuOutlined, RollbackOutlined } from "@ant-design/icons";
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { V2_ROUTES } from "./routeCatalog";
+import { V2_ROUTES, V2_ROUTE_REDIRECTS } from "./routeCatalog";
 import { useSyncSession } from "../sync/session";
 
 const { Header, Sider, Content } = Layout;
@@ -10,8 +10,10 @@ const { Text } = Typography;
 
 function sectionLabel(section: string): string {
   if (section === "overview") return "Ueberblick";
-  if (section === "planning") return "Planung";
-  return "Werkzeuge";
+  if (section === "operations") return "Operative Planung";
+  if (section === "masterdata") return "Stammdaten";
+  if (section === "closing") return "Monatsabschluss";
+  return "Mehr / Tools";
 }
 
 function formatUserLabel(userId: string | null, compact: boolean): string {
@@ -30,19 +32,51 @@ function V2Layout(): JSX.Element {
   const isDesktop = Boolean(screens.lg);
   const isMobile = !isDesktop;
 
+  const menuRoutes = useMemo(
+    () => V2_ROUTES.filter((route) => route.sidebarVisible !== false),
+    [],
+  );
+  const routeByKey = useMemo(
+    () => new Map(menuRoutes.map((route) => [route.key, route])),
+    [menuRoutes],
+  );
+
+  function normalizeRoutePath(path: string): string {
+    return String(path || "").replace(/\/\*$/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+  }
+
   const activeKey = useMemo(() => {
-    const parts = location.pathname.split("/").filter(Boolean);
-    return parts[1] || "dashboard";
-  }, [location.pathname]);
+    const relativePath = location.pathname
+      .replace(/^\/v2\/?/, "")
+      .replace(/\/+$/, "");
+    const fallback = "dashboard";
+    if (!relativePath) return fallback;
+    let selected = fallback;
+    let bestLen = -1;
+    menuRoutes.forEach((route) => {
+      const normalized = normalizeRoutePath(route.path);
+      if (!normalized) return;
+      const exactMatch = relativePath === normalized;
+      const nestedMatch = relativePath.startsWith(`${normalized}/`);
+      if (!exactMatch && !nestedMatch) return;
+      if (normalized.length > bestLen) {
+        bestLen = normalized.length;
+        selected = route.key;
+      }
+    });
+    return selected;
+  }, [location.pathname, menuRoutes]);
 
   const menuItems = useMemo(() => {
     const grouped: Record<string, unknown[]> = {
       overview: [],
-      planning: [],
+      operations: [],
+      masterdata: [],
+      closing: [],
       tools: [],
     };
 
-    V2_ROUTES.forEach((route) => {
+    menuRoutes.forEach((route) => {
       const Icon = route.icon;
       (grouped[route.section] as unknown[]).push({
         key: route.key,
@@ -57,7 +91,7 @@ function V2Layout(): JSX.Element {
       label: sectionLabel(section),
       children,
     }));
-  }, []);
+  }, [menuRoutes]);
 
   return (
     <Layout className="v2-shell">
@@ -72,7 +106,9 @@ function V2Layout(): JSX.Element {
             selectedKeys={[activeKey]}
             items={menuItems as never}
             onClick={({ key }) => {
-              navigate(`/v2/${String(key)}`);
+              const route = routeByKey.get(String(key));
+              const target = route?.menuPath || normalizeRoutePath(route?.path || "dashboard");
+              navigate(`/v2/${target}`);
             }}
           />
         </Sider>
@@ -130,7 +166,9 @@ function V2Layout(): JSX.Element {
               selectedKeys={[activeKey]}
               items={menuItems as never}
               onClick={({ key }) => {
-                navigate(`/v2/${String(key)}`);
+                const route = routeByKey.get(String(key));
+                const target = route?.menuPath || normalizeRoutePath(route?.path || "dashboard");
+                navigate(`/v2/${target}`);
                 setMobileMenuOpen(false);
               }}
             />
@@ -149,10 +187,17 @@ export function V2Routes(): JSX.Element {
     <Routes>
       <Route path="/v2" element={<V2Layout />}>
         <Route index element={<Navigate to="dashboard" replace />} />
+        {V2_ROUTE_REDIRECTS.map((redirect) => (
+          <Route
+            key={`redirect:${redirect.from}`}
+            path={redirect.from}
+            element={<Navigate to={`/v2/${redirect.to}`} replace />}
+          />
+        ))}
         {V2_ROUTES.map((route) => (
           <Route
             key={route.key}
-            path={route.key}
+            path={route.path}
             element={<route.Component />}
           />
         ))}

@@ -489,7 +489,7 @@ export default function FixcostsModule(): JSX.Element {
           <div>
             <Title level={3}>Fixkosten</Title>
             <Paragraph>
-              Stammdaten, monatliche Instanzen, Overrides und Paid-Logik laufen nativ auf dem V2-Workspace.
+              Stammdaten, monatliche Instanzen, Overrides und Paid-Logik für den Monatsabschluss.
             </Paragraph>
           </div>
         </div>

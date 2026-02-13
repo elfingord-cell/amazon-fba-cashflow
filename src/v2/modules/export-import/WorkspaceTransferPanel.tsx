@@ -227,7 +227,7 @@ export function WorkspaceTransferPanel(): JSX.Element {
       return;
     }
 
-    const confirmed = window.confirm("Workspace durch dieses V2-JSON ersetzen?");
+    const confirmed = window.confirm("Workspace durch diese JSON-Datei ersetzen?");
     if (!confirmed) return;
 
     const backupId = createWorkspaceBackup("v2:workspace-transfer:pre-import", ensureAppStateV2(state));
@@ -243,7 +243,7 @@ export function WorkspaceTransferPanel(): JSX.Element {
       <Card>
         <Title level={4}>Workspace JSON Transfer</Title>
         <Paragraph>
-          Nativer Export/Import fuer V2 Workspace-JSON. Legacy-Dateien bitte ueber den Migration Wizard importieren.
+          Export/Import fuer Workspace-JSON. Legacy-Dateien bitte ueber den Migration Wizard importieren.
         </Paragraph>
         <Space wrap>
           <Button

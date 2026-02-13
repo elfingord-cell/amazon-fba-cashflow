@@ -2,7 +2,7 @@
 
 ## Stand
 - Datum: 2026-02-13
-- Basis: reale V2-Tab-Abnahme, V2-only Hardening-Pass und technischer Verify-Lauf.
+- Basis: reale V2-Tab-Abnahme nach Prozess-IA-Rearchitektur, V2-only Hardening-Pass und technischer Verify-Lauf.
 - Scope: nur `#/v2/**`, kein Legacy.
 
 ## Prueffelder
@@ -16,21 +16,22 @@
 | Route | Header/Titel | Controls | Table-Shell | Actions | Scroll/Responsive | Ergebnis |
 |---|---|---|---|---|---|---|
 | `#/v2/dashboard` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/products` | PASS | PASS | PASS | PASS | PASS | PASS |
 | `#/v2/forecast` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/inventory` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/fo` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/po` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/inventory/snapshot` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/inventory/projektion` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/orders/fo` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/orders/po` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/plan` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/products` | PASS | PASS | PASS | PASS | PASS | PASS |
 | `#/v2/suppliers` | PASS | PASS | PASS | PASS | PASS | PASS |
 | `#/v2/settings` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/inputs` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/fixcosts` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/vat` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/payments-export` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/accounting-export` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/abschluss/eingaben` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/abschluss/fixkosten` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/abschluss/ust` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/abschluss/payments` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/abschluss/buchhalter` | PASS | PASS | PASS | PASS | PASS | PASS |
 | `#/v2/export-import` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/plan` | PASS | PASS | PASS | PASS | PASS | PASS |
-| `#/v2/debug` | PASS | PASS | PASS | PASS | PASS | PASS |
+| `#/v2/tools/debug` | PASS | PASS | PASS | PASS | PASS | PASS |
 
 ## Hotspot-Abnahme (V2)
 1. Doppelrahmen in Tabellen entfernt: `TanStackGrid` + AntD Table auf Single-Frame harmonisiert.
@@ -38,6 +39,8 @@
 3. PO/Suppliers Actions auf `nowrap` und ausreichende Spaltenbreiten gestellt.
 4. Inventory DOH-Spalten verschlankt und Table-Layout stabilisiert.
 5. Fixkosten mit globalen Expand/Collapse-Aktionen (`Alles auf` / `Alles zu`) versehen.
+6. Prozess-IA umgesetzt: Operations/Masterdata/Monatsabschluss/Tools getrennt, `Plan` sichtbar, `Debug` unter Tools.
+7. Routing-Kompatibilität aktiv: alte V2-Pfade (`fo`, `po`, `inputs`, `fixcosts`, `vat`, `payments-export`, `accounting-export`, `inventory`) redirecten auf neue Zielrouten.
 
 ## Akzeptanz gegen Kriterien
 1. `0 Blocker`: PASS.

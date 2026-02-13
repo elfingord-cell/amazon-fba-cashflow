@@ -143,7 +143,11 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-export default function FoModule(): JSX.Element {
+export interface FoModuleProps {
+  embedded?: boolean;
+}
+
+export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | FoStatus>("ALL");
@@ -609,14 +613,16 @@ export default function FoModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <div className="v2-page-head">
-          <div>
-            <Title level={3}>Forecast Orders</Title>
-            <Paragraph>
-              Backward Scheduling, FO-Empfehlung und Conversion nach PO mit V2-State und Sync.
-            </Paragraph>
+        {!embedded ? (
+          <div className="v2-page-head">
+            <div>
+              <Title level={3}>Forecast Orders</Title>
+              <Paragraph>
+                Backward Scheduling, FO-Empfehlung und Conversion nach PO in einem durchgängigen Flow.
+              </Paragraph>
+            </div>
           </div>
-        </div>
+        ) : null}
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
             <Button type="primary" onClick={openCreateModal}>Create FO</Button>
