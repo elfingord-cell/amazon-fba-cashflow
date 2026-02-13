@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Checkbox,
+  Collapse,
   Input,
   InputNumber,
   Modal,
@@ -104,6 +105,7 @@ export default function ForecastModule(): JSX.Element {
   const [importSourceLabel, setImportSourceLabel] = useState("");
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferSelection, setTransferSelection] = useState<string[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
 
   const settings = (state.settings || {}) as Record<string, unknown>;
   const forecast = (state.forecast || {}) as Record<string, unknown>;
@@ -145,6 +147,32 @@ export default function ForecastModule(): JSX.Element {
     });
   }, [forecastImport, manualDraft, onlyActive, onlyWithForecast, products, search, visibleMonths]);
 
+  const groupedProducts = useMemo(() => {
+    const groups = new Map<string, ProductRow[]>();
+    filteredProducts.forEach((row) => {
+      const key = String(row.categoryLabel || "Ohne Kategorie");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)?.push(row);
+    });
+    return Array.from(groups.entries())
+      .map(([key, rows]) => ({
+        key,
+        label: key,
+        rows: rows.sort((a, b) => a.sku.localeCompare(b.sku)),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [filteredProducts]);
+
+  useEffect(() => {
+    setExpandedCategories((current) => {
+      if (!groupedProducts.length) return [];
+      const valid = new Set(groupedProducts.map((group) => group.key));
+      const filtered = current.filter((key) => valid.has(key));
+      if (filtered.length) return filtered;
+      return groupedProducts.map((group) => group.key);
+    });
+  }, [groupedProducts]);
+
   const revenueByMonth = useMemo(() => {
     return buildForecastRevenueByMonth({
       allMonths,
@@ -156,11 +184,11 @@ export default function ForecastModule(): JSX.Element {
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
     const base: ColumnDef<ProductRow>[] = [
-      { header: "SKU", accessorKey: "sku" },
-      { header: "Alias", accessorKey: "alias" },
-      { header: "Kategorie", accessorKey: "categoryLabel" },
+      { header: "SKU", accessorKey: "sku", meta: { width: 190, minWidth: 190 } },
+      { header: "Alias", accessorKey: "alias", meta: { width: 220, minWidth: 220 } },
       {
         header: "Status",
+        meta: { width: 86, minWidth: 86 },
         cell: ({ row }) => row.original.isActive ? <Tag color="green">Aktiv</Tag> : <Tag>Inaktiv</Tag>,
       },
     ];
@@ -168,6 +196,7 @@ export default function ForecastModule(): JSX.Element {
     const monthColumns: ColumnDef<ProductRow>[] = visibleMonths.map((month) => ({
       id: month,
       header: formatMonthLabel(month),
+      meta: { width: 118, minWidth: 118, align: "right" },
       cell: ({ row }) => {
         const sku = row.original.sku;
         const manualValue = manualDraft?.[sku]?.[month];
@@ -178,6 +207,7 @@ export default function ForecastModule(): JSX.Element {
           return (
             <div className="v2-forecast-cell">
               <InputNumber
+                className="v2-grid-input"
                 value={Number.isFinite(manualValue) ? manualValue : null}
                 onChange={(nextValue) => {
                   setManualDraft((prev) => {
@@ -470,12 +500,52 @@ export default function ForecastModule(): JSX.Element {
       </Card>
 
       <Card>
-        <TanStackGrid
-          data={filteredProducts}
-          columns={columns}
-          minTableWidth={1200}
-          tableLayout="auto"
-        />
+        <div className="v2-category-tools">
+          <Text type="secondary">{filteredProducts.length} Produkte in {groupedProducts.length} Kategorien</Text>
+          <div className="v2-actions-inline">
+            <Button
+              size="small"
+              onClick={() => setExpandedCategories(groupedProducts.map((group) => group.key))}
+              disabled={!groupedProducts.length}
+            >
+              Alles auf
+            </Button>
+            <Button
+              size="small"
+              onClick={() => setExpandedCategories([])}
+              disabled={!expandedCategories.length}
+            >
+              Alles zu
+            </Button>
+          </div>
+        </div>
+
+        {!groupedProducts.length ? (
+          <Text type="secondary">Keine Forecast-Zeilen für den aktuellen Filter.</Text>
+        ) : (
+          <Collapse
+            className="v2-category-collapse"
+            activeKey={expandedCategories}
+            onChange={(nextKeys) => setExpandedCategories((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).map(String))}
+            items={groupedProducts.map((group) => ({
+              key: group.key,
+              label: (
+                <Space>
+                  <Text strong>{group.label}</Text>
+                  <span className="v2-category-count">{group.rows.length} Produkte</span>
+                </Space>
+              ),
+              children: (
+                <TanStackGrid
+                  data={group.rows}
+                  columns={columns}
+                  minTableWidth={Math.max(980, 520 + (visibleMonths.length * 118))}
+                  tableLayout="fixed"
+                />
+              ),
+            }))}
+          />
+        )}
       </Card>
 
       <Modal

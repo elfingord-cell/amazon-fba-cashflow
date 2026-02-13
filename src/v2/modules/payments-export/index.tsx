@@ -250,12 +250,16 @@ export default function PaymentsExportModule(): JSX.Element {
                 ]}
               />
             </div>
-            <Button type="primary" onClick={exportRows}>
-              Export
-            </Button>
-            <Button onClick={() => { void reload(); }}>
-              Neu laden
-            </Button>
+          </div>
+          <div className="v2-toolbar-row v2-toolbar-actions">
+            <div className="v2-actions-inline">
+              <Button type="primary" onClick={exportRows}>
+                Export
+              </Button>
+              <Button onClick={() => { void reload(); }}>
+                Neu laden
+              </Button>
+            </div>
             <Tag color="blue">Zeilen: {rows.length}</Tag>
             <Tag color="green">Ist (PAID): {formatCurrency(paidActualTotal)}</Tag>
             <Tag color="orange">Soll (OPEN): {formatCurrency(openPlannedTotal)}</Tag>

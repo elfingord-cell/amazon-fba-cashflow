@@ -235,7 +235,7 @@ export default function AccountingExportModule(): JSX.Element {
                 type="month"
                 value={month}
                 onChange={(event) => setMonth(event.target.value || currentMonthKey())}
-                style={{ width: 180 }}
+                style={{ width: 180, maxWidth: "100%" }}
               />
             </div>
             <div className="v2-toolbar-field">
@@ -250,15 +250,19 @@ export default function AccountingExportModule(): JSX.Element {
                 placeholder="z.B. 150000"
                 value={inventoryOverrideRaw}
                 onChange={(event) => setInventoryOverrideRaw(event.target.value)}
-                style={{ width: 220 }}
+                style={{ width: 220, maxWidth: "100%" }}
               />
             </div>
-            <Button type="primary" onClick={() => { void handleExport(); }} loading={exportBusy}>
-              Paket erstellen
-            </Button>
-            <Button onClick={() => { void handleCopyEmail(); }}>
-              E-Mail Text kopieren
-            </Button>
+          </div>
+          <div className="v2-toolbar-row v2-toolbar-actions">
+            <div className="v2-actions-inline">
+              <Button type="primary" onClick={() => { void handleExport(); }} loading={exportBusy}>
+                Paket erstellen
+              </Button>
+              <Button onClick={() => { void handleCopyEmail(); }}>
+                E-Mail Text kopieren
+              </Button>
+            </div>
             <Tag color="blue">Anzahlungen: {preview.deposits.length}</Tag>
             <Tag color="blue">Wareneingaenge: {preview.arrivals.length}</Tag>
             <Tag color={preview.quality.length ? "red" : "green"}>Issues: {preview.quality.length}</Tag>

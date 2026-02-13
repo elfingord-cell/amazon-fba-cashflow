@@ -1191,7 +1191,7 @@ tr.income-source-manual td{background:rgba(234,179,8,0.05);}
 .table-actions.ui-table-actions-nowrap{display:inline-flex; gap:6px; flex-wrap:nowrap; white-space:nowrap;}
 .banner.info{padding:12px 16px; border-radius:12px; background:rgba(38,132,255,0.12); color:#0b3d91; margin-bottom:16px;}
 .banner.warning{padding:12px 16px; border-radius:12px; background:rgba(245,166,35,0.16); color:#7a4b00; margin-bottom:16px;}
-.sync-banner-container{position:fixed; top:16px; right:20px; max-width:380px; z-index:100;}
+.sync-banner-container{position:fixed; top:74px; right:20px; max-width:380px; z-index:90;}
 .sync-banner{position:relative; padding-right:36px;}
 .sync-banner-content{font-size:13px; line-height:1.4;}
 .sync-banner-actions{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}

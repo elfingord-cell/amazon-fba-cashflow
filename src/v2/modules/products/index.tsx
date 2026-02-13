@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
   Card,
   Checkbox,
+  Collapse,
   Form,
   Input,
   InputNumber,
@@ -121,6 +122,7 @@ export default function ProductsModule(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [form] = Form.useForm<ProductDraft>();
   const stateObject = state as unknown as Record<string, unknown>;
 
@@ -155,14 +157,35 @@ export default function ProductsModule(): JSX.Element {
     });
   }, [categoryLabelById, search, stateObject, statusFilter, supplierLabelById]);
 
+  const groupedRows = useMemo(() => {
+    const groups = new Map<string, ProductRow[]>();
+    rows.forEach((row) => {
+      const categoryLabel = row.categoryId ? (categoryLabelById.get(row.categoryId) || "Ohne Kategorie") : "Ohne Kategorie";
+      if (!groups.has(categoryLabel)) groups.set(categoryLabel, []);
+      groups.get(categoryLabel)?.push(row);
+    });
+    return Array.from(groups.entries())
+      .map(([category, items]) => ({
+        key: category,
+        label: category,
+        rows: items.sort((a, b) => a.sku.localeCompare(b.sku)),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [categoryLabelById, rows]);
+
+  useEffect(() => {
+    setExpandedCategories((current) => {
+      if (!groupedRows.length) return [];
+      const validKeys = new Set(groupedRows.map((group) => group.key));
+      const filtered = current.filter((key) => validKeys.has(key));
+      if (filtered.length) return filtered;
+      return groupedRows.map((group) => group.key);
+    });
+  }, [groupedRows]);
+
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => [
     { header: "SKU", accessorKey: "sku", meta: { width: 170 } },
     { header: "Alias", accessorKey: "alias", meta: { width: 230 } },
-    {
-      header: "Kategorie",
-      meta: { width: 140 },
-      cell: ({ row }) => (row.original.categoryId ? categoryLabelById.get(row.original.categoryId) || row.original.categoryId : "Ohne Kategorie"),
-    },
     {
       header: "Supplier",
       meta: { width: 190 },
@@ -254,7 +277,7 @@ export default function ProductsModule(): JSX.Element {
         </div>
       ),
     },
-  ], [categoryLabelById, form, saveWith, supplierLabelById]);
+  ], [form, saveWith, supplierLabelById]);
 
   async function handleSave(values: ProductDraft): Promise<void> {
     const sku = values.sku.trim();
@@ -385,12 +408,52 @@ export default function ProductsModule(): JSX.Element {
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <TanStackGrid
-          data={rows}
-          columns={columns}
-          minTableWidth={1500}
-          tableLayout="auto"
-        />
+        <div className="v2-category-tools">
+          <Text type="secondary">{rows.length} Produkte in {groupedRows.length} Kategorien</Text>
+          <div className="v2-actions-inline">
+            <Button
+              size="small"
+              onClick={() => setExpandedCategories(groupedRows.map((group) => group.key))}
+              disabled={!groupedRows.length}
+            >
+              Alles auf
+            </Button>
+            <Button
+              size="small"
+              onClick={() => setExpandedCategories([])}
+              disabled={!expandedCategories.length}
+            >
+              Alles zu
+            </Button>
+          </div>
+        </div>
+
+        {!groupedRows.length ? (
+          <Text type="secondary">Keine Produkte für den aktuellen Filter.</Text>
+        ) : (
+          <Collapse
+            className="v2-category-collapse"
+            activeKey={expandedCategories}
+            onChange={(nextKeys) => setExpandedCategories((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).map(String))}
+            items={groupedRows.map((group) => ({
+              key: group.key,
+              label: (
+                <Space>
+                  <Text strong>{group.label}</Text>
+                  <span className="v2-category-count">{group.rows.length} Produkte</span>
+                </Space>
+              ),
+              children: (
+                <TanStackGrid
+                  data={group.rows}
+                  columns={columns}
+                  minTableWidth={1380}
+                  tableLayout="auto"
+                />
+              ),
+            }))}
+          />
+        )}
       </Card>
 
       <Modal

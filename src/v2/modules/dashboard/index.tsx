@@ -1,11 +1,12 @@
-import { useMemo } from "react";
-import { Alert, Card, Col, Progress, Row, Space, Statistic, Table, Tag, Typography } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, Button, Card, Col, Progress, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { formatMonthLabel } from "../../domain/months";
+import { getEffectiveUnits, normalizeManualMap } from "../../domain/tableModels";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Text, Title } = Typography;
@@ -70,6 +71,29 @@ interface ProductAbcRow {
   abcClass: string | null;
 }
 
+type DashboardRange = "next6" | "next12" | "next18" | "all";
+
+interface MonthMaturityCheck {
+  key: string;
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface MonthMaturityRow {
+  month: string;
+  scorePct: number;
+  allGreen: boolean;
+  checks: MonthMaturityCheck[];
+}
+
+const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
+  { value: "next6", label: "Nächste 6 Monate", count: 6 },
+  { value: "next12", label: "Nächste 12 Monate", count: 12 },
+  { value: "next18", label: "Nächste 18 Monate", count: 18 },
+  { value: "all", label: "Alle Monate", count: null },
+];
+
 function isActiveProduct(product: Record<string, unknown>): boolean {
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;
@@ -102,6 +126,8 @@ function formatPercent(value: unknown): string {
 
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error } = useWorkspaceState();
+  const [range, setRange] = useState<DashboardRange>("next6");
+  const [selectedMaturityMonth, setSelectedMaturityMonth] = useState<string>("");
   const stateObject = state as unknown as Record<string, unknown>;
 
   const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [state]);
@@ -111,15 +137,78 @@ export default function DashboardModule(): JSX.Element {
   const actualComparisons = report.actualComparisons || [];
   const kpis = report.kpis || {};
 
-  const latestBreakdown = breakdown[breakdown.length - 1] || null;
-  const totalInflow = seriesRows.reduce((sum, row) => sum + Number(row.inflow?.total || 0), 0);
-  const totalOutflow = seriesRows.reduce((sum, row) => sum + Number(row.outflow?.total || 0), 0);
-  const totalNet = seriesRows.reduce((sum, row) => sum + Number(row.net?.total || 0), 0);
+  const visibleMonths = useMemo(() => {
+    const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
+    if (!option || option.count == null) return months;
+    return months.slice(0, option.count);
+  }, [months, range]);
+
+  const visibleMonthSet = useMemo(() => new Set(visibleMonths), [visibleMonths]);
+
+  const visibleSeriesRows = useMemo(
+    () => seriesRows.filter((row) => visibleMonthSet.has(row.month)),
+    [seriesRows, visibleMonthSet],
+  );
+  const visibleBreakdown = useMemo(
+    () => breakdown.filter((row) => visibleMonthSet.has(row.month)),
+    [breakdown, visibleMonthSet],
+  );
+  const visibleActualComparisons = useMemo(
+    () => actualComparisons.filter((row) => visibleMonthSet.has(row.month)),
+    [actualComparisons, visibleMonthSet],
+  );
+
+  const latestBreakdown = visibleBreakdown[visibleBreakdown.length - 1] || null;
+  const totalInflow = visibleSeriesRows.reduce((sum, row) => sum + Number(row.inflow?.total || 0), 0);
+  const totalOutflow = visibleSeriesRows.reduce((sum, row) => sum + Number(row.outflow?.total || 0), 0);
+  const totalNet = visibleSeriesRows.reduce((sum, row) => sum + Number(row.net?.total || 0), 0);
 
   const abcSnapshot = useMemo(() => computeAbcClassification(stateObject), [state]);
   const abcRows = useMemo(() => {
     return Array.from(abcSnapshot.bySku.values()) as ProductAbcRow[];
   }, [abcSnapshot.bySku]);
+
+  const activeABucketSkus = useMemo(() => {
+    return abcRows
+      .filter((row) => row.active && row.abcClass === "A")
+      .map((row) => String(row.sku || "").trim())
+      .filter(Boolean);
+  }, [abcRows]);
+
+  const forecastImport = useMemo(() => {
+    const forecast = (state.forecast && typeof state.forecast === "object") ? state.forecast as Record<string, unknown> : {};
+    return (forecast.forecastImport && typeof forecast.forecastImport === "object")
+      ? forecast.forecastImport as Record<string, unknown>
+      : {};
+  }, [state.forecast]);
+
+  const forecastManual = useMemo(() => {
+    const forecast = (state.forecast && typeof state.forecast === "object") ? state.forecast as Record<string, unknown> : {};
+    return normalizeManualMap((forecast.forecastManual || {}) as Record<string, unknown>);
+  }, [state.forecast]);
+
+  const hasFixcosts = Array.isArray(state.fixcosts) && state.fixcosts.length > 0;
+  const hasVatConfig = useMemo(() => {
+    const vatPreview = state.settings && typeof state.settings === "object"
+      ? (state.settings as Record<string, unknown>).vatPreview
+      : null;
+    return Boolean(vatPreview && typeof vatPreview === "object");
+  }, [state.settings]);
+
+  const incomingsMonthSet = useMemo(() => {
+    const set = new Set<string>();
+    (Array.isArray(state.incomings) ? state.incomings : []).forEach((entry) => {
+      const month = String((entry as Record<string, unknown>).month || "").trim();
+      if (month) set.add(month);
+    });
+    return set;
+  }, [state.incomings]);
+
+  const seriesByMonth = useMemo(() => {
+    const map = new Map<string, DashboardSeriesRow>();
+    seriesRows.forEach((row) => map.set(row.month, row));
+    return map;
+  }, [seriesRows]);
 
   const activeProducts = useMemo(() => {
     return (Array.isArray(state.products) ? state.products : [])
@@ -145,30 +234,88 @@ export default function DashboardModule(): JSX.Element {
     ? Math.round((forecastCoveredCount / activeProducts.length) * 100)
     : 0;
 
-  const maturityChecks = useMemo(() => {
-    const hasIncomings = Array.isArray(state.incomings) && state.incomings.length > 0;
-    const hasFixcosts = Array.isArray(state.fixcosts) && state.fixcosts.length > 0;
-    const hasOrders = (Array.isArray(state.pos) && state.pos.length > 0) || (Array.isArray(state.fos) && state.fos.length > 0);
-    const vatPreview = state.settings && typeof state.settings === "object"
-      ? (state.settings as Record<string, unknown>).vatPreview
-      : null;
-    const hasVatConfig = Boolean(vatPreview && typeof vatPreview === "object");
-    const checks = [
-      { key: "incomings", label: "Cash-In Daten", ok: hasIncomings },
-      { key: "fixcosts", label: "Fixkosten", ok: hasFixcosts },
-      { key: "orders", label: "PO/FO Daten", ok: hasOrders },
-      { key: "vat", label: "USt-Vorschau", ok: hasVatConfig },
-      { key: "forecast", label: "Forecast-Abdeckung >= 70%", ok: forecastCoveragePct >= 70 },
-    ];
-    const okCount = checks.filter((entry) => entry.ok).length;
-    return {
-      checks,
-      scorePct: Math.round((okCount / checks.length) * 100),
-    };
-  }, [forecastCoveragePct, state.fixcosts, state.fos, state.incomings, state.pos, state.settings]);
+  const maturityByMonth = useMemo<MonthMaturityRow[]>(() => {
+    return visibleMonths.map((month) => {
+      const seriesForMonth = seriesByMonth.get(month);
+      const outflow = Number(seriesForMonth?.outflow?.total || 0);
+      const inflow = Number(seriesForMonth?.inflow?.total || 0);
+      const coveredACount = activeABucketSkus.filter((sku) => {
+        const units = getEffectiveUnits(forecastManual, forecastImport, sku, month);
+        return Number.isFinite(units as number) && Number(units) > 0;
+      }).length;
+      const coveragePct = activeABucketSkus.length
+        ? Math.round((coveredACount / activeABucketSkus.length) * 100)
+        : 100;
+      const checks: MonthMaturityCheck[] = [
+        {
+          key: "incomings",
+          label: "Cash-In Monat gepflegt",
+          ok: incomingsMonthSet.has(month),
+          detail: incomingsMonthSet.has(month) ? "vorhanden" : "fehlend",
+        },
+        {
+          key: "orders",
+          label: "PO/FO Zahlungswirkung",
+          ok: outflow > 0,
+          detail: outflow > 0 ? formatCurrency(outflow) : "keine geplanten Auszahlungen",
+        },
+        {
+          key: "forecastA",
+          label: "A-Produkte Forecast",
+          ok: coveragePct === 100,
+          detail: `${coveredACount}/${activeABucketSkus.length || 0} (${coveragePct} %)`,
+        },
+        {
+          key: "fixcosts",
+          label: "Fixkosten vorhanden",
+          ok: hasFixcosts,
+          detail: hasFixcosts ? "ja" : "nein",
+        },
+        {
+          key: "vat",
+          label: "USt-Konfiguration",
+          ok: hasVatConfig,
+          detail: hasVatConfig ? "ja" : "nein",
+        },
+        {
+          key: "inflow",
+          label: "Einzahlungen geplant",
+          ok: inflow > 0,
+          detail: inflow > 0 ? formatCurrency(inflow) : "keine Einzahlungen",
+        },
+      ];
+      const okCount = checks.filter((entry) => entry.ok).length;
+      return {
+        month,
+        checks,
+        scorePct: Math.round((okCount / checks.length) * 100),
+        allGreen: okCount === checks.length,
+      };
+    });
+  }, [activeABucketSkus, forecastImport, forecastManual, hasFixcosts, hasVatConfig, incomingsMonthSet, seriesByMonth, visibleMonths]);
+
+  useEffect(() => {
+    if (!maturityByMonth.length) {
+      setSelectedMaturityMonth("");
+      return;
+    }
+    if (!selectedMaturityMonth || !maturityByMonth.some((entry) => entry.month === selectedMaturityMonth)) {
+      setSelectedMaturityMonth(maturityByMonth[0].month);
+    }
+  }, [maturityByMonth, selectedMaturityMonth]);
+
+  const selectedMaturity = useMemo(() => {
+    return maturityByMonth.find((entry) => entry.month === selectedMaturityMonth) || maturityByMonth[0] || null;
+  }, [maturityByMonth, selectedMaturityMonth]);
+
+  const monthMaturityMap = useMemo(() => {
+    const map = new Map<string, MonthMaturityRow>();
+    maturityByMonth.forEach((entry) => map.set(entry.month, entry));
+    return map;
+  }, [maturityByMonth]);
 
   const chartOption = useMemo(() => {
-    const monthLabels = months.map((month) => formatMonthLabel(month));
+    const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
     return {
       tooltip: {
         trigger: "axis",
@@ -178,7 +325,7 @@ export default function DashboardModule(): JSX.Element {
       },
       grid: {
         left: 56,
-        right: 20,
+        right: 62,
         top: 44,
         bottom: 32,
       },
@@ -189,7 +336,12 @@ export default function DashboardModule(): JSX.Element {
       yAxis: [
         {
           type: "value",
-          name: "Monat",
+          name: "Cashflow",
+        },
+        {
+          type: "value",
+          name: "Kontostand",
+          position: "right",
         },
       ],
       series: [
@@ -197,33 +349,50 @@ export default function DashboardModule(): JSX.Element {
           name: "Inflow",
           type: "bar",
           stack: "cash",
-          data: seriesRows.map((row) => Number(row.inflow?.total || 0)),
+          data: visibleSeriesRows.map((row) => Number(row.inflow?.total || 0)),
           itemStyle: { color: "#27ae60" },
         },
         {
           name: "Outflow",
           type: "bar",
           stack: "cash",
-          data: seriesRows.map((row) => -Number(row.outflow?.total || 0)),
+          data: visibleSeriesRows.map((row) => -Number(row.outflow?.total || 0)),
           itemStyle: { color: "#e74c3c" },
         },
         {
           name: "Net",
           type: "line",
           smooth: true,
-          data: seriesRows.map((row) => Number(row.net?.total || 0)),
+          data: visibleSeriesRows.map((row) => Number(row.net?.total || 0)),
           itemStyle: { color: "#0f1b2d" },
         },
         {
-          name: "Closing",
+          name: "Kontostand (grün)",
           type: "line",
           smooth: true,
-          data: breakdown.map((row) => Number(row.closing || 0)),
+          yAxisIndex: 1,
+          connectNulls: false,
+          data: visibleBreakdown.map((row) => (monthMaturityMap.get(row.month)?.allGreen ? Number(row.closing || 0) : null)),
+          lineStyle: { width: 2 },
           itemStyle: { color: "#3bc2a7" },
+        },
+        {
+          name: "Kontostand (ungeplant)",
+          type: "line",
+          smooth: true,
+          yAxisIndex: 1,
+          connectNulls: false,
+          data: visibleBreakdown.map((row) => (!monthMaturityMap.get(row.month)?.allGreen ? Number(row.closing || 0) : null)),
+          lineStyle: {
+            width: 2,
+            type: "dashed",
+            color: "#94a3b8",
+          },
+          itemStyle: { color: "#94a3b8" },
         },
       ],
     };
-  }, [breakdown, months, seriesRows]);
+  }, [monthMaturityMap, visibleBreakdown, visibleMonths, visibleSeriesRows]);
 
   const actualColumns = useMemo<ColumnDef<ActualComparisonRow>[]>(() => [
     { header: "Monat", accessorKey: "month" },
@@ -278,7 +447,19 @@ export default function DashboardModule(): JSX.Element {
       width: 140,
       render: (ok: boolean) => (ok ? <Tag color="green">OK</Tag> : <Tag color="red">Offen</Tag>),
     },
+    {
+      title: "Detail",
+      dataIndex: "detail",
+      key: "detail",
+      width: 180,
+      render: (value: string) => <Text type="secondary">{value}</Text>,
+    },
   ], []);
+
+  const readyMonthCount = useMemo(
+    () => maturityByMonth.filter((entry) => entry.allGreen).length,
+    [maturityByMonth],
+  );
 
   return (
     <div className="v2-page">
@@ -289,6 +470,15 @@ export default function DashboardModule(): JSX.Element {
             <Paragraph>
               Plan/Ist Uebersicht mit Cashflow-KPIs, Monatsverlauf, Datenreife und Produkt-Forecast-Abdeckung.
             </Paragraph>
+          </div>
+          <div className="v2-toolbar-field">
+            <Text>Zeitraum</Text>
+            <Select
+              value={range}
+              onChange={(value) => setRange(value)}
+              options={DASHBOARD_RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
+              style={{ width: 180, maxWidth: "100%" }}
+            />
           </div>
         </div>
       </Card>
@@ -340,16 +530,33 @@ export default function DashboardModule(): JSX.Element {
           <Card>
             <Title level={4}>Reifegrad</Title>
             <Paragraph type="secondary">
-              Score basiert auf Kerninputs und Forecast-Abdeckung.
+              Monatsstatus ist anklickbar. Nur komplett grüne Monate gelten als belastbar geplant.
             </Paragraph>
-            <Progress percent={maturityChecks.scorePct} status={maturityChecks.scorePct >= 70 ? "success" : "active"} />
+            <Space wrap style={{ marginBottom: 10 }}>
+              {maturityByMonth.map((entry) => (
+                <Button
+                  key={entry.month}
+                  size="small"
+                  type={entry.month === selectedMaturity?.month ? "primary" : "default"}
+                  onClick={() => setSelectedMaturityMonth(entry.month)}
+                >
+                  {formatMonthLabel(entry.month)}
+                  {" "}
+                  {entry.allGreen ? "●" : "○"}
+                </Button>
+              ))}
+            </Space>
+            <Progress
+              percent={selectedMaturity?.scorePct || 0}
+              status={(selectedMaturity?.allGreen || false) ? "success" : "active"}
+            />
             <Table
               style={{ marginTop: 12 }}
               size="small"
               pagination={false}
               rowKey="key"
               columns={maturityColumns}
-              dataSource={maturityChecks.checks}
+              dataSource={selectedMaturity?.checks || []}
             />
             <div style={{ marginTop: 16 }}>
               <Text strong>Produktabdeckung</Text>
@@ -357,6 +564,7 @@ export default function DashboardModule(): JSX.Element {
               <div>Mit Forecast (6M): {forecastCoveredCount}</div>
               <div>Coverage: {formatNumber(forecastCoveragePct, 0)} %</div>
               <div>ABC A/B/C: {abcClassCounts.A} / {abcClassCounts.B} / {abcClassCounts.C}</div>
+              <div>Monate komplett grün: {readyMonthCount} / {maturityByMonth.length}</div>
             </div>
           </Card>
         </Col>
@@ -368,7 +576,7 @@ export default function DashboardModule(): JSX.Element {
           Monatsvergleich zwischen geplantem und erfasstem Istwert aus den Monats-Ist-Daten.
         </Paragraph>
         <TanStackGrid
-          data={actualComparisons}
+          data={visibleActualComparisons}
           columns={actualColumns}
           minTableWidth={980}
           tableLayout="auto"

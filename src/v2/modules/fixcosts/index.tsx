@@ -537,7 +537,7 @@ export default function FixcostsModule(): JSX.Element {
         </Space>
 
         <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table">
+          <table className="v2-stats-table v2-fixcost-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -570,7 +570,7 @@ export default function FixcostsModule(): JSX.Element {
                         value={row.category}
                         options={CATEGORY_OPTIONS.map((value) => ({ value, label: value }))}
                         onChange={(value) => updateRow(row.id, (current) => ({ ...current, category: value }))}
-                        style={{ width: 160 }}
+                        style={{ width: "100%" }}
                       />
                     </td>
                     <td>
@@ -587,7 +587,7 @@ export default function FixcostsModule(): JSX.Element {
                           value={row.frequency}
                           options={FREQUENCY_OPTIONS}
                           onChange={(value) => updateRow(row.id, (current) => ({ ...current, frequency: value }))}
-                          style={{ width: 180 }}
+                          style={{ width: "100%" }}
                         />
                         {row.frequency === "custom" ? (
                           <InputNumber
@@ -597,7 +597,7 @@ export default function FixcostsModule(): JSX.Element {
                               ...current,
                               intervalMonths: Math.max(1, Number(value || 1)),
                             }))}
-                            style={{ width: 120 }}
+                            style={{ width: "100%" }}
                           />
                         ) : null}
                       </Space>
@@ -608,7 +608,7 @@ export default function FixcostsModule(): JSX.Element {
                         options={ANCHOR_OPTIONS}
                         onChange={(value) => updateRow(row.id, (current) => ({ ...current, anchor: value }))}
                         status={errors.includes("anchor") ? "error" : ""}
-                        style={{ width: 140 }}
+                        style={{ width: "100%" }}
                       />
                     </td>
                     <td>
@@ -648,7 +648,7 @@ export default function FixcostsModule(): JSX.Element {
                               ...current,
                               proration: { ...current.proration, method: value },
                             }))}
-                            style={{ width: 150 }}
+                            style={{ width: "100%" }}
                           />
                         ) : null}
                       </Space>

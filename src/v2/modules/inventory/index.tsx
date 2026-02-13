@@ -230,6 +230,7 @@ export default function InventoryModule(): JSX.Element {
       meta: { width: 116, align: "right" },
       cell: ({ row }) => (
         <InputNumber
+          className="v2-grid-input"
           value={row.original.amazonUnits}
           min={0}
           style={{ width: "100%" }}
@@ -253,6 +254,7 @@ export default function InventoryModule(): JSX.Element {
       meta: { width: 116, align: "right" },
       cell: ({ row }) => (
         <InputNumber
+          className="v2-grid-input"
           value={row.original.threePLUnits}
           min={0}
           style={{ width: "100%" }}
