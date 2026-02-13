@@ -51,7 +51,7 @@ module.exports = function handler(req, res) {
     supabaseAnonKey,
     realtimeEnabled: toBoolean(readEnv("REALTIME_ENABLED", "VITE_REALTIME_ENABLED"), true),
     presenceHeartbeatMs: toMs(readEnv("PRESENCE_HEARTBEAT_MS", "VITE_PRESENCE_HEARTBEAT_MS"), 20000),
-    fallbackPollMs: toMs(readEnv("FALLBACK_POLL_MS", "VITE_FALLBACK_POLL_MS"), 15000),
+    fallbackPollMs: toMs(readEnv("FALLBACK_POLL_MS", "VITE_FALLBACK_POLL_MS"), 4000),
     editGraceMs: toMs(readEnv("EDIT_GRACE_MS", "VITE_EDIT_GRACE_MS"), 1200),
   });
 };

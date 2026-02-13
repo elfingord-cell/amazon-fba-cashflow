@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -100,6 +100,31 @@ function randomId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function normalizeDraft(values: SettingsDraft): string {
+  return JSON.stringify({
+    air: Number(values.air || 0),
+    rail: Number(values.rail || 0),
+    sea: Number(values.sea || 0),
+    defaultBufferDays: Number(values.defaultBufferDays || 0),
+    defaultCurrency: String(values.defaultCurrency || ""),
+    fxRate: toOptionalNumber(values.fxRate),
+    eurUsdRate: toOptionalNumber(values.eurUsdRate),
+    safetyStockDohDefault: Number(values.safetyStockDohDefault || 0),
+    foCoverageDohDefault: Number(values.foCoverageDohDefault || 0),
+    moqDefaultUnits: Number(values.moqDefaultUnits || 0),
+    monthAnchorDay: String(values.monthAnchorDay || ""),
+    cnyStart: String(values.cnyStart || ""),
+    cnyEnd: String(values.cnyEnd || ""),
+  });
+}
+
+function isEditableNode(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.matches("input:not([type='hidden']), textarea, [contenteditable='true']")) return true;
+  if (target.closest(".ant-select, .ant-picker, .ant-input-number")) return true;
+  return false;
+}
+
 export default function SettingsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -113,12 +138,25 @@ export default function SettingsModule(): JSX.Element {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [editingCategory, setEditingCategory] = useState<CategoryRow | null>(null);
   const [categoryForm] = Form.useForm<{ name: string; sortOrder: number }>();
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const lastSavedHashRef = useRef("");
+  const [autoSaveHint, setAutoSaveHint] = useState("");
 
   useEffect(() => {
     const nextSeed = settingsDraftFromState(settings);
     setDraftSeed(nextSeed);
     form.setFieldsValue(nextSeed);
+    lastSavedHashRef.current = normalizeDraft(nextSeed);
   }, [form, settings]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current != null) {
+        window.clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const categoryRows = useMemo(() => {
     const categories = Array.isArray(state.productCategories) ? state.productCategories : [];
@@ -202,7 +240,7 @@ export default function SettingsModule(): JSX.Element {
     },
   ], [categoryForm, saveWith]);
 
-  async function handleSaveSettings(values: SettingsDraft): Promise<void> {
+  async function handleSaveSettings(values: SettingsDraft, source = "v2:settings:save"): Promise<void> {
     if ((values.cnyStart && !values.cnyEnd) || (!values.cnyStart && values.cnyEnd)) {
       throw new Error("Bitte CNY Start und Ende gemeinsam setzen.");
     }
@@ -237,7 +275,31 @@ export default function SettingsModule(): JSX.Element {
         lastUpdatedAt: nowIso(),
       };
       return next;
-    }, "v2:settings:save");
+    }, source);
+    lastSavedHashRef.current = normalizeDraft(values);
+    setAutoSaveHint(`Gespeichert: ${new Date().toLocaleTimeString("de-DE")}`);
+  }
+
+  function scheduleAutoSave(): void {
+    if (autoSaveTimerRef.current != null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      if (saving) {
+        scheduleAutoSave();
+        return;
+      }
+      const values = form.getFieldsValue(true) as SettingsDraft;
+      const currentHash = normalizeDraft(values);
+      if (currentHash === lastSavedHashRef.current) return;
+      void form
+        .validateFields()
+        .then((validated) => handleSaveSettings(validated as SettingsDraft, "v2:settings:auto"))
+        .catch(() => {
+          // Validation errors are shown by Form; autosave will retry on next blur/change.
+        });
+    }, 420);
   }
 
   async function handleAddCategory(): Promise<void> {
@@ -300,6 +362,7 @@ export default function SettingsModule(): JSX.Element {
           <div className="v2-toolbar-row">
             {saving ? <Tag color="processing">Speichern...</Tag> : null}
             {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+            {autoSaveHint ? <Tag color="blue">{autoSaveHint}</Tag> : null}
           </div>
         </div>
       </Card>
@@ -312,6 +375,13 @@ export default function SettingsModule(): JSX.Element {
           form={form}
           layout="vertical"
           initialValues={draftSeed}
+          onValuesChange={() => {
+            setAutoSaveHint("Ungespeicherte Aenderungen");
+          }}
+          onBlurCapture={(event) => {
+            if (!isEditableNode(event.target)) return;
+            scheduleAutoSave();
+          }}
           onFinish={(values) => {
             void handleSaveSettings(values);
           }}

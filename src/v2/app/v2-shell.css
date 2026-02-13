@@ -89,8 +89,28 @@
 }
 
 .v2-presence-remote-field {
+  position: relative;
   border-color: rgba(245, 158, 11, 0.75) !important;
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.14) !important;
+}
+
+.v2-presence-remote-field[data-v2-presence-label]::after {
+  content: attr(data-v2-presence-label);
+  position: absolute;
+  top: -9px;
+  right: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.92);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 5;
+  pointer-events: none;
 }
 
 .v2-page {

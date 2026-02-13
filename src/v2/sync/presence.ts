@@ -132,23 +132,35 @@ function clearExistingPresenceHints() {
       node.removeAttribute("title");
     }
     node.removeAttribute("data-v2-presence-remote");
+    node.removeAttribute("data-v2-presence-label");
     node.classList.remove("v2-presence-remote-field");
   });
+}
+
+function resolveHighlightTarget(node: HTMLElement): HTMLElement {
+  return (
+    node.closest(
+      ".ant-input-number, .ant-input-affix-wrapper, .ant-select, .ant-picker, .ant-input, .ant-form-item-control-input",
+    ) as HTMLElement
+  ) || node;
 }
 
 function findTargetsForBaseField(baseFieldKey: string): HTMLElement[] {
   const key = String(baseFieldKey || "").trim();
   if (!key) return [];
+  const escaped = cssEscape(key);
   const selectors = [
-    `[data-field-key="${cssEscape(key)}"]`,
-    `#${cssEscape(key)}`,
-    `[name="${cssEscape(key)}"]`,
+    `[data-field-key="${escaped}"]`,
+    `#${escaped}`,
+    `[name="${escaped}"]`,
+    `[id$="_${escaped}"]`,
+    `[name$=".${escaped}"]`,
   ];
   const result = new Set<HTMLElement>();
   selectors.forEach((selector) => {
     document.querySelectorAll(selector).forEach((node) => {
       if (node instanceof HTMLElement) {
-        result.add(node);
+        result.add(resolveHighlightTarget(node));
       }
     });
   });
@@ -175,6 +187,7 @@ export function applyPresenceHints(entries: WorkspacePresenceEntry[], currentUse
         }
         node.setAttribute("title", hint);
         node.setAttribute("data-v2-presence-remote", "1");
+        node.setAttribute("data-v2-presence-label", hint);
         node.classList.add("v2-presence-remote-field");
       });
     });

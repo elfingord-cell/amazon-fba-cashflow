@@ -73,6 +73,7 @@ interface PresencePayload {
 }
 
 const LOCAL_PRESENCE_KEY = `presence-${Math.random().toString(36).slice(2, 10)}`;
+const RECONNECT_DELAY_MS = 2500;
 let listenerIdCounter = 1;
 const listeners = new Map<number, WorkspaceListener>();
 
@@ -82,6 +83,7 @@ let activeConnectionState: WorkspaceConnectionState = "idle";
 let activePresenceEntries: WorkspacePresenceEntry[] = [];
 let lastPresencePayload: PresencePayload | null = null;
 let heartbeatTimer: number | null = null;
+let reconnectTimer: number | null = null;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -161,6 +163,13 @@ function clearHeartbeat(): void {
   }
 }
 
+function clearReconnectTimer(): void {
+  if (reconnectTimer != null) {
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
 function startHeartbeat(): void {
   clearHeartbeat();
   const cfg = getRuntimeConfig();
@@ -173,6 +182,7 @@ function startHeartbeat(): void {
 
 async function teardownChannel(): Promise<void> {
   clearHeartbeat();
+  clearReconnectTimer();
   activePresenceEntries = [];
   if (!activeChannel) {
     activeWorkspaceId = null;
@@ -197,16 +207,18 @@ async function teardownChannel(): Promise<void> {
   emitConnectionState("idle");
 }
 
-async function ensureWorkspaceChannel(workspaceId: string): Promise<void> {
+async function ensureWorkspaceChannel(workspaceId: string, options?: { forceRecreate?: boolean }): Promise<void> {
   const targetWorkspace = String(workspaceId || "").trim();
   if (!targetWorkspace) {
     await teardownChannel();
     return;
   }
-  if (activeChannel && activeWorkspaceId === targetWorkspace) {
+  const forceRecreate = Boolean(options?.forceRecreate);
+  if (activeChannel && activeWorkspaceId === targetWorkspace && !forceRecreate) {
     return;
   }
 
+  clearReconnectTimer();
   await teardownChannel();
 
   const supabase = getSupabaseBrowserClient();
@@ -265,9 +277,18 @@ async function ensureWorkspaceChannel(workspaceId: string): Promise<void> {
       const mapped = mapSubscribeState(status);
       emitConnectionState(mapped);
       if (mapped === "subscribed") {
+        clearReconnectTimer();
         if (lastPresencePayload) {
           void trackPresenceNow();
         }
+        return;
+      }
+      if (mapped === "errored" || mapped === "closed" || mapped === "reconnecting") {
+        clearReconnectTimer();
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          void ensureWorkspaceChannel(targetWorkspace, { forceRecreate: true });
+        }, RECONNECT_DELAY_MS);
       }
     });
 
