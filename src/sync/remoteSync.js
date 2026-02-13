@@ -581,12 +581,20 @@ export function initRemoteSync() {
 
   const handleLocalImportEvent = () => {
     blockAutoSync = true;
-    remoteRev = null;
-    remoteExists = false;
-    localStorage.removeItem(REMOTE_REV_KEY);
-    localStorage.removeItem(REMOTE_UPDATED_KEY);
-    handleImportedBanner();
+    dirty = true;
     updateStatus();
+
+    if (!isAutoSyncEnabled()) {
+      handleImportedBanner();
+      return;
+    }
+
+    if (!remoteExists && !remoteRev) {
+      void publishLocalState(true);
+      return;
+    }
+
+    void attemptPush(loadState());
   };
 
   const handleAuthChanged = () => {

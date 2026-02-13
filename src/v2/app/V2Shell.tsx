@@ -72,7 +72,7 @@ function connectionTagLabel(state: WorkspaceConnectionState): string {
   if (state === "subscribed") return "Realtime aktiv";
   if (state === "subscribing") return "Realtime verbindet...";
   if (state === "reconnecting") return "Realtime reconnect";
-  if (state === "errored") return "Realtime Fehler";
+  if (state === "errored") return "Realtime Fehler (Polling aktiv)";
   if (state === "closed") return "Realtime beendet";
   return "Realtime inaktiv";
 }
@@ -334,7 +334,7 @@ function V2Layout(): JSX.Element {
                 type={syncSession.isAuthenticated ? "default" : "primary"}
                 onClick={() => setAuthModalOpen(true)}
               >
-                {syncSession.isAuthenticated ? "Workspace" : "Anmelden"}
+                {syncSession.isAuthenticated ? "Konto" : "Anmelden"}
               </Button>
               {syncSession.isAuthenticated ? (
                 <Button
@@ -410,7 +410,7 @@ function V2Layout(): JSX.Element {
       </Layout>
 
       <Modal
-        title="Workspace Anmeldung"
+        title="Konto & Workspace"
         open={authModalOpen}
         onCancel={() => setAuthModalOpen(false)}
         footer={null}

@@ -20,7 +20,7 @@ export default function ExportImportPage(): JSX.Element {
       </Card>
 
       <Tabs
-        defaultActiveKey="transfer"
+        defaultActiveKey="wizard"
         items={[
           {
             key: "transfer",
