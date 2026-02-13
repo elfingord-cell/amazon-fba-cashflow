@@ -1,3 +1,5 @@
+import { getRuntimeConfig, isRuntimeConfigLoaded } from "./runtimeConfig.js";
+
 function readEnv(key) {
   try {
     if (typeof import.meta !== "undefined" && import.meta?.env && import.meta.env[key] != null) {
@@ -6,19 +8,40 @@ function readEnv(key) {
   } catch {
     // no-op
   }
-
   if (typeof process !== "undefined" && process?.env && process.env[key] != null) {
     return process.env[key];
   }
-
   return "";
 }
 
-export function getSyncBackend() {
-  const backend = String(readEnv("VITE_SYNC_BACKEND") || "blobs")
+function resolveBackendFromEnv() {
+  const backend = String(readEnv("VITE_SYNC_BACKEND") || readEnv("SYNC_BACKEND") || "db")
     .trim()
     .toLowerCase();
-  return backend === "db" ? "db" : "blobs";
+  return backend === "db" ? "db" : "disabled";
+}
+
+function resolveConfig() {
+  const cfg = getRuntimeConfig();
+  if (isRuntimeConfigLoaded()) {
+    return {
+      backend: cfg.syncBackend === "db" ? "db" : "disabled",
+      url: String(cfg.supabaseUrl || "").trim(),
+      anonKey: String(cfg.supabaseAnonKey || "").trim(),
+      source: cfg.source || "runtime",
+    };
+  }
+
+  return {
+    backend: resolveBackendFromEnv(),
+    url: String(readEnv("VITE_SUPABASE_URL") || readEnv("SUPABASE_URL") || "").trim(),
+    anonKey: String(readEnv("VITE_SUPABASE_ANON_KEY") || readEnv("SUPABASE_ANON_KEY") || "").trim(),
+    source: "env-fallback",
+  };
+}
+
+export function getSyncBackend() {
+  return resolveConfig().backend;
 }
 
 export function isDbSyncEnabled() {
@@ -26,9 +49,11 @@ export function isDbSyncEnabled() {
 }
 
 export function getSupabaseClientConfig() {
+  const cfg = resolveConfig();
   return {
-    url: String(readEnv("VITE_SUPABASE_URL") || "").trim(),
-    anonKey: String(readEnv("VITE_SUPABASE_ANON_KEY") || "").trim(),
+    url: cfg.url,
+    anonKey: cfg.anonKey,
+    source: cfg.source,
   };
 }
 

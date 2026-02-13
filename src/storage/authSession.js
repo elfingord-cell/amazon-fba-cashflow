@@ -299,6 +299,42 @@ export async function signInWithPassword(email, password) {
   return session;
 }
 
+export async function signUpWithPassword(email, password) {
+  if (!isDbSyncEnabled()) throw new Error("DB Sync ist nicht aktiv.");
+  const cleanEmail = String(email || "").trim();
+  const cleanPassword = String(password || "");
+  if (!cleanEmail || !cleanPassword) {
+    throw new Error("E-Mail und Passwort sind erforderlich.");
+  }
+
+  let payload;
+  try {
+    payload = await supabaseAuthRequest("/signup", {
+      method: "POST",
+      body: {
+        email: cleanEmail,
+        password: cleanPassword,
+      },
+    });
+  } catch (error) {
+    throw toReadableAuthError(error, "Registrierung fehlgeschlagen");
+  }
+
+  const session = toSessionFromAuthPayload(payload);
+  if (session?.access_token) {
+    saveSession(session);
+  } else {
+    saveSession(null);
+  }
+  saveWorkspaceSession(null);
+  emitAuthChanged({ event: "password-sign-up", session, userId: session?.user?.id || null });
+
+  return {
+    session,
+    user: payload?.user || session?.user || null,
+  };
+}
+
 export async function signInWithMagicLink(email) {
   if (!isDbSyncEnabled()) throw new Error("DB Sync ist nicht aktiv.");
   const cleanEmail = String(email || "").trim();

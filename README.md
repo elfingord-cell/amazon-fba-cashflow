@@ -1,6 +1,6 @@
 # Amazon FBA Cashflow
 
-Vite + React Frontend mit Netlify Functions als BFF.
+Vite + React App mit V2 Shared-Workspace-Sync auf Supabase (Auth + RPC + Realtime/Presence) und Runtime-Konfiguration ueber `/api/config`.
 
 ## Lokal starten
 
@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Vite startet standardmaessig auf `http://localhost:5173`.
+Die App laeuft standardmaessig auf `http://localhost:5173`.
 
 ## Build
 
@@ -17,23 +17,30 @@ Vite startet standardmaessig auf `http://localhost:5173`.
 npm run build
 ```
 
-`netlify.toml` nutzt:
+## Runtime-Konfiguration
 
-- Build command: `npm run build`
-- Publish dir: `dist`
+Das Frontend liest produktiv keine Supabase-Werte aus `import.meta.env`, sondern ueber den Runtime-Endpoint:
 
-## Sync Backends
+- `GET /api/config`
 
-Per Env steuerbar:
+Serverseitig benoetigte Variablen:
 
-- `VITE_SYNC_BACKEND=blobs` (legacy Blob snapshot sync)
-- `VITE_SYNC_BACKEND=db` (Supabase DB sync)
-- optional serverseitig: `SYNC_BACKEND=db`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- optional: `REALTIME_ENABLED`
+- optional: `PRESENCE_HEARTBEAT_MS`
+- optional: `FALLBACK_POLL_MS`
+- optional: `EDIT_GRACE_MS`
 
-## Supabase DB Sync Setup (direkt)
+## Datenbank
 
-Details in:
+Supabase SQL:
 
-- `docs/db-sync-supabase.md`
+- `supabase/schema.sql` (kanonische Gesamtsicht)
 - `supabase/migrations/20260210_workspace_sync.sql`
 - `supabase/migrations/20260212_client_rpc_auth.sql`
+- `supabase/migrations/20260213_rls_realtime_presence.sql`
+
+## Deployment
+
+Vercel-only Deployment und 2-User Workspace Setup sind in `DEPLOY.md` dokumentiert.

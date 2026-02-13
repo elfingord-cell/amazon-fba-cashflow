@@ -1,12 +1,48 @@
-import { useMemo, useState } from "react";
-import { Layout, Menu, Space, Tag, Typography, Button, Drawer, Grid } from "antd";
-import { BankOutlined, MenuOutlined, RollbackOutlined } from "@ant-design/icons";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Alert,
+  Button,
+  Drawer,
+  Form,
+  Grid,
+  Input,
+  Layout,
+  Menu,
+  Modal,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
+import {
+  BankOutlined,
+  LoginOutlined,
+  LogoutOutlined,
+  MenuOutlined,
+  RollbackOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import {
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+} from "../../storage/authSession.js";
 import { V2_ROUTES, V2_ROUTE_REDIRECTS } from "./routeCatalog";
 import { useSyncSession } from "../sync/session";
+import {
+  type WorkspaceConnectionState,
+  type WorkspacePresenceEntry,
+  subscribeWorkspaceChanges,
+} from "../sync/realtimeWorkspace";
+import { applyPresenceHints, attachPresenceFocusTracking } from "../sync/presence";
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
+
+interface AuthFormValues {
+  email: string;
+  password: string;
+}
 
 function sectionLabel(section: string): string {
   if (section === "overview") return "Ueberblick";
@@ -16,11 +52,84 @@ function sectionLabel(section: string): string {
   return "Mehr / Tools";
 }
 
-function formatUserLabel(userId: string | null, compact: boolean): string {
-  if (!userId) return "Nicht angemeldet";
-  if (!compact) return `User: ${userId}`;
-  if (userId.length <= 18) return `User: ${userId}`;
-  return `User: ${userId.slice(0, 6)}...${userId.slice(-6)}`;
+function formatUserLabel(session: ReturnType<typeof useSyncSession>, compact: boolean): string {
+  if (!session.isAuthenticated) return "Nicht angemeldet";
+  const label = session.email || session.userId || "Unbekannter User";
+  if (!compact || label.length <= 32) return label;
+  return `${label.slice(0, 20)}...${label.slice(-8)}`;
+}
+
+function connectionTagColor(state: WorkspaceConnectionState): string {
+  if (state === "subscribed") return "green";
+  if (state === "subscribing") return "blue";
+  if (state === "reconnecting") return "orange";
+  if (state === "errored") return "red";
+  if (state === "closed") return "gold";
+  return "default";
+}
+
+function connectionTagLabel(state: WorkspaceConnectionState): string {
+  if (state === "subscribed") return "Realtime aktiv";
+  if (state === "subscribing") return "Realtime verbindet...";
+  if (state === "reconnecting") return "Realtime reconnect";
+  if (state === "errored") return "Realtime Fehler";
+  if (state === "closed") return "Realtime beendet";
+  return "Realtime inaktiv";
+}
+
+function extractRemoteEditors(entries: WorkspacePresenceEntry[], currentUserId: string | null): WorkspacePresenceEntry[] {
+  return entries.filter((entry) => entry.userId && entry.userId !== currentUserId && (entry.fieldKey || entry.route));
+}
+
+function AccessGate({
+  session,
+  onOpenAuth,
+  onLogout,
+  authBusy,
+}: {
+  session: ReturnType<typeof useSyncSession>;
+  onOpenAuth: () => void;
+  onLogout: () => void;
+  authBusy: boolean;
+}): JSX.Element {
+  const notSignedIn = session.requiresAuth || !session.isAuthenticated;
+  if (notSignedIn) {
+    return (
+      <div className="v2-access-gate">
+        <Alert
+          type="warning"
+          showIcon
+          message="Anmeldung erforderlich"
+          description="Bitte melde dich mit deinem Supabase-Account an, um den Shared Workspace zu nutzen."
+          action={(
+            <Button type="primary" icon={<LoginOutlined />} onClick={onOpenAuth}>
+              Anmelden
+            </Button>
+          )}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="v2-access-gate">
+      <Alert
+        type="error"
+        showIcon
+        message="Kein Workspace-Zugriff"
+        description="Dieser Benutzer ist keinem Workspace zugeordnet. Bitte den Membership-Eintrag in Supabase setzen."
+        action={(
+          <Space>
+            <Button onClick={onOpenAuth}>
+              Benutzer wechseln
+            </Button>
+            <Button danger icon={<LogoutOutlined />} onClick={onLogout} loading={authBusy}>
+              Logout
+            </Button>
+          </Space>
+        )}
+      />
+    </div>
+  );
 }
 
 function V2Layout(): JSX.Element {
@@ -28,6 +137,12 @@ function V2Layout(): JSX.Element {
   const location = useLocation();
   const syncSession = useSyncSession();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [authForm] = Form.useForm<AuthFormValues>();
+  const [connectionState, setConnectionState] = useState<WorkspaceConnectionState>("idle");
+  const [presenceEntries, setPresenceEntries] = useState<WorkspacePresenceEntry[]>([]);
   const screens = Grid.useBreakpoint();
   const isDesktop = Boolean(screens.lg);
   const isMobile = !isDesktop;
@@ -40,6 +155,12 @@ function V2Layout(): JSX.Element {
     () => new Map(menuRoutes.map((route) => [route.key, route])),
     [menuRoutes],
   );
+
+  const remoteEditors = useMemo(
+    () => extractRemoteEditors(presenceEntries, syncSession.userId),
+    [presenceEntries, syncSession.userId],
+  );
+  const primaryRemoteEditor = remoteEditors[0] || null;
 
   function normalizeRoutePath(path: string): string {
     return String(path || "").replace(/\/\*$/, "").replace(/^\/+/, "").replace(/\/+$/, "");
@@ -93,6 +214,80 @@ function V2Layout(): JSX.Element {
     }));
   }, [menuRoutes]);
 
+  useEffect(() => {
+    if (!syncSession.workspaceId || !syncSession.hasWorkspaceAccess || !syncSession.userId) {
+      setConnectionState("idle");
+      setPresenceEntries([]);
+      applyPresenceHints([], syncSession.userId);
+      return () => {};
+    }
+
+    const unsubscribe = subscribeWorkspaceChanges({
+      workspaceId: syncSession.workspaceId,
+      onConnectionState: (state) => setConnectionState(state),
+      onPresenceChange: (entries) => {
+        setPresenceEntries(entries);
+        applyPresenceHints(entries, syncSession.userId);
+      },
+    });
+
+    const detachTracking = attachPresenceFocusTracking({
+      userId: syncSession.userId,
+      userEmail: syncSession.email,
+      workspaceId: syncSession.workspaceId,
+      routeResolver: () => window.location.hash || "",
+    });
+
+    return () => {
+      unsubscribe();
+      detachTracking();
+      applyPresenceHints([], syncSession.userId);
+    };
+  }, [
+    syncSession.email,
+    syncSession.hasWorkspaceAccess,
+    syncSession.userId,
+    syncSession.workspaceId,
+  ]);
+
+  async function handleAuthSubmit(mode: "login" | "register"): Promise<void> {
+    try {
+      const values = await authForm.validateFields();
+      setAuthBusy(true);
+      setAuthMessage("");
+      if (mode === "register") {
+        await signUpWithPassword(values.email, values.password);
+        setAuthMessage("Registrierung erfolgreich. Falls no_access erscheint, Membership in Supabase setzen.");
+      } else {
+        await signInWithPassword(values.email, values.password);
+        setAuthMessage("Anmeldung erfolgreich.");
+        setAuthModalOpen(false);
+      }
+    } catch (error) {
+      if (error && typeof error === "object" && "errorFields" in error) return;
+      const text = error instanceof Error ? error.message : "Auth-Aktion fehlgeschlagen";
+      setAuthMessage(text);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleLogout(): Promise<void> {
+    setAuthBusy(true);
+    setAuthMessage("");
+    try {
+      await signOut();
+      setAuthMessage("Abgemeldet.");
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "Logout fehlgeschlagen";
+      setAuthMessage(text);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  const showAccessGate = syncSession.requiresAuth || (syncSession.isAuthenticated && !syncSession.hasWorkspaceAccess);
+
   return (
     <Layout className="v2-shell">
       {isDesktop ? (
@@ -134,17 +329,43 @@ function V2Layout(): JSX.Element {
               >
                 Legacy App
               </Button>
+              <Button
+                icon={<UserOutlined />}
+                type={syncSession.isAuthenticated ? "default" : "primary"}
+                onClick={() => setAuthModalOpen(true)}
+              >
+                {syncSession.isAuthenticated ? "Workspace" : "Anmelden"}
+              </Button>
+              {syncSession.isAuthenticated ? (
+                <Button
+                  icon={<LogoutOutlined />}
+                  onClick={() => { void handleLogout(); }}
+                  loading={authBusy}
+                >
+                  Logout
+                </Button>
+              ) : null}
             </Space>
           </div>
           <div className="v2-header-meta">
             <Tag color={syncSession.online ? "green" : "red"}>
               {syncSession.online ? "Online" : "Offline"}
             </Tag>
-            <Tag color={syncSession.workspaceId ? "blue" : "default"}>
-              {syncSession.workspaceId ? `Workspace: ${syncSession.workspaceId}` : "Local fallback"}
+            <Tag color={syncSession.hasWorkspaceAccess ? "blue" : "default"}>
+              {syncSession.hasWorkspaceAccess
+                ? `Workspace: ${syncSession.workspaceId}`
+                : (syncSession.isAuthenticated ? "no_access" : "nicht verbunden")}
             </Tag>
+            <Tag color={connectionTagColor(connectionState)}>
+              {connectionTagLabel(connectionState)}
+            </Tag>
+            {primaryRemoteEditor ? (
+              <Tag color="orange">
+                {primaryRemoteEditor.userEmail || primaryRemoteEditor.userId || "Kollege"} bearbeitet gerade
+              </Tag>
+            ) : null}
             <Text type="secondary">
-              {formatUserLabel(syncSession.userId, isMobile)}
+              {formatUserLabel(syncSession, isMobile)}
             </Text>
           </div>
         </Header>
@@ -175,9 +396,66 @@ function V2Layout(): JSX.Element {
           </Drawer>
         ) : null}
         <Content className="v2-content">
-          <Outlet />
+          {showAccessGate ? (
+            <AccessGate
+              session={syncSession}
+              onOpenAuth={() => setAuthModalOpen(true)}
+              onLogout={() => { void handleLogout(); }}
+              authBusy={authBusy}
+            />
+          ) : (
+            <Outlet />
+          )}
         </Content>
       </Layout>
+
+      <Modal
+        title="Workspace Anmeldung"
+        open={authModalOpen}
+        onCancel={() => setAuthModalOpen(false)}
+        footer={null}
+      >
+        <Form<AuthFormValues> form={authForm} layout="vertical">
+          <Form.Item
+            name="email"
+            label="E-Mail"
+            rules={[{ required: true, message: "E-Mail fehlt." }]}
+          >
+            <Input autoComplete="email" disabled={authBusy} />
+          </Form.Item>
+          <Form.Item
+            name="password"
+            label="Passwort"
+            rules={[{ required: true, message: "Passwort fehlt." }]}
+          >
+            <Input.Password autoComplete="current-password" disabled={authBusy} />
+          </Form.Item>
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<LoginOutlined />}
+              loading={authBusy}
+              onClick={() => { void handleAuthSubmit("login"); }}
+            >
+              Login
+            </Button>
+            <Button
+              loading={authBusy}
+              onClick={() => { void handleAuthSubmit("register"); }}
+            >
+              Registrieren
+            </Button>
+          </Space>
+          {authMessage ? (
+            <Alert
+              type={authMessage.toLowerCase().includes("erfolg") ? "success" : "info"}
+              showIcon
+              style={{ marginTop: 12 }}
+              message={authMessage}
+            />
+          ) : null}
+        </Form>
+      </Modal>
     </Layout>
   );
 }

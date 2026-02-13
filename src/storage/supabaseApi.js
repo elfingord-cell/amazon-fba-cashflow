@@ -30,7 +30,7 @@ function getConfiguredBaseUrl() {
   const baseUrl = String(cfg.url || "").trim().replace(/\/+$/, "");
   const anonKey = String(cfg.anonKey || "").trim();
   if (!baseUrl || !anonKey) {
-    throw new SupabaseConfigurationError("Supabase client env vars are missing.");
+    throw new SupabaseConfigurationError("Supabase runtime config is missing (check /api/config).");
   }
   return { baseUrl, anonKey };
 }

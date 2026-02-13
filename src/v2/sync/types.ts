@@ -2,9 +2,13 @@ import type { AppStateV2 } from "../state/types";
 
 export interface SyncSession {
   userId: string | null;
+  email: string | null;
   workspaceId: string | null;
   role: "owner" | "editor" | null;
   online: boolean;
+  isAuthenticated: boolean;
+  hasWorkspaceAccess: boolean;
+  requiresAuth: boolean;
 }
 
 export interface StorageAdapter {

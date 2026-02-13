@@ -4,6 +4,7 @@ import {
   getCurrentUser,
   onAuthSessionChange,
 } from "../../storage/authSession.js";
+import { isDbSyncEnabled } from "../../storage/syncBackend.js";
 import type { SyncSession, StorageAdapter } from "./types";
 import { createDefaultStorageAdapter } from "./storageAdapters";
 
@@ -15,9 +16,13 @@ function readOnline(): boolean {
 export function useSyncSession(): SyncSession {
   const [session, setSession] = useState<SyncSession>({
     userId: null,
+    email: null,
     workspaceId: null,
     role: null,
     online: readOnline(),
+    isAuthenticated: false,
+    hasWorkspaceAccess: false,
+    requiresAuth: isDbSyncEnabled(),
   });
 
   useEffect(() => {
@@ -26,17 +31,26 @@ export function useSyncSession(): SyncSession {
     const refresh = async () => {
       try {
         const user = await getCurrentUser();
-        const server = await fetchServerSession();
+        const server = user ? await fetchServerSession() : null;
         if (!mounted) return;
+        const authenticated = Boolean(user?.id);
+        const hasWorkspaceAccess = Boolean(server?.workspaceId);
         setSession({
           userId: user?.id || null,
+          email: user?.email || null,
           workspaceId: server?.workspaceId || null,
           role: (server?.role || null) as "owner" | "editor" | null,
           online: readOnline(),
+          isAuthenticated: authenticated,
+          hasWorkspaceAccess,
+          requiresAuth: isDbSyncEnabled() && !authenticated,
         });
       } catch {
         if (!mounted) return;
-        setSession((prev) => ({ ...prev, online: readOnline() }));
+        setSession((prev) => ({
+          ...prev,
+          online: readOnline(),
+        }));
       }
     };
 

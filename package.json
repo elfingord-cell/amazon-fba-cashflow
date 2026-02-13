@@ -2,7 +2,7 @@
   "name": "amazon-fba-cashflow",
   "version": "1.0.0",
   "private": true,
-  "description": "Amazon FBA Cashflow planning (static) with Netlify Functions storage",
+  "description": "Amazon FBA Cashflow planning with Supabase shared workspace (V2) and Vercel runtime config",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -25,7 +25,7 @@
     "test:parity": "node --test src/domain/parity.golden.test.js src/domain/cashflow.fixcost.test.js src/domain/inventoryProjection.test.js src/domain/outflowStack.test.js src/domain/vatPreview.test.js src/domain/foSuggestion.test.js src/domain/accountantReport.test.js && npm run test:parity:v2"
   },
   "dependencies": {
-    "@netlify/blobs": "^8.0.0",
+    "@supabase/supabase-js": "^2.49.8",
     "@tanstack/react-table": "^8.21.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

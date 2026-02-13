@@ -5,6 +5,7 @@ import "../styles.css";
 import "./react/app-shell.css";
 import { AppShell } from "./react/AppShell.jsx";
 import { StandaloneV2App } from "./v2/app/StandaloneV2App";
+import { loadRuntimeConfig, getRuntimeLoadError } from "./storage/runtimeConfig.js";
 
 const rootNode = document.getElementById("root");
 
@@ -51,4 +52,19 @@ function AppEntry() {
     : createElement(AppShell);
 }
 
-createRoot(rootNode).render(createElement(AppEntry));
+async function bootstrap() {
+  try {
+    await loadRuntimeConfig();
+  } catch {
+    // runtimeConfig stores the load error; app still renders and shows auth/config states.
+  }
+
+  const runtimeError = getRuntimeLoadError();
+  if (runtimeError) {
+    console.error("Runtime config load error:", runtimeError);
+  }
+
+  createRoot(rootNode).render(createElement(AppEntry));
+}
+
+void bootstrap();

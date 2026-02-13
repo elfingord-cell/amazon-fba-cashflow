@@ -84,6 +84,15 @@
   margin: 0 auto;
 }
 
+.v2-access-gate {
+  width: min(980px, 100%);
+}
+
+.v2-presence-remote-field {
+  border-color: rgba(245, 158, 11, 0.75) !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.14) !important;
+}
+
 .v2-page {
   display: grid;
   gap: 12px;

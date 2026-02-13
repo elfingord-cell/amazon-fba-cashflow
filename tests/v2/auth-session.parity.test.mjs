@@ -228,3 +228,49 @@ test("auth/session parity: editor session recovery from persisted storage", asyn
     clearDbEnv();
   }
 });
+
+test("auth/session parity: sign-up is allowed but user without membership gets no_access session", async () => {
+  setDbEnv();
+  const localStorage = createLocalStorage();
+  installBrowserMocks({ localStorage });
+
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/auth/v1/signup")) {
+      return makeResponse(200, {
+        access_token: "token-new",
+        refresh_token: "refresh-new",
+        expires_in: 3600,
+        token_type: "bearer",
+        user: { id: "user-new", email: "new@example.com" },
+      });
+    }
+    if (target.includes("/rest/v1/rpc/app_auth_session_client")) {
+      return makeResponse(200, [{
+        ok: false,
+        reason: "NOT_A_MEMBER",
+      }]);
+    }
+    if (target.includes("/auth/v1/logout")) {
+      return makeResponse(200, { ok: true });
+    }
+    return makeResponse(404, { error: "unexpected endpoint" });
+  };
+
+  try {
+    const auth = await importFreshAuthSession();
+    const result = await auth.signUpWithPassword("new@example.com", "secret");
+    const user = await auth.getCurrentUser();
+    const serverSession = await auth.fetchServerSession();
+
+    assert.equal(result.user.id, "user-new");
+    assert.equal(user.id, "user-new");
+    assert.equal(serverSession, null);
+    assert.equal(auth.getWorkspaceId(), null);
+
+    await auth.signOut();
+  } finally {
+    cleanupGlobals();
+    clearDbEnv();
+  }
+});
