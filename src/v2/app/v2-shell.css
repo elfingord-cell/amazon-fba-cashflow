@@ -1,4 +1,11 @@
 .v2-shell {
+  --control-height-md: 34px;
+  --control-height-sm: 28px;
+  --table-row-height: 38px;
+  --table-row-padding-y: 7px;
+  --table-row-padding-x: 10px;
+  --v2-table-border: rgba(15, 27, 45, 0.1);
+  --v2-table-radius: 12px;
   min-height: 100vh;
   background: radial-gradient(1200px 800px at 20% -10%, #e8f7f2 0%, #f0fbf7 60%);
 }
@@ -32,10 +39,10 @@
   background: #fff !important;
   border-bottom: 1px solid rgba(15, 27, 45, 0.08);
   padding: 0 18px !important;
-  min-height: 58px;
+  min-height: 54px;
   line-height: 1.2;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
@@ -44,7 +51,7 @@
 .v2-header-main {
   display: flex;
   align-items: center;
-  min-height: 58px;
+  min-height: 54px;
 }
 
 .v2-header-title {
@@ -52,7 +59,7 @@
 }
 
 .v2-header-meta {
-  min-height: 58px;
+  min-height: 54px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -71,7 +78,7 @@
 }
 
 .v2-content {
-  padding: 16px var(--page-gutter-x, 24px) 22px;
+  padding: 14px var(--page-gutter-x, 24px) 20px;
   width: 100%;
   max-width: var(--app-max-width, 1560px);
   margin: 0 auto;
@@ -79,7 +86,7 @@
 
 .v2-page {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .v2-intro-card {
@@ -92,7 +99,7 @@
 }
 
 .v2-shell .ant-card .ant-card-body {
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 
 .v2-shell .ant-btn {
@@ -103,30 +110,43 @@
 
 .v2-shell .ant-btn.ant-btn-sm {
   height: var(--control-height-sm, 30px);
+  padding-inline: 10px;
+}
+
+.v2-shell .ant-btn-link {
+  height: var(--control-height-sm, 28px);
+  padding-inline: 6px;
 }
 
 .v2-shell .ant-input,
 .v2-shell .ant-input-affix-wrapper,
 .v2-shell .ant-select-selector,
 .v2-shell .ant-picker {
-  min-height: var(--control-height-md, 36px) !important;
+  min-height: var(--control-height-md, 34px) !important;
   border-radius: 10px !important;
 }
 
 .v2-shell .ant-select-selection-item,
 .v2-shell .ant-select-selection-placeholder {
-  line-height: calc(var(--control-height-md, 36px) - 2px) !important;
+  line-height: calc(var(--control-height-md, 34px) - 2px) !important;
 }
 
 .v2-shell .ant-checkbox-inner {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   border-radius: 4px;
 }
 
+.v2-shell .ant-table-wrapper {
+  border: 1px solid var(--v2-table-border);
+  border-radius: var(--v2-table-radius);
+  overflow: hidden;
+  background: #fff;
+}
+
 .v2-shell .ant-table-wrapper .ant-table-container {
-  border-radius: 12px !important;
-  border: 1px solid rgba(15, 27, 45, 0.1);
+  border: 0 !important;
+  border-radius: 0 !important;
 }
 
 .v2-shell .ant-table-content {
@@ -157,15 +177,63 @@
   color: var(--table-header-text, #4b5563);
   font-size: 12px;
   font-weight: 600;
-  padding: var(--table-row-padding-y, 8px) var(--table-row-padding-x, 12px);
-  height: var(--table-row-height, 40px);
+  padding: var(--table-row-padding-y, 7px) var(--table-row-padding-x, 10px);
+  height: var(--table-row-height, 38px);
   white-space: nowrap;
 }
 
 .v2-shell .ant-table-tbody > tr > td {
-  padding: var(--table-row-padding-y, 8px) var(--table-row-padding-x, 12px);
-  height: var(--table-row-height, 40px);
+  padding: var(--table-row-padding-y, 7px) var(--table-row-padding-x, 10px);
+  height: var(--table-row-height, 38px);
   font-size: 13px;
+  white-space: nowrap;
+}
+
+.v2-page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v2-page-head h1,
+.v2-page-head h2,
+.v2-page-head h3,
+.v2-page-head h4 {
+  margin: 0 !important;
+}
+
+.v2-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.v2-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-actions-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-actions-nowrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.v2-actions-nowrap .ant-btn {
   white-space: nowrap;
 }
 
@@ -185,12 +253,40 @@
   gap: 16px;
 }
 
+.v2-table-shell,
+.v2-stats-table-wrap {
+  width: 100%;
+  border: 1px solid var(--v2-table-border);
+  border-radius: var(--v2-table-radius);
+  background: #fff;
+}
+
+.v2-scroll-host,
 .v2-stats-table-wrap {
   overflow: auto;
   scrollbar-gutter: stable;
-  border: 1px solid rgba(15, 27, 45, 0.1);
-  border-radius: 12px;
-  background: #fff;
+}
+
+.v2-scroll-host::-webkit-scrollbar,
+.v2-stats-table-wrap::-webkit-scrollbar {
+  height: 8px;
+}
+
+.v2-scroll-host::-webkit-scrollbar-track,
+.v2-stats-table-wrap::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, rgba(15, 23, 42, 0.1));
+  border-radius: 999px;
+}
+
+.v2-scroll-host::-webkit-scrollbar-thumb,
+.v2-stats-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #9aa4b2);
+  border-radius: 999px;
+}
+
+.v2-scroll-host::-webkit-scrollbar-thumb:hover,
+.v2-stats-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, #7f8a99);
 }
 
 .v2-stats-table {
@@ -201,11 +297,16 @@
   background: #fff;
 }
 
+.v2-stats-table[data-layout="auto"] {
+  table-layout: auto;
+}
+
 .v2-stats-table th,
 .v2-stats-table td {
-  padding: 10px 12px;
+  padding: var(--table-row-padding-y, 7px) var(--table-row-padding-x, 10px);
   border-bottom: 1px solid rgba(15, 27, 45, 0.08);
   text-align: left;
+  white-space: nowrap;
 }
 
 .v2-stats-table thead th {
@@ -213,6 +314,20 @@
   color: #4b5563;
   font-size: 12px;
   font-weight: 600;
+}
+
+.v2-stats-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.v2-density-compact .v2-stats-table th,
+.v2-density-compact .v2-stats-table td {
+  padding: var(--table-row-padding-y, 7px) var(--table-row-padding-x, 10px);
+}
+
+.v2-density-cozy .v2-stats-table th,
+.v2-density-cozy .v2-stats-table td {
+  padding: 9px 12px;
 }
 
 .v2-forecast-cell {
@@ -229,7 +344,7 @@
 .v2-toolbar-field {
   display: grid;
   gap: 4px;
-  min-width: 170px;
+  min-width: 160px;
 }
 
 .v2-toolbar-field .ant-select,
@@ -239,7 +354,7 @@
 
 @media (max-width: 1024px) {
   .v2-header {
-    padding: 10px 14px !important;
+    padding: 8px 14px !important;
   }
 
   .v2-header-main,
@@ -272,6 +387,10 @@
 
   .v2-form-row .ant-form-item {
     margin-bottom: 12px;
+  }
+
+  .v2-toolbar-row {
+    align-items: stretch;
   }
 
   .v2-menu-toggle {

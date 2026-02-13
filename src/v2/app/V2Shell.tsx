@@ -6,7 +6,7 @@ import { V2_ROUTES } from "./routeCatalog";
 import { useSyncSession } from "../sync/session";
 
 const { Header, Sider, Content } = Layout;
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 function sectionLabel(section: string): string {
   if (section === "overview") return "Ueberblick";
@@ -90,7 +90,6 @@ function V2Layout(): JSX.Element {
                   Navigation
                 </Button>
               ) : null}
-              <Title level={4} className="v2-header-title">Parallel V2</Title>
               <Button
                 icon={<RollbackOutlined />}
                 onClick={() => {

@@ -8,11 +8,15 @@ export default function ExportImportPage(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Export / Import (V2)</Title>
-        <Paragraph>
-          Neuer Migrationswizard fuer Legacy JSON mit Dry-Run/Apply sowie nativer Workspace JSON Transfer
-          (Export, Backup, Import, Vorschau, Validierung).
-        </Paragraph>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Export / Import</Title>
+            <Paragraph>
+              Neuer Migrationswizard fuer Legacy JSON mit Dry-Run/Apply sowie nativer Workspace JSON Transfer
+              (Export, Backup, Import, Vorschau, Validierung).
+            </Paragraph>
+          </div>
+        </div>
       </Card>
 
       <Tabs

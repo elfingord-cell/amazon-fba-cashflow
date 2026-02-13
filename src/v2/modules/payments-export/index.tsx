@@ -198,64 +198,70 @@ export default function PaymentsExportModule(): JSX.Element {
     <div className="v2-page">
       {contextHolder}
       <Card className="v2-intro-card">
-        <Title level={3}>Payments Export (V2 Native)</Title>
-        <Paragraph>
-          Zahlungsjournal mit Scope/Monatsfilter sowie CSV-Export und PDF-Print-View.
-        </Paragraph>
-        <Space wrap>
-          <div className="v2-toolbar-field">
-            <Text>Monat</Text>
-            <Select
-              value={monthFilter}
-              onChange={(value) => setMonthFilter(value)}
-              options={[
-                { value: ALL_MONTHS, label: "Alle Monate" },
-                ...monthOptions.map((month) => ({
-                  value: month,
-                  label: `${month} (${formatMonthLabel(month)})`,
-                })),
-              ]}
-              style={{ width: 220, maxWidth: "100%" }}
-            />
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Payments Export</Title>
+            <Paragraph>
+              Zahlungsjournal mit Scope/Monatsfilter sowie CSV-Export und PDF-Print-View.
+            </Paragraph>
           </div>
-          <div className="v2-toolbar-field">
-            <Text>Scope</Text>
-            <Radio.Group
-              value={scope}
-              onChange={(event) => setScope(event.target.value as PaymentExportScope)}
-              optionType="button"
-              buttonStyle="solid"
-              options={[
-                { label: "Paid", value: "paid" },
-                { label: "Open", value: "open" },
-                { label: "Both", value: "both" },
-              ]}
-            />
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <div className="v2-toolbar-field">
+              <Text>Monat</Text>
+              <Select
+                value={monthFilter}
+                onChange={(value) => setMonthFilter(value)}
+                options={[
+                  { value: ALL_MONTHS, label: "Alle Monate" },
+                  ...monthOptions.map((month) => ({
+                    value: month,
+                    label: `${month} (${formatMonthLabel(month)})`,
+                  })),
+                ]}
+                style={{ width: 220, maxWidth: "100%" }}
+              />
+            </div>
+            <div className="v2-toolbar-field">
+              <Text>Scope</Text>
+              <Radio.Group
+                value={scope}
+                onChange={(event) => setScope(event.target.value as PaymentExportScope)}
+                optionType="button"
+                buttonStyle="solid"
+                options={[
+                  { label: "Paid", value: "paid" },
+                  { label: "Open", value: "open" },
+                  { label: "Both", value: "both" },
+                ]}
+              />
+            </div>
+            <div className="v2-toolbar-field">
+              <Text>Format</Text>
+              <Radio.Group
+                value={format}
+                onChange={(event) => setFormat(event.target.value as ExportFormat)}
+                optionType="button"
+                buttonStyle="solid"
+                options={[
+                  { label: "CSV", value: "csv" },
+                  { label: "PDF (Print)", value: "print" },
+                ]}
+              />
+            </div>
+            <Button type="primary" onClick={exportRows}>
+              Export
+            </Button>
+            <Button onClick={() => { void reload(); }}>
+              Neu laden
+            </Button>
+            <Tag color="blue">Zeilen: {rows.length}</Tag>
+            <Tag color="green">Ist (PAID): {formatCurrency(paidActualTotal)}</Tag>
+            <Tag color="orange">Soll (OPEN): {formatCurrency(openPlannedTotal)}</Tag>
+            <Tag color={issueCount > 0 ? "red" : "green"}>Issues: {issueCount}</Tag>
           </div>
-          <div className="v2-toolbar-field">
-            <Text>Format</Text>
-            <Radio.Group
-              value={format}
-              onChange={(event) => setFormat(event.target.value as ExportFormat)}
-              optionType="button"
-              buttonStyle="solid"
-              options={[
-                { label: "CSV", value: "csv" },
-                { label: "PDF (Print)", value: "print" },
-              ]}
-            />
-          </div>
-          <Button type="primary" onClick={exportRows}>
-            Export
-          </Button>
-          <Button onClick={() => { void reload(); }}>
-            Neu laden
-          </Button>
-          <Tag color="blue">Zeilen: {rows.length}</Tag>
-          <Tag color="green">Ist (PAID): {formatCurrency(paidActualTotal)}</Tag>
-          <Tag color="orange">Soll (OPEN): {formatCurrency(openPlannedTotal)}</Tag>
-          <Tag color={issueCount > 0 ? "red" : "green"}>Issues: {issueCount}</Tag>
-        </Space>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -266,7 +272,12 @@ export default function PaymentsExportModule(): JSX.Element {
         <Text type="secondary">
           Paid-Positionen werden mit Ist-Betrag angezeigt; fehlende Ist-Werte sind als Issue markiert.
         </Text>
-        <TanStackGrid data={rows} columns={columns} />
+        <TanStackGrid
+          data={rows}
+          columns={columns}
+          minTableWidth={1600}
+          tableLayout="auto"
+        />
       </Card>
     </div>
   );

@@ -111,22 +111,28 @@ export default function DebugModule(): JSX.Element {
     <div className="v2-page">
       {contextHolder}
       <Card className="v2-intro-card">
-        <Title level={3}>Debug / Werkzeuge (V2 Native)</Title>
-        <Paragraph>
-          Hilfsfunktionen zum schnellen Befuellen, Zuruecksetzen und Pruefen der ABC-Klassifizierung.
-        </Paragraph>
-        <Space wrap>
-          <Button onClick={() => { void runSeed(); }} loading={saving}>
-            Testdaten &amp; POs laden
-          </Button>
-          <Button danger onClick={() => { void runWipe(); }} loading={saving}>
-            Alle Daten loeschen
-          </Button>
-          <Button onClick={() => { void runUndo(); }} disabled={!lastSnapshot} loading={saving}>
-            Letzten Seed rueckgaengig
-          </Button>
-          <Tag color="blue">Drafts (lokal): {draftCount}</Tag>
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Debug / Werkzeuge</Title>
+            <Paragraph>
+              Hilfsfunktionen zum schnellen Befuellen, Zuruecksetzen und Pruefen der ABC-Klassifizierung.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button onClick={() => { void runSeed(); }} loading={saving}>
+              Testdaten &amp; POs laden
+            </Button>
+            <Button danger onClick={() => { void runWipe(); }} loading={saving}>
+              Alle Daten loeschen
+            </Button>
+            <Button onClick={() => { void runUndo(); }} disabled={!lastSnapshot} loading={saving}>
+              Letzten Seed rueckgaengig
+            </Button>
+            <Tag color="blue">Drafts (lokal): {draftCount}</Tag>
+          </div>
+        </div>
         <Space direction="vertical" size={2} style={{ marginTop: 12 }}>
           <Text>Storage-Key: <strong>{commitSummary.storageKey || "-"}</strong></Text>
           <Text>Last Commit: <strong>{commitSummary.lastCommitAt || "-"}</strong></Text>

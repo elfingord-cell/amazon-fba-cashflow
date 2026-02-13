@@ -285,10 +285,14 @@ export default function PlanModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Plan (V2 Native)</Title>
-        <Paragraph>
-          Zeitplan der aktiven Purchase und Forecast Orders mit Produktions-/Transitphasen und Payment-Milestones.
-        </Paragraph>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Plan</Title>
+            <Paragraph>
+              Zeitplan der aktiven Purchase und Forecast Orders mit Produktions-/Transitphasen und Payment-Milestones.
+            </Paragraph>
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}

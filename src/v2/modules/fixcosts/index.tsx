@@ -226,6 +226,7 @@ export default function FixcostsModule(): JSX.Element {
   const [autoManualCheck, setAutoManualCheck] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [overrideEditor, setOverrideEditor] = useState<OverrideEditorState | null>(null);
+  const [expandedMonths, setExpandedMonths] = useState<string[]>([]);
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -291,6 +292,10 @@ export default function FixcostsModule(): JSX.Element {
         };
       });
   }, [expandedInstances]);
+
+  useEffect(() => {
+    setExpandedMonths((current) => current.filter((month) => groupedByMonth.some((group) => group.month === month)));
+  }, [groupedByMonth]);
 
   const hasValidationErrors = useMemo(
     () => draftRows.some((row) => validateFixcost(row).length > 0),
@@ -480,29 +485,35 @@ export default function FixcostsModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Fixkosten (V2 Native)</Title>
-        <Paragraph>
-          Stammdaten, monatliche Instanzen, Overrides und Paid-Logik laufen nativ auf dem V2-Workspace.
-        </Paragraph>
-        <Space>
-          <Button type="primary" onClick={() => { void saveAll(); }} disabled={!dirty || hasValidationErrors} loading={saving}>
-            Fixkosten speichern
-          </Button>
-          <Button
-            onClick={() => {
-              setDraftRows(normalizeFixcosts((Array.isArray(state.fixcosts) ? state.fixcosts : []), defaultStartMonth));
-              setDraftOverrides(cloneOverrides(state.fixcostOverrides));
-              const status = (state.status && typeof state.status === "object") ? state.status as Record<string, unknown> : {};
-              setAutoManualCheck(status.autoManualCheck === true);
-              setDraftEvents(cloneEvents(status.events));
-              setDirty(false);
-            }}
-          >
-            Verwerfen
-          </Button>
-          <Tag color={dirtyColor}>{dirtyLabel}</Tag>
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Fixkosten</Title>
+            <Paragraph>
+              Stammdaten, monatliche Instanzen, Overrides und Paid-Logik laufen nativ auf dem V2-Workspace.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button type="primary" onClick={() => { void saveAll(); }} disabled={!dirty || hasValidationErrors} loading={saving}>
+              Fixkosten speichern
+            </Button>
+            <Button
+              onClick={() => {
+                setDraftRows(normalizeFixcosts((Array.isArray(state.fixcosts) ? state.fixcosts : []), defaultStartMonth));
+                setDraftOverrides(cloneOverrides(state.fixcostOverrides));
+                const status = (state.status && typeof state.status === "object") ? state.status as Record<string, unknown> : {};
+                setAutoManualCheck(status.autoManualCheck === true);
+                setDraftEvents(cloneEvents(status.events));
+                setDirty(false);
+              }}
+            >
+              Verwerfen
+            </Button>
+            <Tag color={dirtyColor}>{dirtyLabel}</Tag>
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -525,8 +536,8 @@ export default function FixcostsModule(): JSX.Element {
           <Button onClick={addRow}>Position hinzufuegen</Button>
         </Space>
 
-        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-          <table className="v2-stats-table ui-table-standard">
+        <div className="v2-stats-table-wrap">
+          <table className="v2-stats-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -655,10 +666,10 @@ export default function FixcostsModule(): JSX.Element {
                       />
                     </td>
                     <td>
-                      <Space>
+                      <div className="v2-actions-nowrap">
                         <Button size="small" onClick={() => duplicateRow(row.id)}>Duplizieren</Button>
                         <Button size="small" danger onClick={() => removeRow(row.id)}>X</Button>
-                      </Space>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -669,11 +680,31 @@ export default function FixcostsModule(): JSX.Element {
       </Card>
 
       <Card>
-        <Title level={5}>Fixkosten je Monat</Title>
+        <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }} wrap>
+          <Title level={5} style={{ margin: 0 }}>Fixkosten je Monat</Title>
+          <div className="v2-actions-inline">
+            <Button
+              size="small"
+              onClick={() => setExpandedMonths(groupedByMonth.map((group) => group.month))}
+              disabled={!groupedByMonth.length}
+            >
+              Alles auf
+            </Button>
+            <Button
+              size="small"
+              onClick={() => setExpandedMonths([])}
+              disabled={!expandedMonths.length}
+            >
+              Alles zu
+            </Button>
+          </div>
+        </Space>
         {!groupedByMonth.length ? (
           <Text type="secondary">Keine Instanzen im Planungshorizont.</Text>
         ) : (
           <Collapse
+            activeKey={expandedMonths}
+            onChange={(nextKeys) => setExpandedMonths((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).map(String))}
             items={groupedByMonth.map((group) => ({
               key: group.month,
               label: (
@@ -706,8 +737,8 @@ export default function FixcostsModule(): JSX.Element {
                       Auto-Markierung ignorieren
                     </Button>
                   </Space>
-                  <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-                    <table className="v2-stats-table ui-table-standard">
+                  <div className="v2-stats-table-wrap">
+                    <table className="v2-stats-table">
                       <thead>
                         <tr>
                           <th>Position</th>
@@ -744,12 +775,12 @@ export default function FixcostsModule(): JSX.Element {
                               />
                             </td>
                             <td>
-                              <Space>
+                              <div className="v2-actions-nowrap">
                                 <Button size="small" onClick={() => openOverrideEditor(item)}>Override</Button>
                                 {item.overrideActive ? (
                                   <Button size="small" onClick={() => resetOverride(item)}>Reset</Button>
                                 ) : null}
-                              </Space>
+                              </div>
                             </td>
                           </tr>
                         ))}

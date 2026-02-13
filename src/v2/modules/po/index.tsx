@@ -289,9 +289,10 @@ export default function PoModule(): JSX.Element {
   }, [includeArchived, poSettings, productBySku, search, state.payments, state.pos, supplierById]);
 
   const columns = useMemo<ColumnDef<PoRow>[]>(() => [
-    { header: "PO", accessorKey: "poNo" },
+    { header: "PO", accessorKey: "poNo", meta: { width: 98 } },
     {
       header: "Produkt",
+      meta: { width: 230 },
       cell: ({ row }) => (
         <Space direction="vertical" size={0}>
           <Text>{row.original.alias}</Text>
@@ -299,10 +300,11 @@ export default function PoModule(): JSX.Element {
         </Space>
       ),
     },
-    { header: "Supplier", accessorKey: "supplierName" },
-    { header: "Order", cell: ({ row }) => formatDate(row.original.orderDate) },
+    { header: "Supplier", accessorKey: "supplierName", meta: { width: 150 } },
+    { header: "Order", meta: { width: 112 }, cell: ({ row }) => formatDate(row.original.orderDate) },
     {
       header: "ETD / ETA",
+      meta: { width: 162 },
       cell: ({ row }) => (
         <Space direction="vertical" size={0}>
           <Text>ETD {formatDate(row.original.etdDate)}</Text>
@@ -312,10 +314,12 @@ export default function PoModule(): JSX.Element {
     },
     {
       header: "Warenwert",
+      meta: { width: 130, align: "right" },
       cell: ({ row }) => formatCurrency(row.original.goodsEur),
     },
     {
       header: "Open / Paid",
+      meta: { width: 160, align: "right" },
       cell: ({ row }) => (
         <Space direction="vertical" size={0}>
           <Text>Open: {formatCurrency(row.original.openEur)}</Text>
@@ -325,12 +329,14 @@ export default function PoModule(): JSX.Element {
     },
     {
       header: "Status",
+      meta: { width: 110 },
       cell: ({ row }) => statusTag(row.original.statusText),
     },
     {
       header: "Aktionen",
+      meta: { width: 190, minWidth: 190 },
       cell: ({ row }) => (
-        <Space>
+        <div className="v2-actions-nowrap">
           <Button size="small" onClick={() => openEditModal(row.original.raw)}>Bearbeiten</Button>
           <Button
             size="small"
@@ -351,7 +357,7 @@ export default function PoModule(): JSX.Element {
           >
             Loeschen
           </Button>
-        </Space>
+        </div>
       ),
     },
   ], [saveWith]);
@@ -465,31 +471,44 @@ export default function PoModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Purchase Orders (V2 Native)</Title>
-        <Paragraph>
-          PO-Stammdaten, Milestones, Auto-Events und Payment-Status laufen nativ im V2 State.
-        </Paragraph>
-        <Space>
-          <Button type="primary" onClick={openCreateModal}>Neue PO</Button>
-          <Checkbox checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)}>
-            Archiv anzeigen
-          </Checkbox>
-          {saving ? <Tag color="processing">Speichern...</Tag> : null}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Purchase Orders</Title>
+            <Paragraph>
+              PO-Stammdaten, Milestones, Auto-Events und Payment-Status laufen nativ im V2 State.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button type="primary" onClick={openCreateModal}>Neue PO</Button>
+            <Checkbox checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)}>
+              Archiv anzeigen
+            </Checkbox>
+            {saving ? <Tag color="processing">Speichern...</Tag> : null}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <Input
-          placeholder="PO Nummer, SKU, Alias, Supplier"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          style={{ width: 320, marginBottom: 12 }}
+        <div className="v2-toolbar-row" style={{ marginBottom: 10 }}>
+          <Input
+            placeholder="PO Nummer, SKU, Alias, Supplier"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            style={{ width: 320, maxWidth: "100%" }}
+          />
+        </div>
+        <TanStackGrid
+          data={rows}
+          columns={columns}
+          minTableWidth={1360}
+          tableLayout="auto"
         />
-        <TanStackGrid data={rows} columns={columns} />
       </Card>
 
       <Modal
@@ -691,8 +710,8 @@ export default function PoModule(): JSX.Element {
                     )
                   }
                 </Text>
-                <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-                  <table className="v2-stats-table ui-table-standard">
+                <div className="v2-stats-table-wrap">
+                  <table className="v2-stats-table">
                     <thead>
                       <tr>
                         <th>ID</th>

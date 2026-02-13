@@ -272,14 +272,20 @@ export default function SettingsModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Settings (V2 Native)</Title>
-        <Paragraph>
-          Lead Times, Defaults, CNY-Fenster und Kategorien werden direkt auf dem V2 Workspace gespeichert.
-        </Paragraph>
-        <Space>
-          {saving ? <Tag color="processing">Speichern...</Tag> : null}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Settings</Title>
+            <Paragraph>
+              Lead Times, Defaults, CNY-Fenster und Kategorien werden direkt auf dem V2 Workspace gespeichert.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            {saving ? <Tag color="processing">Speichern...</Tag> : null}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}

@@ -222,11 +222,12 @@ export default function InventoryModule(): JSX.Element {
   }, [baseRows, onlyActive, search]);
 
   const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
-    { header: "SKU", accessorKey: "sku" },
-    { header: "Alias", accessorKey: "alias" },
-    { header: "Kategorie", accessorKey: "categoryLabel" },
+    { header: "SKU", accessorKey: "sku", meta: { width: 150 } },
+    { header: "Alias", accessorKey: "alias", meta: { width: 220 } },
+    { header: "Kategorie", accessorKey: "categoryLabel", meta: { width: 150 } },
     {
       header: "Amazon",
+      meta: { width: 116, align: "right" },
       cell: ({ row }) => (
         <InputNumber
           value={row.original.amazonUnits}
@@ -249,6 +250,7 @@ export default function InventoryModule(): JSX.Element {
     },
     {
       header: "3PL",
+      meta: { width: 116, align: "right" },
       cell: ({ row }) => (
         <InputNumber
           value={row.original.threePLUnits}
@@ -271,10 +273,12 @@ export default function InventoryModule(): JSX.Element {
     },
     {
       header: "Total",
+      meta: { width: 92, align: "right" },
       cell: ({ row }) => formatInt(row.original.totalUnits),
     },
     {
       header: "Delta",
+      meta: { width: 92, align: "right" },
       cell: ({ row }) => (
         <span className={row.original.delta < 0 ? "v2-negative" : ""}>
           {formatInt(row.original.delta)}
@@ -282,11 +286,13 @@ export default function InventoryModule(): JSX.Element {
       ),
     },
     {
-      header: "Safety DOH",
+      header: "Safety",
+      meta: { width: 88, align: "right" },
       cell: ({ row }) => formatInt(row.original.safetyDays),
     },
     {
-      header: "Coverage DOH",
+      header: "Coverage",
+      meta: { width: 94, align: "right" },
       cell: ({ row }) => formatInt(row.original.coverageDays),
     },
   ], []);
@@ -322,16 +328,18 @@ export default function InventoryModule(): JSX.Element {
 
   const projectionColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => {
     const base: ColumnDef<InventoryProductRow>[] = [
-      { header: "SKU", accessorKey: "sku" },
-      { header: "Alias", accessorKey: "alias" },
+      { header: "SKU", accessorKey: "sku", meta: { width: 150 } },
+      { header: "Alias", accessorKey: "alias", meta: { width: 220 } },
       {
         header: projectionMode === "plan" ? "Forecast Units" : projectionMode === "doh" ? "DOH Verlauf" : "Bestandsverlauf",
+        meta: { width: 128 },
         cell: () => " ",
       },
     ];
     const monthColumns = projectionMonthList.map((month) => ({
       id: month,
       header: formatMonthLabel(month),
+      meta: { minWidth: 110, align: "right" },
       cell: ({ row }: { row: { original: InventoryProductRow } }) => {
         const data = projection.perSkuMonth.get(row.original.sku)?.get(month);
         if (!data) return "—";
@@ -427,49 +435,57 @@ export default function InventoryModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Inventory (V2 Native)</Title>
-        <Paragraph>
-          Snapshot-Erfassung und Projektion (Units / DOH / Plan) auf Basis der bestehenden Domain-Logik.
-        </Paragraph>
-        <Space wrap>
-          <Select
-            value={selectedMonth}
-            onChange={(value) => setSelectedMonth(value)}
-            options={monthOptions.map((month) => ({ value: month, label: month }))}
-            style={{ width: 140, maxWidth: "100%" }}
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Suche SKU, Alias, Kategorie"
-            style={{ width: 320, maxWidth: "100%" }}
-          />
-          <Checkbox checked={onlyActive} onChange={(event) => setOnlyActive(event.target.checked)}>
-            Nur aktive Produkte
-          </Checkbox>
-          <Radio.Group value={projectionMode} onChange={(event) => setProjectionMode(event.target.value as ProjectionMode)}>
-            <Radio.Button value="units">Units</Radio.Button>
-            <Radio.Button value="doh">DOH</Radio.Button>
-            <Radio.Button value="plan">Plan</Radio.Button>
-          </Radio.Group>
-          <InputNumber
-            min={1}
-            max={36}
-            value={projectionMonths}
-            onChange={(value) => setProjectionMonths(Math.max(1, Math.round(Number(value) || 1)))}
-          />
-          <Button onClick={() => { void copyFromPreviousMonth(); }}>
-            Vorherigen Monat kopieren
-          </Button>
-          <Button type="primary" onClick={() => { void saveSnapshot(); }} disabled={!snapshotDirty} loading={saving}>
-            Snapshot speichern
-          </Button>
-          <Button onClick={exportSnapshotCsv}>
-            Snapshot CSV
-          </Button>
-          {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Inventory</Title>
+            <Paragraph>
+              Snapshot-Erfassung und Projektion (Units / DOH / Plan) auf Basis der bestehenden Domain-Logik.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Select
+              value={selectedMonth}
+              onChange={(value) => setSelectedMonth(value)}
+              options={monthOptions.map((month) => ({ value: month, label: month }))}
+              style={{ width: 140, maxWidth: "100%" }}
+            />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Suche SKU, Alias, Kategorie"
+              style={{ width: 320, maxWidth: "100%" }}
+            />
+            <Checkbox checked={onlyActive} onChange={(event) => setOnlyActive(event.target.checked)}>
+              Nur aktive Produkte
+            </Checkbox>
+            <Radio.Group value={projectionMode} onChange={(event) => setProjectionMode(event.target.value as ProjectionMode)}>
+              <Radio.Button value="units">Units</Radio.Button>
+              <Radio.Button value="doh">DOH</Radio.Button>
+              <Radio.Button value="plan">Plan</Radio.Button>
+            </Radio.Group>
+            <InputNumber
+              min={1}
+              max={36}
+              value={projectionMonths}
+              onChange={(value) => setProjectionMonths(Math.max(1, Math.round(Number(value) || 1)))}
+            />
+          </div>
+          <div className="v2-toolbar-row">
+            <Button onClick={() => { void copyFromPreviousMonth(); }}>
+              Vorherigen Monat kopieren
+            </Button>
+            <Button type="primary" onClick={() => { void saveSnapshot(); }} disabled={!snapshotDirty} loading={saving}>
+              Snapshot speichern
+            </Button>
+            <Button onClick={exportSnapshotCsv}>
+              Snapshot CSV
+            </Button>
+            {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -477,7 +493,12 @@ export default function InventoryModule(): JSX.Element {
 
       <Card>
         <Title level={4}>Snapshot {selectedMonth}</Title>
-        <TanStackGrid data={filteredRows} columns={snapshotColumns} />
+        <TanStackGrid
+          data={filteredRows}
+          columns={snapshotColumns}
+          minTableWidth={980}
+          tableLayout="auto"
+        />
       </Card>
 
       <Card>
@@ -485,7 +506,12 @@ export default function InventoryModule(): JSX.Element {
         <Text type="secondary">
           Zeitraum: {projectionMonthList[0] || "—"} bis {projectionMonthList[projectionMonthList.length - 1] || "—"}.
         </Text>
-        <TanStackGrid data={filteredRows} columns={projectionColumns} />
+        <TanStackGrid
+          data={filteredRows}
+          columns={projectionColumns}
+          minTableWidth={Math.max(980, 500 + (projectionMonthList.length * 110))}
+          tableLayout="auto"
+        />
       </Card>
     </div>
   );

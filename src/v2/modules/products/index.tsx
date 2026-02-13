@@ -156,18 +156,21 @@ export default function ProductsModule(): JSX.Element {
   }, [categoryLabelById, search, stateObject, statusFilter, supplierLabelById]);
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => [
-    { header: "SKU", accessorKey: "sku" },
-    { header: "Alias", accessorKey: "alias" },
+    { header: "SKU", accessorKey: "sku", meta: { width: 170 } },
+    { header: "Alias", accessorKey: "alias", meta: { width: 230 } },
     {
       header: "Kategorie",
+      meta: { width: 140 },
       cell: ({ row }) => (row.original.categoryId ? categoryLabelById.get(row.original.categoryId) || row.original.categoryId : "Ohne Kategorie"),
     },
     {
       header: "Supplier",
+      meta: { width: 190 },
       cell: ({ row }) => (row.original.supplierId ? supplierLabelById.get(row.original.supplierId) || row.original.supplierId : "—"),
     },
     {
       header: "Status",
+      meta: { width: 96 },
       cell: ({ row }) => (
         row.original.status === "inactive"
           ? <Tag>Inaktiv</Tag>
@@ -176,24 +179,29 @@ export default function ProductsModule(): JSX.Element {
     },
     {
       header: "Completeness",
+      meta: { width: 122 },
       cell: ({ row }) => completenessTag(row.original.completeness),
     },
     {
       header: "Ø VK (EUR)",
+      meta: { width: 116, align: "right" },
       cell: ({ row }) => row.original.avgSellingPriceGrossEUR == null ? "—" : row.original.avgSellingPriceGrossEUR.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
     },
     {
       header: "Marge %",
+      meta: { width: 96, align: "right" },
       cell: ({ row }) => row.original.sellerboardMarginPct == null ? "—" : row.original.sellerboardMarginPct.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 2 }),
     },
     {
       header: "MOQ",
+      meta: { width: 84, align: "right" },
       cell: ({ row }) => row.original.moqUnits == null ? "—" : String(Math.round(row.original.moqUnits)),
     },
     {
       header: "Aktionen",
+      meta: { width: 230, minWidth: 230 },
       cell: ({ row }) => (
-        <Space>
+        <div className="v2-actions-nowrap">
           <Button
             size="small"
             onClick={() => {
@@ -243,7 +251,7 @@ export default function ProductsModule(): JSX.Element {
           >
             Loeschen
           </Button>
-        </Space>
+        </div>
       ),
     },
   ], [categoryLabelById, form, saveWith, supplierLabelById]);
@@ -329,47 +337,60 @@ export default function ProductsModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Produkte (V2 Native)</Title>
-        <Paragraph>
-          Produktstammdaten mit Completeness-Status, Kategorie/Supplier-Zuordnung und Kern-Kalkulationsfeldern.
-        </Paragraph>
-        <Space wrap>
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Suche SKU, Alias, Supplier, Kategorie"
-            style={{ width: 340, maxWidth: "100%" }}
-          />
-          <Select
-            value={statusFilter}
-            onChange={(value) => setStatusFilter(value)}
-            options={[
-              { value: "all", label: "Alle" },
-              { value: "active", label: "Aktiv" },
-              { value: "inactive", label: "Inaktiv" },
-            ]}
-            style={{ width: 140, maxWidth: "100%" }}
-          />
-          <Button
-            type="primary"
-            onClick={() => {
-              setEditing(null);
-              form.setFieldsValue(productDraftFromRow(undefined));
-              setModalOpen(true);
-            }}
-          >
-            Produkt hinzufuegen
-          </Button>
-          {saving ? <Tag color="processing">Speichern...</Tag> : null}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Produkte</Title>
+            <Paragraph>
+              Produktstammdaten mit Completeness-Status, Kategorie/Supplier-Zuordnung und Kern-Kalkulationsfeldern.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Space wrap>
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Suche SKU, Alias, Supplier, Kategorie"
+                style={{ width: 340, maxWidth: "100%" }}
+              />
+              <Select
+                value={statusFilter}
+                onChange={(value) => setStatusFilter(value)}
+                options={[
+                  { value: "all", label: "Alle" },
+                  { value: "active", label: "Aktiv" },
+                  { value: "inactive", label: "Inaktiv" },
+                ]}
+                style={{ width: 140, maxWidth: "100%" }}
+              />
+              <Button
+                type="primary"
+                onClick={() => {
+                  setEditing(null);
+                  form.setFieldsValue(productDraftFromRow(undefined));
+                  setModalOpen(true);
+                }}
+              >
+                Produkt hinzufuegen
+              </Button>
+            </Space>
+            {saving ? <Tag color="processing">Speichern...</Tag> : null}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <TanStackGrid data={rows} columns={columns} />
+        <TanStackGrid
+          data={rows}
+          columns={columns}
+          minTableWidth={1500}
+          tableLayout="auto"
+        />
       </Card>
 
       <Modal

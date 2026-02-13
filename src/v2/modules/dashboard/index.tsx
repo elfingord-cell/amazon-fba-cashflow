@@ -283,10 +283,14 @@ export default function DashboardModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Dashboard (V2 Native)</Title>
-        <Paragraph>
-          Plan/Ist Uebersicht mit Cashflow-KPIs, Monatsverlauf, Datenreife und Produkt-Forecast-Abdeckung.
-        </Paragraph>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Dashboard</Title>
+            <Paragraph>
+              Plan/Ist Uebersicht mit Cashflow-KPIs, Monatsverlauf, Datenreife und Produkt-Forecast-Abdeckung.
+            </Paragraph>
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -363,7 +367,12 @@ export default function DashboardModule(): JSX.Element {
         <Paragraph type="secondary">
           Monatsvergleich zwischen geplantem und erfasstem Istwert aus den Monats-Ist-Daten.
         </Paragraph>
-        <TanStackGrid data={actualComparisons} columns={actualColumns} />
+        <TanStackGrid
+          data={actualComparisons}
+          columns={actualColumns}
+          minTableWidth={980}
+          tableLayout="auto"
+        />
       </Card>
     </div>
   );

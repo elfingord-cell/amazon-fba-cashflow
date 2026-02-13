@@ -342,8 +342,9 @@ export default function FoModule(): JSX.Element {
     },
     {
       header: "Aktionen",
+      meta: { width: 250, minWidth: 250 },
       cell: ({ row }) => (
-        <Space>
+        <div className="v2-actions-nowrap">
           <Button
             size="small"
             onClick={() => {
@@ -383,7 +384,7 @@ export default function FoModule(): JSX.Element {
           >
             Loeschen
           </Button>
-        </Space>
+        </div>
       ),
     },
   ], [saveWith, state.pos]);
@@ -608,24 +609,30 @@ export default function FoModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Forecast Orders (V2 Native)</Title>
-        <Paragraph>
-          Backward Scheduling, FO-Empfehlung und Conversion nach PO mit V2-State und Sync.
-        </Paragraph>
-        <Space>
-          <Button type="primary" onClick={openCreateModal}>Create FO</Button>
-          {saving ? <Tag color="processing">Speichern...</Tag> : null}
-          {lastSavedAt ? (
-            <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag>
-          ) : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Forecast Orders</Title>
+            <Paragraph>
+              Backward Scheduling, FO-Empfehlung und Conversion nach PO mit V2-State und Sync.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button type="primary" onClick={openCreateModal}>Create FO</Button>
+            {saving ? <Tag color="processing">Speichern...</Tag> : null}
+            {lastSavedAt ? (
+              <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag>
+            ) : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <Space style={{ marginBottom: 12 }} wrap>
+        <div className="v2-toolbar-row" style={{ marginBottom: 10 }}>
           <Input
             placeholder="Alias, SKU, Supplier"
             value={search}
@@ -641,8 +648,13 @@ export default function FoModule(): JSX.Element {
             ]}
             style={{ width: 190 }}
           />
-        </Space>
-        <TanStackGrid data={rows} columns={columns} />
+        </div>
+        <TanStackGrid
+          data={rows}
+          columns={columns}
+          minTableWidth={1400}
+          tableLayout="auto"
+        />
       </Card>
 
       <Modal

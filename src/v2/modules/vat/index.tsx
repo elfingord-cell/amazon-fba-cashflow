@@ -231,25 +231,31 @@ export default function VatModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>USt Vorschau (V2 Native)</Title>
-        <Paragraph>
-          DE-USt-Vorschau mit Detaildrilldown und Monats-Overrides fuer DE-Anteil, Gebuehrensatz und Fixkosten-VSt.
-        </Paragraph>
-        <Space>
-          <Button type="primary" onClick={() => { void saveVatDraft(); }} disabled={!dirty} loading={saving}>
-            USt-Einstellungen speichern
-          </Button>
-          <Button
-            onClick={() => {
-              setMonthOverridesDraft({});
-              setDirty(true);
-            }}
-          >
-            Monats-Overrides zuruecksetzen
-          </Button>
-          {dirty ? <Tag color="gold">Ungespeicherte Aenderungen</Tag> : <Tag color="green">Synchron</Tag>}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>USt Vorschau</Title>
+            <Paragraph>
+              DE-USt-Vorschau mit Detaildrilldown und Monats-Overrides fuer DE-Anteil, Gebuehrensatz und Fixkosten-VSt.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button type="primary" onClick={() => { void saveVatDraft(); }} disabled={!dirty} loading={saving}>
+              USt-Einstellungen speichern
+            </Button>
+            <Button
+              onClick={() => {
+                setMonthOverridesDraft({});
+                setDirty(true);
+              }}
+            >
+              Monats-Overrides zuruecksetzen
+            </Button>
+            {dirty ? <Tag color="gold">Ungespeicherte Aenderungen</Tag> : <Tag color="green">Synchron</Tag>}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -342,7 +348,7 @@ export default function VatModule(): JSX.Element {
               title: "DE-Brutto",
               key: "grossDe",
               render: (_, row) => (
-                <Button type="link" onClick={() => setDetailModal({ month: row.month, key: "deBrutto" })}>
+                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "deBrutto" })}>
                   {formatCurrency(row.grossDe)}
                 </Button>
               ),
@@ -351,7 +357,7 @@ export default function VatModule(): JSX.Element {
               title: "Output-USt",
               key: "outVat",
               render: (_, row) => (
-                <Button type="link" onClick={() => setDetailModal({ month: row.month, key: "outputUst" })}>
+                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "outputUst" })}>
                   {formatCurrency(row.outVat)}
                 </Button>
               ),
@@ -360,7 +366,7 @@ export default function VatModule(): JSX.Element {
               title: "VSt Fees",
               key: "feeInputVat",
               render: (_, row) => (
-                <Button type="link" onClick={() => setDetailModal({ month: row.month, key: "vstFees" })}>
+                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "vstFees" })}>
                   {formatCurrency(row.feeInputVat)}
                 </Button>
               ),
@@ -369,7 +375,7 @@ export default function VatModule(): JSX.Element {
               title: "Fixkosten-VSt",
               key: "fixInputVat",
               render: (_, row) => (
-                <Button type="link" onClick={() => setDetailModal({ month: row.month, key: "fixkostenVst" })}>
+                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "fixkostenVst" })}>
                   {formatCurrency(row.fixInputVat)}
                 </Button>
               ),
@@ -378,7 +384,7 @@ export default function VatModule(): JSX.Element {
               title: "EUSt-Erstattung",
               key: "eustRefund",
               render: (_, row) => (
-                <Button type="link" onClick={() => setDetailModal({ month: row.month, key: "eustErstattung" })}>
+                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "eustErstattung" })}>
                   {formatCurrency(row.eustRefund)}
                 </Button>
               ),
@@ -387,7 +393,7 @@ export default function VatModule(): JSX.Element {
               title: "Zahllast",
               key: "payable",
               render: (_, row) => (
-                <Button type="link" danger={row.payable < 0} onClick={() => setDetailModal({ month: row.month, key: "zahllast" })}>
+                <Button size="small" type="text" danger={row.payable < 0} onClick={() => setDetailModal({ month: row.month, key: "zahllast" })}>
                   {formatCurrency(row.payable)}
                 </Button>
               ),
@@ -490,8 +496,8 @@ export default function VatModule(): JSX.Element {
           <Space direction="vertical" style={{ width: "100%" }}>
             {detailContent.detail.formula ? <Text type="secondary">{detailContent.detail.formula}</Text> : null}
             {detailContent.detail.notes ? <Text type="secondary">{detailContent.detail.notes}</Text> : null}
-            <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-              <table className="v2-stats-table ui-table-standard">
+            <div className="v2-stats-table-wrap">
+              <table className="v2-stats-table">
                 <thead>
                   <tr>
                     <th>Posten</th>

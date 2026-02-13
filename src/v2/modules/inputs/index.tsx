@@ -198,17 +198,23 @@ export default function InputsModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Eingaben (V2 Native)</Title>
-        <Paragraph>
-          Opening Balance, Monats-Horizont, Umsaetze, Extras, Dividenden und Monats-Istwerte.
-        </Paragraph>
-        <Space>
-          <Button type="primary" onClick={() => { void saveAll(); }} disabled={!dirty} loading={saving}>
-            Alle Eingaben speichern
-          </Button>
-          {dirty ? <Tag color="gold">Ungespeicherte Aenderungen</Tag> : <Tag color="green">Synchron</Tag>}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Eingaben</Title>
+            <Paragraph>
+              Opening Balance, Monats-Horizont, Umsaetze, Extras, Dividenden und Monats-Istwerte.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button type="primary" onClick={() => { void saveAll(); }} disabled={!dirty} loading={saving}>
+              Alle Eingaben speichern
+            </Button>
+            {dirty ? <Tag color="gold">Ungespeicherte Aenderungen</Tag> : <Tag color="green">Synchron</Tag>}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -279,8 +285,8 @@ export default function InputsModule(): JSX.Element {
             Monat
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-          <table className="v2-stats-table ui-table-standard">
+        <div className="v2-stats-table-wrap">
+          <table className="v2-stats-table">
             <thead>
               <tr>
                 <th>Monat</th>
@@ -380,8 +386,8 @@ export default function InputsModule(): JSX.Element {
             Extra
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-          <table className="v2-stats-table ui-table-standard">
+        <div className="v2-stats-table-wrap">
+          <table className="v2-stats-table">
             <thead>
               <tr>
                 <th>Datum</th>
@@ -458,8 +464,8 @@ export default function InputsModule(): JSX.Element {
             Dividende
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-          <table className="v2-stats-table ui-table-standard">
+        <div className="v2-stats-table-wrap">
+          <table className="v2-stats-table">
             <thead>
               <tr>
                 <th>Monat</th>
@@ -539,8 +545,8 @@ export default function InputsModule(): JSX.Element {
             Ist-Monat
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-          <table className="v2-stats-table ui-table-standard">
+        <div className="v2-stats-table-wrap">
+          <table className="v2-stats-table">
             <thead>
               <tr>
                 <th>Monat</th>

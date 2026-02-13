@@ -11,16 +11,12 @@ import {
   Tag,
   Typography,
 } from "antd";
-import {
-  ColumnDef,
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-} from "@tanstack/react-table";
+import { ColumnDef } from "@tanstack/react-table";
 import type { ImportMode } from "../../state/types";
 import type { DryRunBundle, ImportIssue, ImportSectionStats, ImportApplyResult } from "../../migration";
 import { applyDryRunBundle, runLegacyDryRunFromJson } from "../../migration";
 import { useStorageAdapter } from "../../sync/session";
+import { TanStackGrid } from "../../components/TanStackGrid";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -47,39 +43,8 @@ function statsColumns(): ColumnDef<ImportSectionStats>[] {
 
 function StatsTable({ rows }: { rows: ImportSectionStats[] }): JSX.Element {
   const columns = useMemo(() => statsColumns(), []);
-  const table = useReactTable({
-    data: rows,
-    columns,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
   return (
-    <div className="v2-stats-table-wrap ui-table-shell ui-scroll-host">
-      <table className="v2-stats-table ui-table-standard">
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <th key={header.id}>
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <TanStackGrid data={rows} columns={columns} minTableWidth={720} tableLayout="auto" />
   );
 }
 

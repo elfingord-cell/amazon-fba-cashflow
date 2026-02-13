@@ -114,17 +114,19 @@ export default function SuppliersModule(): JSX.Element {
   }, [state.suppliers]);
 
   const tableColumns = useMemo<ColumnDef<SupplierRow>[]>(() => [
-    { header: "Name", accessorKey: "name" },
-    { header: "Company", accessorKey: "company_name" },
-    { header: "Prod. Lead (Tage)", accessorKey: "productionLeadTimeDaysDefault" },
-    { header: "Incoterm", accessorKey: "incotermDefault" },
-    { header: "Currency", accessorKey: "currencyDefault" },
+    { header: "Name", accessorKey: "name", meta: { width: 190 } },
+    { header: "Company", accessorKey: "company_name", meta: { width: 240 } },
+    { header: "Prod. Lead (Tage)", accessorKey: "productionLeadTimeDaysDefault", meta: { width: 118, align: "right" } },
+    { header: "Incoterm", accessorKey: "incotermDefault", meta: { width: 96 } },
+    { header: "Currency", accessorKey: "currencyDefault", meta: { width: 96 } },
     {
       header: "Payment Terms",
+      meta: { width: 260 },
       cell: ({ row }) => summaryTerms(row.original.paymentTermsDefault),
     },
     {
       header: "Aktualisiert",
+      meta: { width: 108 },
       cell: ({ row }) => (
         row.original.updatedAt
           ? new Date(row.original.updatedAt).toLocaleDateString("de-DE")
@@ -133,8 +135,9 @@ export default function SuppliersModule(): JSX.Element {
     },
     {
       header: "Aktionen",
+      meta: { width: 190, minWidth: 190 },
       cell: ({ row }) => (
-        <Space>
+        <div className="v2-actions-nowrap">
           <Button
             size="small"
             onClick={() => {
@@ -172,7 +175,7 @@ export default function SuppliersModule(): JSX.Element {
           >
             Loeschen
           </Button>
-        </Space>
+        </div>
       ),
     },
   ], [form, saveWith]);
@@ -230,39 +233,50 @@ export default function SuppliersModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Suppliers (V2 Native)</Title>
-        <Paragraph>
-          Lieferantenverwaltung inkl. Payment Terms mit Triggern fuer PO-Events.
-        </Paragraph>
-        <Space>
-          <Button
-            type="primary"
-            onClick={() => {
-              setEditingId(null);
-              form.setFieldsValue({
-                id: undefined,
-                name: "",
-                company_name: "",
-                productionLeadTimeDaysDefault: 30,
-                incotermDefault: "EXW",
-                currencyDefault: "EUR",
-                paymentTermsDefault: defaultPaymentTerms(),
-              });
-              setModalOpen(true);
-            }}
-          >
-            Lieferant hinzufuegen
-          </Button>
-          {saving ? <Tag color="processing">Speichern...</Tag> : null}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Suppliers</Title>
+            <Paragraph>
+              Lieferantenverwaltung inkl. Payment Terms mit Triggern fuer PO-Events.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Button
+              type="primary"
+              onClick={() => {
+                setEditingId(null);
+                form.setFieldsValue({
+                  id: undefined,
+                  name: "",
+                  company_name: "",
+                  productionLeadTimeDaysDefault: 30,
+                  incotermDefault: "EXW",
+                  currencyDefault: "EUR",
+                  paymentTermsDefault: defaultPaymentTerms(),
+                });
+                setModalOpen(true);
+              }}
+            >
+              Lieferant hinzufuegen
+            </Button>
+            {saving ? <Tag color="processing">Speichern...</Tag> : null}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <TanStackGrid data={rows} columns={tableColumns} />
+        <TanStackGrid
+          data={rows}
+          columns={tableColumns}
+          minTableWidth={1320}
+          tableLayout="auto"
+        />
       </Card>
 
       <Modal

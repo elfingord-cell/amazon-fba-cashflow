@@ -219,45 +219,51 @@ export default function AccountingExportModule(): JSX.Element {
     <div className="v2-page">
       {contextHolder}
       <Card className="v2-intro-card">
-        <Title level={3}>Buchhalter Export</Title>
-        <Paragraph>
-          One-Click Monats-Paket mit Preview: Warenbestand, Lieferanzahlungen, Wareneingaenge und E-Mail Text.
-        </Paragraph>
-        <Space wrap>
-          <div className="v2-toolbar-field">
-            <Text>Monat</Text>
-            <Input
-              type="month"
-              value={month}
-              onChange={(event) => setMonth(event.target.value || currentMonthKey())}
-              style={{ width: 180 }}
-            />
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Buchhalter Export</Title>
+            <Paragraph>
+              One-Click Monats-Paket mit Preview: Warenbestand, Lieferanzahlungen, Wareneingaenge und E-Mail Text.
+            </Paragraph>
           </div>
-          <div className="v2-toolbar-field">
-            <Text>Scope</Text>
-            <Checkbox checked={includeJournal} onChange={(event) => setIncludeJournal(event.target.checked)}>
-              Zahlungsjournal zusaetzlich
-            </Checkbox>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <div className="v2-toolbar-field">
+              <Text>Monat</Text>
+              <Input
+                type="month"
+                value={month}
+                onChange={(event) => setMonth(event.target.value || currentMonthKey())}
+                style={{ width: 180 }}
+              />
+            </div>
+            <div className="v2-toolbar-field">
+              <Text>Scope</Text>
+              <Checkbox checked={includeJournal} onChange={(event) => setIncludeJournal(event.target.checked)}>
+                Zahlungsjournal zusaetzlich
+              </Checkbox>
+            </div>
+            <div className="v2-toolbar-field">
+              <Text>Warenwert Override EUR (optional)</Text>
+              <Input
+                placeholder="z.B. 150000"
+                value={inventoryOverrideRaw}
+                onChange={(event) => setInventoryOverrideRaw(event.target.value)}
+                style={{ width: 220 }}
+              />
+            </div>
+            <Button type="primary" onClick={() => { void handleExport(); }} loading={exportBusy}>
+              Paket erstellen
+            </Button>
+            <Button onClick={() => { void handleCopyEmail(); }}>
+              E-Mail Text kopieren
+            </Button>
+            <Tag color="blue">Anzahlungen: {preview.deposits.length}</Tag>
+            <Tag color="blue">Wareneingaenge: {preview.arrivals.length}</Tag>
+            <Tag color={preview.quality.length ? "red" : "green"}>Issues: {preview.quality.length}</Tag>
           </div>
-          <div className="v2-toolbar-field">
-            <Text>Warenwert Override EUR (optional)</Text>
-            <Input
-              placeholder="z.B. 150000"
-              value={inventoryOverrideRaw}
-              onChange={(event) => setInventoryOverrideRaw(event.target.value)}
-              style={{ width: 220 }}
-            />
-          </div>
-          <Button type="primary" onClick={() => { void handleExport(); }} loading={exportBusy}>
-            Paket erstellen
-          </Button>
-          <Button onClick={() => { void handleCopyEmail(); }}>
-            E-Mail Text kopieren
-          </Button>
-          <Tag color="blue">Anzahlungen: {preview.deposits.length}</Tag>
-          <Tag color="blue">Wareneingaenge: {preview.arrivals.length}</Tag>
-          <Tag color={preview.quality.length ? "red" : "green"}>Issues: {preview.quality.length}</Tag>
-        </Space>
+        </div>
       </Card>
 
       {error ? (
@@ -281,7 +287,8 @@ export default function AccountingExportModule(): JSX.Element {
         <TanStackGrid
           data={(preview.inventoryRows || []) as InventoryRow[]}
           columns={inventoryColumns}
-          className="v2-stats-table-wrap ui-table-shell ui-scroll-host"
+          minTableWidth={980}
+          tableLayout="auto"
         />
       </Card>
 
@@ -289,7 +296,8 @@ export default function AccountingExportModule(): JSX.Element {
         <TanStackGrid
           data={(preview.deposits || []) as DepositRow[]}
           columns={depositColumns}
-          className="v2-stats-table-wrap ui-table-shell ui-scroll-host"
+          minTableWidth={1180}
+          tableLayout="auto"
         />
       </Card>
 
@@ -297,7 +305,8 @@ export default function AccountingExportModule(): JSX.Element {
         <TanStackGrid
           data={(preview.arrivals || []) as ArrivalRow[]}
           columns={arrivalColumns}
-          className="v2-stats-table-wrap ui-table-shell ui-scroll-host"
+          minTableWidth={1100}
+          tableLayout="auto"
         />
       </Card>
 
@@ -305,7 +314,8 @@ export default function AccountingExportModule(): JSX.Element {
         <TanStackGrid
           data={(preview.quality || []) as QualityRow[]}
           columns={qualityColumns}
-          className="v2-stats-table-wrap ui-table-shell ui-scroll-host"
+          minTableWidth={960}
+          tableLayout="auto"
         />
       </Card>
     </div>

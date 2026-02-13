@@ -363,59 +363,65 @@ export default function ForecastModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <Title level={3}>Forecast (V2 Native)</Title>
-        <Paragraph>
-          Manuelle Forecast-Eingaben, Ventory CSV-Import und Übertragung der Forecast-Umsätze in `Eingaben`.
-        </Paragraph>
-        <Space wrap>
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Suche SKU, Alias, Kategorie"
-            style={{ width: 320, maxWidth: "100%" }}
-          />
-          <Select
-            value={range}
-            onChange={(value) => setRange(value)}
-            options={RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
-            style={{ width: 140, maxWidth: "100%" }}
-          />
-          <Radio.Group value={view} onChange={(event) => setView(event.target.value as ForecastViewMode)}>
-            <Radio.Button value="units">Units</Radio.Button>
-            <Radio.Button value="revenue">Umsatz</Radio.Button>
-            <Radio.Button value="profit">Gewinn</Radio.Button>
-          </Radio.Group>
-          <Checkbox checked={onlyActive} onChange={(event) => setOnlyActive(event.target.checked)}>
-            Nur aktive Produkte
-          </Checkbox>
-          <Checkbox checked={onlyWithForecast} onChange={(event) => setOnlyWithForecast(event.target.checked)}>
-            Nur mit Forecast
-          </Checkbox>
-          <Checkbox
-            checked={Boolean((forecast.settings as Record<string, unknown> | undefined)?.useForecast)}
-            onChange={(event) => {
-              void toggleUseForecast(event.target.checked);
-            }}
-          >
-            `useForecast` aktiv
-          </Checkbox>
-        </Space>
-        <Space style={{ marginTop: 12 }} wrap>
-          <Button type="primary" onClick={() => { void saveManualForecast(); }} disabled={!manualDirty} loading={saving}>
-            Manuelle Änderungen speichern
-          </Button>
-          <Button
-            onClick={() => {
-              const defaults = visibleMonths.filter((month) => Number(revenueByMonth.get(month) || 0) > 0);
-              setTransferSelection(defaults);
-              setTransferOpen(true);
-            }}
-          >
-            Umsatz übertragen
-          </Button>
-          {manualDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
-          {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
-        </Space>
+        <div className="v2-page-head">
+          <div>
+            <Title level={3}>Forecast</Title>
+            <Paragraph>
+              Manuelle Forecast-Eingaben, Ventory CSV-Import und Übertragung der Forecast-Umsätze in `Eingaben`.
+            </Paragraph>
+          </div>
+        </div>
+        <div className="v2-toolbar">
+          <div className="v2-toolbar-row">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Suche SKU, Alias, Kategorie"
+              style={{ width: 320, maxWidth: "100%" }}
+            />
+            <Select
+              value={range}
+              onChange={(value) => setRange(value)}
+              options={RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
+              style={{ width: 140, maxWidth: "100%" }}
+            />
+            <Radio.Group value={view} onChange={(event) => setView(event.target.value as ForecastViewMode)}>
+              <Radio.Button value="units">Units</Radio.Button>
+              <Radio.Button value="revenue">Umsatz</Radio.Button>
+              <Radio.Button value="profit">Gewinn</Radio.Button>
+            </Radio.Group>
+            <Checkbox checked={onlyActive} onChange={(event) => setOnlyActive(event.target.checked)}>
+              Nur aktive Produkte
+            </Checkbox>
+            <Checkbox checked={onlyWithForecast} onChange={(event) => setOnlyWithForecast(event.target.checked)}>
+              Nur mit Forecast
+            </Checkbox>
+            <Checkbox
+              checked={Boolean((forecast.settings as Record<string, unknown> | undefined)?.useForecast)}
+              onChange={(event) => {
+                void toggleUseForecast(event.target.checked);
+              }}
+            >
+              `useForecast` aktiv
+            </Checkbox>
+          </div>
+          <div className="v2-toolbar-row">
+            <Button type="primary" onClick={() => { void saveManualForecast(); }} disabled={!manualDirty} loading={saving}>
+              Manuelle Änderungen speichern
+            </Button>
+            <Button
+              onClick={() => {
+                const defaults = visibleMonths.filter((month) => Number(revenueByMonth.get(month) || 0) > 0);
+                setTransferSelection(defaults);
+                setTransferOpen(true);
+              }}
+            >
+              Umsatz übertragen
+            </Button>
+            {manualDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
+            {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
+          </div>
+        </div>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -464,7 +470,12 @@ export default function ForecastModule(): JSX.Element {
       </Card>
 
       <Card>
-        <TanStackGrid data={filteredProducts} columns={columns} />
+        <TanStackGrid
+          data={filteredProducts}
+          columns={columns}
+          minTableWidth={1200}
+          tableLayout="auto"
+        />
       </Card>
 
       <Modal
