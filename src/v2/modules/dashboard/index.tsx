@@ -1,5 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Col, Progress, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Collapse,
+  Divider,
+  Progress,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
@@ -7,25 +23,27 @@ import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { formatMonthLabel } from "../../domain/months";
 import { getEffectiveUnits, normalizeManualMap } from "../../domain/tableModels";
+import {
+  buildDashboardMaturityRows,
+  buildDashboardPnlRowsByMonth,
+  buildInventoryMonthRiskIndex,
+  type DashboardBreakdownRow,
+  type DashboardMaturityCheckV2,
+  type DashboardMaturityRowV2,
+  type DashboardPnlRow,
+} from "../../domain/dashboardMaturity";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
+
+type DashboardRange = "next6" | "next12" | "next18" | "all";
 
 interface DashboardSeriesRow {
   month: string;
   inflow: { total: number; paid: number; open: number };
   outflow: { total: number; paid: number; open: number };
   net: { total: number; paid: number; open: number };
-}
-
-interface DashboardBreakdownRow {
-  month: string;
-  opening: number;
-  closing: number;
-  inflow: number;
-  outflow: number;
-  net: number;
 }
 
 interface ActualComparisonRow {
@@ -68,24 +86,7 @@ interface SeriesResult {
 interface ProductAbcRow {
   sku: string;
   active: boolean;
-  units6m: number | null;
   abcClass: string | null;
-}
-
-type DashboardRange = "next6" | "next12" | "next18" | "all";
-
-interface MonthMaturityCheck {
-  key: string;
-  label: string;
-  ok: boolean;
-  detail: string;
-}
-
-interface MonthMaturityRow {
-  month: string;
-  scorePct: number;
-  allGreen: boolean;
-  checks: MonthMaturityCheck[];
 }
 
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
@@ -93,6 +94,15 @@ const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; cou
   { value: "next12", label: "Nächste 12 Monate", count: 12 },
   { value: "next18", label: "Nächste 18 Monate", count: 18 },
   { value: "all", label: "Alle Monate", count: null },
+];
+
+const PNL_GROUP_ORDER: Array<{ key: DashboardPnlRow["group"]; label: string }> = [
+  { key: "inflow", label: "Einzahlungen" },
+  { key: "po_fo", label: "PO/FO Zahlungen" },
+  { key: "fixcost", label: "Fixkosten" },
+  { key: "tax", label: "Steuern & Importkosten" },
+  { key: "outflow", label: "Sonstige Auszahlungen" },
+  { key: "other", label: "Sonstige" },
 ];
 
 function isActiveProduct(product: Record<string, unknown>): boolean {
@@ -107,7 +117,15 @@ function formatCurrency(value: unknown): string {
   return number.toLocaleString("de-DE", {
     style: "currency",
     currency: "EUR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
+}
+
+function formatSignedCurrency(value: number): string {
+  if (!Number.isFinite(value)) return "-";
+  if (value < 0) return `−${formatCurrency(Math.abs(value))}`;
+  return formatCurrency(value);
 }
 
 function formatNumber(value: unknown, digits = 0): string {
@@ -125,11 +143,33 @@ function formatPercent(value: unknown): string {
   return `${number.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
 }
 
+function formatIsoDate(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("de-DE");
+}
+
+function normalizeSkuKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function statusTag(status: DashboardMaturityCheckV2["status"]): JSX.Element {
+  if (status === "ok") return <Tag color="green">OK</Tag>;
+  if (status === "warning") return <Tag color="gold">Warnung</Tag>;
+  return <Tag color="red">Offen</Tag>;
+}
+
+function sumRows(rows: DashboardPnlRow[]): number {
+  return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+}
+
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error } = useWorkspaceState();
   const navigate = useNavigate();
-  const [range, setRange] = useState<DashboardRange>("next6");
+  const [range, setRange] = useState<DashboardRange>("next12");
   const [selectedMaturityMonth, setSelectedMaturityMonth] = useState<string>("");
+  const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
   const stateObject = state as unknown as Record<string, unknown>;
 
   const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [state]);
@@ -167,12 +207,19 @@ export default function DashboardModule(): JSX.Element {
 
   const abcSnapshot = useMemo(() => computeAbcClassification(stateObject), [state]);
   const abcRows = useMemo(() => {
-    return Array.from(abcSnapshot.bySku.values()) as ProductAbcRow[];
+    const uniqueBySku = new Map<string, ProductAbcRow>();
+    Array.from(abcSnapshot.bySku.values()).forEach((value) => {
+      const row = value as ProductAbcRow;
+      const key = normalizeSkuKey(String(row?.sku || ""));
+      if (!key || uniqueBySku.has(key)) return;
+      uniqueBySku.set(key, row);
+    });
+    return Array.from(uniqueBySku.values());
   }, [abcSnapshot.bySku]);
 
   const activeABucketSkus = useMemo(() => {
     return abcRows
-      .filter((row) => row.active && row.abcClass === "A")
+      .filter((row) => row.active && (row.abcClass === "A" || row.abcClass === "B"))
       .map((row) => String(row.sku || "").trim())
       .filter(Boolean);
   }, [abcRows]);
@@ -215,16 +262,24 @@ export default function DashboardModule(): JSX.Element {
   const activeProducts = useMemo(() => {
     return (Array.isArray(state.products) ? state.products : [])
       .map((entry) => (entry || {}) as Record<string, unknown>)
-      .filter(isActiveProduct);
+      .filter(isActiveProduct)
+      .filter((entry) => String(entry.sku || "").trim());
   }, [state.products]);
 
   const forecastCoveredCount = useMemo(() => {
-    return abcRows.filter((row) => row.active && Number(row.units6m || 0) > 0).length;
-  }, [abcRows]);
+    return activeProducts.filter((product) => {
+      const sku = String(product.sku || "").trim();
+      return visibleMonths.some((month) => {
+        const units = getEffectiveUnits(forecastManual, forecastImport, sku, month);
+        return Number.isFinite(units as number) && Number(units) > 0;
+      });
+    }).length;
+  }, [activeProducts, forecastImport, forecastManual, visibleMonths]);
 
   const abcClassCounts = useMemo(() => {
     const counts = { A: 0, B: 0, C: 0 };
     abcRows.forEach((row) => {
+      if (!row.active) return;
       if (row.abcClass === "A") counts.A += 1;
       else if (row.abcClass === "B") counts.B += 1;
       else if (row.abcClass === "C") counts.C += 1;
@@ -233,68 +288,37 @@ export default function DashboardModule(): JSX.Element {
   }, [abcRows]);
 
   const forecastCoveragePct = activeProducts.length
-    ? Math.round((forecastCoveredCount / activeProducts.length) * 100)
+    ? Math.min(100, Math.round((forecastCoveredCount / activeProducts.length) * 100))
     : 0;
 
-  const maturityByMonth = useMemo<MonthMaturityRow[]>(() => {
-    return visibleMonths.map((month) => {
-      const seriesForMonth = seriesByMonth.get(month);
-      const outflow = Number(seriesForMonth?.outflow?.total || 0);
-      const inflow = Number(seriesForMonth?.inflow?.total || 0);
-      const coveredACount = activeABucketSkus.filter((sku) => {
-        const units = getEffectiveUnits(forecastManual, forecastImport, sku, month);
-        return Number.isFinite(units as number) && Number(units) > 0;
-      }).length;
-      const coveragePct = activeABucketSkus.length
-        ? Math.round((coveredACount / activeABucketSkus.length) * 100)
-        : 100;
-      const checks: MonthMaturityCheck[] = [
-        {
-          key: "incomings",
-          label: "Cash-In Monat gepflegt",
-          ok: incomingsMonthSet.has(month),
-          detail: incomingsMonthSet.has(month) ? "vorhanden" : "fehlend",
-        },
-        {
-          key: "orders",
-          label: "PO/FO Zahlungswirkung",
-          ok: outflow > 0,
-          detail: outflow > 0 ? formatCurrency(outflow) : "keine geplanten Auszahlungen",
-        },
-        {
-          key: "forecastA",
-          label: "A-Produkte Forecast",
-          ok: coveragePct === 100,
-          detail: `${coveredACount}/${activeABucketSkus.length || 0} (${coveragePct} %)`,
-        },
-        {
-          key: "fixcosts",
-          label: "Fixkosten vorhanden",
-          ok: hasFixcosts,
-          detail: hasFixcosts ? "ja" : "nein",
-        },
-        {
-          key: "vat",
-          label: "USt-Konfiguration",
-          ok: hasVatConfig,
-          detail: hasVatConfig ? "ja" : "nein",
-        },
-        {
-          key: "inflow",
-          label: "Einzahlungen geplant",
-          ok: inflow > 0,
-          detail: inflow > 0 ? formatCurrency(inflow) : "keine Einzahlungen",
-        },
-      ];
-      const okCount = checks.filter((entry) => entry.ok).length;
-      return {
-        month,
-        checks,
-        scorePct: Math.round((okCount / checks.length) * 100),
-        allGreen: okCount === checks.length,
-      };
+  const inventoryRiskByMonth = useMemo(
+    () => buildInventoryMonthRiskIndex({ state: stateObject, months: visibleMonths, abcBySku: abcSnapshot.bySku }),
+    [abcSnapshot.bySku, stateObject, visibleMonths],
+  );
+
+  const maturityByMonth = useMemo<DashboardMaturityRowV2[]>(() => {
+    return buildDashboardMaturityRows({
+      months: visibleMonths,
+      seriesByMonth,
+      incomingsMonthSet,
+      hasFixcosts,
+      hasVatConfig,
+      activeABucketSkus,
+      forecastManual,
+      forecastImport,
+      inventoryRiskSummaryByMonth: inventoryRiskByMonth.summaryByMonth,
     });
-  }, [activeABucketSkus, forecastImport, forecastManual, hasFixcosts, hasVatConfig, incomingsMonthSet, seriesByMonth, visibleMonths]);
+  }, [
+    activeABucketSkus,
+    forecastImport,
+    forecastManual,
+    hasFixcosts,
+    hasVatConfig,
+    incomingsMonthSet,
+    inventoryRiskByMonth.summaryByMonth,
+    seriesByMonth,
+    visibleMonths,
+  ]);
 
   useEffect(() => {
     if (!maturityByMonth.length) {
@@ -306,28 +330,58 @@ export default function DashboardModule(): JSX.Element {
     }
   }, [maturityByMonth, selectedMaturityMonth]);
 
+  useEffect(() => {
+    if (!visibleBreakdown.length) {
+      setOpenPnlMonths([]);
+      return;
+    }
+    setOpenPnlMonths((current) => {
+      const valid = new Set(visibleBreakdown.map((entry) => entry.month));
+      const kept = current.filter((month) => valid.has(month));
+      if (kept.length) return kept;
+      return [visibleBreakdown[0].month];
+    });
+  }, [visibleBreakdown]);
+
   const selectedMaturity = useMemo(() => {
     return maturityByMonth.find((entry) => entry.month === selectedMaturityMonth) || maturityByMonth[0] || null;
   }, [maturityByMonth, selectedMaturityMonth]);
 
   const monthMaturityMap = useMemo(() => {
-    const map = new Map<string, MonthMaturityRow>();
+    const map = new Map<string, DashboardMaturityRowV2>();
     maturityByMonth.forEach((entry) => map.set(entry.month, entry));
     return map;
   }, [maturityByMonth]);
+
+  const pnlRowsByMonth = useMemo(
+    () => buildDashboardPnlRowsByMonth({ breakdown: visibleBreakdown, state: stateObject }),
+    [stateObject, visibleBreakdown],
+  );
 
   const chartOption = useMemo(() => {
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
     return {
       tooltip: {
         trigger: "axis",
+        formatter: (params: unknown) => {
+          const rows = Array.isArray(params) ? params : [params];
+          const first = rows[0] as { axisValueLabel?: string } | undefined;
+          const lines = [`<div><strong>${first?.axisValueLabel || ""}</strong></div>`];
+          rows.forEach((entryRaw) => {
+            const entry = entryRaw as { marker?: string; seriesName?: string; value?: number | null };
+            const value = Number(entry?.value);
+            const formatted = Number.isFinite(value) ? formatCurrency(value) : "-";
+            lines.push(`<div>${entry?.marker || ""}${entry?.seriesName || ""}: ${formatted}</div>`);
+          });
+          return lines.join("");
+        },
       },
       legend: {
         top: 0,
       },
       grid: {
         left: 56,
-        right: 62,
+        right: 70,
         top: 44,
         bottom: 32,
       },
@@ -339,37 +393,43 @@ export default function DashboardModule(): JSX.Element {
         {
           type: "value",
           name: "Cashflow",
+          axisLabel: {
+            formatter: (value: number) => formatSignedCurrency(value),
+          },
         },
         {
           type: "value",
           name: "Kontostand",
           position: "right",
+          axisLabel: {
+            formatter: (value: number) => formatCurrency(value),
+          },
         },
       ],
       series: [
         {
-          name: "Inflow",
+          name: "Einzahlungen",
           type: "bar",
           stack: "cash",
           data: visibleSeriesRows.map((row) => Number(row.inflow?.total || 0)),
           itemStyle: { color: "#27ae60" },
         },
         {
-          name: "Outflow",
+          name: "Auszahlungen",
           type: "bar",
           stack: "cash",
           data: visibleSeriesRows.map((row) => -Number(row.outflow?.total || 0)),
           itemStyle: { color: "#e74c3c" },
         },
         {
-          name: "Net",
+          name: "Netto",
           type: "line",
           smooth: true,
           data: visibleSeriesRows.map((row) => Number(row.net?.total || 0)),
           itemStyle: { color: "#0f1b2d" },
         },
         {
-          name: "Kontostand (grün)",
+          name: "Kontostand (valide)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -379,7 +439,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#3bc2a7" },
         },
         {
-          name: "Kontostand (ungeplant)",
+          name: "Kontostand (nicht valide)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -399,15 +459,15 @@ export default function DashboardModule(): JSX.Element {
   const actualColumns = useMemo<ColumnDef<ActualComparisonRow>[]>(() => [
     { header: "Monat", accessorKey: "month" },
     {
-      header: "Plan Revenue",
+      header: "Plan Umsatz",
       cell: ({ row }) => formatCurrency(row.original.plannedRevenue),
     },
     {
-      header: "Ist Revenue",
+      header: "Ist Umsatz",
       cell: ({ row }) => formatCurrency(row.original.actualRevenue),
     },
     {
-      header: "Delta Revenue",
+      header: "Delta Umsatz",
       cell: ({ row }) => (
         <span className={Number(row.original.revenueDelta || 0) < 0 ? "v2-negative" : undefined}>
           {formatCurrency(row.original.revenueDelta)}
@@ -415,19 +475,19 @@ export default function DashboardModule(): JSX.Element {
       ),
     },
     {
-      header: "Delta Revenue %",
+      header: "Delta Umsatz %",
       cell: ({ row }) => formatPercent(row.original.revenueDeltaPct),
     },
     {
-      header: "Plan Closing",
+      header: "Plan Kontostand",
       cell: ({ row }) => formatCurrency(row.original.plannedClosing),
     },
     {
-      header: "Ist Closing",
+      header: "Ist Kontostand",
       cell: ({ row }) => formatCurrency(row.original.actualClosing),
     },
     {
-      header: "Delta Closing",
+      header: "Delta Kontostand",
       cell: ({ row }) => (
         <span className={Number(row.original.closingDelta || 0) < 0 ? "v2-negative" : undefined}>
           {formatCurrency(row.original.closingDelta)}
@@ -444,16 +504,16 @@ export default function DashboardModule(): JSX.Element {
     },
     {
       title: "Status",
-      dataIndex: "ok",
-      key: "ok",
+      dataIndex: "status",
+      key: "status",
       width: 140,
-      render: (ok: boolean) => (ok ? <Tag color="green">OK</Tag> : <Tag color="red">Offen</Tag>),
+      render: (status: DashboardMaturityCheckV2["status"]) => statusTag(status),
     },
     {
       title: "Detail",
       dataIndex: "detail",
       key: "detail",
-      width: 180,
+      width: 260,
       render: (value: string) => <Text type="secondary">{value}</Text>,
     },
   ], []);
@@ -463,6 +523,153 @@ export default function DashboardModule(): JSX.Element {
     [maturityByMonth],
   );
 
+  const pnlItems = useMemo(() => {
+    return visibleBreakdown.map((monthRow) => {
+      const monthRows = pnlRowsByMonth.get(monthRow.month) || [];
+      const groupedRows = PNL_GROUP_ORDER
+        .map((group) => ({
+          ...group,
+          rows: monthRows.filter((row) => row.group === group.key),
+        }))
+        .filter((group) => group.rows.length > 0);
+
+      const inflowRows = monthRows.filter((row) => row.group === "inflow");
+      const outflowRows = monthRows.filter((row) => row.amount < 0);
+
+      return {
+        key: monthRow.month,
+        label: (
+          <div className="v2-dashboard-pnl-header">
+            <Text strong>{formatMonthLabel(monthRow.month)}</Text>
+            <Space wrap>
+              <Tag color="green">Einzahlungen: {formatCurrency(sumRows(inflowRows))}</Tag>
+              <Tag color="red">Auszahlungen: {formatCurrency(Math.abs(sumRows(outflowRows)))}</Tag>
+              <Tag color={monthRow.net >= 0 ? "green" : "red"}>Netto: {formatCurrency(monthRow.net)}</Tag>
+              <Tag color={(monthMaturityMap.get(monthRow.month)?.allGreen || false) ? "green" : "gold"}>
+                Reifegrad: {(monthMaturityMap.get(monthRow.month)?.allGreen || false) ? "grün" : "offen"}
+              </Tag>
+            </Space>
+          </div>
+        ),
+        children: (
+          <div className="v2-dashboard-pnl-month">
+            {groupedRows.map((group) => {
+              if (group.key === "po_fo") {
+                const orderMap = new Map<string, DashboardPnlRow[]>();
+                group.rows.forEach((row) => {
+                  const key = `${row.source}:${row.sourceNumber || row.label}`;
+                  const bucket = orderMap.get(key) || [];
+                  bucket.push(row);
+                  orderMap.set(key, bucket);
+                });
+
+                const orderItems = Array.from(orderMap.entries()).map(([orderKey, rows]) => {
+                  const [source, sourceNumber] = orderKey.split(":");
+                  const total = sumRows(rows);
+                  const tooltipMeta = rows.find((row) => row.tooltipMeta)?.tooltipMeta;
+
+                  return {
+                    key: orderKey,
+                    label: (
+                      <div className="v2-dashboard-pnl-order-row">
+                        <Text strong>{String(source).toUpperCase()} {sourceNumber || "—"}</Text>
+                        <Space size={6}>
+                          <Tag color={total < 0 ? "red" : "green"}>{formatSignedCurrency(total)}</Tag>
+                          {tooltipMeta?.units != null ? <Tag>Stück: {formatNumber(tooltipMeta.units, 0)}</Tag> : null}
+                        </Space>
+                      </div>
+                    ),
+                    children: (
+                      <div className="v2-table-shell v2-scroll-host">
+                        <table className="v2-stats-table" data-layout="auto">
+                          <thead>
+                            <tr>
+                              <th>Milestone</th>
+                              <th>Betrag</th>
+                              <th>Fällig</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((row, index) => {
+                              const tooltip = row.tooltipMeta ? (
+                                <div>
+                                  <div><strong>{String(row.source).toUpperCase()} {row.sourceNumber || "—"}</strong></div>
+                                  <div>Alias: {row.tooltipMeta.aliases.join(", ") || "-"}</div>
+                                  <div>Stückzahl: {row.tooltipMeta.units != null ? formatNumber(row.tooltipMeta.units, 0) : "-"}</div>
+                                  <div>Fälligkeit: {formatIsoDate(row.tooltipMeta.dueDate)}</div>
+                                </div>
+                              ) : null;
+                              return (
+                                <tr key={`${orderKey}-${index}`}>
+                                  <td>
+                                    {tooltip ? (
+                                      <Tooltip title={tooltip}>{row.label}</Tooltip>
+                                    ) : row.label}
+                                  </td>
+                                  <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
+                                  <td>{formatIsoDate(row.tooltipMeta?.dueDate)}</td>
+                                  <td>
+                                    {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ),
+                  };
+                });
+
+                return (
+                  <div key={`${monthRow.month}-${group.key}`} className="v2-dashboard-pnl-group">
+                    <div className="v2-dashboard-pnl-group-head">
+                      <Text strong>{group.label}</Text>
+                      <Tag color="blue">{formatSignedCurrency(sumRows(group.rows))}</Tag>
+                    </div>
+                    <Collapse size="small" items={orderItems} />
+                  </div>
+                );
+              }
+
+              return (
+                <div key={`${monthRow.month}-${group.key}`} className="v2-dashboard-pnl-group">
+                  <div className="v2-dashboard-pnl-group-head">
+                    <Text strong>{group.label}</Text>
+                    <Tag color={sumRows(group.rows) < 0 ? "red" : "green"}>{formatSignedCurrency(sumRows(group.rows))}</Tag>
+                  </div>
+                  <div className="v2-table-shell v2-scroll-host">
+                    <table className="v2-stats-table" data-layout="auto">
+                      <thead>
+                        <tr>
+                          <th>Position</th>
+                          <th>Betrag</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.rows.map((row, index) => (
+                          <tr key={`${monthRow.month}-${group.key}-${index}`}>
+                            <td>{row.label}</td>
+                            <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
+                            <td>
+                              {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ),
+      };
+    });
+  }, [monthMaturityMap, pnlRowsByMonth, visibleBreakdown]);
+
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
@@ -470,7 +677,7 @@ export default function DashboardModule(): JSX.Element {
           <div>
             <Title level={3}>Dashboard</Title>
             <Paragraph>
-              Plan/Ist Uebersicht mit Cashflow-KPIs, Monatsverlauf, Datenreife und Produkt-Forecast-Abdeckung.
+              Plan/Ist Übersicht mit 12M-Steuerung, Reifegrad pro Monat und PnL-Drilldown für operative Entscheidungen.
             </Paragraph>
           </div>
           <div className="v2-toolbar-field">
@@ -479,7 +686,7 @@ export default function DashboardModule(): JSX.Element {
               value={range}
               onChange={(value) => setRange(value)}
               options={DASHBOARD_RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
-              style={{ width: 180, maxWidth: "100%" }}
+              style={{ width: 200, maxWidth: "100%" }}
             />
           </div>
         </div>
@@ -490,6 +697,7 @@ export default function DashboardModule(): JSX.Element {
             <Button onClick={() => navigate("/v2/orders/po")}>Zu Bestellungen</Button>
             <Button onClick={() => navigate("/v2/abschluss/eingaben")}>Zum Abschluss</Button>
           </div>
+          <Text type="secondary">Quicklinks arbeiten im aktuell gewählten Zeitraum ({visibleMonths.length} Monate).</Text>
         </div>
       </Card>
 
@@ -499,63 +707,57 @@ export default function DashboardModule(): JSX.Element {
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12} xl={6}>
           <Card>
-            <Statistic title="Opening Balance" value={Number(kpis.opening || 0)} precision={2} suffix="EUR" />
+            <Statistic title="Opening Balance" value={Number(kpis.opening || 0)} formatter={(value) => formatCurrency(value)} />
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card>
-            <Statistic title="Sales Payout Avg" value={Number(kpis.salesPayoutAvg || 0)} precision={2} suffix="EUR" />
+            <Statistic title="Sales Payout Ø" value={Number(kpis.salesPayoutAvg || 0)} formatter={(value) => formatCurrency(value)} />
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card>
-            <Statistic title="First Negative Month" value={kpis.firstNegativeMonth || "-"} />
+            <Statistic title="Erster negativer Monat" value={kpis.firstNegativeMonth || "-"} />
           </Card>
         </Col>
         <Col xs={24} md={12} xl={6}>
           <Card>
-            <Statistic
-              title="Latest Closing"
-              value={Number(latestBreakdown?.closing || 0)}
-              precision={2}
-              suffix="EUR"
-            />
+            <Statistic title="Letzter Kontostand" value={Number(latestBreakdown?.closing || 0)} formatter={(value) => formatCurrency(value)} />
           </Card>
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} xl={16}>
-          <Card>
-            <Title level={4}>Cashflow Verlauf</Title>
-            <Space wrap>
-              <Tag color="green">Inflow: {formatCurrency(totalInflow)}</Tag>
-              <Tag color="red">Outflow: {formatCurrency(totalOutflow)}</Tag>
-              <Tag color={totalNet >= 0 ? "green" : "red"}>Net: {formatCurrency(totalNet)}</Tag>
-            </Space>
-            <ReactECharts style={{ height: 340 }} option={chartOption} />
-          </Card>
-        </Col>
-        <Col xs={24} xl={8}>
-          <Card>
-            <Title level={4}>Reifegrad</Title>
-            <Paragraph type="secondary">
-              Monatsstatus ist anklickbar. Nur komplett grüne Monate gelten als belastbar geplant.
-            </Paragraph>
-            <Space wrap style={{ marginBottom: 10 }}>
-              {maturityByMonth.map((entry) => (
-                <Button
-                  key={entry.month}
-                  size="small"
-                  type={entry.month === selectedMaturity?.month ? "primary" : "default"}
-                  onClick={() => setSelectedMaturityMonth(entry.month)}
-                >
-                  {formatMonthLabel(entry.month)}
-                  {" "}
-                  {entry.allGreen ? "●" : "○"}
-                </Button>
-              ))}
-            </Space>
+      <Card className="v2-dashboard-chart-card">
+        <Title level={4}>Cashflow Verlauf</Title>
+        <Space wrap>
+          <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
+          <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
+          <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
+        </Space>
+        <ReactECharts style={{ height: 360 }} option={chartOption} />
+      </Card>
+
+      <Card>
+        <Title level={4}>Reifegrad</Title>
+        <Paragraph type="secondary">
+          Ein Monat ist nur grün, wenn alle Checks erfüllt sind und bei A/B-Produkten weder OOS noch „unter Safety" auftreten.
+        </Paragraph>
+
+        <div className="v2-dashboard-maturity-months">
+          {maturityByMonth.map((entry) => (
+            <Button
+              key={entry.month}
+              size="small"
+              type={entry.month === selectedMaturity?.month ? "primary" : "default"}
+              onClick={() => setSelectedMaturityMonth(entry.month)}
+            >
+              {formatMonthLabel(entry.month)} {entry.allGreen ? "●" : "○"}
+            </Button>
+          ))}
+        </div>
+
+        <Row gutter={[16, 16]}>
+          <Col xs={24} xl={14}>
             <Progress
               percent={selectedMaturity?.scorePct || 0}
               status={(selectedMaturity?.allGreen || false) ? "success" : "active"}
@@ -568,17 +770,38 @@ export default function DashboardModule(): JSX.Element {
               columns={maturityColumns}
               dataSource={selectedMaturity?.checks || []}
             />
-            <div style={{ marginTop: 16 }}>
-              <Text strong>Produktabdeckung</Text>
+          </Col>
+          <Col xs={24} xl={10}>
+            <div className="v2-dashboard-maturity-kpis">
+              <Text strong>Produktabdeckung (12M)</Text>
               <div>Aktive Produkte: {activeProducts.length}</div>
-              <div>Mit Forecast (6M): {forecastCoveredCount}</div>
+              <div>Mit Forecast (12M): {forecastCoveredCount}</div>
               <div>Coverage: {formatNumber(forecastCoveragePct, 0)} %</div>
               <div>ABC A/B/C: {abcClassCounts.A} / {abcClassCounts.B} / {abcClassCounts.C}</div>
               <div>Monate komplett grün: {readyMonthCount} / {maturityByMonth.length}</div>
+              <Divider style={{ margin: "10px 0" }} />
+              <Text type="secondary">
+                A/B Risiko im gewählten Monat: {selectedMaturity ? (
+                  `${inventoryRiskByMonth.summaryByMonth.get(selectedMaturity.month)?.abRiskSkuCount || 0} SKU betroffen`
+                ) : "-"}
+              </Text>
             </div>
-          </Card>
-        </Col>
-      </Row>
+          </Col>
+        </Row>
+      </Card>
+
+      <Card>
+        <Title level={4}>Monatliche PnL (Drilldown)</Title>
+        <Paragraph type="secondary">
+          Einzahlungen, PO/FO-Zahlungen, Fixkosten und Steuern je Monat. PO/FO-Positionen sind aufklappbar bis auf Milestone-Ebene.
+        </Paragraph>
+        <Collapse
+          className="v2-dashboard-pnl-collapse"
+          activeKey={openPnlMonths}
+          onChange={(keys) => setOpenPnlMonths(Array.isArray(keys) ? keys.map(String) : [String(keys)])}
+          items={pnlItems}
+        />
+      </Card>
 
       <Card>
         <Title level={4}>Plan/Ist Drilldown</Title>

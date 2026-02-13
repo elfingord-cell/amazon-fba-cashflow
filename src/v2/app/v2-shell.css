@@ -762,6 +762,74 @@
   padding: 12px !important;
 }
 
+.v2-dashboard-chart-card {
+  width: 100%;
+}
+
+.v2-dashboard-maturity-months {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.v2-dashboard-maturity-kpis {
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.82);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.v2-dashboard-pnl-collapse .ant-collapse-item {
+  border-color: rgba(15, 27, 45, 0.08) !important;
+}
+
+.v2-dashboard-pnl-collapse .ant-collapse-header {
+  padding: 10px 12px !important;
+}
+
+.v2-dashboard-pnl-collapse .ant-collapse-content-box {
+  padding: 10px 12px !important;
+}
+
+.v2-dashboard-pnl-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v2-dashboard-pnl-month {
+  display: grid;
+  gap: 12px;
+}
+
+.v2-dashboard-pnl-group {
+  display: grid;
+  gap: 8px;
+}
+
+.v2-dashboard-pnl-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.v2-dashboard-pnl-order-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 992px) {
   .v2-form-row {
     grid-template-columns: 1fr;
