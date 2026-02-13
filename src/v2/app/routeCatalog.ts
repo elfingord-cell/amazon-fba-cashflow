@@ -14,6 +14,7 @@ import {
   TeamOutlined,
   UploadOutlined,
   CreditCardOutlined,
+  FileTextOutlined,
 } from "@ant-design/icons";
 import type { ComponentType } from "react";
 
@@ -30,6 +31,7 @@ import FixcostsModule from "../modules/fixcosts";
 import VatModule from "../modules/vat";
 import ExportImportModule from "../modules/export-import";
 import PaymentsExportModule from "../modules/payments-export";
+import AccountingExportModule from "../modules/accounting-export";
 import PlanModule from "../modules/plan";
 import DebugModule from "../modules/debug";
 
@@ -57,6 +59,7 @@ export const V2_ROUTES: V2RouteItem[] = [
 
   { key: "export-import", label: "Export / Import", section: "tools", icon: UploadOutlined, Component: ExportImportModule },
   { key: "payments-export", label: "Payments Export", section: "tools", icon: CreditCardOutlined, Component: PaymentsExportModule },
+  { key: "accounting-export", label: "Buchhalter Export", section: "tools", icon: FileTextOutlined, Component: AccountingExportModule },
   { key: "plan", label: "Plan", section: "tools", icon: ProjectOutlined, Component: PlanModule },
   { key: "debug", label: "Debug", section: "tools", icon: BugOutlined, Component: DebugModule },
 ];

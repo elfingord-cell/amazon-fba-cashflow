@@ -11,6 +11,7 @@ export const ROUTE_LOADERS = {
   "#suppliers": () => import("../ui/suppliers.js"),
   "#settings": () => import("../ui/settings.js"),
   "#payments-export": () => import("../ui/paymentsExport.js"),
+  "#accounting-export": () => import("../ui/accountantExport.js"),
   "#export": () => import("../ui/export.js"),
   "#plan": () => import("../ui/plan.js"),
   "#debug": () => import("../ui/debug.js"),
@@ -48,6 +49,7 @@ export const MENU_SECTIONS = [
     children: [
       { key: "#export", label: "Export / Import", icon: "export" },
       { key: "#payments-export", label: "Payments Export", icon: "payments" },
+      { key: "#accounting-export", label: "Buchhalter Export", icon: "accounting" },
       { key: "#debug", label: "Debug", icon: "debug" },
       { key: "#plan", label: "Plan", icon: "plan" },
     ],

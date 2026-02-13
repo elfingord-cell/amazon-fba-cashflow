@@ -54,6 +54,7 @@ const MENU_ICON_MAP = {
   tax: CalculatorOutlined,
   export: UploadOutlined,
   payments: CreditCardOutlined,
+  accounting: BankOutlined,
   debug: BugOutlined,
   plan: ProjectOutlined,
 };
