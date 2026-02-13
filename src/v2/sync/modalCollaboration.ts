@@ -115,6 +115,22 @@ export function useModalCollaboration(options: ModalCollaborationOptions): Modal
   const readOnly = Boolean(options.isOpen && userId && lockOwnerUserId && lockOwnerUserId !== userId);
   const role: ModalRole = readOnly ? "viewer" : "editor";
 
+  const sendBroadcast = useCallback(async (event: string, payload: Record<string, unknown>) => {
+    if (!workspaceId || !modalScope || !userId) return false;
+    return publishWorkspaceBroadcast({
+      workspaceId,
+      event,
+      payload: {
+        modalScope,
+        userId,
+        userEmail,
+        userDisplayName,
+        sentAt: nowIso(),
+        ...payload,
+      },
+    });
+  }, [modalScope, userDisplayName, userEmail, userId, workspaceId]);
+
   const lockOwnerParticipant = useMemo(
     () => (lockOwnerUserId ? participants[lockOwnerUserId] || null : null),
     [lockOwnerUserId, participants],
@@ -169,22 +185,6 @@ export function useModalCollaboration(options: ModalCollaborationOptions): Modal
     }
     return null;
   }, [options.isOpen, readOnly, remoteInModal, remoteUserLabel, userId]);
-
-  const sendBroadcast = useCallback(async (event: string, payload: Record<string, unknown>) => {
-    if (!workspaceId || !modalScope || !userId) return false;
-    return publishWorkspaceBroadcast({
-      workspaceId,
-      event,
-      payload: {
-        modalScope,
-        userId,
-        userEmail,
-        userDisplayName,
-        sentAt: nowIso(),
-        ...payload,
-      },
-    });
-  }, [modalScope, userDisplayName, userEmail, userId, workspaceId]);
 
   const flushDraftPatch = useCallback(() => {
     if (!options.isOpen || readOnly) return;

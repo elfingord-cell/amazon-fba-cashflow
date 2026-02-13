@@ -27,11 +27,19 @@ function isV2Hash(hash) {
 }
 
 function AppEntry() {
-  const [mode, setMode] = useState(() => (isV2Hash(normalizeV2Hash(window.location.hash)) ? "v2" : "legacy"));
+  const [mode, setMode] = useState(() => {
+    const currentHash = window.location.hash || "";
+    if (!currentHash) return "v2";
+    return isV2Hash(normalizeV2Hash(currentHash)) ? "v2" : "legacy";
+  });
 
   useEffect(() => {
     const syncMode = () => {
       const currentHash = window.location.hash || "";
+      if (!currentHash) {
+        window.location.hash = "#/v2/dashboard";
+        return;
+      }
       const normalized = normalizeV2Hash(currentHash);
       if (normalized !== currentHash) {
         window.location.hash = normalized;
