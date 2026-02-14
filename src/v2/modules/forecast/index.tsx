@@ -79,13 +79,6 @@ function ensureForecastContainers(state: Record<string, unknown>): void {
   }
 }
 
-function formatMoneyState(value: number): string {
-  return Number(value || 0).toLocaleString("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
 function formatDisplay(value: number | null, digits = 0): string {
   if (!Number.isFinite(value as number)) return "—";
   return Number(value).toLocaleString("de-DE", {
@@ -375,13 +368,12 @@ export default function ForecastModule(): JSX.Element {
 
       transferSelection.forEach((month) => {
         const revenue = Number(revenueByMonth.get(month) || 0);
-        const formatted = formatMoneyState(revenue);
         const index = incomings.findIndex((entry) => String(entry.month || "") === month);
         if (index >= 0) {
           incomings[index] = {
             ...incomings[index],
             month,
-            revenueEur: formatted,
+            revenueEur: revenue,
             payoutPct: incomings[index].payoutPct || lastPayout || "0",
             source: "forecast",
           };
@@ -389,7 +381,7 @@ export default function ForecastModule(): JSX.Element {
         }
         incomings.push({
           month,
-          revenueEur: formatted,
+          revenueEur: revenue,
           payoutPct: lastPayout || "0",
           source: "forecast",
         });
