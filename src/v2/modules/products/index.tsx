@@ -49,6 +49,24 @@ const CURRENCIES = ["EUR", "USD", "CNY"];
 type ProductRow = ProductGridRow;
 type ProductIssueFilter = "all" | "needs_fix" | "revenue" | "blocked";
 
+const COMPLETENESS_FIELD_TO_FORM_FIELDS: Record<string, Array<keyof ProductDraft>> = {
+  unitPriceUsd: ["templateUnitPriceUsd"],
+  avgSellingPriceGrossEUR: ["avgSellingPriceGrossEUR"],
+  sellerboardMarginPct: ["sellerboardMarginPct"],
+  moqUnits: ["moqUnits"],
+  productionLeadTimeDaysDefault: ["productionLeadTimeDaysDefault"],
+  incoterm_ddp: ["templateDdp"],
+  hsCode: ["hsCode"],
+  goodsDescription: ["goodsDescription"],
+  landedUnitCostEur: ["landedUnitCostEur"],
+};
+
+const ADVANCED_FORM_FIELDS = new Set<keyof ProductDraft>([
+  "moqUnits",
+  "sellerboardMarginPct",
+  "templateDdp",
+]);
+
 interface ProductDraft {
   id?: string;
   sku: string;
@@ -215,6 +233,7 @@ export default function ProductsModule(): JSX.Element {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [logisticsManualOverride, setLogisticsManualOverride] = useState(false);
+  const [advancedOpenKeys, setAdvancedOpenKeys] = useState<string[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("products"));
   const [expandFromQuery, setExpandFromQuery] = useState(false);
   const [form] = Form.useForm<ProductDraft>();
@@ -584,6 +603,44 @@ export default function ProductsModule(): JSX.Element {
     [draftProductRecord, stateObject],
   );
 
+  const fieldIssues = useMemo(() => {
+    const map = new Map<keyof ProductDraft, { level: "error" | "warning"; messages: string[] }>();
+    const push = (field: keyof ProductDraft, level: "error" | "warning", message: string): void => {
+      const current = map.get(field);
+      if (!current) {
+        map.set(field, { level, messages: [message] });
+        return;
+      }
+      if (level === "error") current.level = "error";
+      if (!current.messages.includes(message)) current.messages.push(message);
+    };
+
+    const blockingLevel: "error" | "warning" = draftCompleteness.blockScope ? "error" : "warning";
+    draftCompleteness.blockingMissing.forEach((issue) => {
+      const targets = COMPLETENESS_FIELD_TO_FORM_FIELDS[issue.fieldKey] || [];
+      targets.forEach((field) => push(field, blockingLevel, issue.reason || issue.label));
+    });
+    draftCompleteness.importantMissing.forEach((issue) => {
+      const targets = COMPLETENESS_FIELD_TO_FORM_FIELDS[issue.fieldKey] || [];
+      targets.forEach((field) => push(field, "warning", issue.reason || issue.label));
+    });
+    return map;
+  }, [draftCompleteness]);
+
+  const hasAdvancedIssue = useMemo(() => {
+    return Array.from(fieldIssues.keys()).some((field) => ADVANCED_FORM_FIELDS.has(field));
+  }, [fieldIssues]);
+
+  function fieldValidateStatus(field: keyof ProductDraft): "error" | "warning" | undefined {
+    return fieldIssues.get(field)?.level;
+  }
+
+  function fieldHelp(field: keyof ProductDraft): string | undefined {
+    const issue = fieldIssues.get(field);
+    if (!issue || !issue.messages.length) return undefined;
+    return `Prüfen: ${issue.messages.join(" · ")}`;
+  }
+
   const shippingSuggestion = useMemo(() => {
     const values = draftValues || ({} as ProductDraft);
     const fxUsed = pickFxUsdPerEur({
@@ -628,6 +685,16 @@ export default function ProductsModule(): JSX.Element {
     if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
     form.setFieldsValue(modalCollab.remoteDraftPatch as unknown as Partial<ProductDraft>);
   }, [form, modalCollab.readOnly, modalCollab.remoteDraftPatch, modalCollab.remoteDraftVersion, modalOpen]);
+
+  useEffect(() => {
+    if (!modalOpen) {
+      setAdvancedOpenKeys([]);
+      return;
+    }
+    if (hasAdvancedIssue) {
+      setAdvancedOpenKeys(["advanced"]);
+    }
+  }, [hasAdvancedIssue, modalOpen]);
 
   function resetField(field: keyof ProductDraft): void {
     form.setFieldsValue({ [field]: null } as Partial<ProductDraft>);
@@ -687,6 +754,7 @@ export default function ProductsModule(): JSX.Element {
     setEditing(null);
     form.setFieldsValue(draft);
     setLogisticsManualOverride(draft.logisticsPerUnitEur != null);
+    setAdvancedOpenKeys([]);
     setModalOpen(true);
   }
 
@@ -911,12 +979,15 @@ export default function ProductsModule(): JSX.Element {
                 </Space>
               ),
               children: (
-                <TanStackGrid
-                  data={group.rows}
-                  columns={columns}
-                  minTableWidth={productsGridMode === "management" ? 1600 : 1240}
-                  tableLayout="auto"
-                />
+                <div className="v2-products-grid-host">
+                  <TanStackGrid
+                    className="v2-products-grid-wrap"
+                    data={group.rows}
+                    columns={columns}
+                    minTableWidth={productsGridMode === "management" ? 1120 : 940}
+                    tableLayout="fixed"
+                  />
+                </div>
               ),
             }))}
           />
@@ -931,6 +1002,7 @@ export default function ProductsModule(): JSX.Element {
           modalCollab.clearDraft();
           setModalOpen(false);
           setLogisticsManualOverride(false);
+          setAdvancedOpenKeys([]);
         }}
         onOk={() => {
           if (modalCollab.readOnly) {
@@ -1024,12 +1096,24 @@ export default function ProductsModule(): JSX.Element {
                   options={suppliers.map((entry) => ({ value: entry.id, label: entry.name }))}
                 />
               </Form.Item>
-              <Form.Item name="hsCode" label="HS-Code" style={{ flex: 1 }}>
+              <Form.Item
+                name="hsCode"
+                label="HS-Code"
+                style={{ flex: 1 }}
+                validateStatus={fieldValidateStatus("hsCode")}
+                help={fieldHelp("hsCode")}
+              >
                 <Input placeholder="z. B. 3926.90.97" />
               </Form.Item>
             </div>
             <div className="v2-form-row">
-              <Form.Item name="goodsDescription" label="Warenbeschreibung" style={{ gridColumn: "1 / -1" }}>
+              <Form.Item
+                name="goodsDescription"
+                label="Warenbeschreibung"
+                style={{ gridColumn: "1 / -1" }}
+                validateStatus={fieldValidateStatus("goodsDescription")}
+                help={fieldHelp("goodsDescription")}
+              >
                 <Input.TextArea rows={2} placeholder="Kurzbeschreibung fuer Zoll / Logistiker" />
               </Form.Item>
             </div>
@@ -1041,13 +1125,21 @@ export default function ProductsModule(): JSX.Element {
               <span className="v2-form-section-desc">Kerndaten fuer Planung sowie FO/PO-Prefill.</span>
             </div>
             <div className="v2-form-row">
-              <Form.Item name="avgSellingPriceGrossEUR" label="Durchschnittlicher Verkaufspreis (EUR)" style={{ flex: 1 }}>
+              <Form.Item
+                name="avgSellingPriceGrossEUR"
+                label="Durchschnittlicher Verkaufspreis (EUR)"
+                style={{ flex: 1 }}
+                validateStatus={fieldValidateStatus("avgSellingPriceGrossEUR")}
+                help={fieldHelp("avgSellingPriceGrossEUR")}
+              >
                 <DeNumberInput mode="decimal" min={0} />
               </Form.Item>
               <Form.Item
                 name="templateUnitPriceUsd"
                 label={labelWithReset("Durchschnittlicher EK (USD)", "templateUnitPriceUsd")}
                 style={{ flex: 1 }}
+                validateStatus={fieldValidateStatus("templateUnitPriceUsd")}
+                help={fieldHelp("templateUnitPriceUsd")}
                 extra={renderResolvedMeta(resolvedDraft.unitPriceUsd, { digits: 2 })}
               >
                 <DeNumberInput mode="decimal" min={0} />
@@ -1056,6 +1148,8 @@ export default function ProductsModule(): JSX.Element {
                 name="landedUnitCostEur"
                 label="Durchschnittlicher Einstand (EUR)"
                 style={{ flex: 1 }}
+                validateStatus={fieldValidateStatus("landedUnitCostEur")}
+                help={fieldHelp("landedUnitCostEur")}
                 extra={<span className="v2-field-meta">Landed Cost je Einheit laut Ist-/Logistikdaten.</span>}
               >
                 <DeNumberInput mode="decimal" min={0} />
@@ -1109,6 +1203,8 @@ export default function ProductsModule(): JSX.Element {
                 name="productionLeadTimeDaysDefault"
                 label={labelWithReset("Production Lead Time (Tage)", "productionLeadTimeDaysDefault")}
                 style={{ flex: 1 }}
+                validateStatus={fieldValidateStatus("productionLeadTimeDaysDefault")}
+                help={fieldHelp("productionLeadTimeDaysDefault")}
                 extra={renderResolvedMeta(resolvedDraft.productionLeadDays, { digits: 0 })}
               >
                 <DeNumberInput mode="int" min={0} />
@@ -1134,6 +1230,11 @@ export default function ProductsModule(): JSX.Element {
 
           <Collapse
             className="v2-inline-collapse"
+            activeKey={advancedOpenKeys}
+            onChange={(nextKeys) => {
+              const list = Array.isArray(nextKeys) ? nextKeys : [nextKeys];
+              setAdvancedOpenKeys(list.map(String).filter(Boolean));
+            }}
             items={[
               {
                 key: "advanced",
@@ -1149,6 +1250,8 @@ export default function ProductsModule(): JSX.Element {
                         name="moqUnits"
                         label={labelWithReset("MOQ Units", "moqUnits")}
                         style={{ flex: 1 }}
+                        validateStatus={fieldValidateStatus("moqUnits")}
+                        help={fieldHelp("moqUnits")}
                         extra={renderResolvedMeta(resolvedDraft.moqEffective, { digits: 0 })}
                       >
                         <DeNumberInput mode="int" min={0} />
@@ -1165,6 +1268,8 @@ export default function ProductsModule(): JSX.Element {
                         name="sellerboardMarginPct"
                         label="Sellerboard Marge %"
                         style={{ flex: 1 }}
+                        validateStatus={fieldValidateStatus("sellerboardMarginPct")}
+                        help={fieldHelp("sellerboardMarginPct")}
                         extra={<span className="v2-field-meta">Optional fuer Legacy-Kompatibilitaet / Reporting.</span>}
                       >
                         <DeNumberInput mode="percent" min={0} max={100} />
@@ -1241,7 +1346,10 @@ export default function ProductsModule(): JSX.Element {
                       </Form.Item>
                       <Form.Item
                         name="templateDdp"
+                        label="Incoterm / DDP"
                         valuePropName="checked"
+                        validateStatus={fieldValidateStatus("templateDdp")}
+                        help={fieldHelp("templateDdp")}
                         extra={renderResolvedMeta(resolvedDraft.ddp, { kind: "boolean" })}
                       >
                         <Checkbox>DDP aktiv (Door-to-Door, Importkosten im Lieferpreis)</Checkbox>

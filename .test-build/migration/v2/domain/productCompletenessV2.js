@@ -146,7 +146,7 @@ function evaluateProductCompletenessV2(input) {
             blockScope,
         };
     }
-    if (blockingMissing.length > 0 || importantMissing.length > 0 || defaulted.length > 0) {
+    if (blockingMissing.length > 0 || importantMissing.length > 0) {
         return {
             status: "warn",
             blockingMissing,

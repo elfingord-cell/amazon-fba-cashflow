@@ -857,7 +857,7 @@
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
 }
 
@@ -877,6 +877,25 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
+}
+
+.v2-products-grid-host {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.v2-products-grid-host .v2-products-grid-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.v2-products-grid-host .v2-stats-table {
+  width: max-content;
+  min-width: 100%;
 }
 
 .v2-category-count {
