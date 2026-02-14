@@ -250,6 +250,46 @@ function getLatestSnapshotAtOrBefore(state, monthLimit = null) {
   return null;
 }
 
+function sortedSnapshots(state) {
+  return (state?.inventory?.snapshots || [])
+    .filter(snap => snap?.month && normalizeMonthKey(snap.month))
+    .slice()
+    .sort((a, b) => normalizeMonthKey(a.month).localeCompare(normalizeMonthKey(b.month)));
+}
+
+function parseSnapshotItemTotalUnits(item) {
+  const amazonUnits = parseDeNumber(item?.amazonUnits);
+  const threePLUnits = parseDeNumber(item?.threePLUnits);
+  const legacyUnits = parseDeNumber(item?.units);
+  const hasSplitUnits = Number.isFinite(amazonUnits) || Number.isFinite(threePLUnits);
+  if (hasSplitUnits) {
+    return (Number.isFinite(amazonUnits) ? Number(amazonUnits) : 0)
+      + (Number.isFinite(threePLUnits) ? Number(threePLUnits) : 0);
+  }
+  return Number.isFinite(legacyUnits) ? Number(legacyUnits) : 0;
+}
+
+function buildLatestSnapshotBySkuAtOrBefore(state, monthLimit = null) {
+  const limit = normalizeMonthKey(monthLimit);
+  const snapshots = sortedSnapshots(state);
+  const bySku = new Map();
+  snapshots.forEach((snapshot) => {
+    const snapshotMonth = normalizeMonthKey(snapshot?.month);
+    if (!snapshotMonth) return;
+    if (limit && compareMonthKeys(snapshotMonth, limit) > 0) return;
+    const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+    items.forEach((item) => {
+      const sku = normalizeSku(item?.sku);
+      if (!sku) return;
+      bySku.set(sku, {
+        month: snapshotMonth,
+        units: parseSnapshotItemTotalUnits(item),
+      });
+    });
+  });
+  return bySku;
+}
+
 function parsePositiveDays(value) {
   const parsed = parseDeNumber(value);
   if (!Number.isFinite(parsed)) return null;
@@ -310,46 +350,67 @@ export function computeInventoryProjection({
   const projectionAnchorLimit = firstProjectionMonth
     ? addMonthsToMonthKey(firstProjectionMonth, -1)
     : null;
-  let requestedSnapshotMonth = requestedSnapshotMonthRaw || projectionAnchorLimit;
+  let anchorTargetMonth = requestedSnapshotMonthRaw || projectionAnchorLimit;
   if (
-    requestedSnapshotMonth
+    anchorTargetMonth
     && firstProjectionMonth
-    && compareMonthKeys(requestedSnapshotMonth, firstProjectionMonth) >= 0
+    && compareMonthKeys(anchorTargetMonth, firstProjectionMonth) >= 0
     && projectionAnchorLimit
   ) {
-    requestedSnapshotMonth = projectionAnchorLimit;
+    anchorTargetMonth = projectionAnchorLimit;
   }
 
   const providedSnapshot = snapshot && Array.isArray(snapshot.items) ? snapshot : null;
   const resolvedSnapshot = providedSnapshot
-    || getLatestSnapshotAtOrBefore(state, requestedSnapshotMonth);
+    || getLatestSnapshotAtOrBefore(state, anchorTargetMonth);
   const resolvedSnapshotMonth = normalizeMonthKey(resolvedSnapshot?.month);
   const snapshotFallbackUsed = Boolean(
     requestedSnapshotMonthRaw
     && resolvedSnapshotMonth
     && requestedSnapshotMonthRaw !== resolvedSnapshotMonth,
   );
-  const anchorMonth = requestedSnapshotMonth || resolvedSnapshotMonth || projectionAnchorLimit || null;
+  anchorTargetMonth = anchorTargetMonth || resolvedSnapshotMonth || projectionAnchorLimit || null;
   const snapshotMap = new Map();
   if (resolvedSnapshot && Array.isArray(resolvedSnapshot.items)) {
     resolvedSnapshot.items.forEach(item => {
       const sku = normalizeSku(item?.sku);
       if (!sku) return;
-      const amazonUnits = parseDeNumber(item?.amazonUnits);
-      const threePLUnits = parseDeNumber(item?.threePLUnits);
-      const legacyUnits = parseDeNumber(item?.units);
-      const hasSplitUnits = Number.isFinite(amazonUnits) || Number.isFinite(threePLUnits);
-      const totalUnits = hasSplitUnits
-        ? (Number.isFinite(amazonUnits) ? Number(amazonUnits) : 0)
-          + (Number.isFinite(threePLUnits) ? Number(threePLUnits) : 0)
-        : (Number.isFinite(legacyUnits) ? Number(legacyUnits) : 0);
-      snapshotMap.set(sku, totalUnits);
+      snapshotMap.set(sku, parseSnapshotItemTotalUnits(item));
     });
   }
+  const latestSnapshotBySku = buildLatestSnapshotBySkuAtOrBefore(state, anchorTargetMonth);
+  const startSourceBySku = new Map();
+  const startAvailableRawBySku = new Map();
+  const anchorSkuFallbackSkus = new Set();
+  const anchorSkuMissingHistory = new Set();
+  const anchorRollforwardMonthsBySku = new Map();
+  const inboundMonthsSet = new Set(monthKeys);
 
-  const anchorRollforwardMonths = monthRangeAfter(resolvedSnapshotMonth, anchorMonth);
-  const inboundMonths = Array.from(new Set([...monthKeys, ...anchorRollforwardMonths]));
+  productList.forEach((product) => {
+    const sku = normalizeSku(product?.sku);
+    if (!sku) return;
+    if (snapshotMap.has(sku) && resolvedSnapshotMonth) {
+      startSourceBySku.set(sku, { type: "anchor_snapshot", month: resolvedSnapshotMonth });
+      startAvailableRawBySku.set(sku, snapshotMap.get(sku));
+    } else {
+      const fallback = latestSnapshotBySku.get(sku) || null;
+      if (fallback) {
+        startSourceBySku.set(sku, { type: "sku_fallback", month: fallback.month });
+        startAvailableRawBySku.set(sku, fallback.units);
+        anchorSkuFallbackSkus.add(sku);
+      } else {
+        startSourceBySku.set(sku, { type: "missing_history", month: null });
+        startAvailableRawBySku.set(sku, 0);
+        anchorSkuMissingHistory.add(sku);
+      }
+    }
+    const sourceMonth = startSourceBySku.get(sku)?.month || null;
+    const monthsForSku = monthRangeAfter(sourceMonth, anchorTargetMonth);
+    anchorRollforwardMonthsBySku.set(sku, monthsForSku);
+    monthsForSku.forEach((month) => inboundMonthsSet.add(month));
+  });
 
+  const inboundMonths = Array.from(inboundMonthsSet);
   const {
     inboundUnitsMap,
     inboundDetailsMap,
@@ -365,8 +426,9 @@ export function computeInventoryProjection({
     const sku = normalizeSku(product?.sku);
     if (!sku) return;
     if (isProductActive(product)) activeSkus.add(sku);
-    const startAvailable = snapshotMap.has(sku) ? snapshotMap.get(sku) : 0;
+    const startAvailable = startAvailableRawBySku.has(sku) ? startAvailableRawBySku.get(sku) : 0;
     let anchorAvailable = Number.isFinite(startAvailable) ? startAvailable : 0;
+    const anchorRollforwardMonths = anchorRollforwardMonthsBySku.get(sku) || [];
     anchorRollforwardMonths.forEach(month => {
       const inboundUnits = inboundUnitsMap.get(sku)?.get(month) || 0;
       const forecastUnits = getForecastUnits(state, sku, month);
@@ -427,9 +489,10 @@ export function computeInventoryProjection({
     startAvailableBySku.set(sku, anchorAvailable);
   });
 
+  const globalAnchorRollforwardMonths = monthRangeAfter(resolvedSnapshotMonth, anchorTargetMonth);
   const anchorMode = !resolvedSnapshotMonth
     ? "no_snapshot"
-    : (anchorRollforwardMonths.length ? "rollforward" : "snapshot");
+    : (globalAnchorRollforwardMonths.length ? "rollforward" : "snapshot");
 
   return {
     months: monthKeys,
@@ -443,9 +506,14 @@ export function computeInventoryProjection({
     startAvailableBySku,
     projectionMode: normalizedMode,
     activeSkus,
-    anchorMonth,
+    anchorMonth: anchorTargetMonth,
+    anchorTargetMonth,
     anchorSourceMonth: resolvedSnapshotMonth,
     anchorMode,
+    anchorSourceBySku: startSourceBySku,
+    anchorSkuFallbackCount: anchorSkuFallbackSkus.size,
+    anchorSkuFallbackSkus: Array.from(anchorSkuFallbackSkus).sort(),
+    anchorSkuMissingHistory: Array.from(anchorSkuMissingHistory).sort(),
     anchorForecastGapSkus: Array.from(anchorForecastGapSkus).sort(),
   };
 }

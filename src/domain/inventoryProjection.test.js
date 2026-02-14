@@ -99,6 +99,8 @@ test("projection resolves latest snapshot fallback and exposes PO/FO inbound det
   });
 
   assert.strictEqual(projection.resolvedSnapshotMonth, "2026-01");
+  assert.strictEqual(projection.anchorTargetMonth, "2026-01");
+  assert.deepEqual(projection.months, ["2026-02"]);
   assert.strictEqual(projection.snapshotFallbackUsed, true);
   assert.strictEqual(projection.inboundUnitsMap.get("SKU-A").get("2026-02"), 240);
 
@@ -149,6 +151,7 @@ test("running-month anchor rolls forward from previous snapshot", () => {
   });
 
   assert.equal(projection.anchorMonth, "2026-02");
+  assert.equal(projection.anchorTargetMonth, "2026-02");
   assert.equal(projection.anchorSourceMonth, "2026-01");
   assert.equal(projection.anchorMode, "rollforward");
   assert.equal(projection.startAvailableBySku.get("SKU-A"), 90);
@@ -204,6 +207,7 @@ test("anchor rollforward spans multiple months and keeps arithmetic stable", () 
   // 150 - 25 + 20 - 30 + 8 - 35 = 88
   assert.equal(projection.startAvailableBySku.get("SKU-A"), 88);
   assert.equal(projection.anchorMonth, "2026-04");
+  assert.equal(projection.anchorTargetMonth, "2026-04");
   assert.equal(projection.anchorMode, "rollforward");
 });
 
@@ -256,4 +260,71 @@ test("legacy snapshot units fallback is used when split fields are missing", () 
   });
 
   assert.equal(projection.startAvailableBySku.get("SKU-A"), 77);
+});
+
+test("sku missing in anchor snapshot falls back to latest sku-specific snapshot", () => {
+  const state = {
+    settings: { safetyStockDohDefault: 60 },
+    inventory: {
+      snapshots: [
+        {
+          month: "2025-12",
+          items: [{ sku: "SKU-A", amazonUnits: 80, threePLUnits: 0 }],
+        },
+        {
+          month: "2026-01",
+          items: [{ sku: "SKU-B", amazonUnits: 50, threePLUnits: 0 }],
+        },
+      ],
+    },
+    forecast: {
+      forecastManual: {
+        "SKU-A": {
+          "2026-01": 10,
+          "2026-02": 12,
+        },
+      },
+    },
+    products: [{ sku: "SKU-A", status: "active" }],
+  };
+
+  const projection = computeInventoryProjection({
+    state,
+    months: ["2026-02"],
+    products: state.products,
+    snapshotMonth: "2026-01",
+  });
+
+  assert.equal(projection.anchorTargetMonth, "2026-01");
+  assert.equal(projection.startAvailableBySku.get("SKU-A"), 70);
+  assert.equal(projection.anchorSkuFallbackCount, 1);
+  assert.deepEqual(projection.anchorSkuFallbackSkus, ["SKU-A"]);
+  assert.deepEqual(projection.anchorSkuMissingHistory, []);
+});
+
+test("sku without any snapshot history is marked and starts with zero anchor", () => {
+  const state = {
+    settings: { safetyStockDohDefault: 60 },
+    inventory: {
+      snapshots: [
+        {
+          month: "2026-01",
+          items: [{ sku: "SKU-A", amazonUnits: 100, threePLUnits: 0 }],
+        },
+      ],
+    },
+    forecast: { forecastManual: {} },
+    products: [{ sku: "SKU-Z", status: "active" }],
+  };
+
+  const projection = computeInventoryProjection({
+    state,
+    months: ["2026-02"],
+    products: state.products,
+    snapshotMonth: "2026-01",
+  });
+
+  assert.equal(projection.startAvailableBySku.get("SKU-Z"), 0);
+  assert.equal(projection.anchorSkuFallbackCount, 0);
+  assert.deepEqual(projection.anchorSkuMissingHistory, ["SKU-Z"]);
 });

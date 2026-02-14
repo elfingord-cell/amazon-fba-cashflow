@@ -28,6 +28,7 @@ import { TanStackGrid } from "../../components/TanStackGrid";
 import {
   addMonths,
   currentMonthKey,
+  formatMonthEndLabel,
   formatMonthLabel,
   monthRange,
   normalizeMonthKey,
@@ -53,6 +54,7 @@ type ProjectionMode = "units" | "doh" | "plan";
 type InventoryView = "snapshot" | "projection" | "both";
 type ProjectionRiskFilter = "all" | "oos" | "under_safety";
 type ProjectionAbcFilter = "all" | "a" | "b" | "ab" | "abc";
+const PROJECTION_HORIZON_OPTIONS = [6, 12, 18] as const;
 
 export interface InventoryModuleProps {
   view?: InventoryView;
@@ -332,6 +334,16 @@ function normalizeProjectionAbcFilter(value: unknown): ProjectionAbcFilter {
   return "all";
 }
 
+function normalizeProjectionHorizon(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 12;
+  const rounded = Math.round(parsed);
+  if (PROJECTION_HORIZON_OPTIONS.includes(rounded as typeof PROJECTION_HORIZON_OPTIONS[number])) return rounded;
+  if (rounded < 9) return 6;
+  if (rounded < 15) return 12;
+  return 18;
+}
+
 function normalizeAbcClass(value: string | null | undefined): "A" | "B" | "C" | null {
   const raw = String(value || "").trim().toUpperCase();
   if (raw === "A" || raw === "B" || raw === "C") return raw;
@@ -476,7 +488,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   useEffect(() => {
     const fromSettings = Number(inventorySettings.projectionMonths);
     if (Number.isFinite(fromSettings) && fromSettings > 0) {
-      setProjectionMonths(Math.round(fromSettings));
+      setProjectionMonths(normalizeProjectionHorizon(fromSettings));
     }
   }, [inventorySettings.projectionMonths]);
 
@@ -605,31 +617,12 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     setModuleExpandedCategoryKeys("inventory_projection", projectionExpandedCategories);
   }, [projectionExpandedCategories]);
 
-  const projectionStartMonth = useMemo(() => addMonths(selectedMonth, 1), [selectedMonth]);
+  const projectionBaseMonth = currentMonthKey();
+  const projectionAnchorMonth = useMemo(() => addMonths(projectionBaseMonth, -1), [projectionBaseMonth]);
   const projectionMonthList = useMemo(
-    () => monthRange(projectionStartMonth, projectionMonths),
-    [projectionMonths, projectionStartMonth],
+    () => monthRange(projectionBaseMonth, projectionMonths),
+    [projectionBaseMonth, projectionMonths],
   );
-
-  const selectedSnapshot = useMemo(
-    () => findSnapshot(stateObject, selectedMonth),
-    [selectedMonth, stateObject],
-  );
-
-  const snapshotForProjection = useMemo(() => {
-    const hasDraftData = Object.keys(snapshotDraft).length > 0;
-    const shouldUseDraft = snapshotDirty || Boolean(selectedSnapshot) || hasDraftData;
-    if (!shouldUseDraft) return null;
-    return {
-      month: selectedMonth,
-      items: Object.entries(snapshotDraft).map(([sku, values]) => ({
-        sku,
-        amazonUnits: parseUnits(values.amazonUnits),
-        threePLUnits: parseUnits(values.threePLUnits),
-        note: String(values.note || ""),
-      })),
-    };
-  }, [selectedMonth, selectedSnapshot, snapshotDirty, snapshotDraft]);
 
   const projection = useMemo(() => computeInventoryProjection({
     state: stateObject,
@@ -641,10 +634,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       safetyStockDohOverride: entry.safetyDays,
       foCoverageDohOverride: entry.coverageDays,
     })),
-    snapshot: snapshotForProjection,
-    snapshotMonth: selectedMonth,
+    snapshot: null,
+    snapshotMonth: projectionAnchorMonth,
     projectionMode,
-  }), [filteredRows, projectionMode, projectionMonthList, selectedMonth, snapshotForProjection, stateObject]);
+  }), [filteredRows, projectionAnchorMonth, projectionMode, projectionMonthList, stateObject]);
 
   const recommendationContext = useMemo(
     () => buildFoRecommendationContext(stateObject),
@@ -1086,8 +1079,22 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         header: "Ankerbestand",
         meta: { width: 118, align: "right" },
         cell: ({ row }) => {
-          const anchor = projection.startAvailableBySku.get(row.original.sku);
-          return formatInt(Number.isFinite(anchor as number) ? Number(anchor) : 0);
+          const sku = String(row.original.sku || "").trim();
+          const anchor = projection.startAvailableBySku.get(sku);
+          const isSkuFallback = anchorSkuFallbackSet.has(sku);
+          const isMissingHistory = anchorMissingHistorySet.has(sku);
+          const source = projection.anchorSourceBySku?.get?.(sku) || null;
+          const sourceMonth = source?.month ? formatMonthEndLabel(String(source.month), "long") : "—";
+          const title = isMissingHistory
+            ? "Keine Snapshot-Historie für diese SKU. Startwert = 0."
+            : (isSkuFallback
+              ? `SKU-Fallback: letzter verfügbarer Snapshot (${sourceMonth}).`
+              : `Anchor-Snapshot (${sourceMonth}).`);
+          return (
+            <Tooltip title={title}>
+              <span>{formatInt(Number.isFinite(anchor as number) ? Number(anchor) : 0)}</span>
+            </Tooltip>
+          );
         },
       },
     ];
@@ -1183,7 +1190,15 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     })) as ColumnDef<InventoryProductRow>[];
 
     return [...base, ...monthColumns];
-  }, [actionIntent, firstRiskFoIntentByCellKey, projection, projectionMode, projectionMonthList]);
+  }, [
+    actionIntent,
+    anchorMissingHistorySet,
+    anchorSkuFallbackSet,
+    firstRiskFoIntentByCellKey,
+    projection,
+    projectionMode,
+    projectionMonthList,
+  ]);
 
   async function saveSnapshot(): Promise<void> {
     await saveWith((current) => {
@@ -1216,7 +1231,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       inventoryTarget.snapshots = snapshots;
       inventoryTarget.settings = {
         ...((inventoryTarget.settings || {}) as Record<string, unknown>),
-        projectionMonths: Math.max(1, Math.round(projectionMonths)),
+        projectionMonths: normalizeProjectionHorizon(projectionMonths),
       };
       return next;
     }, "v2:inventory:save-snapshot");
@@ -1257,11 +1272,27 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const anchorForecastGapSkus = Array.isArray(projection.anchorForecastGapSkus)
     ? projection.anchorForecastGapSkus as string[]
     : [];
+  const anchorSkuFallbackSkus = Array.isArray(projection.anchorSkuFallbackSkus)
+    ? projection.anchorSkuFallbackSkus as string[]
+    : [];
+  const anchorSkuMissingHistory = Array.isArray(projection.anchorSkuMissingHistory)
+    ? projection.anchorSkuMissingHistory as string[]
+    : [];
+  const anchorSkuFallbackSet = useMemo(
+    () => new Set(anchorSkuFallbackSkus.map((sku) => String(sku || "").trim())),
+    [anchorSkuFallbackSkus],
+  );
+  const anchorMissingHistorySet = useMemo(
+    () => new Set(anchorSkuMissingHistory.map((sku) => String(sku || "").trim())),
+    [anchorSkuMissingHistory],
+  );
   const anchorMode = String(projection.anchorMode || "no_snapshot");
+  const anchorTargetMonth = normalizeMonthKey(projection.anchorTargetMonth || projection.anchorMonth);
+  const projectionTodayMonth = projectionBaseMonth;
   const anchorLabel = anchorMode === "rollforward"
-    ? `Anker: ${projection.anchorSourceMonth || "—"} Snapshot → Rollforward bis ${projection.anchorMonth || "—"}`
+    ? `Anker: ${projection.anchorSourceMonth || "—"} Snapshot → Rollforward bis ${anchorTargetMonth || "—"}`
     : anchorMode === "snapshot"
-      ? `Anker: Snapshot ${projection.anchorMonth || projection.anchorSourceMonth || "—"}`
+      ? `Anker: Snapshot ${anchorTargetMonth || projection.anchorSourceMonth || "—"}`
       : "Anker: kein Snapshot (Start bei 0)";
 
   return (
@@ -1285,15 +1316,20 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         </div>
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
-            <Select
-              value={selectedMonth}
-              onChange={(value) => {
-                setSelectedMonth(value);
-                setSelectedMonthTouched(true);
-              }}
-              options={monthOptions.map((month) => ({ value: month, label: month }))}
-              style={{ width: 140, maxWidth: "100%" }}
-            />
+            {showSnapshot ? (
+              <Select
+                value={selectedMonth}
+                onChange={(value) => {
+                  setSelectedMonth(value);
+                  setSelectedMonthTouched(true);
+                }}
+                options={monthOptions.map((month) => ({
+                  value: month,
+                  label: `${month} · ${formatMonthEndLabel(month, "long")}`,
+                }))}
+                style={{ width: 260, maxWidth: "100%" }}
+              />
+            ) : null}
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1313,11 +1349,14 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                 <Tooltip title={projectionModeHint(projectionMode)}>
                   <InfoCircleOutlined style={{ color: "#64748b", fontSize: 16 }} />
                 </Tooltip>
-                <InputNumber
-                  min={1}
-                  max={36}
+                <Select
                   value={projectionMonths}
-                  onChange={(value) => setProjectionMonths(Math.max(1, Math.round(Number(value) || 1)))}
+                  onChange={(value) => setProjectionMonths(normalizeProjectionHorizon(value))}
+                  style={{ width: 160, maxWidth: "100%" }}
+                  options={PROJECTION_HORIZON_OPTIONS.map((months) => ({
+                    value: months,
+                    label: `Horizont ${months} Monate`,
+                  }))}
                 />
               </>
             ) : null}
@@ -1335,20 +1374,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                 Snapshot CSV
               </Button>
               {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
+              <Tag color="blue">{formatMonthEndLabel(selectedMonth, "long")}</Tag>
               {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
             </div>
-          ) : (
-            <div className="v2-toolbar-row">
-              <Tag color={anchorMode === "no_snapshot" ? "red" : "blue"}>{anchorLabel}</Tag>
-              {projection.snapshotFallbackUsed ? (
-                <Tag color="gold">Fallback auf letzten Snapshot ≤ Ankermonat</Tag>
-              ) : null}
-              {anchorForecastGapSkus.length > 0 ? (
-                <Tag color="orange">Forecast-Lücken im Anker-Rollforward: {anchorForecastGapSkus.length}</Tag>
-              ) : null}
-              {projection.resolvedSnapshotMonth ? <Text type="secondary">EOM-basiert, inkl. Inbound (PO+FO) und Forecast-Abzug.</Text> : null}
-            </div>
-          )}
+          ) : null}
         </div>
       </Card>
 
@@ -1357,7 +1386,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
       {showSnapshot ? (
         <Card>
-          <Title level={4}>Snapshot {selectedMonth}</Title>
+          <Title level={4}>Snapshot zum Stichtag {formatMonthEndLabel(selectedMonth, "long")}</Title>
+          <Text type="secondary">Monatsschlüssel: {selectedMonth}</Text>
           <div className="v2-category-tools">
             <Text type="secondary">{filteredRows.length} Produkte in {groupedRows.length} Kategorien</Text>
             <div className="v2-actions-inline">
@@ -1410,136 +1440,170 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       {showProjection ? (
         <Card>
           <Title level={4}>Projektion ({projectionMode.toUpperCase()})</Title>
-          <Text type="secondary">
-            Zeitraum: {projectionMonthList[0] || "—"} bis {projectionMonthList[projectionMonthList.length - 1] || "—"}.
-          </Text>
-          {anchorForecastGapSkus.length > 0 ? (
-            <Alert
-              style={{ marginTop: 10, marginBottom: 2 }}
-              className="v2-proj-anchor-warning"
-              type="warning"
-              showIcon
-              message={`Anker-Rollforward mit Forecast-Lücken bei ${anchorForecastGapSkus.length} SKU(s) – diese Monate wurden mit 0 Units gerechnet.`}
-            />
-          ) : null}
+          <div className="v2-proj-cluster-grid">
+            <div className="v2-proj-context-cluster">
+              <div className="v2-toolbar-row">
+                <Tag color="blue">Heute: {formatMonthEndLabel(projectionTodayMonth, "long")}</Tag>
+                <Tag color={anchorMode === "no_snapshot" ? "red" : "blue"}>{anchorLabel}</Tag>
+                <Tag color="default">
+                  Zeitraum: {projectionMonthList[0] || "—"} bis {projectionMonthList[projectionMonthList.length - 1] || "—"}
+                </Tag>
+                <Tag color="default">Horizont: {projectionMonths} Monate</Tag>
+              </div>
+              <div className="v2-toolbar-row">
+                {projection.snapshotFallbackUsed ? (
+                  <Tag color="gold">Fallback auf letzten Snapshot ≤ Ankermonat</Tag>
+                ) : null}
+                {projection.resolvedSnapshotMonth ? (
+                  <Tag color="blue">Stichtag Anchor: {formatMonthEndLabel(String(projection.resolvedSnapshotMonth || anchorTargetMonth || ""), "long")}</Tag>
+                ) : null}
+                {Number(projection.anchorSkuFallbackCount || 0) > 0 ? (
+                  <Tag color="gold">SKU-Fallback aktiv: {Number(projection.anchorSkuFallbackCount || 0)}</Tag>
+                ) : null}
+                {riskSummary.missingEta > 0 ? (
+                  <Tag color="orange">Fehlende ETA: {riskSummary.missingEta}</Tag>
+                ) : (
+                  <Tag color="green">Fehlende ETA: 0</Tag>
+                )}
+                <Tooltip title="Units = projizierter Monatsendbestand · DOH = Reichweite in Tagen · Plan = Forecast-Absatz · Safety = Vergleich gegen Safety-Schwelle je SKU/Monat">
+                  <Tag color="default">Modus-Hilfe</Tag>
+                </Tooltip>
+              </div>
+              {anchorForecastGapSkus.length > 0 ? (
+                <Alert
+                  className="v2-proj-anchor-warning"
+                  type="warning"
+                  showIcon
+                  message={`Anker-Rollforward mit Forecast-Lücken bei ${anchorForecastGapSkus.length} SKU(s) – diese Monate wurden mit 0 Units gerechnet.`}
+                />
+              ) : null}
+              {anchorSkuMissingHistory.length > 0 ? (
+                <Alert
+                  className="v2-proj-anchor-warning"
+                  type="error"
+                  showIcon
+                  message={`Keine Snapshot-Historie für ${anchorSkuMissingHistory.length} SKU(s) – Anker startet dort mit 0.`}
+                  description={anchorSkuMissingHistory.slice(0, 8).join(", ")}
+                />
+              ) : null}
+            </div>
 
-          <div className="v2-toolbar-row" style={{ marginTop: 10 }}>
-            <Tag color={riskSummary.underSafetySkus > 0 ? "gold" : "green"}>
-              SKUs unter Safety: {riskSummary.underSafetySkus}
-            </Tag>
-            <Tag color={riskSummary.oosSkus > 0 ? "red" : "green"}>
-              OOS: {riskSummary.oosSkus}
-            </Tag>
-            <Tag color="blue">
-              Kritischster Monat: {riskSummary.criticalMonth ? formatMonthLabel(riskSummary.criticalMonth) : "—"}
-            </Tag>
-            <Tag color={riskSummary.missingEta > 0 ? "orange" : "green"}>
-              Fehlende ETA: {riskSummary.missingEta}
-            </Tag>
-            <Tooltip title="Units = projizierter Monatsendbestand · DOH = Reichweite in Tagen · Plan = Forecast-Absatz · Safety = Vergleich gegen Safety-Schwelle je SKU/Monat">
-              <Tag color="default">Modus-Hilfe</Tag>
-            </Tooltip>
-          </div>
-
-          <div className="v2-toolbar-row v2-proj-filter-row" style={{ marginTop: 4 }}>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn ${riskFilter === "all" ? "is-active" : ""}`}
-              onClick={() => setRiskFilter("all")}
-            >
-              Alle Risiken
-            </button>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn v2-proj-filter-btn--negative ${riskFilter === "oos" ? "is-active" : ""}`}
-              onClick={() => setRiskFilter("oos")}
-            >
-              OOS / {"<="} 0
-            </button>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn v2-proj-filter-btn--low ${riskFilter === "under_safety" ? "is-active" : ""}`}
-              onClick={() => setRiskFilter("under_safety")}
-            >
-              Unter Safety
-            </button>
-            <Text type="secondary">Filter für Projektionstabelle.</Text>
-          </div>
-
-          <div className="v2-toolbar-row v2-proj-filter-row" style={{ marginTop: 4 }}>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn ${abcFilter === "all" ? "is-active" : ""}`}
-              onClick={() => setAbcFilter("all")}
-            >
-              Alle
-            </button>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn ${abcFilter === "a" ? "is-active" : ""}`}
-              onClick={() => setAbcFilter("a")}
-            >
-              A
-            </button>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn ${abcFilter === "b" ? "is-active" : ""}`}
-              onClick={() => setAbcFilter("b")}
-            >
-              B
-            </button>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn ${abcFilter === "ab" ? "is-active" : ""}`}
-              onClick={() => setAbcFilter("ab")}
-            >
-              A+B
-            </button>
-            <button
-              type="button"
-              className={`v2-proj-filter-btn ${abcFilter === "abc" ? "is-active" : ""}`}
-              onClick={() => setAbcFilter("abc")}
-            >
-              ABC
-            </button>
-            <Text type="secondary">ABC-Filter bleibt über Kategorien erhalten.</Text>
-          </div>
-
-          <div className="v2-proj-heatmap" style={{ marginTop: 10 }}>
-            {projectionMonthList.map((month) => {
-              const urgency = urgencyByMonth.get(month);
-              const score = Number(urgency?.score || 0);
-              const intensity = maxUrgencyScore > 0 ? Math.min(1, score / maxUrgencyScore) : 0;
-              const isActive = selectedUrgencyMonth === month;
-              return (
+            <div className="v2-proj-filter-cluster">
+              <Text type="secondary">Risiko-Filter</Text>
+              <div className="v2-toolbar-row v2-proj-filter-row">
                 <button
                   type="button"
-                  key={month}
-                  className={`v2-proj-heatmap-item${isActive ? " is-active" : ""}`}
-                  style={{
-                    background: `rgba(220, 38, 38, ${0.08 + (intensity * 0.3)})`,
-                    borderColor: isActive ? "rgba(220, 38, 38, 0.8)" : "rgba(15, 27, 45, 0.12)",
-                  }}
-                  onClick={() => setSelectedUrgencyMonth((current) => (current === month ? null : month))}
-                  title={`${formatMonthLabel(month)} · ABC-gewichteter Risikoscore ${score} · OOS ${Number(urgency?.oosCount || 0)} · Unter Safety ${Number(urgency?.underSafetyCount || 0)}`}
+                  className={`v2-proj-filter-btn ${riskFilter === "all" ? "is-active" : ""}`}
+                  onClick={() => setRiskFilter("all")}
                 >
-                  <span>{formatMonthLabel(month)}</span>
-                  <strong>Score {score}</strong>
+                  Alle Risiken
                 </button>
-              );
-            })}
-            {selectedUrgencyMonth ? (
-              <Button size="small" onClick={() => setSelectedUrgencyMonth(null)}>
-                Filter löschen
-              </Button>
-            ) : null}
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn v2-proj-filter-btn--negative ${riskFilter === "oos" ? "is-active" : ""}`}
+                  onClick={() => setRiskFilter("oos")}
+                >
+                  OOS / {"<="} 0
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn v2-proj-filter-btn--low ${riskFilter === "under_safety" ? "is-active" : ""}`}
+                  onClick={() => setRiskFilter("under_safety")}
+                >
+                  Unter Safety
+                </button>
+              </div>
+            </div>
+
+            <div className="v2-proj-filter-cluster">
+              <Text type="secondary">ABC-Filter</Text>
+              <div className="v2-toolbar-row v2-proj-filter-row">
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${abcFilter === "all" ? "is-active" : ""}`}
+                  onClick={() => setAbcFilter("all")}
+                >
+                  Alle
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${abcFilter === "a" ? "is-active" : ""}`}
+                  onClick={() => setAbcFilter("a")}
+                >
+                  A
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${abcFilter === "b" ? "is-active" : ""}`}
+                  onClick={() => setAbcFilter("b")}
+                >
+                  B
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${abcFilter === "ab" ? "is-active" : ""}`}
+                  onClick={() => setAbcFilter("ab")}
+                >
+                  A+B
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${abcFilter === "abc" ? "is-active" : ""}`}
+                  onClick={() => setAbcFilter("abc")}
+                >
+                  ABC
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="v2-toolbar-row" style={{ marginTop: 4 }}>
-            <Tag className="v2-proj-legend v2-proj-legend--negative">Rot = OOS / {"<="} 0</Tag>
-            <Tag className="v2-proj-legend v2-proj-legend--low">Orange = Unter Safety</Tag>
-            <Tag className="v2-proj-legend">Inbound Marker: PO / FO</Tag>
-            <Text type="secondary">`FO empfohlen` im ersten Risikomonat anklicken oder Zelle öffnen für FO-Anlage.</Text>
+          <div className="v2-proj-score-strip">
+            <div className="v2-toolbar-row">
+              <Tag color={riskSummary.underSafetySkus > 0 ? "gold" : "green"}>
+                SKUs unter Safety: {riskSummary.underSafetySkus}
+              </Tag>
+              <Tag color={riskSummary.oosSkus > 0 ? "red" : "green"}>
+                OOS: {riskSummary.oosSkus}
+              </Tag>
+              <Tag color="blue">
+                Kritischster Monat: {riskSummary.criticalMonth ? formatMonthLabel(riskSummary.criticalMonth) : "—"}
+              </Tag>
+            </div>
+            <div className="v2-proj-heatmap">
+              {projectionMonthList.map((month) => {
+                const urgency = urgencyByMonth.get(month);
+                const score = Number(urgency?.score || 0);
+                const intensity = maxUrgencyScore > 0 ? Math.min(1, score / maxUrgencyScore) : 0;
+                const isActive = selectedUrgencyMonth === month;
+                return (
+                  <button
+                    type="button"
+                    key={month}
+                    className={`v2-proj-heatmap-item${isActive ? " is-active" : ""}`}
+                    style={{
+                      background: `rgba(220, 38, 38, ${0.08 + (intensity * 0.3)})`,
+                      borderColor: isActive ? "rgba(220, 38, 38, 0.8)" : "rgba(15, 27, 45, 0.12)",
+                    }}
+                    onClick={() => setSelectedUrgencyMonth((current) => (current === month ? null : month))}
+                    title={`${formatMonthLabel(month)} · ABC-gewichteter Risikoscore ${score} · OOS ${Number(urgency?.oosCount || 0)} · Unter Safety ${Number(urgency?.underSafetyCount || 0)}`}
+                  >
+                    <span>{formatMonthLabel(month)}</span>
+                    <strong>Score {score}</strong>
+                  </button>
+                );
+              })}
+              {selectedUrgencyMonth ? (
+                <Button size="small" onClick={() => setSelectedUrgencyMonth(null)}>
+                  Filter löschen
+                </Button>
+              ) : null}
+            </div>
+            <div className="v2-toolbar-row">
+              <Tag className="v2-proj-legend v2-proj-legend--negative">Rot = OOS / {"<="} 0</Tag>
+              <Tag className="v2-proj-legend v2-proj-legend--low">Orange = Unter Safety</Tag>
+              <Tag className="v2-proj-legend">Inbound Marker: PO / FO</Tag>
+              <Text type="secondary">`FO empfohlen` im ersten Risikomonat anklicken oder Zelle öffnen für FO-Anlage.</Text>
+            </div>
           </div>
 
           <div className="v2-category-tools" style={{ marginTop: 10 }}>

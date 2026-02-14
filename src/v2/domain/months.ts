@@ -39,5 +39,22 @@ export function formatMonthLabel(month: string): string {
   if (!normalized) return "—";
   const [year, monthNumber] = normalized.split("-").map(Number);
   const date = new Date(Date.UTC(year, monthNumber - 1, 1));
-  return date.toLocaleDateString("de-DE", { month: "short", year: "numeric" });
+  return date.toLocaleDateString("de-DE", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+export function monthEndDate(month: string): Date | null {
+  const normalized = normalizeMonthKey(month);
+  if (!normalized) return null;
+  const [year, monthNumber] = normalized.split("-").map(Number);
+  if (!year || !monthNumber) return null;
+  return new Date(Date.UTC(year, monthNumber, 0));
+}
+
+export function formatMonthEndLabel(month: string, mode: "short" | "long" = "long"): string {
+  const date = monthEndDate(month);
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "—";
+  if (mode === "short") {
+    return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+  }
+  return `Ende ${date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" })}`;
 }
