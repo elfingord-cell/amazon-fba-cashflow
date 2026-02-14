@@ -16,7 +16,6 @@ import {
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { deriveShippingPerUnitEur } from "../../../domain/costing/shipping.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
@@ -92,6 +91,33 @@ function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pickFxUsdPerEur(input: {
+  formFx: unknown;
+  settingsFx: unknown;
+  settingsEurUsd: unknown;
+  resolvedFx: unknown;
+}): number | null {
+  const directCandidates = [
+    asNumber(input.formFx),
+    asNumber(input.settingsFx),
+    asNumber(input.resolvedFx),
+  ];
+  for (let i = 0; i < directCandidates.length; i += 1) {
+    const value = directCandidates[i];
+    if (value != null && value > 0 && value < 10) return value;
+  }
+  const eurUsd = asNumber(input.settingsEurUsd);
+  if (eurUsd != null && eurUsd > 0 && eurUsd < 10) {
+    const inverted = 1 / eurUsd;
+    if (Number.isFinite(inverted) && inverted > 0) return inverted;
+  }
+  for (let i = 0; i < directCandidates.length; i += 1) {
+    const value = directCandidates[i];
+    if (value != null && value > 0) return value;
+  }
+  return null;
 }
 
 function formatNumber(value: number | null, digits = 2): string {
@@ -560,13 +586,32 @@ export default function ProductsModule(): JSX.Element {
 
   const shippingSuggestion = useMemo(() => {
     const values = draftValues || ({} as ProductDraft);
-    const fallbackFx = resolvedDraft.fxRate.value;
-    return deriveShippingPerUnitEur({
-      unitCostUsd: values.templateUnitPriceUsd,
-      landedUnitCostEur: values.landedUnitCostEur,
-      fxEurUsd: values.templateFxRate ?? fallbackFx,
+    const fxUsed = pickFxUsdPerEur({
+      formFx: values.templateFxRate,
+      settingsFx: settings.fxRate,
+      settingsEurUsd: settings.eurUsdRate,
+      resolvedFx: resolvedDraft.fxRate.value,
     });
-  }, [draftValues, resolvedDraft.fxRate.value]);
+    const unitCostUsd = asNumber(values.templateUnitPriceUsd);
+    const landedUnitCostEur = asNumber(values.landedUnitCostEur);
+    const goodsCostEur = (
+      unitCostUsd != null
+      && fxUsed != null
+      && fxUsed > 0
+    ) ? (unitCostUsd / fxUsed) : null;
+    const raw = (
+      landedUnitCostEur != null
+      && goodsCostEur != null
+    ) ? (landedUnitCostEur - goodsCostEur) : null;
+    return {
+      value: Number.isFinite(raw as number) ? Math.max(0, Number(raw)) : null,
+      warning: Number.isFinite(raw as number) ? Number(raw) < 0 : false,
+      goodsCostEur,
+      fxUsed,
+      landedUnitCostEur,
+      unitCostUsd,
+    };
+  }, [draftValues, resolvedDraft.fxRate.value, settings.eurUsdRate, settings.fxRate]);
 
   useEffect(() => {
     if (!modalOpen || logisticsManualOverride) return;
@@ -1038,8 +1083,9 @@ export default function ProductsModule(): JSX.Element {
                         {logisticsManualOverride ? "Produkt" : resolvedDraft.logisticsPerUnitEur.sourceLabel}
                       </span>
                     </span>
-                    <span>Vorschlag: {formatNumber(asNumber(shippingSuggestion.value), 2)} EUR/Stk (Formel: Landed - (USD/FX))</span>
-                    <span>Warenkosten-Anteil aus USD/FX: {formatNumber(asNumber(shippingSuggestion.goodsCostEur), 2)} EUR/Stk</span>
+                    <span>Vorschlag: {formatNumber(asNumber(shippingSuggestion.value), 2)} EUR/Stk (Formel: Einstand (EUR) - EK in EUR)</span>
+                    <span>EK in EUR (aus USD/FX): {formatNumber(asNumber(shippingSuggestion.goodsCostEur), 2)} EUR/Stk</span>
+                    <span>FX-Referenz: {formatNumber(asNumber(shippingSuggestion.fxUsed), 4)} USD je EUR</span>
                     <span>Kann je nach Datenbasis auch Zoll/EUSt/Importnebenkosten enthalten.</span>
                   </span>
                 )}

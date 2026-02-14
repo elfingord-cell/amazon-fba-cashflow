@@ -856,14 +856,25 @@
   padding: 10px !important;
   max-width: 100%;
   min-width: 0;
-  overflow: hidden;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .v2-category-collapse .ant-collapse-content {
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
 }
 
 .v2-category-collapse .ant-collapse-content-box > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.v2-category-collapse .v2-scroll-host,
+.v2-category-collapse .v2-stats-table-wrap {
+  width: 100%;
   max-width: 100%;
   min-width: 0;
 }
