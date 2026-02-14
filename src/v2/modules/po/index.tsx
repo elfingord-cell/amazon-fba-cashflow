@@ -6,6 +6,7 @@ import {
   Checkbox,
   Form,
   Input,
+  message,
   Modal,
   Select,
   Space,
@@ -15,6 +16,7 @@ import {
 import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
 import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
+import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { computeScheduleFromOrderDate, nowIso, PO_ANCHORS, randomId } from "../../domain/orderUtils";
@@ -81,6 +83,37 @@ interface PoRow {
   raw: Record<string, unknown>;
 }
 
+interface PoPaymentRow {
+  id: string;
+  typeLabel: string;
+  label: string;
+  dueDate: string | null;
+  plannedEur: number;
+  status: "open" | "paid";
+  paidDate: string | null;
+  paidEurActual: number | null;
+  paymentId: string | null;
+  method: string | null;
+  paidBy: string | null;
+  note: string;
+  invoiceDriveUrl: string;
+  invoiceFolderDriveUrl: string;
+  eventType: string | null;
+}
+
+interface PoPaymentFormValues {
+  selectedEventIds: string[];
+  paidDate: string;
+  method: string;
+  paidBy: string;
+  amountActualEur: number | null;
+  amountActualUsd: number | null;
+  paymentId: string;
+  invoiceDriveUrl: string;
+  invoiceFolderDriveUrl: string;
+  note: string;
+}
+
 function formatDate(value: unknown): string {
   if (!value) return "—";
   const [year, month, day] = String(value).split("-").map(Number);
@@ -120,6 +153,64 @@ function statusTag(status: string): JSX.Element {
   if (status === "paid_only") return <Tag color="green">Bezahlt</Tag>;
   if (status === "mixed") return <Tag color="gold">Teilweise bezahlt</Tag>;
   return <Tag color="blue">Offen</Tag>;
+}
+
+function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "label">): string {
+  if (row.eventType === "duty") return "Custom Duties";
+  if (row.eventType === "eust") return "Einfuhrumsatzsteuer";
+  if (row.eventType === "freight") return "Shipping China -> 3PL";
+  if (row.eventType === "fx_fee") return "FX Gebuehr";
+  const base = String(row.typeLabel || row.label || "").trim();
+  return base || "Payment";
+}
+
+function paymentMethodOptions(): Array<{ value: string; label: string }> {
+  return [
+    { value: "Alibaba Trade Assurance", label: "Alibaba Trade Assurance" },
+    { value: "Wise Transfer", label: "Wise Transfer" },
+    { value: "PayPal", label: "PayPal" },
+    { value: "SEPA Bank Transfer", label: "SEPA Bank Transfer" },
+    { value: "Kreditkarte", label: "Kreditkarte" },
+  ];
+}
+
+function paymentPayerOptions(input: {
+  displayNameMap: Record<string, string>;
+  syncEmail: string | null;
+}): Array<{ value: string; label: string }> {
+  const labels = new Set<string>();
+  Object.entries(input.displayNameMap || {}).forEach(([key, name]) => {
+    const clean = String(name || key || "").trim();
+    if (clean) labels.add(clean);
+  });
+  if (input.syncEmail) labels.add(String(input.syncEmail).trim());
+  if (!labels.size) return [];
+  return Array.from(labels).sort((a, b) => a.localeCompare(b, "de-DE", { sensitivity: "base" })).map((entry) => ({
+    value: entry,
+    label: entry,
+  }));
+}
+
+function canOpenLink(value: string): boolean {
+  const url = String(value || "").trim();
+  return url.length > 0 && isHttpUrl(url);
+}
+
+function buildSuggestedInvoiceFilename(input: {
+  paidDate: string;
+  poNo: string;
+  alias: string;
+  units: number;
+  selectedRows: PoPaymentRow[];
+}): string {
+  const date = String(input.paidDate || "").trim() || "YYYY-MM-DD";
+  const poNo = String(input.poNo || "").trim() || "PO";
+  const alias = String(input.alias || "").trim().replace(/\s+/g, "-").replace(/[\\/:*?"<>|]/g, "-") || "Alias";
+  const units = Number.isFinite(Number(input.units)) ? Math.max(0, Math.round(Number(input.units))) : 0;
+  const labels = Array.from(new Set((input.selectedRows || []).map((row) => paymentTypeLabel(row))))
+    .map((entry) => entry.replace(/\s+/g, "-").replace(/[\\/:*?"<>|]/g, "-"));
+  const paymentChunk = labels.length ? labels.join("+") : "Payment";
+  return `${date}_PO-${poNo}_${alias}_${units}u_${paymentChunk}.pdf`.replace(/-+/g, "-");
 }
 
 function poSettingsFromState(state: Record<string, unknown>): Record<string, unknown> {
@@ -257,6 +348,11 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm<PoFormValues>();
+  const [paymentForm] = Form.useForm<PoPaymentFormValues>();
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentEditingId, setPaymentEditingId] = useState<string | null>(null);
+  const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
+  const [paymentInitialEventIds, setPaymentInitialEventIds] = useState<string[]>([]);
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -455,20 +551,71 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     return toPoRecord(draftValues, existing);
   }, [draftValues, editingId, rows]);
 
-  const draftPaymentRows = useMemo(() => {
+  const draftPaymentRows = useMemo<PoPaymentRow[]>(() => {
     if (!draftPoRecord) return [];
     try {
       const cloned = structuredClone(draftPoRecord);
-      return buildPaymentRows(
+      const rows = buildPaymentRows(
         cloned,
         PO_CONFIG,
         poSettings,
         (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
       );
+      return rows.map((row) => ({
+        id: String(row.id || ""),
+        typeLabel: String(row.typeLabel || ""),
+        label: String(row.label || ""),
+        dueDate: row.dueDate ? String(row.dueDate) : null,
+        plannedEur: Number(row.plannedEur || 0),
+        status: row.status === "paid" ? "paid" : "open",
+        paidDate: row.paidDate ? String(row.paidDate) : null,
+        paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
+        paymentId: row.paymentId ? String(row.paymentId) : null,
+        method: row.method ? String(row.method) : null,
+        paidBy: row.paidBy ? String(row.paidBy) : null,
+        note: String(row.note || ""),
+        invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
+        invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
+        eventType: row.eventType ? String(row.eventType) : null,
+      }));
     } catch {
       return [];
     }
   }, [draftPoRecord, poSettings, state.payments]);
+
+  const paymentRecordById = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    (Array.isArray(state.payments) ? state.payments : []).forEach((entry) => {
+      const row = entry as Record<string, unknown>;
+      const id = String(row.id || "").trim();
+      if (!id) return;
+      map.set(id, row);
+    });
+    return map;
+  }, [state.payments]);
+
+  const payerOptions = useMemo(
+    () => paymentPayerOptions({ displayNameMap, syncEmail: syncSession.email }),
+    [displayNameMap, syncSession.email],
+  );
+  const methodOptions = useMemo(() => paymentMethodOptions(), []);
+  const paymentSelectedIds = Form.useWatch("selectedEventIds", paymentForm) as string[] | undefined;
+  const paymentDraftValues = Form.useWatch([], paymentForm) as PoPaymentFormValues | undefined;
+  const paymentSelectedRows = useMemo(() => {
+    const selected = new Set((paymentSelectedIds || []).map((entry) => String(entry || "")));
+    return draftPaymentRows.filter((entry) => selected.has(entry.id));
+  }, [draftPaymentRows, paymentSelectedIds]);
+  const suggestedPaymentFilename = useMemo(() => {
+    if (!draftPoRecord || !paymentDraftValues) return "";
+    const alias = productBySku.get(String(draftPoRecord.sku || ""))?.alias || String(draftPoRecord.sku || "");
+    return buildSuggestedInvoiceFilename({
+      paidDate: paymentDraftValues.paidDate,
+      poNo: String(draftPoRecord.poNo || ""),
+      alias,
+      units: Number(draftPoRecord.units || 0),
+      selectedRows: paymentSelectedRows,
+    });
+  }, [draftPoRecord, paymentDraftValues, paymentSelectedRows, productBySku]);
 
   useEffect(() => {
     if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
@@ -564,6 +711,175 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setEditingId(String(existing.id || ""));
     form.setFieldsValue(buildDefaultDraft(existing));
     setModalOpen(true);
+  }
+
+  function openPaymentBookingModal(seed?: PoPaymentRow | null): void {
+    if (!editingId) {
+      message.info("Bitte PO zuerst speichern, danach koennen Zahlungen verbucht werden.");
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const fromSeed = seed || null;
+    const fromPaymentId = fromSeed?.paymentId || null;
+    const selectedRows = fromPaymentId
+      ? draftPaymentRows.filter((entry) => entry.paymentId === fromPaymentId)
+      : (fromSeed ? [fromSeed] : draftPaymentRows.filter((entry) => entry.status !== "paid"));
+    const selectedEventIds = selectedRows.map((entry) => entry.id);
+    const plannedSum = selectedRows.reduce((sum, entry) => sum + Number(entry.plannedEur || 0), 0);
+    const paymentRecord = fromPaymentId ? (paymentRecordById.get(fromPaymentId) || null) : null;
+    const requestedPaymentId = String(
+      paymentRecord?.id
+      || fromPaymentId
+      || normalizePaymentId(randomId("pay"))
+      || randomId("pay"),
+    );
+    paymentForm.setFieldsValue({
+      selectedEventIds,
+      paidDate: String(paymentRecord?.paidDate || fromSeed?.paidDate || today),
+      method: String(paymentRecord?.method || fromSeed?.method || "Alibaba Trade Assurance"),
+      paidBy: String(paymentRecord?.payer || fromSeed?.paidBy || ownDisplayName || syncSession.email || ""),
+      amountActualEur: Number.isFinite(Number(paymentRecord?.amountActualEurTotal))
+        ? Number(paymentRecord?.amountActualEurTotal)
+        : Math.round(plannedSum * 100) / 100,
+      amountActualUsd: Number.isFinite(Number(paymentRecord?.amountActualUsdTotal))
+        ? Number(paymentRecord?.amountActualUsdTotal)
+        : null,
+      paymentId: requestedPaymentId,
+      invoiceDriveUrl: String(paymentRecord?.invoiceDriveUrl || fromSeed?.invoiceDriveUrl || ""),
+      invoiceFolderDriveUrl: String(paymentRecord?.invoiceFolderDriveUrl || fromSeed?.invoiceFolderDriveUrl || ""),
+      note: String(paymentRecord?.note || fromSeed?.note || ""),
+    });
+    setPaymentInitialEventIds(selectedEventIds);
+    setPaymentEditingId(paymentRecord?.id ? String(paymentRecord.id) : null);
+    setPaymentModalError(null);
+    setPaymentModalOpen(true);
+  }
+
+  async function savePaymentBooking(values: PoPaymentFormValues): Promise<void> {
+    if (modalCollab.readOnly) throw new Error("Nur Lesemodus: keine Zahlungen speichern.");
+    if (!editingId) throw new Error("PO muss zuerst gespeichert werden.");
+    const selectedIds = Array.from(new Set((values.selectedEventIds || []).map((entry) => String(entry || "").trim()).filter(Boolean)));
+    if (!selectedIds.length) throw new Error("Bitte mindestens einen Zahlungsbaustein auswaehlen.");
+    if (!values.paidDate) throw new Error("Bitte ein Zahlungsdatum setzen.");
+    if (!values.method.trim()) throw new Error("Bitte eine Zahlungsmethode waehlen.");
+    if (!values.paidBy.trim()) throw new Error("Bitte angeben, wer gezahlt hat.");
+    const amountActualEur = Number(values.amountActualEur);
+    if (!Number.isFinite(amountActualEur) || amountActualEur < 0) {
+      throw new Error("Bitte einen gueltigen Ist-Betrag in EUR eingeben.");
+    }
+    if (values.invoiceDriveUrl && !isHttpUrl(values.invoiceDriveUrl)) {
+      throw new Error("Invoice-Link muss mit http:// oder https:// beginnen.");
+    }
+    if (values.invoiceFolderDriveUrl && !isHttpUrl(values.invoiceFolderDriveUrl)) {
+      throw new Error("Folder-Link muss mit http:// oder https:// beginnen.");
+    }
+
+    const paymentId = String(normalizePaymentId(values.paymentId) || normalizePaymentId(randomId("pay")) || randomId("pay"));
+    const selectedRows = draftPaymentRows.filter((entry) => selectedIds.includes(entry.id));
+    const allocations = allocatePayment(amountActualEur, selectedRows.map((row) => ({ id: row.id, plannedEur: row.plannedEur })));
+    if (!allocations || !allocations.length) throw new Error("Konnte die Zahlung nicht auf die gewaehlten Bausteine verteilen.");
+
+    const amountActualUsdRaw = Number(values.amountActualUsd);
+    const amountActualUsd = Number.isFinite(amountActualUsdRaw) ? amountActualUsdRaw : null;
+    const plannedSum = selectedRows.reduce((sum, row) => sum + Number(row.plannedEur || 0), 0);
+    const usdAllocations = amountActualUsd != null && plannedSum > 0
+      ? selectedRows.map((row) => {
+        const share = Number(row.plannedEur || 0) / plannedSum;
+        return {
+          eventId: row.id,
+          actual: Math.round(amountActualUsd * share * 100) / 100,
+        };
+      })
+      : [];
+    const usdByEvent = new Map(usdAllocations.map((entry) => [entry.eventId, entry.actual]));
+
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const pos = Array.isArray(next.pos) ? [...next.pos] : [];
+      const index = pos.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === editingId);
+      if (index < 0) throw new Error("PO nicht gefunden.");
+      const record = { ...(pos[index] as Record<string, unknown>) };
+      const paymentLog = (record.paymentLog && typeof record.paymentLog === "object")
+        ? { ...(record.paymentLog as Record<string, Record<string, unknown>>) }
+        : {};
+      const oldPaymentId = paymentEditingId ? String(paymentEditingId) : null;
+
+      paymentInitialEventIds.forEach((eventId) => {
+        if (selectedIds.includes(eventId)) return;
+        const prev = (paymentLog[eventId] && typeof paymentLog[eventId] === "object")
+          ? { ...(paymentLog[eventId] as Record<string, unknown>) }
+          : {};
+        paymentLog[eventId] = {
+          ...prev,
+          status: "open",
+          paidDate: null,
+          paymentId: null,
+          amountActualEur: null,
+          amountActualUsd: null,
+          method: null,
+          payer: null,
+          note: null,
+        };
+      });
+
+      allocations.forEach((entry) => {
+        const prev = (paymentLog[entry.eventId] && typeof paymentLog[entry.eventId] === "object")
+          ? { ...(paymentLog[entry.eventId] as Record<string, unknown>) }
+          : {};
+        paymentLog[entry.eventId] = {
+          ...prev,
+          paymentInternalId: String(prev.paymentInternalId || randomId("payrow")),
+          status: "paid",
+          paidDate: values.paidDate,
+          paymentId,
+          amountActualEur: Number(entry.actual || 0),
+          amountActualUsd: usdByEvent.get(entry.eventId) ?? null,
+          method: values.method.trim(),
+          payer: values.paidBy.trim(),
+          note: values.note?.trim() || null,
+        };
+      });
+
+      record.paymentLog = paymentLog;
+      record.updatedAt = nowIso();
+      pos[index] = record;
+      next.pos = pos;
+
+      const payments = Array.isArray(next.payments) ? [...next.payments] : [];
+      const duplicateIndex = payments.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === paymentId);
+      if (duplicateIndex >= 0 && (!oldPaymentId || String((payments[duplicateIndex] as Record<string, unknown>).id || "") !== oldPaymentId)) {
+        const currentCovered = new Set((payments[duplicateIndex] as Record<string, unknown>).coveredEventIds as string[] || []);
+        const overlap = selectedIds.some((eventId) => currentCovered.has(eventId));
+        if (!overlap && paymentId !== oldPaymentId) {
+          throw new Error(`Payment-ID ${paymentId} ist bereits vergeben.`);
+        }
+      }
+      const payload: Record<string, unknown> = {
+        id: paymentId,
+        paidDate: values.paidDate,
+        method: values.method.trim(),
+        payer: values.paidBy.trim(),
+        currency: "EUR",
+        amountActualEurTotal: amountActualEur,
+        amountActualUsdTotal: amountActualUsd,
+        coveredEventIds: selectedIds,
+        note: values.note?.trim() || null,
+        invoiceDriveUrl: values.invoiceDriveUrl?.trim() || "",
+        invoiceFolderDriveUrl: values.invoiceFolderDriveUrl?.trim() || "",
+      };
+      const upsertIndex = payments.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === paymentId);
+      if (upsertIndex >= 0) payments[upsertIndex] = { ...(payments[upsertIndex] as Record<string, unknown>), ...payload };
+      else payments.push(payload);
+      next.payments = payments;
+      return next;
+    }, "v2:po:payment-booking");
+
+    setPaymentModalOpen(false);
+    setPaymentEditingId(null);
+    setPaymentInitialEventIds([]);
+    setPaymentModalError(null);
+    paymentForm.resetFields();
+    message.success("Zahlung wurde gespeichert.");
   }
 
   async function savePo(values: PoFormValues): Promise<void> {
@@ -885,7 +1201,16 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           </Card>
 
           <Card size="small">
-            <Text strong>Event / Payment Preview</Text>
+            <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+              <Text strong>Event / Payment Preview</Text>
+              <Button
+                size="small"
+                onClick={() => openPaymentBookingModal(null)}
+                disabled={!editingId || !draftPaymentRows.length || modalCollab.readOnly}
+              >
+                Sammelzahlung buchen
+              </Button>
+            </Space>
             {draftPoRecord ? (
               <Space direction="vertical" size={4} style={{ width: "100%", marginTop: 8 }}>
                 <Text>
@@ -911,6 +1236,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                     )
                   }
                 </Text>
+                {!editingId ? (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="PO zuerst speichern, danach koennen Zahlungen (inkl. Sammelzahlung) verbucht werden."
+                  />
+                ) : null}
                 <div className="v2-stats-table-wrap">
                   <table className="v2-stats-table">
                     <thead>
@@ -919,19 +1251,51 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                         <th>Typ</th>
                         <th>Due</th>
                         <th>Planned EUR</th>
+                        <th>Ist EUR</th>
                         <th>Status</th>
                         <th>Paid Date</th>
+                        <th>Methode / Von</th>
+                        <th>Invoice / Folder</th>
+                        <th>Aktionen</th>
                       </tr>
                     </thead>
                     <tbody>
                       {draftPaymentRows.map((row) => (
                         <tr key={row.id}>
                           <td>{shortId(String(row.id || ""))}</td>
-                          <td>{row.typeLabel || row.label}</td>
+                          <td>{paymentTypeLabel(row)}</td>
                           <td>{formatDate(row.dueDate)}</td>
                           <td>{formatCurrency(row.plannedEur)}</td>
+                          <td>{row.paidEurActual != null ? formatCurrency(row.paidEurActual) : "—"}</td>
                           <td>{row.status === "paid" ? "Bezahlt" : "Offen"}</td>
                           <td>{formatDate(row.paidDate)}</td>
+                          <td>
+                            {row.method || row.paidBy ? (
+                              <Space direction="vertical" size={0}>
+                                <Text>{row.method || "—"}</Text>
+                                <Text type="secondary">{row.paidBy || "—"}</Text>
+                              </Space>
+                            ) : "—"}
+                          </td>
+                          <td>
+                            <Space direction="vertical" size={0}>
+                              {canOpenLink(row.invoiceDriveUrl) ? (
+                                <a href={String(row.invoiceDriveUrl)} target="_blank" rel="noreferrer">Invoice</a>
+                              ) : <Text type="secondary">Invoice —</Text>}
+                              {canOpenLink(row.invoiceFolderDriveUrl) ? (
+                                <a href={String(row.invoiceFolderDriveUrl)} target="_blank" rel="noreferrer">Folder</a>
+                              ) : <Text type="secondary">Folder —</Text>}
+                            </Space>
+                          </td>
+                          <td>
+                            <Button
+                              size="small"
+                              onClick={() => openPaymentBookingModal(row)}
+                              disabled={!editingId || modalCollab.readOnly}
+                            >
+                              {row.status === "paid" ? "Bearbeiten" : "Zahlung buchen"}
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -941,6 +1305,147 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             ) : (
               <Text type="secondary">Preview erscheint nach Eingabe.</Text>
             )}
+          </Card>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="PO Zahlung verbuchen"
+        open={paymentModalOpen}
+        width={920}
+        onCancel={() => {
+          setPaymentModalOpen(false);
+          setPaymentEditingId(null);
+          setPaymentInitialEventIds([]);
+          setPaymentModalError(null);
+          paymentForm.resetFields();
+        }}
+        onOk={() => {
+          setPaymentModalError(null);
+          void paymentForm.validateFields().then((values) => savePaymentBooking(values)).catch((saveError) => {
+            if (saveError?.errorFields) return;
+            setPaymentModalError(String(saveError instanceof Error ? saveError.message : saveError));
+          });
+        }}
+      >
+        {paymentModalError ? (
+          <Alert type="error" showIcon message={paymentModalError} style={{ marginBottom: 10 }} />
+        ) : null}
+        <Form
+          form={paymentForm}
+          layout="vertical"
+          onFinish={(values) => {
+            setPaymentModalError(null);
+            void savePaymentBooking(values).catch((saveError) => {
+              setPaymentModalError(String(saveError instanceof Error ? saveError.message : saveError));
+            });
+          }}
+        >
+          <Form.Item
+            name="selectedEventIds"
+            label="Welche Zahlungsbausteine sind in dieser Zahlung enthalten?"
+            rules={[{ required: true, message: "Bitte mindestens einen Baustein waehlen." }]}
+          >
+            <Checkbox.Group style={{ width: "100%" }}>
+              <Space direction="vertical" style={{ width: "100%" }}>
+                {draftPaymentRows.map((row) => {
+                  const lockedByOtherPayment = row.status === "paid"
+                    && row.paymentId
+                    && row.paymentId !== paymentEditingId
+                    && !paymentInitialEventIds.includes(row.id);
+                  return (
+                    <Card key={row.id} size="small" style={{ width: "100%" }}>
+                      <Checkbox value={row.id} disabled={lockedByOtherPayment}>
+                        <Space size={10} wrap>
+                          <Text strong>{paymentTypeLabel(row)}</Text>
+                          <Text type="secondary">Due {formatDate(row.dueDate)}</Text>
+                          <Text>{formatCurrency(row.plannedEur)}</Text>
+                          {row.status === "paid" ? <Tag color="green">Bereits bezahlt</Tag> : <Tag>Offen</Tag>}
+                          {row.paymentId ? <Text type="secondary">Payment-ID {row.paymentId}</Text> : null}
+                        </Space>
+                      </Checkbox>
+                    </Card>
+                  );
+                })}
+              </Space>
+            </Checkbox.Group>
+          </Form.Item>
+
+          <Space align="start" wrap style={{ width: "100%" }}>
+            <Form.Item name="paidDate" label="Zahlungsdatum" style={{ width: 170 }} rules={[{ required: true }]}>
+              <Input type="date" />
+            </Form.Item>
+            <Form.Item name="method" label="Zahlungsmethode" style={{ minWidth: 240, flex: 1 }} rules={[{ required: true }]}>
+              <Select
+                showSearch
+                optionFilterProp="label"
+                options={methodOptions}
+                placeholder="z. B. Alibaba Trade Assurance"
+              />
+            </Form.Item>
+            <Form.Item name="paidBy" label="Bezahlt durch" style={{ minWidth: 220, flex: 1 }} rules={[{ required: true }]}>
+              <Input placeholder={payerOptions.map((entry) => entry.label).join(" / ") || "Name oder E-Mail"} />
+            </Form.Item>
+          </Space>
+
+          <Space align="start" wrap style={{ width: "100%" }}>
+            <Form.Item name="amountActualEur" label="Ist-Betrag EUR" style={{ width: 190 }} rules={[{ required: true }]}>
+              <DeNumberInput mode="decimal" min={0} />
+            </Form.Item>
+            <Form.Item name="amountActualUsd" label="Ist-Betrag USD (optional)" style={{ width: 210 }}>
+              <DeNumberInput mode="decimal" min={0} />
+            </Form.Item>
+            <Form.Item name="paymentId" label="Payment-ID (intern)" style={{ minWidth: 300, flex: 1 }}>
+              <Input placeholder="pay-..." />
+            </Form.Item>
+          </Space>
+
+          <Space align="start" wrap style={{ width: "100%" }}>
+            <Form.Item name="invoiceDriveUrl" label="Invoice Link (Google Drive)" style={{ minWidth: 360, flex: 1 }}>
+              <Input placeholder="https://..." />
+            </Form.Item>
+            <Button
+              style={{ marginTop: 31 }}
+              disabled={!canOpenLink(String(paymentDraftValues?.invoiceDriveUrl || ""))}
+              onClick={() => window.open(String(paymentDraftValues?.invoiceDriveUrl || ""), "_blank", "noopener,noreferrer")}
+            >
+              Link oeffnen
+            </Button>
+          </Space>
+          <Space align="start" wrap style={{ width: "100%" }}>
+            <Form.Item name="invoiceFolderDriveUrl" label="Ordner-Link (Google Drive)" style={{ minWidth: 360, flex: 1 }}>
+              <Input placeholder="https://..." />
+            </Form.Item>
+            <Button
+              style={{ marginTop: 31 }}
+              disabled={!canOpenLink(String(paymentDraftValues?.invoiceFolderDriveUrl || ""))}
+              onClick={() => window.open(String(paymentDraftValues?.invoiceFolderDriveUrl || ""), "_blank", "noopener,noreferrer")}
+            >
+              Ordner oeffnen
+            </Button>
+          </Space>
+
+          <Form.Item name="note" label="Notiz">
+            <Input.TextArea rows={2} placeholder="Optionaler Hinweis" />
+          </Form.Item>
+
+          <Card size="small">
+            <Space direction="vertical" style={{ width: "100%" }} size={6}>
+              <Text strong>Dateiname-Vorschlag fuer Rechnung</Text>
+              <Text code>{suggestedPaymentFilename || "—"}</Text>
+              <div>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    if (!suggestedPaymentFilename) return;
+                    void navigator.clipboard.writeText(suggestedPaymentFilename);
+                    message.success("Dateiname kopiert.");
+                  }}
+                >
+                  Dateiname kopieren
+                </Button>
+              </div>
+            </Space>
           </Card>
         </Form>
       </Modal>
