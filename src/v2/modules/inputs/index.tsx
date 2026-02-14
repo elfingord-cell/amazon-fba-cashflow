@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   Input,
-  InputNumber,
   Select,
   Space,
   Tag,
@@ -21,6 +20,7 @@ import {
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { randomId } from "../../domain/orderUtils";
+import { DeNumberInput } from "../../components/DeNumberInput";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -504,42 +504,50 @@ export default function InputsModule(): JSX.Element {
         <Space wrap align="start">
           <div>
             <Text>Opening Balance (EUR)</Text>
-            <InputNumber
-              value={openingBalance}
-              onChange={(value) => {
-                setOpeningBalance(Number(toNumber(value) || 0));
-              }}
-              style={{ width: 190 }}
-              min={0}
-              step={100}
-            />
+            <div data-field-key="inputs.openingBalance">
+              <DeNumberInput
+                value={openingBalance}
+                onChange={(value) => {
+                  setOpeningBalance(Number(toNumber(value) || 0));
+                }}
+                style={{ width: 190 }}
+                mode="decimal"
+                min={0}
+                step={100}
+              />
+            </div>
           </div>
           <div>
             <Text>Startmonat</Text>
-            <Input
-              type="month"
-              value={startMonth}
-              onChange={(event) => {
-                const nextStartMonth = normalizeMonth(event.target.value, startMonth);
-                setStartMonth(nextStartMonth);
-                setIncomings((prev) => syncIncomingsToWindow(prev, nextStartMonth, horizonMonths));
-              }}
-              style={{ width: 170 }}
-            />
+            <div data-field-key="inputs.startMonth">
+              <Input
+                type="month"
+                value={startMonth}
+                onChange={(event) => {
+                  const nextStartMonth = normalizeMonth(event.target.value, startMonth);
+                  setStartMonth(nextStartMonth);
+                  setIncomings((prev) => syncIncomingsToWindow(prev, nextStartMonth, horizonMonths));
+                }}
+                style={{ width: 170 }}
+              />
+            </div>
           </div>
           <div>
             <Text>Horizont (Monate)</Text>
-            <InputNumber
-              value={horizonMonths}
-              onChange={(value) => {
-                const nextHorizon = Math.max(1, Number(toNumber(value) || 1));
-                setHorizonMonths(nextHorizon);
-                setIncomings((prev) => syncIncomingsToWindow(prev, startMonth, nextHorizon));
-              }}
-              min={1}
-              max={48}
-              style={{ width: 160 }}
-            />
+            <div data-field-key="inputs.horizonMonths">
+              <DeNumberInput
+                value={horizonMonths}
+                onChange={(value) => {
+                  const nextHorizon = Math.max(1, Number(toNumber(value) || 1));
+                  setHorizonMonths(nextHorizon);
+                  setIncomings((prev) => syncIncomingsToWindow(prev, startMonth, nextHorizon));
+                }}
+                mode="int"
+                min={1}
+                max={48}
+                style={{ width: 160 }}
+              />
+            </div>
           </div>
         </Space>
       </Card>
@@ -629,34 +637,40 @@ export default function InputsModule(): JSX.Element {
                       <div><Text type="secondary">{row.month}</Text></div>
                     </td>
                     <td>
-                      <InputNumber
-                        value={row.revenueEur ?? undefined}
-                        min={0}
-                        step={100}
-                        style={{ width: "100%" }}
-                        onChange={(value) => {
-                          setIncomings((prev) => prev.map((entry) => {
-                            if (entry.id !== row.id) return entry;
-                            return {
-                              ...entry,
-                              revenueEur: toNumber(value),
-                              source: "manual",
-                            };
-                          }));
-                        }}
-                      />
+                      <div data-field-key={`inputs.incomings.${row.id}.revenueEur`}>
+                        <DeNumberInput
+                          value={row.revenueEur ?? undefined}
+                          mode="decimal"
+                          min={0}
+                          step={100}
+                          style={{ width: "100%" }}
+                          onChange={(value) => {
+                            setIncomings((prev) => prev.map((entry) => {
+                              if (entry.id !== row.id) return entry;
+                              return {
+                                ...entry,
+                                revenueEur: toNumber(value),
+                                source: "manual",
+                              };
+                            }));
+                          }}
+                        />
+                      </div>
                     </td>
                     <td>
-                      <InputNumber
-                        value={row.payoutPct ?? undefined}
-                        min={0}
-                        max={100}
-                        step={0.1}
-                        style={{ width: "100%" }}
-                        onChange={(value) => {
-                          setIncomings((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, payoutPct: toNumber(value) } : entry));
-                        }}
-                      />
+                      <div data-field-key={`inputs.incomings.${row.id}.payoutPct`}>
+                        <DeNumberInput
+                          value={row.payoutPct ?? undefined}
+                          mode="percent"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          style={{ width: "100%" }}
+                          onChange={(value) => {
+                            setIncomings((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, payoutPct: toNumber(value) } : entry));
+                          }}
+                        />
+                      </div>
                     </td>
                     <td>
                       {Number.isFinite(recommendation)
@@ -671,28 +685,30 @@ export default function InputsModule(): JSX.Element {
                     <td>{formatNumber(payoutByMonth.get(row.month) || 0, 2)}</td>
                     <td>
                       <div>
-                        <Select
-                          value={row.source}
-                          options={[
-                            { value: "manual", label: "Manuell" },
-                            { value: "forecast", label: "Forecast" },
-                          ]}
-                          onChange={(value) => {
-                            setIncomings((prev) => prev.map((entry) => {
-                              if (entry.id !== row.id) return entry;
-                              if (value === "forecast") {
-                                const nextRevenue = Number(forecastRevenueByMonth.get(entry.month) || 0);
-                                return {
-                                  ...entry,
-                                  source: "forecast",
-                                  revenueEur: Number.isFinite(nextRevenue) ? nextRevenue : entry.revenueEur,
-                                };
-                              }
-                              return { ...entry, source: "manual" };
-                            }));
-                          }}
-                          style={{ width: 120 }}
-                        />
+                        <div data-field-key={`inputs.incomings.${row.id}.source`}>
+                          <Select
+                            value={row.source}
+                            options={[
+                              { value: "manual", label: "Manuell" },
+                              { value: "forecast", label: "Forecast" },
+                            ]}
+                            onChange={(value) => {
+                              setIncomings((prev) => prev.map((entry) => {
+                                if (entry.id !== row.id) return entry;
+                                if (value === "forecast") {
+                                  const nextRevenue = Number(forecastRevenueByMonth.get(entry.month) || 0);
+                                  return {
+                                    ...entry,
+                                    source: "forecast",
+                                    revenueEur: Number.isFinite(nextRevenue) ? nextRevenue : entry.revenueEur,
+                                  };
+                                }
+                                return { ...entry, source: "manual" };
+                              }));
+                            }}
+                            style={{ width: 120 }}
+                          />
+                        </div>
                         {forecastMissing ? <div><Text type="warning">Kein Forecast-Umsatz vorhanden</Text></div> : null}
                       </div>
                     </td>
@@ -744,31 +760,38 @@ export default function InputsModule(): JSX.Element {
               {extras.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    <Input
-                      type="date"
-                      value={row.date}
-                      onChange={(event) => {
-                        setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, date: event.target.value } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.extras.${row.id}.date`}>
+                      <Input
+                        type="date"
+                        value={row.date}
+                        onChange={(event) => {
+                          setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, date: event.target.value } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <Input
-                      value={row.label}
-                      onChange={(event) => {
-                        setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, label: event.target.value } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.extras.${row.id}.label`}>
+                      <Input
+                        value={row.label}
+                        onChange={(event) => {
+                          setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, label: event.target.value } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <InputNumber
-                      value={row.amountEur ?? undefined}
-                      style={{ width: "100%" }}
-                      step={10}
-                      onChange={(value) => {
-                        setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, amountEur: toNumber(value) } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.extras.${row.id}.amountEur`}>
+                      <DeNumberInput
+                        value={row.amountEur ?? undefined}
+                        mode="decimal"
+                        style={{ width: "100%" }}
+                        step={10}
+                        onChange={(value) => {
+                          setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, amountEur: toNumber(value) } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
                     <Button
@@ -817,31 +840,38 @@ export default function InputsModule(): JSX.Element {
               {dividends.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    <Input
-                      type="month"
-                      value={row.month}
-                      onChange={(event) => {
-                        setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, month: normalizeMonth(event.target.value, row.month) } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.dividends.${row.id}.month`}>
+                      <Input
+                        type="month"
+                        value={row.month}
+                        onChange={(event) => {
+                          setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, month: normalizeMonth(event.target.value, row.month) } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <Input
-                      value={row.label}
-                      onChange={(event) => {
-                        setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, label: event.target.value } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.dividends.${row.id}.label`}>
+                      <Input
+                        value={row.label}
+                        onChange={(event) => {
+                          setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, label: event.target.value } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <InputNumber
-                      value={row.amountEur ?? undefined}
-                      style={{ width: "100%" }}
-                      step={10}
-                      onChange={(value) => {
-                        setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, amountEur: toNumber(value) } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.dividends.${row.id}.amountEur`}>
+                      <DeNumberInput
+                        value={row.amountEur ?? undefined}
+                        mode="decimal"
+                        style={{ width: "100%" }}
+                        step={10}
+                        onChange={(value) => {
+                          setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, amountEur: toNumber(value) } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
                     <Button
@@ -894,41 +924,52 @@ export default function InputsModule(): JSX.Element {
               {monthlyActuals.map((row, index) => (
                 <tr key={`${row.month}-${index}`}>
                   <td>
-                    <Input
-                      type="month"
-                      value={row.month}
-                      onChange={(event) => {
-                        const value = normalizeMonth(event.target.value, row.month);
-                        setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, month: value } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.monthlyActuals.${index}.month`}>
+                      <Input
+                        type="month"
+                        value={row.month}
+                        onChange={(event) => {
+                          const value = normalizeMonth(event.target.value, row.month);
+                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, month: value } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <InputNumber
-                      value={row.realRevenueEUR ?? undefined}
-                      style={{ width: "100%" }}
-                      onChange={(value) => {
-                        setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realRevenueEUR: toNumber(value) } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.monthlyActuals.${index}.realRevenueEUR`}>
+                      <DeNumberInput
+                        value={row.realRevenueEUR ?? undefined}
+                        mode="decimal"
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realRevenueEUR: toNumber(value) } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <InputNumber
-                      value={row.realPayoutRatePct ?? undefined}
-                      style={{ width: "100%" }}
-                      onChange={(value) => {
-                        setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realPayoutRatePct: toNumber(value) } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.monthlyActuals.${index}.realPayoutRatePct`}>
+                      <DeNumberInput
+                        value={row.realPayoutRatePct ?? undefined}
+                        mode="percent"
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realPayoutRatePct: toNumber(value) } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
-                    <InputNumber
-                      value={row.realClosingBalanceEUR ?? undefined}
-                      style={{ width: "100%" }}
-                      onChange={(value) => {
-                        setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realClosingBalanceEUR: toNumber(value) } : entry));
-                      }}
-                    />
+                    <div data-field-key={`inputs.monthlyActuals.${index}.realClosingBalanceEUR`}>
+                      <DeNumberInput
+                        value={row.realClosingBalanceEUR ?? undefined}
+                        mode="decimal"
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realClosingBalanceEUR: toNumber(value) } : entry));
+                        }}
+                      />
+                    </div>
                   </td>
                   <td>
                     <Button

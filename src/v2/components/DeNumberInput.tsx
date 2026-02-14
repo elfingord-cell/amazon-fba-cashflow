@@ -23,10 +23,38 @@ function parseDeInput(input: string | undefined): string {
     .replace(/\s+/g, "")
     .replace(/€/g, "")
     .replace(/%/g, "");
-  const normalized = raw.includes(",")
-    ? raw.replace(/\./g, "").replace(",", ".")
-    : raw;
-  return normalized.replace(/[^0-9.-]/g, "");
+  const hasComma = raw.includes(",");
+  const hasDot = raw.includes(".");
+
+  let normalized = raw;
+  if (hasComma && hasDot) {
+    normalized = raw.replace(/\./g, "").replace(",", ".");
+  } else if (hasComma) {
+    normalized = raw.replace(",", ".");
+  } else if (hasDot) {
+    // "40.000" -> 40000, but keep "12.5" as decimal input fallback.
+    const dotThousandsPattern = /^-?\d{1,3}(?:\.\d{3})+$/;
+    if (dotThousandsPattern.test(raw)) {
+      normalized = raw.replace(/\./g, "");
+    } else {
+      const parts = raw.split(".");
+      if (parts.length === 2 && parts[1] && parts[1].length <= 2) {
+        normalized = raw;
+      } else {
+        normalized = raw.replace(/\./g, "");
+      }
+    }
+  }
+
+  const negative = normalized.startsWith("-") ? "-" : "";
+  const unsigned = normalized.replace(/-/g, "");
+  const firstDot = unsigned.indexOf(".");
+  if (firstDot === -1) {
+    return `${negative}${unsigned.replace(/[^0-9]/g, "")}`;
+  }
+  const intPart = unsigned.slice(0, firstDot).replace(/[^0-9]/g, "");
+  const fracPart = unsigned.slice(firstDot + 1).replace(/[^0-9]/g, "");
+  return `${negative}${intPart}${fracPart ? `.${fracPart}` : ""}`;
 }
 
 function formatNumber(value: number, digits: number): string {
