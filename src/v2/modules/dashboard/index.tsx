@@ -1097,423 +1097,495 @@ export default function DashboardModule(): JSX.Element {
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
-      <div className="v2-dashboard-signal-grid">
-        <Card className="v2-dashboard-signal-card v2-dashboard-readiness-card">
-          <Statistic
-            title={signalTitle(
-              "Readiness Gate",
-              "Go/No-Go vor großer Datenpflege. Alle Checks müssen grün sein.",
-            )}
-            value={readiness.ready ? "Bereit" : "Nicht bereit"}
-          />
-          <Space wrap>
-            <Tag color={readiness.ready ? "green" : "red"}>
-              {readiness.ready ? "Go" : "No-Go"}
-            </Tag>
-            <Tag color={readiness.ready ? "green" : "gold"}>
-              {readiness.robustMonthsCount}/{readiness.robustRequiredCount} robuste Monate
-            </Tag>
-          </Space>
-          {!readiness.ready && readiness.blockers.length ? (
-            <div className="v2-dashboard-readiness-blockers">
-              {readiness.blockers.slice(0, 2).map((blocker) => (
-                <div key={blocker.id} className="v2-dashboard-readiness-blocker-item">
-                  <Text type="secondary">{blocker.label}: {blocker.message}</Text>
-                  <Button size="small" onClick={() => navigate(blocker.route)}>Öffnen</Button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <Text type="secondary">Alle Gate-Checks erfüllt.</Text>
-          )}
-        </Card>
-
-        <Card className="v2-dashboard-signal-card">
-          <Statistic
-            title={signalTitle(
-              "Robust bis",
-              "Letzter Monat, in dem alle Hard-Checks erfüllt sind. Danach ist der Kontostand nur Orientierung.",
-            )}
-            value={robustness.robustUntilMonth ? formatMonthLabel(robustness.robustUntilMonth) : "—"}
-          />
-          <Text type="secondary">{robustness.robustMonthsCount}/{robustness.totalMonths} Monate robust</Text>
-        </Card>
-
-        <Card className="v2-dashboard-signal-card">
-          <Statistic
-            title={signalTitle(
-              "Erster negativer Monat (robust)",
-              "Erster belastbarer Monat mit negativem Kontostand. Nicht robuste Monate werden dafür ignoriert.",
-            )}
-            value={firstNegativeRobustMonth ? formatMonthLabel(firstNegativeRobustMonth) : "Keiner"}
-          />
-          <Text type="secondary">Simulation wird berücksichtigt</Text>
-        </Card>
-
-        <Card className="v2-dashboard-signal-card">
-          <Statistic
-            title={signalTitle(
-              "Freier Cash nach Buffer",
-              "Minimaler belastbarer Kontostand minus Sicherheitsreserve aus 2 Monaten Fixkosten.",
-            )}
-            value={freeCashAfterBuffer != null ? formatCurrency(freeCashAfterBuffer) : "—"}
-          />
-          <Text type="secondary">Buffer (2M Fixkosten): {formatCurrency(bufferFloor)}</Text>
-        </Card>
-
-        <Card className="v2-dashboard-signal-card">
-          <div className="v2-dashboard-forecast-status-head">
-            <Text strong>
-              Forecast Freshness
-              <Tooltip title="Ampel nach Importalter: Grün <=35 Tage, Gelb 36-45 Tage, Rot >45 Tage.">
-                <InfoCircleOutlined className="v2-dashboard-inline-info" />
-              </Tooltip>
-            </Text>
-            <Tag color={
-              forecastFreshnessStatus === "fresh"
-                ? "green"
-                : forecastFreshnessStatus === "aging"
-                  ? "gold"
-                  : forecastFreshnessStatus === "stale"
-                    ? "red"
-                    : "default"
-            }>
-              {forecastFreshnessStatus === "fresh"
-                ? "Grün"
-                : forecastFreshnessStatus === "aging"
-                  ? "Gelb"
-                  : forecastFreshnessStatus === "stale"
-                    ? "Rot"
-                    : "Keine Daten"}
-            </Tag>
-          </div>
-          <div className="v2-dashboard-forecast-status-meta">
-            <div>{forecastFreshnessLabel}</div>
-            <div>Letzter Import: {formatIsoDate(lastImportAt)}</div>
-            <div>Nächster Import empfohlen: {nextRecommendedImport ? nextRecommendedImport.toLocaleDateString("de-DE") : "—"}</div>
-          </div>
-        </Card>
-      </div>
-
-      <Card className="v2-dashboard-chart-card">
-        <Title level={4}>Kontostand & Cashflow</Title>
-        <Space wrap>
-          <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
-          <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
-          <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-          <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
-        </Space>
-        <div className="v2-dashboard-legend-help">
-          <Tooltip title="Durchgezogene Linie: belastbarer Kontostand (alle Hard-Checks bestanden).">
-            <Tag className="v2-dashboard-legend-tag">Linie solid = belastbar</Tag>
-          </Tooltip>
-          <Tooltip title="Gestrichelte Linie: orientierend, weil mindestens ein Hard-Check fehlt.">
-            <Tag className="v2-dashboard-legend-tag">Linie gestrichelt = orientierend</Tag>
-          </Tooltip>
-          <Tooltip title="Rot markiert: Kontostand liegt unter 0 im jeweiligen Zustand.">
-            <Tag className="v2-dashboard-legend-tag">Rot = unter 0</Tag>
-          </Tooltip>
-        </div>
-        <ReactECharts style={{ height: 380 }} option={chartOption} />
-      </Card>
-
-      <Row gutter={[12, 12]}>
-        <Col xs={24} xl={14}>
-          <Card>
-            <Title level={4}>Action Center</Title>
-            <Paragraph type="secondary">
-              Priorisierte Maßnahmen, damit der Kontostand wieder belastbar wird.
-            </Paragraph>
-            {!robustness.actions.length ? (
-              <Alert type="success" showIcon message="Keine offenen Hard-Blocker im gewählten Zeitraum." />
-            ) : (
-              <div className="v2-dashboard-actions">
-                {robustness.actions.map((action) => (
-                  <div key={action.id} className={`v2-dashboard-action-card is-${action.severity}`}>
-                    <div>
-                      <Text strong>{action.title}</Text>
-                      <div className="v2-dashboard-action-detail">{action.detail}</div>
-                      <div className="v2-dashboard-action-impact">Impact: {action.impact}</div>
-                    </div>
-                    <div className="v2-dashboard-action-meta">
-                      <Tag color={action.severity === "error" ? "red" : "gold"}>{action.count}</Tag>
-                      <Button
-                        size="small"
-                        onClick={() => navigate(resolveDashboardRoute({
-                          route: action.route,
-                          actionId: action.id,
-                          month: actionFocusMonth,
-                        }))}
-                      >
-                        Öffnen
-                      </Button>
-                    </div>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "signals",
+          label: "Executive Signals",
+          children: (
+            <div className="v2-dashboard-signal-grid">
+              <Card className="v2-dashboard-signal-card v2-dashboard-readiness-card">
+                <Statistic
+                  title={signalTitle(
+                    "Readiness Gate",
+                    "Go/No-Go vor großer Datenpflege. Alle Checks müssen grün sein.",
+                  )}
+                  value={readiness.ready ? "Bereit" : "Nicht bereit"}
+                />
+                <Space wrap>
+                  <Tag color={readiness.ready ? "green" : "red"}>
+                    {readiness.ready ? "Go" : "No-Go"}
+                  </Tag>
+                  <Tag color={readiness.ready ? "green" : "gold"}>
+                    {readiness.robustMonthsCount}/{readiness.robustRequiredCount} robuste Monate
+                  </Tag>
+                </Space>
+                {!readiness.ready && readiness.blockers.length ? (
+                  <div className="v2-dashboard-readiness-blockers">
+                    {readiness.blockers.slice(0, 2).map((blocker) => (
+                      <div key={blocker.id} className="v2-dashboard-readiness-blocker-item">
+                        <Text type="secondary">{blocker.label}: {blocker.message}</Text>
+                        <Button size="small" onClick={() => navigate(blocker.route)}>Öffnen</Button>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </Col>
+                ) : (
+                  <Text type="secondary">Alle Gate-Checks erfüllt.</Text>
+                )}
+              </Card>
 
-        <Col xs={24} xl={10}>
-          <Card>
-            <Title level={4}>Forecast Ops</Title>
-            <Paragraph type="secondary">
-              Monatlicher Import mit Drift-Alarm (A/B Fokus, Profil: {driftSummary.thresholdProfile}).
-            </Paragraph>
-            <Space wrap style={{ marginBottom: 8 }}>
-              <Tag color={driftReviewedForCurrent ? "green" : "gold"}>
-                Drift-Review: {driftReviewedForCurrent ? "geprüft" : "offen"}
-              </Tag>
-              {driftReviewedAt ? (
-                <Tag>Geprüft am: {new Date(driftReviewedAt).toLocaleDateString("de-DE")}</Tag>
-              ) : null}
-              <Button
-                size="small"
-                onClick={() => { void markDriftReviewed(); }}
-                disabled={!driftSummary.comparedAt || driftReviewedForCurrent || saving}
-              >
-                Drift geprüft
-              </Button>
-            </Space>
-            <div className="v2-dashboard-forecast-ops">
-              <div>Flagged SKUs: <strong>{formatNumber(driftSummary.flaggedSkuCount, 0)}</strong></div>
-              <div>Flagged A/B: <strong>{formatNumber(driftSummary.flaggedABCount, 0)}</strong></div>
-              <div>Flagged SKU-Monate: <strong>{formatNumber(driftSummary.flaggedMonthCount, 0)}</strong></div>
-              <div>Verglichen am: <strong>{formatIsoDate(driftSummary.comparedAt)}</strong></div>
-            </div>
-            {driftSummary.topItems.length ? (
-              <div className="v2-dashboard-drift-list">
-                {driftSummary.topItems.slice(0, 5).map((item, index) => (
-                  <div key={`${item.sku}-${item.month}-${index}`} className="v2-dashboard-drift-item">
-                    <div>
-                      <Text strong>{item.sku}</Text>
-                      <Text type="secondary"> · {formatMonthLabel(item.month)} · {item.abcClass}</Text>
-                    </div>
-                    <div>
-                      ΔUnits {formatNumber(item.deltaUnits, 0)} · ΔUmsatz {formatCurrency(item.deltaRevenue)} · Δ% {formatPercent(item.deltaPct)}
-                    </div>
-                  </div>
-                ))}
-                <Button size="small" onClick={() => navigate("/v2/forecast")}>Zur Forecast-Prüfung</Button>
-              </div>
-            ) : (
-              <Alert type="success" showIcon message="Keine kritischen Drift-Abweichungen im letzten Vergleich." />
-            )}
-          </Card>
-        </Col>
-      </Row>
+              <Card className="v2-dashboard-signal-card">
+                <Statistic
+                  title={signalTitle(
+                    "Robust bis",
+                    "Letzter Monat, in dem alle Hard-Checks erfüllt sind. Danach ist der Kontostand nur Orientierung.",
+                  )}
+                  value={robustness.robustUntilMonth ? formatMonthLabel(robustness.robustUntilMonth) : "—"}
+                />
+                <Text type="secondary">{robustness.robustMonthsCount}/{robustness.totalMonths} Monate robust</Text>
+              </Card>
 
-      <Card>
-        <Title level={4}>Robustheits-Matrix</Title>
-        <Paragraph type="secondary">
-          Ein Monat ist nur robust, wenn alle Hard-Checks erfüllt sind (Coverage 100 %, Cash-In, Fixkosten, VAT und Revenue-Basis).
-        </Paragraph>
+              <Card className="v2-dashboard-signal-card">
+                <Statistic
+                  title={signalTitle(
+                    "Erster negativer Monat (robust)",
+                    "Erster belastbarer Monat mit negativem Kontostand. Nicht robuste Monate werden dafür ignoriert.",
+                  )}
+                  value={firstNegativeRobustMonth ? formatMonthLabel(firstNegativeRobustMonth) : "Keiner"}
+                />
+                <Text type="secondary">Simulation wird berücksichtigt</Text>
+              </Card>
 
-        <div className="v2-dashboard-robust-grid">
-          {robustness.months.map((month) => {
-            const monthIdx = monthIndex(month.month);
-            const isPast = monthIdx != null && currentMonthIdx != null && monthIdx < currentMonthIdx;
-            return (
-              <button
-                key={month.month}
-                type="button"
-                className={[
-                  "v2-dashboard-robust-item",
-                  selectedMonth === month.month ? "is-selected" : "",
-                  month.robust ? "is-robust" : "is-open",
-                  isPast ? "is-past" : "",
-                ].filter(Boolean).join(" ")}
-                onClick={() => setSelectedMonth(month.month)}
-              >
-                <div className="v2-dashboard-robust-item-head">
-                  <span>{formatMonthLabel(month.month)}</span>
-                  <Tag color={isPast ? "default" : (month.robust ? "green" : "red")}>
-                    {isPast ? "Vergangen (Info)" : (month.robust ? "Robust" : "Offen")}
+              <Card className="v2-dashboard-signal-card">
+                <Statistic
+                  title={signalTitle(
+                    "Freier Cash nach Buffer",
+                    "Minimaler belastbarer Kontostand minus Sicherheitsreserve aus 2 Monaten Fixkosten.",
+                  )}
+                  value={freeCashAfterBuffer != null ? formatCurrency(freeCashAfterBuffer) : "—"}
+                />
+                <Text type="secondary">Buffer (2M Fixkosten): {formatCurrency(bufferFloor)}</Text>
+              </Card>
+
+              <Card className="v2-dashboard-signal-card">
+                <div className="v2-dashboard-forecast-status-head">
+                  <Text strong>
+                    Forecast Freshness
+                    <Tooltip title="Ampel nach Importalter: Grün <=35 Tage, Gelb 36-45 Tage, Rot >45 Tage.">
+                      <InfoCircleOutlined className="v2-dashboard-inline-info" />
+                    </Tooltip>
+                  </Text>
+                  <Tag color={
+                    forecastFreshnessStatus === "fresh"
+                      ? "green"
+                      : forecastFreshnessStatus === "aging"
+                        ? "gold"
+                        : forecastFreshnessStatus === "stale"
+                          ? "red"
+                          : "default"
+                  }>
+                    {forecastFreshnessStatus === "fresh"
+                      ? "Grün"
+                      : forecastFreshnessStatus === "aging"
+                        ? "Gelb"
+                        : forecastFreshnessStatus === "stale"
+                          ? "Rot"
+                          : "Keine Daten"}
                   </Tag>
                 </div>
-                <div className="v2-dashboard-robust-item-meta">
-                  Coverage: {formatPercent(month.coverage.ratio * 100)} ({month.coverage.coveredSkus}/{month.coverage.activeSkus})
+                <div className="v2-dashboard-forecast-status-meta">
+                  <div>{forecastFreshnessLabel}</div>
+                  <div>Letzter Import: {formatIsoDate(lastImportAt)}</div>
+                  <div>Nächster Import empfohlen: {nextRecommendedImport ? nextRecommendedImport.toLocaleDateString("de-DE") : "—"}</div>
                 </div>
-                <div className="v2-dashboard-robust-item-meta">
-                  Blocker: {month.blockerCount}
-                </div>
-              </button>
-            );
-          })}
-        </div>
+              </Card>
+            </div>
+          ),
+        }]}
+      />
 
-        {selectedMonthData ? (
-          <div className="v2-dashboard-robust-detail">
-            <div className="v2-dashboard-robust-detail-head">
-              <Text strong>{formatMonthLabel(selectedMonthData.month)}</Text>
-              <Space>
-                <Tag color={selectedMonthData.robust ? "green" : "red"}>{selectedMonthData.robust ? "Robust" : "Nicht robust"}</Tag>
-                <Tag>A/B Risiko: {selectedMonthData.coverage.abRiskSkuCount}</Tag>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "cashflow",
+          label: "Kontostand & Cashflow",
+          children: (
+            <Card className="v2-dashboard-chart-card">
+              <Title level={4}>Kontostand & Cashflow</Title>
+              <Space wrap>
+                <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
+                <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
+                <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
+                <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
               </Space>
-            </div>
+              <div className="v2-dashboard-legend-help">
+                <Tooltip title="Durchgezogene Linie: belastbarer Kontostand (alle Hard-Checks bestanden).">
+                  <Tag className="v2-dashboard-legend-tag">Linie solid = belastbar</Tag>
+                </Tooltip>
+                <Tooltip title="Gestrichelte Linie: orientierend, weil mindestens ein Hard-Check fehlt.">
+                  <Tag className="v2-dashboard-legend-tag">Linie gestrichelt = orientierend</Tag>
+                </Tooltip>
+                <Tooltip title="Rot markiert: Kontostand liegt unter 0 im jeweiligen Zustand.">
+                  <Tag className="v2-dashboard-legend-tag">Rot = unter 0</Tag>
+                </Tooltip>
+              </div>
+              <ReactECharts style={{ height: 380 }} option={chartOption} />
+            </Card>
+          ),
+        }]}
+      />
 
-            <Table
-              size="small"
-              pagination={false}
-              rowKey="key"
-              columns={checkColumns}
-              dataSource={selectedMonthData.checks}
-            />
-
-            <div className="v2-dashboard-blockers">
-              <Text strong>Blocker</Text>
-              {!selectedMonthData.blockers.length ? (
-                <Text type="secondary">Keine Blocker in diesem Monat.</Text>
-              ) : (
-                <div className="v2-dashboard-blocker-list">
-                  {selectedMonthData.blockers.map((blocker) => (
-                    <div key={blocker.id} className="v2-dashboard-blocker-item">
-                      <div>
-                        <Text>{blocker.message}</Text>
-                        {blocker.sku ? <Text type="secondary"> · {blocker.sku}</Text> : null}
-                      </div>
-                      <Button
-                        size="small"
-                        onClick={() => navigate(resolveDashboardRoute({
-                          route: blocker.route,
-                          checkKey: blocker.checkKey,
-                          month: blocker.month,
-                          sku: blocker.sku || null,
-                        }))}
-                      >
-                        Öffnen
-                      </Button>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "actions",
+          label: "Action Center & Forecast Ops",
+          children: (
+            <Row gutter={[12, 12]}>
+              <Col xs={24} xl={14}>
+                <Card>
+                  <Title level={4}>Action Center</Title>
+                  <Paragraph type="secondary">
+                    Priorisierte Maßnahmen, damit der Kontostand wieder belastbar wird.
+                  </Paragraph>
+                  {!robustness.actions.length ? (
+                    <Alert type="success" showIcon message="Keine offenen Hard-Blocker im gewählten Zeitraum." />
+                  ) : (
+                    <div className="v2-dashboard-actions">
+                      {robustness.actions.map((action) => (
+                        <div key={action.id} className={`v2-dashboard-action-card is-${action.severity}`}>
+                          <div>
+                            <Text strong>{action.title}</Text>
+                            <div className="v2-dashboard-action-detail">{action.detail}</div>
+                            <div className="v2-dashboard-action-impact">Impact: {action.impact}</div>
+                          </div>
+                          <div className="v2-dashboard-action-meta">
+                            <Tag color={action.severity === "error" ? "red" : "gold"}>{action.count}</Tag>
+                            <Button
+                              size="small"
+                              onClick={() => navigate(resolveDashboardRoute({
+                                route: action.route,
+                                actionId: action.id,
+                                month: actionFocusMonth,
+                              }))}
+                            >
+                              Öffnen
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                </Card>
+              </Col>
+
+              <Col xs={24} xl={10}>
+                <Card>
+                  <Title level={4}>Forecast Ops</Title>
+                  <Paragraph type="secondary">
+                    Monatlicher Import mit Drift-Alarm (A/B Fokus, Profil: {driftSummary.thresholdProfile}).
+                  </Paragraph>
+                  <Space wrap style={{ marginBottom: 8 }}>
+                    <Tag color={driftReviewedForCurrent ? "green" : "gold"}>
+                      Drift-Review: {driftReviewedForCurrent ? "geprüft" : "offen"}
+                    </Tag>
+                    {driftReviewedAt ? (
+                      <Tag>Geprüft am: {new Date(driftReviewedAt).toLocaleDateString("de-DE")}</Tag>
+                    ) : null}
+                    <Button
+                      size="small"
+                      onClick={() => { void markDriftReviewed(); }}
+                      disabled={!driftSummary.comparedAt || driftReviewedForCurrent || saving}
+                    >
+                      Drift geprüft
+                    </Button>
+                  </Space>
+                  <div className="v2-dashboard-forecast-ops">
+                    <div>Flagged SKUs: <strong>{formatNumber(driftSummary.flaggedSkuCount, 0)}</strong></div>
+                    <div>Flagged A/B: <strong>{formatNumber(driftSummary.flaggedABCount, 0)}</strong></div>
+                    <div>Flagged SKU-Monate: <strong>{formatNumber(driftSummary.flaggedMonthCount, 0)}</strong></div>
+                    <div>Verglichen am: <strong>{formatIsoDate(driftSummary.comparedAt)}</strong></div>
+                  </div>
+                  {driftSummary.topItems.length ? (
+                    <div className="v2-dashboard-drift-list">
+                      {driftSummary.topItems.slice(0, 5).map((item, index) => (
+                        <div key={`${item.sku}-${item.month}-${index}`} className="v2-dashboard-drift-item">
+                          <div>
+                            <Text strong>{item.sku}</Text>
+                            <Text type="secondary"> · {formatMonthLabel(item.month)} · {item.abcClass}</Text>
+                          </div>
+                          <div>
+                            ΔUnits {formatNumber(item.deltaUnits, 0)} · ΔUmsatz {formatCurrency(item.deltaRevenue)} · Δ% {formatPercent(item.deltaPct)}
+                          </div>
+                        </div>
+                      ))}
+                      <Button size="small" onClick={() => navigate("/v2/forecast")}>Zur Forecast-Prüfung</Button>
+                    </div>
+                  ) : (
+                    <Alert type="success" showIcon message="Keine kritischen Drift-Abweichungen im letzten Vergleich." />
+                  )}
+                </Card>
+              </Col>
+            </Row>
+          ),
+        }]}
+      />
+
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "robustness",
+          label: "Robustheits-Matrix",
+          children: (
+            <Card>
+              <Title level={4}>Robustheits-Matrix</Title>
+              <Paragraph type="secondary">
+                Ein Monat ist nur robust, wenn alle Hard-Checks erfüllt sind (Coverage 100 %, Cash-In, Fixkosten, VAT und Revenue-Basis).
+              </Paragraph>
+
+              <div className="v2-dashboard-robust-grid">
+                {robustness.months.map((month) => {
+                  const monthIdx = monthIndex(month.month);
+                  const isPast = monthIdx != null && currentMonthIdx != null && monthIdx < currentMonthIdx;
+                  return (
+                    <button
+                      key={month.month}
+                      type="button"
+                      className={[
+                        "v2-dashboard-robust-item",
+                        selectedMonth === month.month ? "is-selected" : "",
+                        month.robust ? "is-robust" : "is-open",
+                        isPast ? "is-past" : "",
+                      ].filter(Boolean).join(" ")}
+                      onClick={() => setSelectedMonth(month.month)}
+                    >
+                      <div className="v2-dashboard-robust-item-head">
+                        <span>{formatMonthLabel(month.month)}</span>
+                        <Tag color={isPast ? "default" : (month.robust ? "green" : "red")}>
+                          {isPast ? "Vergangen (Info)" : (month.robust ? "Robust" : "Offen")}
+                        </Tag>
+                      </div>
+                      <div className="v2-dashboard-robust-item-meta">
+                        Coverage: {formatPercent(month.coverage.ratio * 100)} ({month.coverage.coveredSkus}/{month.coverage.activeSkus})
+                      </div>
+                      <div className="v2-dashboard-robust-item-meta">
+                        Blocker: {month.blockerCount}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedMonthData ? (
+                <div className="v2-dashboard-robust-detail">
+                  <div className="v2-dashboard-robust-detail-head">
+                    <Text strong>{formatMonthLabel(selectedMonthData.month)}</Text>
+                    <Space>
+                      <Tag color={selectedMonthData.robust ? "green" : "red"}>{selectedMonthData.robust ? "Robust" : "Nicht robust"}</Tag>
+                      <Tag>A/B Risiko: {selectedMonthData.coverage.abRiskSkuCount}</Tag>
+                    </Space>
+                  </div>
+
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey="key"
+                    columns={checkColumns}
+                    dataSource={selectedMonthData.checks}
+                  />
+
+                  <div className="v2-dashboard-blockers">
+                    <Text strong>Blocker</Text>
+                    {!selectedMonthData.blockers.length ? (
+                      <Text type="secondary">Keine Blocker in diesem Monat.</Text>
+                    ) : (
+                      <div className="v2-dashboard-blocker-list">
+                        {selectedMonthData.blockers.map((blocker) => (
+                          <div key={blocker.id} className="v2-dashboard-blocker-item">
+                            <div>
+                              <Text>{blocker.message}</Text>
+                              {blocker.sku ? <Text type="secondary"> · {blocker.sku}</Text> : null}
+                            </div>
+                            <Button
+                              size="small"
+                              onClick={() => navigate(resolveDashboardRoute({
+                                route: blocker.route,
+                                checkKey: blocker.checkKey,
+                                month: blocker.month,
+                                sku: blocker.sku || null,
+                              }))}
+                            >
+                              Öffnen
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          </div>
-        ) : null}
-      </Card>
+              ) : null}
+            </Card>
+          ),
+        }]}
+      />
 
-      <Card>
-        <Title level={4}>Payout Planner (Simulation)</Title>
-        <Paragraph type="secondary">
-          Einmalige Dividenden oder CAPEX simulieren und optional als echten Eintrag übernehmen.
-        </Paragraph>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "simulation",
+          label: "Payout Planner (Simulation)",
+          children: (
+            <Card>
+              <Title level={4}>Payout Planner (Simulation)</Title>
+              <Paragraph type="secondary">
+                Einmalige Dividenden oder CAPEX simulieren und optional als echten Eintrag übernehmen.
+              </Paragraph>
 
-        <div className="v2-dashboard-sim-grid">
-          <div className="v2-dashboard-sim-field">
-            <Text>Typ</Text>
-            <Select
-              value={simType}
-              onChange={(value) => setSimType(value)}
-              options={[
-                { value: "dividend", label: "Dividende" },
-                { value: "capex", label: "CAPEX" },
-              ]}
-            />
-          </div>
+              <div className="v2-dashboard-sim-grid">
+                <div className="v2-dashboard-sim-field">
+                  <Text>Typ</Text>
+                  <Select
+                    value={simType}
+                    onChange={(value) => setSimType(value)}
+                    options={[
+                      { value: "dividend", label: "Dividende" },
+                      { value: "capex", label: "CAPEX" },
+                    ]}
+                  />
+                </div>
 
-          <div className="v2-dashboard-sim-field">
-            <Text>Monat</Text>
-            <Select
-              value={simMonth}
-              onChange={(value) => setSimMonth(value)}
-              options={visibleMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
-            />
-          </div>
+                <div className="v2-dashboard-sim-field">
+                  <Text>Monat</Text>
+                  <Select
+                    value={simMonth}
+                    onChange={(value) => setSimMonth(value)}
+                    options={visibleMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
+                  />
+                </div>
 
-          <div className="v2-dashboard-sim-field">
-            <Text>Betrag (EUR)</Text>
-            <InputNumber
-              value={Number.isFinite(simAmount as number) ? simAmount : null}
-              onChange={(value) => setSimAmount(typeof value === "number" ? value : null)}
-              min={0}
-              controls={false}
-              placeholder="0"
-            />
-          </div>
+                <div className="v2-dashboard-sim-field">
+                  <Text>Betrag (EUR)</Text>
+                  <InputNumber
+                    value={Number.isFinite(simAmount as number) ? simAmount : null}
+                    onChange={(value) => setSimAmount(typeof value === "number" ? value : null)}
+                    min={0}
+                    controls={false}
+                    placeholder="0"
+                  />
+                </div>
 
-          <div className="v2-dashboard-sim-field">
-            <Text>Label</Text>
-            <Input
-              value={simLabel}
-              onChange={(event) => setSimLabel(event.target.value)}
-              placeholder={simulationDefaultLabel(simType)}
-            />
-          </div>
-        </div>
+                <div className="v2-dashboard-sim-field">
+                  <Text>Label</Text>
+                  <Input
+                    value={simLabel}
+                    onChange={(event) => setSimLabel(event.target.value)}
+                    placeholder={simulationDefaultLabel(simType)}
+                  />
+                </div>
+              </div>
 
-        <div className="v2-dashboard-sim-status">
-          <Tag color={simulationDraft ? "gold" : "default"}>{simulationDraft ? "Simulation aktiv" : "Keine Simulation"}</Tag>
-          <Tag color={bufferFloor > 0 ? "blue" : "red"}>Buffer-Ziel: {formatCurrency(bufferFloor)}</Tag>
-          {simulationDraft && bufferFloor <= 0 ? <Tag color="red">Fixkostenbasis fehlt</Tag> : null}
-          {simulationDraft && bufferFloor > 0 ? (
-            <Tag color={simulationSafe ? "green" : "red"}>
-              {simulationSafe ? "Sicher" : `Kritisch ab ${simulationBreachMonth ? formatMonthLabel(simulationBreachMonth) : "sofort"}`}
-            </Tag>
-          ) : null}
-        </div>
+              <div className="v2-dashboard-sim-status">
+                <Tag color={simulationDraft ? "gold" : "default"}>{simulationDraft ? "Simulation aktiv" : "Keine Simulation"}</Tag>
+                <Tag color={bufferFloor > 0 ? "blue" : "red"}>Buffer-Ziel: {formatCurrency(bufferFloor)}</Tag>
+                {simulationDraft && bufferFloor <= 0 ? <Tag color="red">Fixkostenbasis fehlt</Tag> : null}
+                {simulationDraft && bufferFloor > 0 ? (
+                  <Tag color={simulationSafe ? "green" : "red"}>
+                    {simulationSafe ? "Sicher" : `Kritisch ab ${simulationBreachMonth ? formatMonthLabel(simulationBreachMonth) : "sofort"}`}
+                  </Tag>
+                ) : null}
+              </div>
 
-        <Space>
-          <Button onClick={() => { setSimAmount(null); setSimLabel(""); }}>Simulation zurücksetzen</Button>
-          <Button
-            type="primary"
-            onClick={() => { void commitSimulation(); }}
-            disabled={!simulationDraft}
-            loading={saving}
-          >
-            Als echten Eintrag übernehmen
-          </Button>
-        </Space>
-      </Card>
+              <Space>
+                <Button onClick={() => { setSimAmount(null); setSimLabel(""); }}>Simulation zurücksetzen</Button>
+                <Button
+                  type="primary"
+                  onClick={() => { void commitSimulation(); }}
+                  disabled={!simulationDraft}
+                  loading={saving}
+                >
+                  Als echten Eintrag übernehmen
+                </Button>
+              </Space>
+            </Card>
+          ),
+        }]}
+      />
 
-      <Card>
-        <Title level={4}>Monatliche PnL (Drilldown)</Title>
-        <Paragraph type="secondary">
-          Einzahlungen, PO/FO-Zahlungen, Fixkosten und Steuern je Monat. PO/FO-Positionen sind bis auf Milestone-Ebene aufklappbar.
-        </Paragraph>
-        <Collapse
-          className="v2-dashboard-pnl-collapse"
-          activeKey={openPnlMonths}
-          onChange={(keys) => setOpenPnlMonths(Array.isArray(keys) ? keys.map(String) : [String(keys)])}
-          items={pnlItems}
-        />
-      </Card>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "pnl",
+          label: "Monatliche PnL (Drilldown)",
+          children: (
+            <Card>
+              <Title level={4}>Monatliche PnL (Drilldown)</Title>
+              <Paragraph type="secondary">
+                Einzahlungen, PO/FO-Zahlungen, Fixkosten und Steuern je Monat. PO/FO-Positionen sind bis auf Milestone-Ebene aufklappbar.
+              </Paragraph>
+              <Collapse
+                className="v2-dashboard-pnl-collapse"
+                activeKey={openPnlMonths}
+                onChange={(keys) => setOpenPnlMonths(Array.isArray(keys) ? keys.map(String) : [String(keys)])}
+                items={pnlItems}
+              />
+            </Card>
+          ),
+        }]}
+      />
 
-      <Card>
-        <Title level={4}>Plan/Ist Drilldown</Title>
-        <Paragraph type="secondary">
-          Monatsvergleich zwischen geplantem und erfasstem Istwert aus den Monats-Ist-Daten.
-        </Paragraph>
-        <TanStackGrid
-          data={visibleActualComparisons}
-          columns={actualColumns}
-          minTableWidth={980}
-          tableLayout="auto"
-        />
-      </Card>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "actuals",
+          label: "Plan/Ist Drilldown",
+          children: (
+            <Card>
+              <Title level={4}>Plan/Ist Drilldown</Title>
+              <Paragraph type="secondary">
+                Monatsvergleich zwischen geplantem und erfasstem Istwert aus den Monats-Ist-Daten.
+              </Paragraph>
+              <TanStackGrid
+                data={visibleActualComparisons}
+                columns={actualColumns}
+                minTableWidth={980}
+                tableLayout="auto"
+              />
+            </Card>
+          ),
+        }]}
+      />
 
-      <Row gutter={[12, 12]}>
-        <Col xs={24} md={12} xl={6}>
-          <Card>
-            <Statistic title="Opening Balance" value={Number(report.kpis?.opening || 0)} formatter={(value) => formatCurrency(value)} />
-          </Card>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <Card>
-            <Statistic title="Sales Payout Ø" value={Number(report.kpis?.salesPayoutAvg || 0)} formatter={(value) => formatCurrency(value)} />
-          </Card>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <Card>
-            <Statistic title="Robuste Monate" value={`${robustness.robustMonthsCount}/${robustness.totalMonths}`} />
-          </Card>
-        </Col>
-        <Col xs={24} md={12} xl={6}>
-          <Card>
-            <Statistic title="Letzter Kontostand" value={Number(latestSimulatedBreakdown?.closing || 0)} formatter={(value) => formatCurrency(value)} />
-          </Card>
-        </Col>
-      </Row>
+      <Collapse
+        className="v2-dashboard-module-collapse"
+        items={[{
+          key: "kpis",
+          label: "KPI-Übersicht",
+          children: (
+            <Row gutter={[12, 12]}>
+              <Col xs={24} md={12} xl={6}>
+                <Card>
+                  <Statistic title="Opening Balance" value={Number(report.kpis?.opening || 0)} formatter={(value) => formatCurrency(value)} />
+                </Card>
+              </Col>
+              <Col xs={24} md={12} xl={6}>
+                <Card>
+                  <Statistic title="Sales Payout Ø" value={Number(report.kpis?.salesPayoutAvg || 0)} formatter={(value) => formatCurrency(value)} />
+                </Card>
+              </Col>
+              <Col xs={24} md={12} xl={6}>
+                <Card>
+                  <Statistic title="Robuste Monate" value={`${robustness.robustMonthsCount}/${robustness.totalMonths}`} />
+                </Card>
+              </Col>
+              <Col xs={24} md={12} xl={6}>
+                <Card>
+                  <Statistic title="Letzter Kontostand" value={Number(latestSimulatedBreakdown?.closing || 0)} formatter={(value) => formatCurrency(value)} />
+                </Card>
+              </Col>
+            </Row>
+          ),
+        }]}
+      />
     </div>
   );
 }
