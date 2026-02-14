@@ -1,3 +1,4 @@
+import { InfoCircleOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -26,7 +27,7 @@ import {
   type DashboardRobustMonth,
   type RobustnessCheckResult,
 } from "../../domain/dashboardRobustness";
-import { formatMonthLabel, monthIndex } from "../../domain/months";
+import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
@@ -36,6 +37,9 @@ const { Paragraph, Text, Title } = Typography;
 type DashboardRange = "next6" | "next12" | "next18" | "all";
 
 type SimulationType = "dividend" | "capex";
+type InventoryRiskFilterParam = "all" | "oos" | "under_safety";
+type InventoryAbcFilterParam = "all" | "a" | "b" | "ab" | "abc";
+type ProductIssueFilterParam = "all" | "needs_fix" | "revenue" | "blocked";
 
 interface DashboardSeriesRow {
   month: string;
@@ -163,6 +167,93 @@ function addDays(date: Date, days: number): Date {
 
 function simulationDefaultLabel(type: SimulationType): string {
   return type === "dividend" ? "Dividende (Simulation)" : "CAPEX (Simulation)";
+}
+
+function signalTitle(label: string, tooltip: string): JSX.Element {
+  return (
+    <span className="v2-dashboard-signal-title">
+      {label}
+      <Tooltip title={tooltip}>
+        <InfoCircleOutlined />
+      </Tooltip>
+    </span>
+  );
+}
+
+function appendRouteQuery(route: string, params: Record<string, string | null | undefined>): string {
+  const [pathname, rawQuery = ""] = String(route || "").split("?");
+  const query = new URLSearchParams(rawQuery);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value == null || value === "") {
+      query.delete(key);
+      return;
+    }
+    query.set(key, value);
+  });
+  const nextQuery = query.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
+function buildInventoryDashboardRoute(input: {
+  risk?: InventoryRiskFilterParam;
+  abc?: InventoryAbcFilterParam;
+  month?: string | null;
+  sku?: string | null;
+}): string {
+  return appendRouteQuery("/v2/inventory/projektion", {
+    source: "dashboard",
+    risk: input.risk || "under_safety",
+    abc: input.abc || "ab",
+    month: input.month || null,
+    sku: input.sku || null,
+    expand: "all",
+  });
+}
+
+function buildProductsDashboardRoute(input: {
+  issues?: ProductIssueFilterParam;
+  sku?: string | null;
+}): string {
+  return appendRouteQuery("/v2/products", {
+    source: "dashboard",
+    issues: input.issues || "needs_fix",
+    sku: input.sku || null,
+    expand: "all",
+  });
+}
+
+function resolveDashboardRoute(input: {
+  route: string;
+  actionId?: string;
+  checkKey?: RobustnessCheckResult["key"];
+  month?: string | null;
+  sku?: string | null;
+}): string {
+  const route = String(input.route || "");
+  if (route.startsWith("/v2/inventory/projektion")) {
+    const risk = input.actionId === "inventory_safety" || input.checkKey === "sku_coverage"
+      ? "under_safety"
+      : "all";
+    const abc = input.actionId === "inventory_safety" || input.checkKey === "sku_coverage"
+      ? "ab"
+      : "all";
+    return buildInventoryDashboardRoute({
+      risk,
+      abc,
+      month: input.month || null,
+      sku: input.sku || null,
+    });
+  }
+  if (route.startsWith("/v2/products")) {
+    const issues = input.actionId === "revenue_inputs" || input.checkKey === "revenue_inputs"
+      ? "revenue"
+      : "needs_fix";
+    return buildProductsDashboardRoute({
+      issues,
+      sku: input.sku || null,
+    });
+  }
+  return route;
 }
 
 function getFixcostAverageFromBreakdown(rows: DashboardBreakdownRow[]): number {
@@ -446,6 +537,11 @@ export default function DashboardModule(): JSX.Element {
     : null;
 
   const selectedMonthData = selectedMonth ? robustness.monthMap.get(selectedMonth) || null : null;
+  const currentMonth = currentMonthKey();
+  const currentMonthIdx = monthIndex(currentMonth);
+  const actionFocusMonth = useMemo(() => {
+    return robustness.months.find((entry) => !entry.robust)?.month || selectedMonth || visibleMonths[0] || null;
+  }, [robustness.months, selectedMonth, visibleMonths]);
 
   const pnlRowsByMonth = useMemo(
     () => buildDashboardPnlRowsByMonth({ breakdown: visibleBreakdown, state: stateObject }),
@@ -534,7 +630,7 @@ export default function DashboardModule(): JSX.Element {
           lineStyle: { width: 2 },
         },
         {
-          name: "Kontostand robust",
+          name: "Kontostand belastbar",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -544,7 +640,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#3bc2a7" },
         },
         {
-          name: "Kontostand robust (<0)",
+          name: "Kontostand belastbar (<0)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -554,7 +650,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#b42318" },
         },
         {
-          name: "Kontostand nicht robust",
+          name: "Kontostand orientierend (nicht robust)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -564,7 +660,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#94a3b8" },
         },
         {
-          name: "Nicht robust (<0)",
+          name: "Orientierend (<0)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -661,12 +757,19 @@ export default function DashboardModule(): JSX.Element {
       key: "route",
       width: 132,
       render: (_: unknown, row: RobustnessCheckResult) => (
-        <Button size="small" onClick={() => navigate(row.route)}>
+        <Button
+          size="small"
+          onClick={() => navigate(resolveDashboardRoute({
+            route: row.route,
+            checkKey: row.key,
+            month: selectedMonthData?.month || null,
+          }))}
+        >
           Öffnen
         </Button>
       ),
     },
-  ], [navigate]);
+  ], [navigate, selectedMonthData?.month]);
 
   const pnlItems = useMemo(() => {
     return visibleBreakdown.map((monthRow) => {
@@ -894,7 +997,10 @@ export default function DashboardModule(): JSX.Element {
       <div className="v2-dashboard-signal-grid">
         <Card className="v2-dashboard-signal-card">
           <Statistic
-            title="Robust bis"
+            title={signalTitle(
+              "Robust bis",
+              "Letzter Monat, in dem alle Hard-Checks erfüllt sind. Danach ist der Kontostand nur Orientierung.",
+            )}
             value={robustness.robustUntilMonth ? formatMonthLabel(robustness.robustUntilMonth) : "—"}
           />
           <Text type="secondary">{robustness.robustMonthsCount}/{robustness.totalMonths} Monate robust</Text>
@@ -902,7 +1008,10 @@ export default function DashboardModule(): JSX.Element {
 
         <Card className="v2-dashboard-signal-card">
           <Statistic
-            title="Erster negativer Monat (robust)"
+            title={signalTitle(
+              "Erster negativer Monat (robust)",
+              "Erster belastbarer Monat mit negativem Kontostand. Nicht robuste Monate werden dafür ignoriert.",
+            )}
             value={firstNegativeRobustMonth ? formatMonthLabel(firstNegativeRobustMonth) : "Keiner"}
           />
           <Text type="secondary">Simulation wird berücksichtigt</Text>
@@ -910,7 +1019,10 @@ export default function DashboardModule(): JSX.Element {
 
         <Card className="v2-dashboard-signal-card">
           <Statistic
-            title="Freier Cash nach Buffer"
+            title={signalTitle(
+              "Freier Cash nach Buffer",
+              "Minimaler belastbarer Kontostand minus Sicherheitsreserve aus 2 Monaten Fixkosten.",
+            )}
             value={freeCashAfterBuffer != null ? formatCurrency(freeCashAfterBuffer) : "—"}
           />
           <Text type="secondary">Buffer (2M Fixkosten): {formatCurrency(bufferFloor)}</Text>
@@ -918,7 +1030,12 @@ export default function DashboardModule(): JSX.Element {
 
         <Card className="v2-dashboard-signal-card">
           <div className="v2-dashboard-forecast-status-head">
-            <Text strong>Forecast Freshness</Text>
+            <Text strong>
+              Forecast Freshness
+              <Tooltip title="Ampel nach Importalter: Grün <=35 Tage, Gelb 36-45 Tage, Rot >45 Tage.">
+                <InfoCircleOutlined className="v2-dashboard-inline-info" />
+              </Tooltip>
+            </Text>
             <Tag color={
               forecastFreshnessStatus === "fresh"
                 ? "green"
@@ -953,6 +1070,17 @@ export default function DashboardModule(): JSX.Element {
           <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
           <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
         </Space>
+        <div className="v2-dashboard-legend-help">
+          <Tooltip title="Durchgezogene Linie: belastbarer Kontostand (alle Hard-Checks bestanden).">
+            <Tag className="v2-dashboard-legend-tag">Linie solid = belastbar</Tag>
+          </Tooltip>
+          <Tooltip title="Gestrichelte Linie: orientierend, weil mindestens ein Hard-Check fehlt.">
+            <Tag className="v2-dashboard-legend-tag">Linie gestrichelt = orientierend</Tag>
+          </Tooltip>
+          <Tooltip title="Rot markiert: Kontostand liegt unter 0 im jeweiligen Zustand.">
+            <Tag className="v2-dashboard-legend-tag">Rot = unter 0</Tag>
+          </Tooltip>
+        </div>
         <ReactECharts style={{ height: 380 }} option={chartOption} />
       </Card>
 
@@ -976,7 +1104,14 @@ export default function DashboardModule(): JSX.Element {
                     </div>
                     <div className="v2-dashboard-action-meta">
                       <Tag color={action.severity === "error" ? "red" : "gold"}>{action.count}</Tag>
-                      <Button size="small" onClick={() => navigate(action.route)}>
+                      <Button
+                        size="small"
+                        onClick={() => navigate(resolveDashboardRoute({
+                          route: action.route,
+                          actionId: action.id,
+                          month: actionFocusMonth,
+                        }))}
+                      >
                         Öffnen
                       </Button>
                     </div>
@@ -1028,25 +1163,36 @@ export default function DashboardModule(): JSX.Element {
         </Paragraph>
 
         <div className="v2-dashboard-robust-grid">
-          {robustness.months.map((month) => (
-            <button
-              key={month.month}
-              type="button"
-              className={`v2-dashboard-robust-item ${selectedMonth === month.month ? "is-selected" : ""} ${month.robust ? "is-robust" : "is-open"}`}
-              onClick={() => setSelectedMonth(month.month)}
-            >
-              <div className="v2-dashboard-robust-item-head">
-                <span>{formatMonthLabel(month.month)}</span>
-                <Tag color={month.robust ? "green" : "red"}>{month.robust ? "Robust" : "Offen"}</Tag>
-              </div>
-              <div className="v2-dashboard-robust-item-meta">
-                Coverage: {formatPercent(month.coverage.ratio * 100)} ({month.coverage.coveredSkus}/{month.coverage.activeSkus})
-              </div>
-              <div className="v2-dashboard-robust-item-meta">
-                Blocker: {month.blockerCount}
-              </div>
-            </button>
-          ))}
+          {robustness.months.map((month) => {
+            const monthIdx = monthIndex(month.month);
+            const isPast = monthIdx != null && currentMonthIdx != null && monthIdx < currentMonthIdx;
+            return (
+              <button
+                key={month.month}
+                type="button"
+                className={[
+                  "v2-dashboard-robust-item",
+                  selectedMonth === month.month ? "is-selected" : "",
+                  month.robust ? "is-robust" : "is-open",
+                  isPast ? "is-past" : "",
+                ].filter(Boolean).join(" ")}
+                onClick={() => setSelectedMonth(month.month)}
+              >
+                <div className="v2-dashboard-robust-item-head">
+                  <span>{formatMonthLabel(month.month)}</span>
+                  <Tag color={isPast ? "default" : (month.robust ? "green" : "red")}>
+                    {isPast ? "Vergangen (Info)" : (month.robust ? "Robust" : "Offen")}
+                  </Tag>
+                </div>
+                <div className="v2-dashboard-robust-item-meta">
+                  Coverage: {formatPercent(month.coverage.ratio * 100)} ({month.coverage.coveredSkus}/{month.coverage.activeSkus})
+                </div>
+                <div className="v2-dashboard-robust-item-meta">
+                  Blocker: {month.blockerCount}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {selectedMonthData ? (
@@ -1079,7 +1225,15 @@ export default function DashboardModule(): JSX.Element {
                         <Text>{blocker.message}</Text>
                         {blocker.sku ? <Text type="secondary"> · {blocker.sku}</Text> : null}
                       </div>
-                      <Button size="small" onClick={() => navigate(blocker.route)}>
+                      <Button
+                        size="small"
+                        onClick={() => navigate(resolveDashboardRoute({
+                          route: blocker.route,
+                          checkKey: blocker.checkKey,
+                          month: blocker.month,
+                          sku: blocker.sku || null,
+                        }))}
+                      >
                         Öffnen
                       </Button>
                     </div>

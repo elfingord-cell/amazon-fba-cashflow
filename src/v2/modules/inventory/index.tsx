@@ -1,5 +1,5 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -45,12 +45,14 @@ import {
   setModuleExpandedCategoryKeys,
 } from "../../state/uiPrefs";
 import { useWorkspaceState } from "../../state/workspace";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
 
 type ProjectionMode = "units" | "doh" | "plan";
 type InventoryView = "snapshot" | "projection" | "both";
+type ProjectionRiskFilter = "all" | "oos" | "under_safety";
+type ProjectionAbcFilter = "all" | "a" | "b" | "ab" | "abc";
 
 export interface InventoryModuleProps {
   view?: InventoryView;
@@ -314,6 +316,37 @@ function monthRiskWeight(abcClass: string | null, riskClass: "" | "safety-negati
   return 0;
 }
 
+function normalizeProjectionRiskFilter(value: unknown): ProjectionRiskFilter {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "oos") return "oos";
+  if (raw === "under_safety") return "under_safety";
+  return "all";
+}
+
+function normalizeProjectionAbcFilter(value: unknown): ProjectionAbcFilter {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "a") return "a";
+  if (raw === "b") return "b";
+  if (raw === "ab") return "ab";
+  if (raw === "abc") return "abc";
+  return "all";
+}
+
+function normalizeAbcClass(value: string | null | undefined): "A" | "B" | "C" | null {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw === "A" || raw === "B" || raw === "C") return raw;
+  return null;
+}
+
+function matchesAbcFilter(abcClass: string | null, filter: ProjectionAbcFilter): boolean {
+  if (filter === "all") return true;
+  const normalized = normalizeAbcClass(abcClass);
+  if (filter === "a") return normalized === "A";
+  if (filter === "b") return normalized === "B";
+  if (filter === "ab") return normalized === "A" || normalized === "B";
+  return normalized != null;
+}
+
 function buildInboundPopover(detail: InboundDetailCell | null): JSX.Element {
   if (!detail) return <Text type="secondary">Kein Inbound in diesem Monat.</Text>;
   const poItems = Array.isArray(detail.poItems) ? detail.poItems : [];
@@ -353,10 +386,12 @@ function buildInboundPopover(detail: InboundDetailCell | null): JSX.Element {
 }
 
 export default function InventoryModule({ view = "both" }: InventoryModuleProps = {}): JSX.Element {
+  const location = useLocation();
   const navigate = useNavigate();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const hasStoredSnapshotPrefs = hasModuleExpandedCategoryKeys("inventory_snapshot");
   const hasStoredProjectionPrefs = hasModuleExpandedCategoryKeys("inventory_projection");
+  const appliedDashboardQueryRef = useRef(false);
 
   const [selectedMonth, setSelectedMonth] = useState(() => currentMonthKey());
   const [selectedMonthTouched, setSelectedMonthTouched] = useState(false);
@@ -365,10 +400,14 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [projectionMode, setProjectionMode] = useState<ProjectionMode>("units");
   const [search, setSearch] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
+  const [riskFilter, setRiskFilter] = useState<ProjectionRiskFilter>("all");
+  const [abcFilter, setAbcFilter] = useState<ProjectionAbcFilter>("all");
   const [projectionMonths, setProjectionMonths] = useState(12);
   const [snapshotExpandedCategories, setSnapshotExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("inventory_snapshot"));
   const [projectionExpandedCategories, setProjectionExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("inventory_projection"));
   const [selectedUrgencyMonth, setSelectedUrgencyMonth] = useState<string | null>(null);
+  const [pendingUrgencyMonthFromQuery, setPendingUrgencyMonthFromQuery] = useState<string | null>(null);
+  const [expandProjectionFromQuery, setExpandProjectionFromQuery] = useState(false);
   const [actionIntent, setActionIntent] = useState<ProjectionActionIntent | null>(null);
 
   const showSnapshot = view !== "projection";
@@ -378,6 +417,23 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const inventory = ((state.inventory || {}) as Record<string, unknown>);
   const inventorySettings = ((inventory.settings || {}) as Record<string, unknown>);
   const settings = (state.settings || {}) as Record<string, unknown>;
+
+  useEffect(() => {
+    if (appliedDashboardQueryRef.current) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("source") !== "dashboard") return;
+    appliedDashboardQueryRef.current = true;
+
+    const sku = String(params.get("sku") || "").trim();
+    if (sku) setSearch(sku);
+
+    const month = normalizeMonthKey(params.get("month"));
+    if (month) setPendingUrgencyMonthFromQuery(month);
+
+    setRiskFilter(normalizeProjectionRiskFilter(params.get("risk")));
+    setAbcFilter(normalizeProjectionAbcFilter(params.get("abc")));
+    if (params.get("expand") === "all") setExpandProjectionFromQuery(true);
+  }, [location.search]);
 
   const monthOptions = useMemo(() => {
     const months = new Set<string>();
@@ -509,6 +565,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     return baseRows
       .filter((row) => {
         if (onlyActive && !row.isActive) return false;
+        if (!matchesAbcFilter(row.abcClass, abcFilter)) return false;
         if (!needle) return true;
         return [row.sku, row.alias, row.categoryLabel, row.abcClass || ""]
           .join(" ")
@@ -522,7 +579,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         if (byAlias !== 0) return byAlias;
         return a.sku.localeCompare(b.sku, "de-DE", { sensitivity: "base" });
       });
-  }, [baseRows, categoryOrderMap, onlyActive, search]);
+  }, [abcFilter, baseRows, categoryOrderMap, onlyActive, search]);
 
   const groupedRows = useMemo(
     () => toCategoryGroups(filteredRows, categoryOrderMap),
@@ -670,26 +727,74 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     return Math.max(...values, 0);
   }, [urgencyByMonth]);
 
+  const riskBySku = useMemo(() => {
+    const map = new Map<string, { hasOos: boolean; hasUnderSafety: boolean }>();
+    filteredRows.forEach((row) => {
+      let hasOos = false;
+      let hasUnderSafety = false;
+      projectionMonthList.forEach((month) => {
+        const data = projection.perSkuMonth.get(row.sku)?.get(month) as ProjectionCellData | undefined;
+        if (!data) return;
+        const riskClass = getProjectionSafetyClass({
+          projectionMode,
+          endAvailable: data.endAvailable,
+          safetyUnits: data.safetyUnits,
+          doh: data.doh,
+          safetyDays: data.safetyDays,
+        }) as "" | "safety-negative" | "safety-low";
+        if (!riskClass) return;
+        hasUnderSafety = true;
+        if (riskClass === "safety-negative") hasOos = true;
+      });
+      map.set(row.sku, { hasOos, hasUnderSafety });
+    });
+    return map;
+  }, [filteredRows, projection, projectionMode, projectionMonthList]);
+
+  const projectionRows = useMemo(() => {
+    if (riskFilter === "all") return filteredRows;
+    return filteredRows.filter((row) => {
+      const flags = riskBySku.get(row.sku);
+      if (!flags) return false;
+      if (riskFilter === "oos") return flags.hasOos;
+      return flags.hasUnderSafety;
+    });
+  }, [filteredRows, riskBySku, riskFilter]);
+
+  const projectionBaseGroups = useMemo(
+    () => toCategoryGroups(projectionRows, categoryOrderMap),
+    [categoryOrderMap, projectionRows],
+  );
+
   const projectionCriticalSkuSet = useMemo(() => {
     if (!selectedUrgencyMonth) return null;
     return urgencyByMonth.get(selectedUrgencyMonth)?.criticalSkus || new Set<string>();
   }, [selectedUrgencyMonth, urgencyByMonth]);
 
   const projectionGroupedRows = useMemo(() => {
-    if (!selectedUrgencyMonth || !projectionCriticalSkuSet || !projectionCriticalSkuSet.size) return groupedRows;
-    return groupedRows
+    if (!selectedUrgencyMonth || !projectionCriticalSkuSet || !projectionCriticalSkuSet.size) return projectionBaseGroups;
+    return projectionBaseGroups
       .map((group) => ({
         ...group,
         rows: group.rows.filter((row) => projectionCriticalSkuSet.has(row.sku)),
       }))
       .filter((group) => group.rows.length > 0);
-  }, [groupedRows, projectionCriticalSkuSet, selectedUrgencyMonth]);
+  }, [projectionBaseGroups, projectionCriticalSkuSet, selectedUrgencyMonth]);
 
   useEffect(() => {
     if (selectedUrgencyMonth && !projectionMonthList.includes(selectedUrgencyMonth)) {
       setSelectedUrgencyMonth(null);
     }
   }, [projectionMonthList, selectedUrgencyMonth]);
+
+  useEffect(() => {
+    if (!pendingUrgencyMonthFromQuery) return;
+    if (!projectionMonthList.length) return;
+    if (projectionMonthList.includes(pendingUrgencyMonthFromQuery)) {
+      setSelectedUrgencyMonth(pendingUrgencyMonthFromQuery);
+    }
+    setPendingUrgencyMonthFromQuery(null);
+  }, [pendingUrgencyMonthFromQuery, projectionMonthList]);
 
   useEffect(() => {
     if (!showProjection) return;
@@ -701,6 +806,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       return projectionGroupedRows.map((group) => group.key);
     });
   }, [hasStoredProjectionPrefs, projectionGroupedRows, showProjection]);
+
+  useEffect(() => {
+    if (!showProjection || !expandProjectionFromQuery) return;
+    if (!projectionGroupedRows.length) return;
+    setProjectionExpandedCategories(projectionGroupedRows.map((group) => group.key));
+    setExpandProjectionFromQuery(false);
+  }, [expandProjectionFromQuery, projectionGroupedRows, showProjection]);
 
   function openProjectionAction(
     row: InventoryProductRow,
@@ -793,12 +905,12 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         </Text>
         {Number(intent.recommendation?.coverageDaysForOrder || 0) > 0 ? (
           <Text type="secondary">
-            Bedarf ({formatInt(intent.recommendation?.coverageDaysForOrder)} Tage): {formatInt(intent.recommendation?.coverageDemandUnits)}
+            Bedarf ({formatInt(Number(intent.recommendation?.coverageDaysForOrder || 0))} Tage): {formatInt(Number(intent.recommendation?.coverageDemandUnits || 0))}
           </Text>
         ) : null}
         {intent.recommendation?.moqApplied ? (
           <Text type="warning">
-            MOQ angewendet: kalkulatorisch {formatInt(intent.recommendation?.recommendedUnitsRaw)} → MOQ {formatInt(intent.recommendation?.recommendedUnits)}
+            MOQ angewendet: kalkulatorisch {formatInt(Number(intent.recommendation?.recommendedUnitsRaw || 0))} → MOQ {formatInt(Number(intent.recommendation?.recommendedUnits || 0))}
           </Text>
         ) : null}
         <div className="v2-actions-inline">
@@ -1258,6 +1370,70 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             </Tooltip>
           </div>
 
+          <div className="v2-toolbar-row v2-proj-filter-row" style={{ marginTop: 4 }}>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn ${riskFilter === "all" ? "is-active" : ""}`}
+              onClick={() => setRiskFilter("all")}
+            >
+              Alle Risiken
+            </button>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn v2-proj-filter-btn--negative ${riskFilter === "oos" ? "is-active" : ""}`}
+              onClick={() => setRiskFilter("oos")}
+            >
+              OOS / {"<="} 0
+            </button>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn v2-proj-filter-btn--low ${riskFilter === "under_safety" ? "is-active" : ""}`}
+              onClick={() => setRiskFilter("under_safety")}
+            >
+              Unter Safety
+            </button>
+            <Text type="secondary">Filter für Projektionstabelle.</Text>
+          </div>
+
+          <div className="v2-toolbar-row v2-proj-filter-row" style={{ marginTop: 4 }}>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn ${abcFilter === "all" ? "is-active" : ""}`}
+              onClick={() => setAbcFilter("all")}
+            >
+              Alle
+            </button>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn ${abcFilter === "a" ? "is-active" : ""}`}
+              onClick={() => setAbcFilter("a")}
+            >
+              A
+            </button>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn ${abcFilter === "b" ? "is-active" : ""}`}
+              onClick={() => setAbcFilter("b")}
+            >
+              B
+            </button>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn ${abcFilter === "ab" ? "is-active" : ""}`}
+              onClick={() => setAbcFilter("ab")}
+            >
+              A+B
+            </button>
+            <button
+              type="button"
+              className={`v2-proj-filter-btn ${abcFilter === "abc" ? "is-active" : ""}`}
+              onClick={() => setAbcFilter("abc")}
+            >
+              ABC
+            </button>
+            <Text type="secondary">ABC-Filter bleibt über Kategorien erhalten.</Text>
+          </div>
+
           <div className="v2-proj-heatmap" style={{ marginTop: 10 }}>
             {projectionMonthList.map((month) => {
               const urgency = urgencyByMonth.get(month);
@@ -1274,10 +1450,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                     borderColor: isActive ? "rgba(220, 38, 38, 0.8)" : "rgba(15, 27, 45, 0.12)",
                   }}
                   onClick={() => setSelectedUrgencyMonth((current) => (current === month ? null : month))}
-                  title={`${formatMonthLabel(month)} · Score ${score} · OOS ${Number(urgency?.oosCount || 0)} · Unter Safety ${Number(urgency?.underSafetyCount || 0)}`}
+                  title={`${formatMonthLabel(month)} · ABC-gewichteter Risikoscore ${score} · OOS ${Number(urgency?.oosCount || 0)} · Unter Safety ${Number(urgency?.underSafetyCount || 0)}`}
                 >
                   <span>{formatMonthLabel(month)}</span>
-                  <strong>{score}</strong>
+                  <strong>Score {score}</strong>
                 </button>
               );
             })}
@@ -1289,8 +1465,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           </div>
 
           <div className="v2-toolbar-row" style={{ marginTop: 4 }}>
-            <Tag className="v2-proj-legend v2-proj-legend--negative">OOS / {"<="} 0</Tag>
-            <Tag className="v2-proj-legend v2-proj-legend--low">Unter Safety</Tag>
+            <Tag className="v2-proj-legend v2-proj-legend--negative">Rot = OOS / {"<="} 0</Tag>
+            <Tag className="v2-proj-legend v2-proj-legend--low">Orange = Unter Safety</Tag>
             <Tag className="v2-proj-legend">Inbound Marker: PO / FO</Tag>
             <Text type="secondary">Zelle anklicken für `FO erstellen` / `PO erstellen`.</Text>
           </div>
@@ -1299,7 +1475,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             <Text type="secondary">
               {selectedUrgencyMonth
                 ? `${projectionGroupedRows.reduce((sum, group) => sum + group.rows.length, 0)} kritische Produkte in ${projectionGroupedRows.length} Kategorien (${formatMonthLabel(selectedUrgencyMonth)})`
-                : `${filteredRows.length} Produkte in ${groupedRows.length} Kategorien`}
+                : `${projectionRows.length} Produkte in ${projectionBaseGroups.length} Kategorien`}
             </Text>
             <div className="v2-actions-inline">
               <Button

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -32,6 +32,7 @@ import {
 } from "../../state/uiPrefs";
 import { useSyncSession } from "../../sync/session";
 import { useModalCollaboration } from "../../sync/modalCollaboration";
+import { useLocation } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -45,6 +46,7 @@ const TRANSPORT_MODES = ["AIR", "RAIL", "SEA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
 
 type ProductRow = ProductGridRow;
+type ProductIssueFilter = "all" | "needs_fix" | "revenue" | "blocked";
 
 interface ProductDraft {
   id?: string;
@@ -114,6 +116,26 @@ function completenessTag(status: "blocked" | "warn" | "ok"): JSX.Element {
   return <Tag color="red">BLOCKED</Tag>;
 }
 
+function normalizeStatusFilter(value: unknown): "all" | "active" | "prelaunch" | "inactive" | null {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "all" || raw === "active" || raw === "prelaunch" || raw === "inactive") return raw;
+  return null;
+}
+
+function normalizeIssueFilter(value: unknown): ProductIssueFilter {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "needs_fix") return "needs_fix";
+  if (raw === "revenue") return "revenue";
+  if (raw === "blocked") return "blocked";
+  return "all";
+}
+
+function hasRevenueIssue(row: ProductRow): boolean {
+  const price = Number(row.avgSellingPriceGrossEUR);
+  const missingPrice = !Number.isFinite(price) || price <= 0;
+  return missingPrice || row.completeness === "blocked";
+}
+
 function productDraftFromRow(row?: ProductRow): ProductDraft {
   const templateSource = (row?.raw.template as Record<string, unknown> | undefined) || {};
   const template = (
@@ -153,16 +175,20 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
 }
 
 export default function ProductsModule(): JSX.Element {
+  const location = useLocation();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const syncSession = useSyncSession();
   const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("products");
+  const appliedDashboardQueryRef = useRef(false);
   const [productsGridMode, setProductsGridMode] = useState<"management" | "logistics">("management");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "prelaunch" | "inactive">("all");
+  const [issueFilter, setIssueFilter] = useState<ProductIssueFilter>("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [logisticsManualOverride, setLogisticsManualOverride] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("products"));
+  const [expandFromQuery, setExpandFromQuery] = useState(false);
   const [form] = Form.useForm<ProductDraft>();
   const draftValues = Form.useWatch([], form) as ProductDraft | undefined;
   const stateObject = state as unknown as Record<string, unknown>;
@@ -188,6 +214,21 @@ export default function ProductsModule(): JSX.Element {
     displayNames: displayNameMap,
   });
 
+  useEffect(() => {
+    if (appliedDashboardQueryRef.current) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("source") !== "dashboard") return;
+    appliedDashboardQueryRef.current = true;
+
+    const sku = String(params.get("sku") || "").trim();
+    if (sku) setSearch(sku);
+
+    setIssueFilter(normalizeIssueFilter(params.get("issues")));
+    const nextStatus = normalizeStatusFilter(params.get("status"));
+    if (nextStatus) setStatusFilter(nextStatus);
+    if (params.get("expand") === "all") setExpandFromQuery(true);
+  }, [location.search]);
+
   const categories = useMemo(() => {
     return (Array.isArray(state.productCategories) ? state.productCategories : [])
       .map((entry) => ({
@@ -210,7 +251,7 @@ export default function ProductsModule(): JSX.Element {
   const supplierLabelById = useMemo(() => new Map(suppliers.map((entry) => [entry.id, entry.name])), [suppliers]);
   const categoryOrderMap = useMemo(() => buildCategoryOrderMap(stateObject), [state.productCategories]);
 
-  const rows = useMemo(() => {
+  const baseRows = useMemo(() => {
     return buildProductGridRows({
       state: stateObject,
       search,
@@ -219,6 +260,31 @@ export default function ProductsModule(): JSX.Element {
       supplierLabelById,
     });
   }, [categoryLabelById, search, stateObject, statusFilter, supplierLabelById]);
+
+  const issueCounts = useMemo(() => {
+    return baseRows.reduce((acc, row) => {
+      const revenueIssue = hasRevenueIssue(row);
+      const needsFix = row.completeness !== "ok" || revenueIssue;
+      if (revenueIssue) acc.revenue += 1;
+      if (needsFix) acc.needsFix += 1;
+      if (row.completeness === "blocked") acc.blocked += 1;
+      return acc;
+    }, {
+      revenue: 0,
+      needsFix: 0,
+      blocked: 0,
+    });
+  }, [baseRows]);
+
+  const rows = useMemo(() => {
+    if (issueFilter === "all") return baseRows;
+    return baseRows.filter((row) => {
+      const revenueIssue = hasRevenueIssue(row);
+      if (issueFilter === "revenue") return revenueIssue;
+      if (issueFilter === "blocked") return row.completeness === "blocked";
+      return row.completeness !== "ok" || revenueIssue;
+    });
+  }, [baseRows, issueFilter]);
 
   const groupedRows = useMemo(() => {
     const groups = new Map<string, ProductRow[]>();
@@ -245,6 +311,13 @@ export default function ProductsModule(): JSX.Element {
       return groupedRows.map((group) => group.key);
     });
   }, [groupedRows, hasStoredExpandedPrefs]);
+
+  useEffect(() => {
+    if (!expandFromQuery) return;
+    if (!groupedRows.length) return;
+    setExpandedCategories(groupedRows.map((group) => group.key));
+    setExpandFromQuery(false);
+  }, [expandFromQuery, groupedRows]);
 
   useEffect(() => {
     setModuleExpandedCategoryKeys("products", expandedCategories);
@@ -672,6 +745,36 @@ export default function ProductsModule(): JSX.Element {
                 ]}
                 style={{ width: 140, maxWidth: "100%" }}
               />
+              <div className="v2-products-issue-filters">
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${issueFilter === "all" ? "is-active" : ""}`}
+                  onClick={() => setIssueFilter("all")}
+                >
+                  Alle
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${issueFilter === "needs_fix" ? "is-active" : ""}`}
+                  onClick={() => setIssueFilter("needs_fix")}
+                >
+                  Nur korrigieren
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${issueFilter === "revenue" ? "is-active" : ""}`}
+                  onClick={() => setIssueFilter("revenue")}
+                >
+                  Umsatzrelevant
+                </button>
+                <button
+                  type="button"
+                  className={`v2-proj-filter-btn ${issueFilter === "blocked" ? "is-active" : ""}`}
+                  onClick={() => setIssueFilter("blocked")}
+                >
+                  Nur Blocker
+                </button>
+              </div>
               <Segmented
                 value={productsGridMode}
                 onChange={(value) => setProductsGridMode(value as "management" | "logistics")}
@@ -686,6 +789,11 @@ export default function ProductsModule(): JSX.Element {
               >
                 Produkt hinzufuegen
               </Button>
+            </Space>
+            <Space wrap>
+              <Tag color={issueCounts.needsFix > 0 ? "gold" : "green"}>Korrekturbedarf: {issueCounts.needsFix}</Tag>
+              <Tag color={issueCounts.revenue > 0 ? "volcano" : "green"}>Umsatzrelevant: {issueCounts.revenue}</Tag>
+              <Tag color={issueCounts.blocked > 0 ? "red" : "green"}>Blocker: {issueCounts.blocked}</Tag>
             </Space>
             {saving ? <Tag color="processing">Speichern...</Tag> : null}
             {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
