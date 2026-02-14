@@ -16,9 +16,11 @@ import {
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
+import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { parseVentoryCsv } from "../../../ui/forecastCsv.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
+import { computeForecastDriftSummary } from "../../domain/forecastDrift";
 import { currentMonthKey, formatMonthLabel, normalizeMonthKey } from "../../domain/months";
 import {
   type ForecastRecord,
@@ -320,6 +322,9 @@ export default function ForecastModule(): JSX.Element {
       const nextState = next as unknown as Record<string, unknown>;
       ensureForecastContainers(nextState);
       const forecastTarget = nextState.forecast as Record<string, unknown>;
+      const previousImport = (forecastTarget.forecastImport && typeof forecastTarget.forecastImport === "object")
+        ? structuredClone(forecastTarget.forecastImport as Record<string, unknown>)
+        : {};
       const importTarget = (importMode === "overwrite")
         ? {}
         : { ...((forecastTarget.forecastImport || {}) as Record<string, unknown>) };
@@ -349,8 +354,19 @@ export default function ForecastModule(): JSX.Element {
       });
 
       forecastTarget.forecastImport = importTarget;
-      forecastTarget.lastImportAt = new Date().toISOString();
+      const importTimestamp = new Date().toISOString();
+      const abcBySku = computeAbcClassification(nextState).bySku;
+      forecastTarget.lastImportAt = importTimestamp;
       forecastTarget.importSource = importSourceLabel || "CSV";
+      forecastTarget.importCadence = "monthly";
+      forecastTarget.lastDriftSummary = computeForecastDriftSummary({
+        previousImport: previousImport as Record<string, unknown>,
+        nextImport: importTarget,
+        products: (Array.isArray(nextState.products) ? nextState.products : []) as Array<Record<string, unknown>>,
+        abcBySku,
+        comparedAt: importTimestamp,
+        profile: "medium",
+      });
       return next;
     }, `v2:forecast:import:${importMode}`);
   }
