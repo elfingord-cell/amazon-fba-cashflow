@@ -43,6 +43,35 @@ export interface ForecastState extends UnknownRecord {
   lastDriftSummary?: ForecastDriftSummary | null;
 }
 
+export interface PoItem extends UnknownRecord {
+  id?: string;
+  sku: string;
+  units: number;
+  unitCostUsd: number;
+  unitExtraUsd?: number;
+  extraFlatUsd?: number;
+  prodDays: number;
+  transitDays: number;
+  freightEur?: number;
+}
+
+export interface PoRecordV2 extends UnknownRecord {
+  id: string;
+  poNo: string;
+  supplierId: string;
+  orderDate?: string | null;
+  etdManual?: string | null;
+  etaManual?: string | null;
+  items?: PoItem[];
+  sku?: string;
+  units?: number;
+  prodDays?: number;
+  transitDays?: number;
+  freightEur?: number;
+  milestones?: UnknownRecord[];
+  paymentLog?: Record<string, UnknownRecord>;
+}
+
 export interface AppStateV2 extends UnknownRecord {
   schemaVersion: 2;
   legacyMeta: LegacyMeta;

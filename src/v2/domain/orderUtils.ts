@@ -118,6 +118,40 @@ export interface FoRecommendationContext {
   inboundWithoutEtaCount: number;
 }
 
+export interface PoItemDraft {
+  id: string;
+  sku: string;
+  units: number;
+  unitCostUsd: number;
+  unitExtraUsd: number;
+  extraFlatUsd: number;
+  prodDays: number;
+  transitDays: number;
+  freightEur: number;
+}
+
+export interface PoMilestoneDraft {
+  id: string;
+  label: string;
+  percent: number;
+  anchor: string;
+  lagDays: number;
+}
+
+export interface PoAggregateMetrics {
+  items: PoItemDraft[];
+  goodsUsd: number;
+  goodsEur: number;
+  freightEur: number;
+  units: number;
+  prodDays: number;
+  transitDays: number;
+  firstSku: string;
+  minEtaDate: string | null;
+  maxEtaDate: string | null;
+  schedule: FoSchedule;
+}
+
 function asNumber(value: unknown, fallback = 0): number {
   const parsed = parseDeNumber(value);
   if (!Number.isFinite(parsed as number)) return fallback;
@@ -164,6 +198,7 @@ function addMonths(value: Date, months: number): Date {
 
 function mapPaymentAnchor(trigger: PaymentTrigger): string {
   if (trigger === "PRODUCTION_END") return "PROD_DONE";
+  if (trigger === "DELIVERY") return "ETA";
   return trigger;
 }
 
@@ -318,6 +353,117 @@ export function computeScheduleFromOrderDate(input: {
     deliveryDate: input.deliveryDate ? String(input.deliveryDate) : null,
     logisticsLeadTimeDays,
   };
+}
+
+function normalizePoItemEntry(input: unknown): PoItemDraft | null {
+  const row = (input || {}) as Record<string, unknown>;
+  const sku = String(row.sku || "").trim();
+  if (!sku) return null;
+  const units = Math.max(0, Math.round(asNumber(row.units, 0)));
+  const unitCostUsd = asPositive(row.unitCostUsd, 0);
+  const unitExtraUsd = asPositive(row.unitExtraUsd, 0);
+  const extraFlatUsd = asPositive(row.extraFlatUsd, 0);
+  const prodDays = Math.max(0, Math.round(asPositiveNumber(row.prodDays) ?? asPositive(row.productionLeadTimeDays, 0)));
+  const transitDays = Math.max(0, Math.round(asPositiveNumber(row.transitDays) ?? asPositive(row.logisticsLeadTimeDays, 0)));
+  const freightEur = asPositive(row.freightEur, 0);
+  return {
+    id: String(row.id || randomId("poi")),
+    sku,
+    units,
+    unitCostUsd,
+    unitExtraUsd,
+    extraFlatUsd,
+    prodDays,
+    transitDays,
+    freightEur,
+  };
+}
+
+export function normalizePoItems(
+  items: unknown,
+  fallback?: Record<string, unknown> | null,
+): PoItemDraft[] {
+  const parsedItems = Array.isArray(items) ? items.map(normalizePoItemEntry).filter(Boolean) as PoItemDraft[] : [];
+  if (parsedItems.length) return parsedItems;
+  const sku = String(fallback?.sku || "").trim();
+  if (!sku) return [];
+  const fallbackItem = normalizePoItemEntry({
+    id: String(fallback?.id || randomId("poi")),
+    sku,
+    units: fallback?.units,
+    unitCostUsd: fallback?.unitCostUsd,
+    unitExtraUsd: fallback?.unitExtraUsd,
+    extraFlatUsd: fallback?.extraFlatUsd,
+    prodDays: fallback?.prodDays,
+    transitDays: fallback?.transitDays,
+    freightEur: fallback?.freightEur,
+  });
+  return fallbackItem ? [fallbackItem] : [];
+}
+
+export function computePoAggregateMetrics(input: {
+  items: unknown;
+  orderDate: unknown;
+  fxRate: unknown;
+  fallback?: Record<string, unknown> | null;
+}): PoAggregateMetrics {
+  const normalizedItems = normalizePoItems(input.items, input.fallback);
+  let goodsUsd = 0;
+  let freightEur = 0;
+  let units = 0;
+  let prodDays = 0;
+  let transitDays = 0;
+  const orderDate = parseIsoDate(input.orderDate);
+  let minEtaDate: Date | null = null;
+  let maxEtaDate: Date | null = null;
+
+  normalizedItems.forEach((item) => {
+    const itemGoods = item.units * (item.unitCostUsd + item.unitExtraUsd) + item.extraFlatUsd;
+    goodsUsd += itemGoods;
+    freightEur += item.freightEur;
+    units += item.units;
+    prodDays = Math.max(prodDays, item.prodDays);
+    transitDays = Math.max(transitDays, item.transitDays);
+    if (orderDate) {
+      const eta = addDays(orderDate, item.prodDays + item.transitDays);
+      if (!minEtaDate || eta < minEtaDate) minEtaDate = eta;
+      if (!maxEtaDate || eta > maxEtaDate) maxEtaDate = eta;
+    }
+  });
+
+  const schedule = computeScheduleFromOrderDate({
+    orderDate: input.orderDate,
+    productionLeadTimeDays: prodDays,
+    logisticsLeadTimeDays: transitDays,
+    bufferDays: 0,
+  });
+
+  return {
+    items: normalizedItems,
+    goodsUsd,
+    goodsEur: convertToEur(goodsUsd, "USD", input.fxRate),
+    freightEur,
+    units,
+    prodDays,
+    transitDays,
+    firstSku: normalizedItems[0]?.sku || "",
+    minEtaDate: toIsoDate(minEtaDate),
+    maxEtaDate: toIsoDate(maxEtaDate),
+    schedule,
+  };
+}
+
+export function mapSupplierTermsToPoMilestones(
+  supplierRow?: Record<string, unknown> | null,
+): PoMilestoneDraft[] {
+  const terms = extractSupplierTerms([], supplierRow);
+  return terms.map((term, index) => ({
+    id: String(term.id || `ms-${index + 1}-${Math.random().toString(36).slice(2, 8)}`),
+    label: String(term.label || "Milestone"),
+    percent: asPositive(term.percent, 0),
+    anchor: mapPaymentAnchor(normaliseTrigger(term.triggerEvent)),
+    lagDays: asNumber(term.offsetDays, 0),
+  }));
 }
 
 export function computeFoCostValues(input: {

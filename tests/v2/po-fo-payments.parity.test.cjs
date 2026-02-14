@@ -99,6 +99,7 @@ function createParityState() {
     products: [
       { sku: "SKU-A", alias: "Alpha" },
       { sku: "SKU-B", alias: "Beta" },
+      { sku: "SKU-C", alias: "Gamma" },
     ],
     payments: [
       {
@@ -162,6 +163,15 @@ function createParityState() {
             sku: "SKU-B",
             units: "50",
             unitCostUsd: "4,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+            unitCostManuallyEdited: false,
+          },
+          {
+            id: "po2-item-2",
+            sku: "SKU-C",
+            units: "30",
+            unitCostUsd: "6,00",
             unitExtraUsd: "0,00",
             extraFlatUsd: "0,00",
             unitCostManuallyEdited: false,
