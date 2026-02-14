@@ -540,6 +540,29 @@
   border-color: rgba(124, 58, 237, 0.32);
 }
 
+.v2-proj-fo-badge {
+  appearance: none;
+  border: 1px solid rgba(47, 183, 156, 0.46);
+  border-radius: 999px;
+  background: rgba(47, 183, 156, 0.14);
+  color: #0f766e;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  justify-self: end;
+}
+
+.v2-proj-fo-badge:hover {
+  border-color: rgba(13, 148, 136, 0.65);
+  background: rgba(20, 184, 166, 0.22);
+}
+
+.v2-proj-anchor-warning {
+  border-radius: 10px;
+}
+
 .v2-proj-legend {
   margin-inline-end: 0 !important;
 }
@@ -647,6 +670,43 @@
   max-width: 300px;
   display: grid;
   gap: 4px;
+}
+
+.v2-fo-breakdown-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.v2-fo-breakdown-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.v2-fo-breakdown-table th,
+.v2-fo-breakdown-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid rgba(15, 27, 45, 0.08);
+}
+
+.v2-fo-breakdown-table th:first-child,
+.v2-fo-breakdown-table td:first-child {
+  text-align: left;
+}
+
+.v2-fo-breakdown-table tr.is-total td {
+  font-weight: 600;
+  border-top: 1px solid rgba(15, 27, 45, 0.12);
+}
+
+.v2-fo-breakdown-flag {
+  color: #92400e;
+  font-size: 11px;
 }
 
 .v2-toolbar-field {

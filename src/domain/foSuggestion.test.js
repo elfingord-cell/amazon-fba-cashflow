@@ -123,4 +123,10 @@ test("coverage-window units are based on target arrival month and respect MOQ fl
   assert.strictEqual(recommendation.recommendedUnitsRaw, 600);
   assert.strictEqual(recommendation.recommendedUnits, 800);
   assert.strictEqual(recommendation.moqApplied, true);
+  assert.ok(Array.isArray(recommendation.coverageDemandBreakdown));
+  assert.strictEqual(recommendation.coverageDemandBreakdown[0].month, "2025-03");
+  const breakdownSum = recommendation.coverageDemandBreakdown
+    .reduce((sum, entry) => sum + Number(entry.demandUnitsInWindow || 0), 0);
+  assert.strictEqual(Math.round(breakdownSum), 600);
+  assert.strictEqual(Math.round(recommendation.coverageDemandUnits), 600);
 });

@@ -653,9 +653,19 @@ export function buildClosingStockBySku(state: Record<string, unknown>): Record<s
       const sku = String(item?.sku || "").trim();
       if (!sku) return;
       if (!result[sku]) result[sku] = {};
-      const amazonUnits = asPositive(item?.amazonUnits, 0);
-      const threePlUnits = asPositive(item?.threePLUnits, 0);
-      result[sku][month] = amazonUnits + threePlUnits;
+      const amazonUnitsRaw = parseDeNumber(item?.amazonUnits);
+      const threePlUnitsRaw = parseDeNumber(item?.threePLUnits);
+      const legacyUnitsRaw = parseDeNumber(item?.units);
+      const hasSplitUnits = Number.isFinite(amazonUnitsRaw as number) || Number.isFinite(threePlUnitsRaw as number);
+      if (hasSplitUnits) {
+        const amazonUnits = Number.isFinite(amazonUnitsRaw as number) ? Math.max(0, Number(amazonUnitsRaw)) : 0;
+        const threePlUnits = Number.isFinite(threePlUnitsRaw as number) ? Math.max(0, Number(threePlUnitsRaw)) : 0;
+        result[sku][month] = amazonUnits + threePlUnits;
+        return;
+      }
+      result[sku][month] = Number.isFinite(legacyUnitsRaw as number)
+        ? Math.max(0, Number(legacyUnitsRaw))
+        : 0;
     });
   });
   return result;

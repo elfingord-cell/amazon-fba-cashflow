@@ -89,17 +89,35 @@ function getDailyRateForMonth({ plansBySku, sku, month, fallbackDailyRate, warni
   if (plannedSalesUnits == null) {
     if (fallbackDailyRate != null) {
       warnings.push(`Forecast missing for ${month}; using last available daily rate.`);
-      return { dailyRate: fallbackDailyRate, days, missingForecast: true };
+      return {
+        dailyRate: fallbackDailyRate,
+        days,
+        missingForecast: true,
+        usedFallback: true,
+        forecastMonthUnits: null,
+      };
     }
     warnings.push(`Forecast missing for ${month}; daily rate assumed 0.`);
-    return { dailyRate: 0, days, missingForecast: true };
+    return {
+      dailyRate: 0,
+      days,
+      missingForecast: true,
+      usedFallback: false,
+      forecastMonthUnits: null,
+    };
   }
 
   if (plannedSalesUnits === 0) {
     warnings.push(`Forecast for ${month} is zero; demand treated as 0.`);
   }
 
-  return { dailyRate: plannedSalesUnits / days, days, missingForecast: false };
+  return {
+    dailyRate: plannedSalesUnits / days,
+    days,
+    missingForecast: false,
+    usedFallback: false,
+    forecastMonthUnits: plannedSalesUnits,
+  };
 }
 
 function getDailyRateForDate({ plansBySku, sku, date, fallbackDailyRate, warnings }) {
@@ -142,6 +160,7 @@ function integrateDemand({ plansBySku, sku, startDate, endDate, warnings }) {
   let total = 0;
   let fallbackDailyRate = null;
   let missingForecast = false;
+  const coverageDemandBreakdown = [];
 
   while (cursor < endDate) {
     const month = monthKey(cursor);
@@ -151,7 +170,15 @@ function integrateDemand({ plansBySku, sku, startDate, endDate, warnings }) {
     const segmentEnd = nextMonthStart < endDate ? nextMonthStart : endDate;
     const segmentDays = Math.ceil((segmentEnd.getTime() - cursor.getTime()) / MILLIS_PER_DAY);
     const rateInfo = getDailyRateForMonth({ plansBySku, sku, month, fallbackDailyRate, warnings });
-    total += rateInfo.dailyRate * segmentDays;
+    const demandUnitsInWindow = rateInfo.dailyRate * segmentDays;
+    total += demandUnitsInWindow;
+    coverageDemandBreakdown.push({
+      month,
+      daysCovered: segmentDays,
+      forecastMonthUnits: rateInfo.forecastMonthUnits,
+      demandUnitsInWindow,
+      usedFallback: rateInfo.usedFallback,
+    });
     if (!rateInfo.missingForecast) {
       fallbackDailyRate = rateInfo.dailyRate;
     } else {
@@ -163,7 +190,7 @@ function integrateDemand({ plansBySku, sku, startDate, endDate, warnings }) {
     }
   }
 
-  return { demandUnits: total, missingForecast, fallbackDailyRate };
+  return { demandUnits: total, missingForecast, fallbackDailyRate, coverageDemandBreakdown };
 }
 
 function computeDoh(inventoryUnits, dailyRate) {
@@ -316,6 +343,9 @@ export function computeFoRecommendation({
   const coverageDemandUnits = Number.isFinite(coverageDemand?.demandUnits)
     ? Number(coverageDemand.demandUnits)
     : (Number(selectedProjectionMonth?.avgDailyDemand || 0) * targetCoverageDays);
+  const coverageDemandBreakdown = Array.isArray(coverageDemand?.coverageDemandBreakdown)
+    ? coverageDemand.coverageDemandBreakdown
+    : [];
   const stockAtArrival = Number(selectedProjectionMonth?.startStock || 0);
   const recommendedUnitsRaw = Math.max(0, Math.ceil(coverageDemandUnits));
   let recommendedUnits = recommendedUnitsRaw;
@@ -337,6 +367,7 @@ export function computeFoRecommendation({
     overlapDays,
     coverageDaysForOrder: targetCoverageDays,
     coverageDemandUnits,
+    coverageDemandBreakdown,
     recommendedUnitsRaw,
     recommendedUnits,
     safetyStockDays,

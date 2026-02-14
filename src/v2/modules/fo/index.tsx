@@ -120,6 +120,14 @@ interface FoPaymentBookingValues {
   note: string;
 }
 
+interface CoverageDemandBreakdownRow {
+  month: string;
+  daysCovered: number;
+  forecastMonthUnits: number | null;
+  demandUnitsInWindow: number;
+  usedFallback: boolean;
+}
+
 function formatDate(value: unknown): string {
   if (!value) return "—";
   const [year, month, day] = String(value).split("-").map(Number);
@@ -149,6 +157,24 @@ function formatCurrency(value: unknown): string {
     style: "currency",
     currency: "EUR",
   });
+}
+
+function normalizeCoverageDemandBreakdown(input: unknown): CoverageDemandBreakdownRow[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry) => entry as Record<string, unknown>)
+    .map((entry) => ({
+      month: String(entry.month || ""),
+      daysCovered: Math.max(0, Number(entry.daysCovered || 0)),
+      forecastMonthUnits: Number.isFinite(Number(entry.forecastMonthUnits))
+        ? Number(entry.forecastMonthUnits)
+        : null,
+      demandUnitsInWindow: Number.isFinite(Number(entry.demandUnitsInWindow))
+        ? Number(entry.demandUnitsInWindow)
+        : 0,
+      usedFallback: Boolean(entry.usedFallback),
+    }))
+    .filter((entry) => /^\d{4}-\d{2}$/.test(entry.month));
 }
 
 function statusTag(status: string): JSX.Element {
@@ -669,6 +695,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         : null,
     });
   }, [draftValues, productRows, recommendationContext, settings]);
+
+  const liveRecommendationBreakdown = useMemo(
+    () => normalizeCoverageDemandBreakdown(liveRecommendation?.coverageDemandBreakdown),
+    [liveRecommendation?.coverageDemandBreakdown],
+  );
+  const liveRecommendationBreakdownSum = useMemo(
+    () => liveRecommendationBreakdown.reduce((sum, entry) => sum + Number(entry.demandUnitsInWindow || 0), 0),
+    [liveRecommendationBreakdown],
+  );
 
   const editingFoPayments = useMemo(() => {
     if (!editingId) return null;
@@ -1383,8 +1418,47 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 <>
                   <Text>Baseline: {String(liveRecommendation.baselineMonth || "—")}</Text>
                   <Text>Status: {String(liveRecommendation.status || "—")}</Text>
+                  <Text type="secondary">Empfehlung basiert auf Forecast + Coverage DOH + MOQ.</Text>
                   <Text>
                     Reichweite-Bedarf ({formatNumber(liveRecommendation.coverageDaysForOrder, 0)} Tage): {formatNumber(liveRecommendation.coverageDemandUnits, 0)}
+                  </Text>
+                  {liveRecommendationBreakdown.length ? (
+                    <div className="v2-fo-breakdown-wrap">
+                      <table className="v2-fo-breakdown-table">
+                        <thead>
+                          <tr>
+                            <th>Monat</th>
+                            <th>Tage im Fenster</th>
+                            <th>Forecast Monat</th>
+                            <th>Beitrags-Units</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {liveRecommendationBreakdown.map((entry) => (
+                            <tr key={`${entry.month}-${entry.daysCovered}`}>
+                              <td>{entry.month}</td>
+                              <td>{formatNumber(entry.daysCovered, 0)}</td>
+                              <td>
+                                {entry.forecastMonthUnits == null
+                                  ? "—"
+                                  : formatNumber(entry.forecastMonthUnits, 0)}
+                                {entry.usedFallback ? <span className="v2-fo-breakdown-flag"> (Fallback)</span> : null}
+                              </td>
+                              <td>{formatNumber(entry.demandUnitsInWindow, 0)}</td>
+                            </tr>
+                          ))}
+                          <tr className="is-total">
+                            <td>Summe</td>
+                            <td>{formatNumber(liveRecommendation.coverageDaysForOrder, 0)}</td>
+                            <td>—</td>
+                            <td>{formatNumber(liveRecommendationBreakdownSum, 0)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                  <Text>
+                    Rohwert (aufgerundet): {formatNumber(liveRecommendation.recommendedUnitsRaw, 0)}
                   </Text>
                   <Text>
                     Empfohlene Units: {formatNumber(liveRecommendation.recommendedUnits, 0)}

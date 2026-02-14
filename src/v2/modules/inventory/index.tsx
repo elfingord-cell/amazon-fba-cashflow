@@ -123,11 +123,11 @@ interface ProjectionActionIntent {
   row: InventoryProductRow;
   month: string;
   data: ProjectionCellData;
-  riskClass: "safety-negative" | "safety-low" | "normal";
   recommendedUnits: number;
   requiredArrivalDate: string | null;
   recommendedOrderDate: string | null;
   recommendation: Record<string, unknown> | null;
+  recommendationStatus: string;
 }
 
 interface ProjectionRiskSummary {
@@ -781,6 +781,85 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       .filter((group) => group.rows.length > 0);
   }, [projectionBaseGroups, projectionCriticalSkuSet, selectedUrgencyMonth]);
 
+  function buildProjectionFoIntent(
+    row: InventoryProductRow,
+    month: string,
+    data: ProjectionCellData,
+    cellKey: string,
+  ): ProjectionActionIntent {
+    const product = resolveProductBySku(Array.isArray(state.products) ? (state.products as Record<string, unknown>[]) : [], row.sku);
+    const leadTimeDays = estimateLeadTimeDays(product, settings);
+    const recommendation = computeFoRecommendationForSku({
+      context: recommendationContext,
+      sku: row.sku,
+      leadTimeDays,
+      product,
+      settings,
+      horizonMonths: Math.max(6, projectionMonths),
+      requiredArrivalMonth: month,
+    }) as Record<string, unknown> | null;
+
+    const recommendationStatus = String(recommendation?.status || "");
+    const recommendationUnits = Number(recommendation?.recommendedUnits || 0);
+    const fallbackUnits = Math.max(0, Math.ceil(Number(data.safetyUnits || 0) - Number(data.endAvailable || 0)));
+    const recommendedUnits = Math.max(0, Math.round(Number.isFinite(recommendationUnits) && recommendationUnits > 0
+      ? recommendationUnits
+      : fallbackUnits));
+    const requiredArrivalDate = String(
+      recommendation?.requiredArrivalDate
+      || monthStartIso(month)
+      || "",
+    ) || null;
+    const recommendedOrderDate = String(
+      recommendation?.orderDateAdjusted
+      || recommendation?.orderDate
+      || "",
+    ) || null;
+
+    return {
+      cellKey,
+      row,
+      month,
+      data,
+      recommendedUnits,
+      requiredArrivalDate,
+      recommendedOrderDate,
+      recommendation,
+      recommendationStatus,
+    };
+  }
+
+  const firstRiskFoIntentByCellKey = useMemo(() => {
+    if (projectionMode === "plan") return new Map<string, ProjectionActionIntent>();
+    const map = new Map<string, ProjectionActionIntent>();
+    projectionRows.forEach((row) => {
+      let firstRiskMonth: string | null = null;
+      for (const month of projectionMonthList) {
+        const data = projection.perSkuMonth.get(row.sku)?.get(month) as ProjectionCellData | undefined;
+        if (!data) continue;
+        const riskClass = getProjectionSafetyClass({
+          projectionMode,
+          endAvailable: data.endAvailable,
+          safetyUnits: data.safetyUnits,
+          doh: data.doh,
+          safetyDays: data.safetyDays,
+        });
+        if (riskClass === "safety-negative" || riskClass === "safety-low") {
+          firstRiskMonth = month;
+          break;
+        }
+      }
+      if (!firstRiskMonth) return;
+      const data = projection.perSkuMonth.get(row.sku)?.get(firstRiskMonth) as ProjectionCellData | undefined;
+      if (!data) return;
+      const cellKey = `${row.sku}|${firstRiskMonth}`;
+      const intent = buildProjectionFoIntent(row, firstRiskMonth, data, cellKey);
+      if (intent.recommendationStatus !== "ok" || intent.recommendedUnits <= 0) return;
+      map.set(cellKey, intent);
+    });
+    return map;
+  }, [projection, projectionMode, projectionMonthList, projectionRows, projectionMonths, recommendationContext, settings, state.products]);
+
   useEffect(() => {
     if (selectedUrgencyMonth && !projectionMonthList.includes(selectedUrgencyMonth)) {
       setSelectedUrgencyMonth(null);
@@ -818,67 +897,27 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     row: InventoryProductRow,
     month: string,
     data: ProjectionCellData,
-    riskClass: "safety-negative" | "safety-low" | "normal",
     cellKey: string,
   ): void {
-    const product = resolveProductBySku(Array.isArray(state.products) ? (state.products as Record<string, unknown>[]) : [], row.sku);
-    const leadTimeDays = estimateLeadTimeDays(product, settings);
-    const recommendation = computeFoRecommendationForSku({
-      context: recommendationContext,
-      sku: row.sku,
-      leadTimeDays,
-      product,
-      settings,
-      horizonMonths: Math.max(6, projectionMonths),
-      requiredArrivalMonth: month,
-    }) as Record<string, unknown> | null;
-
-    const recommendationUnits = Number(recommendation?.recommendedUnits || 0);
-    const recommendationUnitsRaw = Number(recommendation?.recommendedUnitsRaw || 0);
-    const fallbackUnits = Math.max(0, Math.ceil(Number(data.safetyUnits || 0) - Number(data.endAvailable || 0)));
-    const recommendedUnits = Math.max(0, Math.round(Number.isFinite(recommendationUnits) && recommendationUnits > 0
-      ? recommendationUnits
-      : fallbackUnits));
-    const requiredArrivalDate = String(
-      recommendation?.requiredArrivalDate
-      || monthStartIso(month)
-      || "",
-    ) || null;
-    const recommendedOrderDate = String(
-      recommendation?.orderDateAdjusted
-      || recommendation?.orderDate
-      || "",
-    ) || null;
-
-    setActionIntent({
-      cellKey,
-      row,
-      month,
-      data,
-      riskClass,
-      recommendedUnits,
-      requiredArrivalDate,
-      recommendedOrderDate,
-      recommendation,
-    });
+    setActionIntent(buildProjectionFoIntent(row, month, data, cellKey));
   }
 
-  function navigateToOrderIntent(target: "fo" | "po"): void {
-    if (!actionIntent) return;
+  function navigateToFoIntent(intent: ProjectionActionIntent | null): void {
+    if (!intent) return;
     const params = new URLSearchParams();
     params.set("source", "inventory_projection");
-    params.set("sku", actionIntent.row.sku);
-    params.set("month", actionIntent.month);
-    params.set("suggestedUnits", String(actionIntent.recommendedUnits || 0));
-    params.set("projectedEnd", String(Math.round(Number(actionIntent.data.endAvailable || 0))));
+    params.set("sku", intent.row.sku);
+    params.set("month", intent.month);
+    params.set("suggestedUnits", String(intent.recommendedUnits || 0));
+    params.set("projectedEnd", String(Math.round(Number(intent.data.endAvailable || 0))));
     params.set("mode", projectionMode);
-    if (actionIntent.requiredArrivalDate) {
-      params.set("requiredArrivalDate", actionIntent.requiredArrivalDate);
+    if (intent.requiredArrivalDate) {
+      params.set("requiredArrivalDate", intent.requiredArrivalDate);
     }
-    if (actionIntent.recommendedOrderDate) {
-      params.set("recommendedOrderDate", actionIntent.recommendedOrderDate);
+    if (intent.recommendedOrderDate) {
+      params.set("recommendedOrderDate", intent.recommendedOrderDate);
     }
-    navigate(`/v2/orders/${target}?${params.toString()}`);
+    navigate(`/v2/orders/fo?${params.toString()}`);
     setActionIntent(null);
   }
 
@@ -903,6 +942,9 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         <Text>
           Vorschlag: <strong>{formatInt(intent.recommendedUnits)}</strong>
         </Text>
+        {intent.recommendationStatus !== "ok" ? (
+          <Text type="warning">Hinweis: Empfehlung ist nicht vollständig belastbar.</Text>
+        ) : null}
         {Number(intent.recommendation?.coverageDaysForOrder || 0) > 0 ? (
           <Text type="secondary">
             Bedarf ({formatInt(Number(intent.recommendation?.coverageDaysForOrder || 0))} Tage): {formatInt(Number(intent.recommendation?.coverageDemandUnits || 0))}
@@ -914,8 +956,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           </Text>
         ) : null}
         <div className="v2-actions-inline">
-          <Button size="small" onClick={() => navigateToOrderIntent("fo")}>FO erstellen</Button>
-          <Button size="small" type="primary" onClick={() => navigateToOrderIntent("po")}>PO erstellen</Button>
+          <Button size="small" type="primary" onClick={() => navigateToFoIntent(intent)}>FO erstellen</Button>
         </div>
       </div>
     );
@@ -1075,11 +1116,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           doh: data.doh,
           safetyDays: data.safetyDays,
         }) as "" | "safety-negative" | "safety-low";
-        const riskClass = riskClassRaw || "normal";
 
         const isActionable = projectionMode !== "plan";
         const inbound = data.inboundDetails;
         const cellKey = `${row.original.sku}|${month}`;
+        const foBadgeIntent = firstRiskFoIntentByCellKey.get(cellKey) || null;
 
         const isMenuOpen = actionIntent?.cellKey === cellKey;
         return (
@@ -1101,11 +1142,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
               ].filter(Boolean).join(" ")}
               role={isActionable ? "button" : undefined}
               tabIndex={isActionable ? 0 : undefined}
-              onClick={isActionable ? () => openProjectionAction(row.original, month, data, riskClass, cellKey) : undefined}
+              onClick={isActionable ? () => openProjectionAction(row.original, month, data, cellKey) : undefined}
               onKeyDown={isActionable ? (event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  openProjectionAction(row.original, month, data, riskClass, cellKey);
+                  openProjectionAction(row.original, month, data, cellKey);
                 }
               } : undefined}
             >
@@ -1114,6 +1155,18 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   SB: {formatInt(data.safetyUnits)}
                 </Text>
+              ) : null}
+              {foBadgeIntent ? (
+                <button
+                  type="button"
+                  className="v2-proj-fo-badge"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    navigateToFoIntent(foBadgeIntent);
+                  }}
+                >
+                  FO empfohlen
+                </button>
               ) : null}
               {inbound && inbound.totalUnits > 0 ? (
                 <Popover content={buildInboundPopover(inbound)} trigger="hover" placement="topLeft">
@@ -1130,7 +1183,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     })) as ColumnDef<InventoryProductRow>[];
 
     return [...base, ...monthColumns];
-  }, [actionIntent, projection, projectionMode, projectionMonthList]);
+  }, [actionIntent, firstRiskFoIntentByCellKey, projection, projectionMode, projectionMonthList]);
 
   async function saveSnapshot(): Promise<void> {
     await saveWith((current) => {
@@ -1200,6 +1253,16 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
+
+  const anchorForecastGapSkus = Array.isArray(projection.anchorForecastGapSkus)
+    ? projection.anchorForecastGapSkus as string[]
+    : [];
+  const anchorMode = String(projection.anchorMode || "no_snapshot");
+  const anchorLabel = anchorMode === "rollforward"
+    ? `Anker: ${projection.anchorSourceMonth || "—"} Snapshot → Rollforward bis ${projection.anchorMonth || "—"}`
+    : anchorMode === "snapshot"
+      ? `Anker: Snapshot ${projection.anchorMonth || projection.anchorSourceMonth || "—"}`
+      : "Anker: kein Snapshot (Start bei 0)";
 
   return (
     <div className="v2-page">
@@ -1276,15 +1339,14 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             </div>
           ) : (
             <div className="v2-toolbar-row">
-              <Tag color="blue">Anker: {projection.resolvedSnapshotMonth || "—"}</Tag>
+              <Tag color={anchorMode === "no_snapshot" ? "red" : "blue"}>{anchorLabel}</Tag>
               {projection.snapshotFallbackUsed ? (
-                <Tag color="gold">Fallback auf letzten Snapshot</Tag>
+                <Tag color="gold">Fallback auf letzten Snapshot ≤ Ankermonat</Tag>
               ) : null}
-              {projection.resolvedSnapshotMonth ? (
-                <Text type="secondary">Projektion startet auf Snapshot {projection.resolvedSnapshotMonth}.</Text>
-              ) : (
-                <Tag color="red">Kein Snapshot verfügbar: Projektion startet bei 0.</Tag>
-              )}
+              {anchorForecastGapSkus.length > 0 ? (
+                <Tag color="orange">Forecast-Lücken im Anker-Rollforward: {anchorForecastGapSkus.length}</Tag>
+              ) : null}
+              {projection.resolvedSnapshotMonth ? <Text type="secondary">EOM-basiert, inkl. Inbound (PO+FO) und Forecast-Abzug.</Text> : null}
             </div>
           )}
         </div>
@@ -1351,6 +1413,15 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           <Text type="secondary">
             Zeitraum: {projectionMonthList[0] || "—"} bis {projectionMonthList[projectionMonthList.length - 1] || "—"}.
           </Text>
+          {anchorForecastGapSkus.length > 0 ? (
+            <Alert
+              style={{ marginTop: 10, marginBottom: 2 }}
+              className="v2-proj-anchor-warning"
+              type="warning"
+              showIcon
+              message={`Anker-Rollforward mit Forecast-Lücken bei ${anchorForecastGapSkus.length} SKU(s) – diese Monate wurden mit 0 Units gerechnet.`}
+            />
+          ) : null}
 
           <div className="v2-toolbar-row" style={{ marginTop: 10 }}>
             <Tag color={riskSummary.underSafetySkus > 0 ? "gold" : "green"}>
@@ -1468,7 +1539,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             <Tag className="v2-proj-legend v2-proj-legend--negative">Rot = OOS / {"<="} 0</Tag>
             <Tag className="v2-proj-legend v2-proj-legend--low">Orange = Unter Safety</Tag>
             <Tag className="v2-proj-legend">Inbound Marker: PO / FO</Tag>
-            <Text type="secondary">Zelle anklicken für `FO erstellen` / `PO erstellen`.</Text>
+            <Text type="secondary">`FO empfohlen` im ersten Risikomonat anklicken oder Zelle öffnen für FO-Anlage.</Text>
           </div>
 
           <div className="v2-category-tools" style={{ marginTop: 10 }}>
