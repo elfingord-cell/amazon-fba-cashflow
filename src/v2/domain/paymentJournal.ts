@@ -370,29 +370,53 @@ export function buildPaymentJournalRowsFromState(
       const currency = String(payment.currency || "EUR");
       const planned = currency === "EUR" ? rawAmount : (fxRate > 0 ? rawAmount / fxRate : rawAmount);
       const dueDate = String(payment.dueDate || "");
+      const paymentId = String(payment.paymentId || "");
+      const paymentRecord = paymentId ? (paymentIndexes.byId.get(paymentId) || null) : null;
+      const status: "PAID" | "OPEN" = (
+        String(payment.status || "").toUpperCase() === "PAID"
+        || Boolean(paymentRecord)
+      ) ? "PAID" : "OPEN";
+      const paidDate = String(payment.paidDate || paymentRecord?.paidDate || "");
+      const actualFromPayment = Number(payment.paidEurActual);
+      let amountActualEur: number | null = Number.isFinite(actualFromPayment) ? actualFromPayment : null;
+      if (amountActualEur == null && paymentRecord?.allocations && Array.isArray(paymentRecord.allocations)) {
+        const allocation = (paymentRecord.allocations as Record<string, unknown>[]).find(
+          (entry) => String(entry?.eventId || "") === String(payment.id || ""),
+        );
+        if (allocation && Number.isFinite(Number(allocation.amountEur))) {
+          amountActualEur = Number(allocation.amountEur);
+        }
+      }
+      if (amountActualEur == null && paymentRecord) {
+        const covered = Array.isArray(paymentRecord.coveredEventIds) ? paymentRecord.coveredEventIds : [];
+        if (covered.length <= 1 && Number.isFinite(Number(paymentRecord.amountActualEurTotal))) {
+          amountActualEur = Number(paymentRecord.amountActualEurTotal);
+        }
+      }
       const entityId = String(record.id || record.foNumber || "");
+      const eventId = String(payment.id || `${entityId}-${paymentType}-${dueDate}`);
       const rowId = `FO-${entityId}-${paymentType}-${dueDate || ""}`;
       rows.push({
         rowId,
-        eventId: String(payment.id || rowId),
-        month: getRowMonth({ status: "OPEN", dueDate, paidDate: "" }),
+        eventId,
+        month: getRowMonth({ status, dueDate, paidDate }),
         entityType: "FO",
         poNumber: String(record.convertedPoNo || ""),
         foNumber: String(record.foNumber || record.id || ""),
         supplierName,
         skuAliases,
         paymentType,
-        status: "OPEN",
+        status,
         dueDate,
-        paidDate: "",
-        paymentId: "",
+        paidDate,
+        paymentId,
         amountPlannedEur: planned,
-        amountActualEur: null,
-        payer: "",
-        paymentMethod: "",
-        note: "",
+        amountActualEur,
+        payer: String(payment.paidBy || paymentRecord?.payer || ""),
+        paymentMethod: String(payment.method || paymentRecord?.method || ""),
+        note: String(payment.note || paymentRecord?.note || ""),
         internalId: String(record.id || rowId),
-        issues: [],
+        issues: status === "PAID" && !paidDate ? ["PAID_WITHOUT_DATE"] : [],
       });
     });
   });

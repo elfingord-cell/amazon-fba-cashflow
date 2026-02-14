@@ -41,6 +41,47 @@ export interface FoPaymentRow extends SupplierPaymentTermDraft {
   category: "supplier" | "freight" | "duty" | "eust" | "eust_refund";
   isOverridden?: boolean;
   dueDateManuallySet?: boolean;
+  status?: "open" | "paid" | string;
+  paidDate?: string | null;
+  paymentId?: string | null;
+  paidEurActual?: number | null;
+  paidUsdActual?: number | null;
+  paidBy?: string | null;
+  method?: string | null;
+  note?: string | null;
+  invoiceDriveUrl?: string;
+  invoiceFolderDriveUrl?: string;
+}
+
+function mergeExistingPaymentState(
+  generated: FoPaymentRow[],
+  existingPayments: unknown,
+): FoPaymentRow[] {
+  const existingList = Array.isArray(existingPayments)
+    ? (existingPayments as Record<string, unknown>[])
+    : [];
+  if (!existingList.length) return generated;
+  const byId = new Map(existingList.map((entry) => [String(entry?.id || ""), entry]));
+  return generated.map((row) => {
+    const existing = byId.get(String(row.id || ""));
+    if (!existing) return row;
+    return {
+      ...row,
+      dueDate: existing.dueDateManuallySet ? String(existing.dueDate || row.dueDate || "") : row.dueDate,
+      dueDateManuallySet: existing.dueDateManuallySet === true ? true : row.dueDateManuallySet,
+      isOverridden: existing.isOverridden === true ? true : row.isOverridden,
+      status: existing.status ? String(existing.status) : undefined,
+      paidDate: existing.paidDate ? String(existing.paidDate) : undefined,
+      paymentId: existing.paymentId ? String(existing.paymentId) : undefined,
+      paidEurActual: Number.isFinite(Number(existing.paidEurActual)) ? Number(existing.paidEurActual) : undefined,
+      paidUsdActual: Number.isFinite(Number(existing.paidUsdActual)) ? Number(existing.paidUsdActual) : undefined,
+      paidBy: existing.paidBy ? String(existing.paidBy) : undefined,
+      method: existing.method ? String(existing.method) : undefined,
+      note: existing.note ? String(existing.note) : undefined,
+      invoiceDriveUrl: existing.invoiceDriveUrl ? String(existing.invoiceDriveUrl) : undefined,
+      invoiceFolderDriveUrl: existing.invoiceFolderDriveUrl ? String(existing.invoiceFolderDriveUrl) : undefined,
+    } as FoPaymentRow;
+  });
 }
 
 export interface FoCostValues {
@@ -357,6 +398,7 @@ export function buildFoPayments(input: {
   eustRatePct: unknown;
   fxRate: unknown;
   incoterm: unknown;
+  existingPayments?: unknown;
 }): FoPaymentRow[] {
   const costValues = computeFoCostValues(input);
   const scheduleDates = buildScheduleDates(input.schedule);
@@ -367,7 +409,7 @@ export function buildFoPayments(input: {
     const offsetDays = asNumber(term.offsetDays, 0);
     const offsetMonths = asNumber(term.offsetMonths, 0);
     return {
-      id: term.id || randomId(`pay-${index}`),
+      id: term.id || `supplier-${index}`,
       label: String(term.label || "Milestone"),
       percent: asPositive(term.percent, 0),
       amount: baseValue * (asPositive(term.percent, 0) / 100),
@@ -386,7 +428,7 @@ export function buildFoPayments(input: {
   const rows: FoPaymentRow[] = [...supplierRows];
   if (incoterm !== "DDP" && costValues.freightAmount > 0) {
     rows.push({
-      id: randomId("freight"),
+      id: "auto-freight",
       label: "Fracht",
       percent: 0,
       amount: costValues.freightAmount,
@@ -404,7 +446,7 @@ export function buildFoPayments(input: {
   const dutyRatePct = asPositive(input.dutyRatePct, 0);
   if (incoterm !== "DDP" && dutyRatePct > 0) {
     rows.push({
-      id: randomId("duty"),
+      id: "auto-duty",
       label: "Duty",
       percent: dutyRatePct,
       amount: costValues.dutyAmountEur,
@@ -422,7 +464,7 @@ export function buildFoPayments(input: {
   const eustRatePct = asPositive(input.eustRatePct, 0);
   if (incoterm !== "DDP" && eustRatePct > 0) {
     rows.push({
-      id: randomId("eust"),
+      id: "auto-eust",
       label: "EUSt",
       percent: eustRatePct,
       amount: costValues.eustAmountEur,
@@ -436,7 +478,7 @@ export function buildFoPayments(input: {
       dueDateManuallySet: false,
     });
     rows.push({
-      id: randomId("eust-refund"),
+      id: "auto-eust-refund",
       label: "EUSt Erstattung",
       percent: eustRatePct,
       amount: -costValues.eustAmountEur,
@@ -451,7 +493,7 @@ export function buildFoPayments(input: {
     });
   }
 
-  return rows;
+  return mergeExistingPaymentState(rows, input.existingPayments);
 }
 
 export function sumSupplierPercent(terms: SupplierPaymentTermDraft[]): number {
@@ -468,6 +510,7 @@ export function normalizeFoRecord(input: {
   const values = input.values || {};
   const schedule = input.schedule;
   const terms = input.supplierTerms || [];
+  const existing = input.existing || null;
   const payments = buildFoPayments({
     supplierTerms: terms,
     schedule,
@@ -480,8 +523,8 @@ export function normalizeFoRecord(input: {
     eustRatePct: values.eustRatePct,
     fxRate: values.fxRate,
     incoterm: values.incoterm,
+    existingPayments: existing?.payments,
   });
-  const existing = input.existing || null;
   return {
     ...(existing || {}),
     id: String(values.id || existing?.id || randomId("fo")),
