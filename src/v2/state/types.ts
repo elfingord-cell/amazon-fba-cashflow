@@ -41,6 +41,8 @@ export interface ForecastState extends UnknownRecord {
   importSource?: string | null;
   importCadence?: "monthly";
   lastDriftSummary?: ForecastDriftSummary | null;
+  lastDriftReviewedAt?: string | null;
+  lastDriftReviewedComparedAt?: string | null;
 }
 
 export interface PoItem extends UnknownRecord {

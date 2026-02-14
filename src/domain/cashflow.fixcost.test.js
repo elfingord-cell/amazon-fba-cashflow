@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { expandFixcostInstances } from "./cashflow.js";
+import { computeSeries, expandFixcostInstances } from "./cashflow.js";
 import { createEmptyState, saveState, STORAGE_KEY } from "../data/storageLocal.js";
 
 const store = new Map();
@@ -168,4 +168,73 @@ test("saveState persists fixcost masters and overrides", () => {
   assert.strictEqual(parsed.fixcosts[0].name, "Miete");
   assert.strictEqual(parsed.fixcostOverrides["fc-store"]["2025-03"].amount, "3.000,00");
   assert.strictEqual(parsed.status.events["fix-fc-store-2025-03"].manual, true);
+});
+
+test("computeSeries treats FO milestones as plan-only and excludes converted/archived", () => {
+  const state = {
+    settings: {
+      startMonth: "2025-03",
+      horizonMonths: 2,
+      openingBalance: 0,
+      fxRate: 1,
+      vatRefundLagMonths: 2,
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [],
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [
+      {
+        id: "fo-active",
+        status: "ACTIVE",
+        orderDate: "2025-03-01",
+        prodDays: 0,
+        transitDays: 0,
+        payments: [
+          { id: "fo-active-pay", label: "Deposit", amount: 100, currency: "EUR", dueDate: "2025-03-05", triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        ],
+      },
+      {
+        id: "fo-planned",
+        status: "PLANNED",
+        orderDate: "2025-03-01",
+        prodDays: 0,
+        transitDays: 0,
+        payments: [
+          { id: "fo-planned-pay", label: "Deposit", amount: 50, currency: "EUR", dueDate: "2025-04-05", triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        ],
+      },
+      {
+        id: "fo-converted",
+        status: "CONVERTED",
+        orderDate: "2025-03-01",
+        payments: [
+          { id: "fo-converted-pay", label: "Deposit", amount: 999, currency: "EUR", dueDate: "2025-03-10", triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        ],
+      },
+      {
+        id: "fo-archived",
+        status: "ARCHIVED",
+        orderDate: "2025-03-01",
+        payments: [
+          { id: "fo-archived-pay", label: "Deposit", amount: 999, currency: "EUR", dueDate: "2025-03-10", triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        ],
+      },
+    ],
+  };
+
+  const report = computeSeries(state);
+  const march = report.series.find((entry) => entry.month === "2025-03");
+  const april = report.series.find((entry) => entry.month === "2025-04");
+  assert.ok(march);
+  assert.ok(april);
+  const marchFoEntries = march.entries.filter((entry) => entry.source === "fo");
+  const aprilFoEntries = april.entries.filter((entry) => entry.source === "fo");
+  assert.equal(marchFoEntries.length, 1);
+  assert.equal(aprilFoEntries.length, 1);
+  assert.equal(marchFoEntries[0].amount, 100);
+  assert.equal(aprilFoEntries[0].amount, 50);
+  assert.equal(marchFoEntries[0].paid, false);
+  assert.equal(aprilFoEntries[0].paid, false);
 });

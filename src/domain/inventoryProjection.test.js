@@ -112,6 +112,37 @@ test("projection resolves latest snapshot fallback and exposes PO/FO inbound det
   assert.equal(inbound.foItems[0].id, "fo-1");
 });
 
+test("projection counts only active FO statuses for inbound planning", () => {
+  const state = {
+    settings: { safetyStockDohDefault: 60 },
+    inventory: {
+      snapshots: [
+        {
+          month: "2026-01",
+          items: [{ sku: "SKU-A", amazonUnits: 100, threePLUnits: 0 }],
+        },
+      ],
+    },
+    forecast: { forecastManual: { "SKU-A": { "2026-02": 10 } } },
+    fos: [
+      { id: "fo-active", sku: "SKU-A", units: 20, targetDeliveryDate: "2026-02-02", status: "ACTIVE" },
+      { id: "fo-planned", sku: "SKU-A", units: 30, targetDeliveryDate: "2026-02-12", status: "PLANNED" },
+      { id: "fo-converted", sku: "SKU-A", units: 40, targetDeliveryDate: "2026-02-18", status: "CONVERTED" },
+      { id: "fo-archived", sku: "SKU-A", units: 50, targetDeliveryDate: "2026-02-24", status: "ARCHIVED" },
+    ],
+    products: [{ sku: "SKU-A", status: "active" }],
+  };
+
+  const projection = computeInventoryProjection({
+    state,
+    months: ["2026-02"],
+    products: state.products,
+    snapshotMonth: "2026-01",
+  });
+
+  assert.strictEqual(projection.inboundUnitsMap.get("SKU-A").get("2026-02"), 50);
+});
+
 test("running-month anchor rolls forward from previous snapshot", () => {
   const state = {
     settings: { safetyStockDohDefault: 60 },

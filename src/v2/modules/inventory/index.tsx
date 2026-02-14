@@ -147,6 +147,20 @@ interface MonthUrgencyData {
   criticalSkus: Set<string>;
 }
 
+interface FoWorklistEntry {
+  key: string;
+  sku: string;
+  alias: string;
+  abcClass: "A" | "B" | "C" | null;
+  month: string;
+  riskClass: "safety-negative" | "safety-low";
+  recommendedUnits: number;
+  requiredArrivalDate: string | null;
+  recommendedOrderDate: string | null;
+  priority: number;
+  intent: ProjectionActionIntent;
+}
+
 function ensureInventoryContainers(state: Record<string, unknown>): void {
   if (!state.inventory || typeof state.inventory !== "object") {
     state.inventory = {
@@ -348,6 +362,14 @@ function normalizeAbcClass(value: string | null | undefined): "A" | "B" | "C" | 
   const raw = String(value || "").trim().toUpperCase();
   if (raw === "A" || raw === "B" || raw === "C") return raw;
   return null;
+}
+
+function abcPriority(value: string | null | undefined): number {
+  const abc = normalizeAbcClass(value);
+  if (abc === "A") return 0;
+  if (abc === "B") return 1;
+  if (abc === "C") return 2;
+  return 3;
 }
 
 function matchesAbcFilter(abcClass: string | null, filter: ProjectionAbcFilter): boolean {
@@ -853,6 +875,48 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     return map;
   }, [projection, projectionMode, projectionMonthList, projectionRows, projectionMonths, recommendationContext, settings, state.products]);
 
+  const foWorklist = useMemo<FoWorklistEntry[]>(() => {
+    const entries = Array.from(firstRiskFoIntentByCellKey.values())
+      .map((intent) => {
+        const riskClass = getProjectionSafetyClass({
+          projectionMode,
+          endAvailable: intent.data.endAvailable,
+          safetyUnits: intent.data.safetyUnits,
+          doh: intent.data.doh,
+          safetyDays: intent.data.safetyDays,
+        }) as "" | "safety-negative" | "safety-low";
+        if (riskClass !== "safety-negative" && riskClass !== "safety-low") return null;
+        const abcClass = normalizeAbcClass(intent.row.abcClass);
+        const month = intent.month;
+        const monthRank = Number(String(month || "").replace("-", ""));
+        const riskBoost = riskClass === "safety-negative" ? -0.5 : 0;
+        const priority = (abcPriority(abcClass) * 1000) + (Number.isFinite(monthRank) ? monthRank : 999999) + riskBoost;
+        return {
+          key: `${intent.row.sku}|${intent.month}`,
+          sku: intent.row.sku,
+          alias: intent.row.alias,
+          abcClass,
+          month,
+          riskClass,
+          recommendedUnits: intent.recommendedUnits,
+          requiredArrivalDate: intent.requiredArrivalDate,
+          recommendedOrderDate: intent.recommendedOrderDate,
+          priority,
+          intent,
+        } satisfies FoWorklistEntry;
+      })
+      .filter(Boolean) as FoWorklistEntry[];
+
+    entries.sort((left, right) => {
+      if (left.priority !== right.priority) return left.priority - right.priority;
+      if (left.month !== right.month) return left.month.localeCompare(right.month);
+      const byUnits = Number(right.recommendedUnits || 0) - Number(left.recommendedUnits || 0);
+      if (byUnits !== 0) return byUnits;
+      return left.sku.localeCompare(right.sku, "de-DE", { sensitivity: "base" });
+    });
+    return entries;
+  }, [firstRiskFoIntentByCellKey, projectionMode]);
+
   useEffect(() => {
     if (selectedUrgencyMonth && !projectionMonthList.includes(selectedUrgencyMonth)) {
       setSelectedUrgencyMonth(null);
@@ -895,7 +959,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     setActionIntent(buildProjectionFoIntent(row, month, data, cellKey));
   }
 
-  function navigateToFoIntent(intent: ProjectionActionIntent | null): void {
+  function navigateToFoIntent(
+    intent: ProjectionActionIntent | null,
+    options?: { nextIntent?: ProjectionActionIntent | null },
+  ): void {
     if (!intent) return;
     const params = new URLSearchParams();
     params.set("source", "inventory_projection");
@@ -909,6 +976,19 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     }
     if (intent.recommendedOrderDate) {
       params.set("recommendedOrderDate", intent.recommendedOrderDate);
+    }
+    params.set("returnTo", "/v2/inventory/projektion");
+    const nextIntent = options?.nextIntent || null;
+    if (nextIntent) {
+      params.set("nextSku", nextIntent.row.sku);
+      params.set("nextMonth", nextIntent.month);
+      params.set("nextSuggestedUnits", String(nextIntent.recommendedUnits || 0));
+      if (nextIntent.requiredArrivalDate) {
+        params.set("nextRequiredArrivalDate", nextIntent.requiredArrivalDate);
+      }
+      if (nextIntent.recommendedOrderDate) {
+        params.set("nextRecommendedOrderDate", nextIntent.recommendedOrderDate);
+      }
     }
     navigate(`/v2/orders/fo?${params.toString()}`);
     setActionIntent(null);
@@ -1604,6 +1684,78 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
               <Tag className="v2-proj-legend">Inbound Marker: PO / FO</Tag>
               <Text type="secondary">`FO empfohlen` im ersten Risikomonat anklicken oder Zelle öffnen für FO-Anlage.</Text>
             </div>
+          </div>
+
+          <div className="v2-proj-worklist">
+            <div className="v2-proj-worklist-head">
+              <Space wrap>
+                <Text strong>FO-Arbeitsliste</Text>
+                <Tag color={foWorklist.length ? "gold" : "green"}>
+                  {foWorklist.length} SKU(s)
+                </Tag>
+                <Tag color="blue">Sortierung: A/B zuerst, frühester Risikomonat</Tag>
+              </Space>
+              {foWorklist.length ? (
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => navigateToFoIntent(foWorklist[0]?.intent || null, { nextIntent: foWorklist[1]?.intent || null })}
+                >
+                  Erste SKU öffnen
+                </Button>
+              ) : null}
+            </div>
+
+            {!foWorklist.length ? (
+              <Text type="secondary">Keine FO-Empfehlungen im aktuellen Filterumfang.</Text>
+            ) : (
+              <div className="v2-table-shell v2-scroll-host">
+                <table className="v2-stats-table" data-layout="auto">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>ABC</th>
+                      <th>Risikomonat</th>
+                      <th>Risiko</th>
+                      <th>Empfohlen</th>
+                      <th>ETA-Ziel</th>
+                      <th>Bestellen bis</th>
+                      <th>Aktion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {foWorklist.map((entry, index) => {
+                      const nextIntent = foWorklist[index + 1]?.intent || null;
+                      return (
+                        <tr key={entry.key}>
+                          <td>
+                            <div className="v2-proj-alias">
+                              <Text className="v2-proj-alias-main">{entry.alias || entry.sku}</Text>
+                              <Text className="v2-proj-sku-secondary" type="secondary">{entry.sku}</Text>
+                            </div>
+                          </td>
+                          <td>{entry.abcClass || "—"}</td>
+                          <td>{formatMonthLabel(entry.month)}</td>
+                          <td>
+                            {entry.riskClass === "safety-negative"
+                              ? <Tag color="red">OOS / ≤ 0</Tag>
+                              : <Tag color="gold">Unter Safety</Tag>}
+                          </td>
+                          <td>{formatInt(entry.recommendedUnits)}</td>
+                          <td>{formatDate(entry.requiredArrivalDate)}</td>
+                          <td>{formatDate(entry.recommendedOrderDate)}</td>
+                          <td>
+                            <Button size="small" type="primary" onClick={() => navigateToFoIntent(entry.intent, { nextIntent })}>
+                              FO öffnen
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="v2-category-tools" style={{ marginTop: 10 }}>

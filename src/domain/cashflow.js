@@ -237,6 +237,19 @@ function dueDateFromAnchor(monthKey, anchor) {
   return new Date(year, monthZero + 1, 0);
 }
 
+function normalizeFoStatus(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return 'DRAFT';
+  if (raw === 'PLANNED') return 'ACTIVE';
+  if (raw === 'CANCELLED') return 'ARCHIVED';
+  return raw;
+}
+
+function isActiveFoStatus(value) {
+  const status = normalizeFoStatus(value);
+  return status === 'DRAFT' || status === 'ACTIVE';
+}
+
 // Daily proration multiplies the share of active days in the start and end
 // months. When a contract begins or ends within the target month we scale the
 // base amount by the remaining/elapsed days, keeping mid-term months at 100 %.
@@ -970,7 +983,7 @@ export function computeSeries(state) {
 
   // FO-Events (Milestones & Importkosten)
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
-    if (String(fo?.status || "").toUpperCase() === "CONVERTED") return;
+    if (!isActiveFoStatus(fo?.status)) return;
     expandOrderEvents(fo, settingsNorm, 'FO', 'foNo').forEach(ev => {
       const m = ev.month; if (!bucket[m]) return;
       const kind = ev.type === 'manual' ? 'fo' : (ev.type === 'vat_refund' ? 'fo-refund' : 'fo-import');
@@ -997,7 +1010,7 @@ export function computeSeries(state) {
         percent: ev.percent,
         sourceNumber: ev.sourceNumber || fo.foNo,
         tooltip: ev.tooltip,
-      }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
+      }, { auto: false, autoEligible: false, defaultPaid: false }));
     });
   });
 

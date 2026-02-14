@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PO_ANCHORS = exports.PAYMENT_CURRENCIES = exports.PAYMENT_TRIGGERS = exports.INCOTERMS = exports.TRANSPORT_MODES = exports.FO_STATUS_VALUES = void 0;
+exports.normalizeFoStatus = normalizeFoStatus;
+exports.isFoPlanningStatus = isFoPlanningStatus;
+exports.isFoConvertibleStatus = isFoConvertibleStatus;
 exports.randomId = randomId;
 exports.nowIso = nowIso;
 exports.convertToEur = convertToEur;
@@ -15,6 +18,7 @@ exports.buildFoPayments = buildFoPayments;
 exports.sumSupplierPercent = sumSupplierPercent;
 exports.normalizeFoRecord = normalizeFoRecord;
 exports.createPoFromFo = createPoFromFo;
+exports.createPoFromFos = createPoFromFos;
 exports.buildPlannedSalesBySku = buildPlannedSalesBySku;
 exports.buildClosingStockBySku = buildClosingStockBySku;
 exports.buildInboundBySku = buildInboundBySku;
@@ -23,12 +27,32 @@ exports.resolveProductBySku = resolveProductBySku;
 exports.computeFoRecommendationForSku = computeFoRecommendationForSku;
 const dataHealth_js_1 = require("../../lib/dataHealth.js");
 const foSuggestion_js_1 = require("../../domain/foSuggestion.js");
-exports.FO_STATUS_VALUES = ["DRAFT", "PLANNED", "CONVERTED", "CANCELLED"];
+exports.FO_STATUS_VALUES = ["DRAFT", "ACTIVE", "CONVERTED", "ARCHIVED"];
+const FO_LEGACY_STATUS_MAP = {
+    PLANNED: "ACTIVE",
+    CANCELLED: "ARCHIVED",
+};
 exports.TRANSPORT_MODES = ["SEA", "RAIL", "AIR"];
 exports.INCOTERMS = ["EXW", "DDP"];
 exports.PAYMENT_TRIGGERS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA", "DELIVERY"];
 exports.PAYMENT_CURRENCIES = ["EUR", "USD", "CNY"];
 exports.PO_ANCHORS = ["ORDER_DATE", "PROD_DONE", "ETD", "ETA"];
+function normalizeFoStatus(value, fallback = "DRAFT") {
+    const raw = String(value || "").trim().toUpperCase();
+    if (!raw)
+        return fallback;
+    if (exports.FO_STATUS_VALUES.includes(raw)) {
+        return raw;
+    }
+    return FO_LEGACY_STATUS_MAP[raw] || fallback;
+}
+function isFoPlanningStatus(value) {
+    const normalized = normalizeFoStatus(value);
+    return normalized === "DRAFT" || normalized === "ACTIVE";
+}
+function isFoConvertibleStatus(value) {
+    return isFoPlanningStatus(value);
+}
 function mergeExistingPaymentState(generated, existingPayments) {
     const existingList = Array.isArray(existingPayments)
         ? existingPayments
@@ -45,16 +69,6 @@ function mergeExistingPaymentState(generated, existingPayments) {
             dueDate: existing.dueDateManuallySet ? String(existing.dueDate || row.dueDate || "") : row.dueDate,
             dueDateManuallySet: existing.dueDateManuallySet === true ? true : row.dueDateManuallySet,
             isOverridden: existing.isOverridden === true ? true : row.isOverridden,
-            status: existing.status ? String(existing.status) : undefined,
-            paidDate: existing.paidDate ? String(existing.paidDate) : undefined,
-            paymentId: existing.paymentId ? String(existing.paymentId) : undefined,
-            paidEurActual: Number.isFinite(Number(existing.paidEurActual)) ? Number(existing.paidEurActual) : undefined,
-            paidUsdActual: Number.isFinite(Number(existing.paidUsdActual)) ? Number(existing.paidUsdActual) : undefined,
-            paidBy: existing.paidBy ? String(existing.paidBy) : undefined,
-            method: existing.method ? String(existing.method) : undefined,
-            note: existing.note ? String(existing.note) : undefined,
-            invoiceDriveUrl: existing.invoiceDriveUrl ? String(existing.invoiceDriveUrl) : undefined,
-            invoiceFolderDriveUrl: existing.invoiceFolderDriveUrl ? String(existing.invoiceFolderDriveUrl) : undefined,
         };
     });
 }
@@ -411,6 +425,7 @@ function buildFoPayments(input) {
         };
     });
     const incoterm = String(input.incoterm || "EXW").toUpperCase();
+    const vatRefundLagMonths = Math.max(0, Math.round(asPositive(input.vatRefundLagMonths, 2)));
     const rows = [...supplierRows];
     if (incoterm !== "DDP" && costValues.freightAmount > 0) {
         rows.push({
@@ -469,8 +484,8 @@ function buildFoPayments(input) {
             currency: "EUR",
             triggerEvent: "ETA",
             offsetDays: 0,
-            offsetMonths: 2,
-            dueDate: resolveDueDate("ETA", 0, 2, scheduleDates),
+            offsetMonths: vatRefundLagMonths,
+            dueDate: resolveDueDate("ETA", 0, vatRefundLagMonths, scheduleDates),
             category: "eust_refund",
             isOverridden: false,
             dueDateManuallySet: false,
@@ -499,6 +514,7 @@ function normalizeFoRecord(input) {
         eustRatePct: values.eustRatePct,
         fxRate: values.fxRate,
         incoterm: values.incoterm,
+        vatRefundLagMonths: input.vatRefundLagMonths,
         existingPayments: existing?.payments,
     });
     return {
@@ -529,7 +545,7 @@ function normalizeFoRecord(input) {
         etaDate: schedule.etaDate,
         deliveryDate: schedule.deliveryDate,
         payments,
-        status: String(values.status || "DRAFT").toUpperCase(),
+        status: normalizeFoStatus(values.status, "DRAFT"),
         convertedPoId: values.convertedPoId || existing?.convertedPoId || null,
         convertedPoNo: values.convertedPoNo || existing?.convertedPoNo || null,
         createdAt: existing?.createdAt || now,
@@ -553,7 +569,7 @@ function createPoFromFo(input) {
         : defaultTerms();
     const overrideOrderDate = input.orderDateOverride || fo.orderDate || null;
     const orderDate = parseIsoDate(overrideOrderDate) ? String(overrideOrderDate) : null;
-    return {
+    const poRecord = {
         id: randomId("po"),
         poNo,
         sku: String(fo.sku || ""),
@@ -578,6 +594,94 @@ function createPoFromFo(input) {
             anchor: mapPaymentAnchor(normaliseTrigger(payment.triggerEvent)),
             lagDays: asNumber(payment.offsetDays, 0),
         })),
+        sourceFoIds: [String(fo.id || "")].filter(Boolean),
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+    };
+    return poRecord;
+}
+function resolveOrderDateForFoMerge(input) {
+    const orderOverride = parseIsoDate(input.orderDateOverride);
+    if (orderOverride)
+        return toIsoDate(orderOverride);
+    const target = parseIsoDate(input.targetDeliveryDate);
+    if (target) {
+        const leadDays = Math.max(0, Math.round(Number(input.maxProdDays || 0) + Number(input.maxTransitDays || 0)));
+        return toIsoDate(addDays(target, -leadDays));
+    }
+    const fallback = parseIsoDate(input.fallbackOrderDate);
+    return fallback ? toIsoDate(fallback) : null;
+}
+function sanitizeFoForPoItem(foRaw) {
+    const productionLead = asPositive(foRaw.productionLeadTimeDays, 0);
+    const bufferDays = asPositive(foRaw.bufferDays, 0);
+    return {
+        id: randomId("poi"),
+        sku: String(foRaw.sku || "").trim(),
+        units: asPositive(foRaw.units, 0),
+        unitCostUsd: asPositive(foRaw.unitPrice, 0),
+        unitExtraUsd: 0,
+        extraFlatUsd: 0,
+        prodDays: Math.max(0, Math.round(productionLead + bufferDays)),
+        transitDays: Math.max(0, Math.round(asPositive(foRaw.logisticsLeadTimeDays, 0))),
+        freightEur: convertToEur(foRaw.freight, foRaw.freightCurrency, foRaw.fxRate),
+    };
+}
+function createPoFromFos(input) {
+    const fos = Array.isArray(input.fos) ? input.fos.filter(Boolean) : [];
+    if (!fos.length) {
+        throw new Error("Keine FOs fuer Merge vorhanden.");
+    }
+    const firstFo = fos[0];
+    const supplierIds = Array.from(new Set(fos.map((fo) => String(fo?.supplierId || "").trim()).filter(Boolean)));
+    if (supplierIds.length > 1) {
+        throw new Error("FO-Merge erlaubt nur einen gemeinsamen Lieferanten.");
+    }
+    const poNo = String(input.poNumber || "").trim();
+    const items = fos.map((fo) => sanitizeFoForPoItem(fo));
+    const maxProdDays = items.reduce((best, item) => Math.max(best, Number(item.prodDays || 0)), 0);
+    const maxTransitDays = items.reduce((best, item) => Math.max(best, Number(item.transitDays || 0)), 0);
+    const orderDate = resolveOrderDateForFoMerge({
+        orderDateOverride: input.orderDateOverride,
+        targetDeliveryDate: input.targetDeliveryDate,
+        maxProdDays,
+        maxTransitDays,
+        fallbackOrderDate: String(firstFo.orderDate || ""),
+    });
+    const supplierMilestones = Array.isArray(firstFo.payments)
+        ? firstFo.payments.filter((payment) => String(payment?.category || "") === "supplier")
+        : [];
+    const milestoneDefaults = supplierMilestones.length ? supplierMilestones : defaultTerms();
+    const unitsTotal = items.reduce((sum, item) => sum + Number(item.units || 0), 0);
+    const freightTotal = items.reduce((sum, item) => sum + Number(item.freightEur || 0), 0);
+    return {
+        id: randomId("po"),
+        poNo,
+        supplierId: String(firstFo.supplierId || ""),
+        sku: String(firstFo.sku || ""),
+        items,
+        units: Math.max(0, Math.round(unitsTotal)),
+        unitCostUsd: asPositive(firstFo.unitPrice, 0),
+        unitExtraUsd: 0,
+        extraFlatUsd: 0,
+        orderDate,
+        prodDays: maxProdDays,
+        transitDays: maxTransitDays,
+        transport: String(firstFo.transportMode || "SEA").toLowerCase(),
+        freightEur: Math.max(0, Math.round(freightTotal * 100) / 100),
+        dutyRatePct: asPositive(firstFo.dutyRatePct, 0),
+        eustRatePct: asPositive(firstFo.eustRatePct, 0),
+        fxOverride: asPositive(firstFo.fxRate, 0) || null,
+        ddp: String(firstFo.incoterm || "").toUpperCase() === "DDP",
+        etaManual: parseIsoDate(input.targetDeliveryDate) ? String(input.targetDeliveryDate) : null,
+        milestones: milestoneDefaults.map((payment) => ({
+            id: String(payment.id || randomId("ms")),
+            label: String(payment.label || "Milestone"),
+            percent: asPositive(payment.percent, 0),
+            anchor: mapPaymentAnchor(normaliseTrigger(payment.triggerEvent)),
+            lagDays: asNumber(payment.offsetDays, 0),
+        })),
+        sourceFoIds: fos.map((fo) => String(fo.id || "")).filter(Boolean),
         createdAt: nowIso(),
         updatedAt: nowIso(),
     };
@@ -696,8 +800,7 @@ function buildInboundBySku(state) {
     });
     const fos = Array.isArray(state?.fos) ? state.fos : [];
     fos.forEach((fo) => {
-        const status = String(fo?.status || "").toUpperCase();
-        if (status === "CANCELLED" || status === "CONVERTED")
+        if (!isFoPlanningStatus(fo?.status))
             return;
         const arrival = resolveInboundArrivalDate(fo);
         if (!arrival) {

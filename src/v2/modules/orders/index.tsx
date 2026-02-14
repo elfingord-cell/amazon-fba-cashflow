@@ -55,9 +55,9 @@ export default function OrdersModule(): JSX.Element {
       <Card style={{ marginBottom: 12 }}>
         <div className="v2-page-head">
           <div>
-            <Title level={5}>Zahlungsprotokoll (PO + FO)</Title>
+            <Title level={5}>Zahlungsprotokoll (PO-Ist)</Title>
             <Paragraph>
-              Letzte verbuchte Zahlungen aus beiden Bereichen mit Payment-ID, Betrag, Methode und Abdeckung.
+              Tatsächlich bestätigte Zahlungen werden nur auf POs gebucht. FOs bleiben Planobjekte.
             </Paragraph>
           </div>
         </div>

@@ -49,10 +49,44 @@ interface AuthFormValues {
 interface RouteErrorBoundaryProps {
   children: ReactNode;
   resetKey: string;
+  routeKey: string;
+  routePath: string;
+  routeLabel: string;
 }
 
 interface RouteErrorBoundaryState {
   error: Error | null;
+}
+
+const ROUTE_ERROR_STORAGE_KEY = "v2:last-route-error";
+
+function saveRouteRuntimeError(payload: {
+  routeKey: string;
+  routePath: string;
+  routeLabel: string;
+  message: string;
+}): void {
+  if (typeof window === "undefined" || !window.sessionStorage) return;
+  const entry = {
+    ...payload,
+    errorAt: new Date().toISOString(),
+  };
+  try {
+    window.sessionStorage.setItem(ROUTE_ERROR_STORAGE_KEY, JSON.stringify(entry));
+  } catch {
+    // noop
+  }
+  window.dispatchEvent(new CustomEvent("v2:route-load-state", { detail: { stable: false, ...entry } }));
+}
+
+function clearRouteRuntimeError(): void {
+  if (typeof window === "undefined" || !window.sessionStorage) return;
+  try {
+    window.sessionStorage.removeItem(ROUTE_ERROR_STORAGE_KEY);
+  } catch {
+    // noop
+  }
+  window.dispatchEvent(new CustomEvent("v2:route-load-state", { detail: { stable: true } }));
 }
 
 class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBoundaryState> {
@@ -62,9 +96,28 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
     return { error };
   }
 
+  componentDidCatch(error: Error): void {
+    saveRouteRuntimeError({
+      routeKey: this.props.routeKey,
+      routePath: this.props.routePath,
+      routeLabel: this.props.routeLabel,
+      message: error?.message || "Unbekannter Ladefehler",
+    });
+  }
+
+  componentDidMount(): void {
+    if (!this.state.error) {
+      clearRouteRuntimeError();
+    }
+  }
+
   componentDidUpdate(prevProps: RouteErrorBoundaryProps): void {
     if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
       this.setState({ error: null });
+      return;
+    }
+    if (prevProps.resetKey !== this.props.resetKey && !this.state.error) {
+      clearRouteRuntimeError();
     }
   }
 
@@ -75,7 +128,30 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
           type="error"
           showIcon
           message="Tab konnte nicht geladen werden"
-          description={this.state.error.message || "Unbekannter Fehler beim Laden dieses Tabs."}
+          description={(
+            <Space direction="vertical" size={8}>
+              <Text>Modul: {this.props.routeLabel} ({this.props.routeKey})</Text>
+              <Text type="secondary">Route: /v2/{this.props.routePath}</Text>
+              <Text type="secondary">{this.state.error.message || "Unbekannter Fehler beim Laden dieses Tabs."}</Text>
+              <Space wrap>
+                <Button size="small" onClick={() => window.location.reload()}>
+                  Tab neu laden
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    if (window.location.hash.startsWith("#")) {
+                      window.location.hash = "/v2/dashboard";
+                      return;
+                    }
+                    window.location.assign("/#/v2/dashboard");
+                  }}
+                >
+                  Zum Dashboard
+                </Button>
+              </Space>
+            </Space>
+          )}
         />
       );
     }
@@ -546,7 +622,12 @@ export function V2Routes(): JSX.Element {
             key={route.key}
             path={route.path}
             element={(
-              <RouteErrorBoundary resetKey={route.key}>
+              <RouteErrorBoundary
+                resetKey={route.key}
+                routeKey={route.key}
+                routePath={route.path}
+                routeLabel={route.label}
+              >
                 <Suspense fallback={<Alert type="info" showIcon message="Tab wird geladen..." />}>
                   <route.Component />
                 </Suspense>

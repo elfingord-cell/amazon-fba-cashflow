@@ -198,6 +198,7 @@ function createParityState() {
         foNumber: "FO-2001",
         supplierId: "sup-a",
         sku: "SKU-A",
+        status: "ACTIVE",
         fxRate: 1.2,
         payments: [
           { id: "fo1-pay-dep", label: "Deposit", category: "supplier", amount: 240, currency: "USD", dueDate: "2025-03-18" },
@@ -210,9 +211,21 @@ function createParityState() {
         foNumber: "FO-2002",
         supplierId: "sup-b",
         sku: "SKU-B",
+        status: "CONVERTED",
         fxRate: 1.0,
         payments: [
           { id: "fo2-pay-dep", label: "Deposit", category: "supplier", amount: 120, currency: "EUR", dueDate: "2025-04-10" },
+        ],
+      },
+      {
+        id: "fo-3",
+        foNumber: "FO-2003",
+        supplierId: "sup-a",
+        sku: "SKU-C",
+        status: "PLANNED",
+        fxRate: 1.0,
+        payments: [
+          { id: "fo3-pay-dep", label: "Deposit", category: "supplier", amount: 80, currency: "EUR", dueDate: "2025-04-05" },
         ],
       },
     ],
@@ -228,7 +241,7 @@ async function buildLegacyRows(state, filters) {
   );
 }
 
-test("po/fo payment parity: row snapshots match legacy for scope and month filters", async () => {
+test("po payment parity remains aligned with legacy snapshots", async () => {
   const state = createParityState();
   const filters = [
     { scope: "both" },
@@ -243,35 +256,30 @@ test("po/fo payment parity: row snapshots match legacy for scope and month filte
       buildLegacyRows(state, filter),
       Promise.resolve(buildV2PaymentJournalRowsFromState(state, filter)),
     ]);
+    const legacyPoRows = legacyRows.filter((row) => String(row.entityType || "") === "PO");
+    const v2PoRows = v2Rows.filter((row) => String(row.entityType || "") === "PO");
 
     assert.deepEqual(
-      normalizeRows(v2Rows),
-      normalizeRows(legacyRows),
-      `row mismatch for filter ${JSON.stringify(filter)}`,
+      normalizeRows(v2PoRows),
+      normalizeRows(legacyPoRows),
+      `PO row mismatch for filter ${JSON.stringify(filter)}`,
     );
   }
 });
 
-test("po/fo payment parity: summed PO/FO totals stay aligned with legacy", async () => {
+test("fo payment journal is planning-only (open) and excludes converted/archived", async () => {
   const state = createParityState();
-  const filters = [
-    { scope: "both" },
-    { scope: "open" },
-    { scope: "paid" },
-    { scope: "both", month: "2025-02" },
-    { scope: "both", month: "2025-04" },
-  ];
+  const rowsBoth = buildV2PaymentJournalRowsFromState(state, { scope: "both" });
+  const foRows = rowsBoth.filter((row) => row.entityType === "FO");
+  assert.ok(foRows.length > 0, "expected FO plan rows");
+  assert.ok(foRows.every((row) => row.status === "OPEN"), "FO rows must stay OPEN");
+  assert.ok(foRows.every((row) => !row.paymentId), "FO rows must not expose payment IDs");
+  assert.ok(foRows.every((row) => row.amountActualEur == null), "FO rows must not have actual EUR amounts");
 
-  for (const filter of filters) {
-    const [legacyRows, v2Rows] = await Promise.all([
-      buildLegacyRows(state, filter),
-      Promise.resolve(buildV2PaymentJournalRowsFromState(state, filter)),
-    ]);
+  const paidRows = buildV2PaymentJournalRowsFromState(state, { scope: "paid" });
+  assert.equal(paidRows.filter((row) => row.entityType === "FO").length, 0, "FO rows must not appear in paid scope");
 
-    assert.deepEqual(
-      summarizeRows(v2Rows),
-      summarizeRows(legacyRows),
-      `summary mismatch for filter ${JSON.stringify(filter)}`,
-    );
-  }
+  const aprilRows = buildV2PaymentJournalRowsFromState(state, { scope: "both", month: "2025-04" });
+  const aprilFoIds = aprilRows.filter((row) => row.entityType === "FO").map((row) => row.internalId);
+  assert.deepEqual(aprilFoIds, ["fo-3"], "legacy PLANNED should be treated as active; converted FO must be excluded");
 });

@@ -92,10 +92,17 @@ function resolveFoArrival(fo) {
   return parseISODate(fo?.targetDeliveryDate || fo?.deliveryDate || fo?.etaDate);
 }
 
+function normalizeFoStatus(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "DRAFT";
+  if (raw === "PLANNED") return "ACTIVE";
+  if (raw === "CANCELLED") return "ARCHIVED";
+  return raw;
+}
+
 function isFoCountable(fo) {
-  const status = String(fo?.status || "").toUpperCase();
-  if (status === "CONVERTED" || status === "CANCELLED") return false;
-  return true;
+  const status = normalizeFoStatus(fo?.status);
+  return status === "DRAFT" || status === "ACTIVE";
 }
 
 function getForecastUnits(state, sku, month) {

@@ -602,6 +602,24 @@
   gap: 8px;
 }
 
+.v2-proj-worklist {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.78);
+  padding: 10px;
+}
+
+.v2-proj-worklist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .v2-proj-filter-row {
   gap: 8px;
 }
@@ -656,6 +674,22 @@
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.v2-bulk-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.v2-bulk-field-row {
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) auto minmax(180px, 220px);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.8);
+  padding: 8px 10px;
 }
 
 .v2-proj-legend--low {
@@ -846,10 +880,14 @@
 
 .v2-category-collapse .ant-collapse-item {
   border-color: rgba(15, 27, 45, 0.08) !important;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .v2-category-collapse .ant-collapse-header {
   padding: 10px 12px !important;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .v2-category-collapse .ant-collapse-content-box {
@@ -880,14 +918,17 @@
 }
 
 .v2-products-grid-host {
+  display: block;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  contain: inline-size;
 }
 
 .v2-products-grid-host .v2-products-grid-wrap {
+  display: block;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -947,6 +988,10 @@
 
 @media (max-width: 1024px) {
   .v2-proj-cluster-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-bulk-field-row {
     grid-template-columns: 1fr;
   }
 
@@ -1141,11 +1186,27 @@
 .v2-dashboard-signal-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .v2-dashboard-signal-card .ant-card-body {
   display: grid;
+  gap: 8px;
+}
+
+.v2-dashboard-readiness-card .ant-statistic-content {
+  font-size: 24px;
+}
+
+.v2-dashboard-readiness-blockers {
+  display: grid;
+  gap: 6px;
+}
+
+.v2-dashboard-readiness-blocker-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
 }
 

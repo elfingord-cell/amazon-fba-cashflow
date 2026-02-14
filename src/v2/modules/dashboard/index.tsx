@@ -27,6 +27,7 @@ import {
   type DashboardRobustMonth,
   type RobustnessCheckResult,
 } from "../../domain/dashboardRobustness";
+import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
@@ -83,6 +84,20 @@ interface SeriesResult {
       avgPayoutDeltaPct?: number | null;
     };
   };
+}
+
+interface RuntimeRouteErrorMeta {
+  errorAt: string | null;
+  routeKey: string | null;
+  routePath: string | null;
+  routeLabel: string | null;
+  message: string | null;
+}
+
+const ROUTE_ERROR_STORAGE_KEY = "v2:last-route-error";
+
+function nowIso(): string {
+  return new Date().toISOString();
 }
 
 interface SimulatedBreakdownRow extends DashboardBreakdownRow {
@@ -377,6 +392,46 @@ function normalizeForecastDriftSummary(value: unknown): {
   };
 }
 
+function readRuntimeRouteErrorMeta(): RuntimeRouteErrorMeta {
+  if (typeof window === "undefined" || !window.sessionStorage) {
+    return {
+      errorAt: null,
+      routeKey: null,
+      routePath: null,
+      routeLabel: null,
+      message: null,
+    };
+  }
+  try {
+    const raw = window.sessionStorage.getItem(ROUTE_ERROR_STORAGE_KEY);
+    if (!raw) {
+      return {
+        errorAt: null,
+        routeKey: null,
+        routePath: null,
+        routeLabel: null,
+        message: null,
+      };
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      errorAt: typeof parsed.errorAt === "string" ? parsed.errorAt : null,
+      routeKey: typeof parsed.routeKey === "string" ? parsed.routeKey : null,
+      routePath: typeof parsed.routePath === "string" ? parsed.routePath : null,
+      routeLabel: typeof parsed.routeLabel === "string" ? parsed.routeLabel : null,
+      message: typeof parsed.message === "string" ? parsed.message : null,
+    };
+  } catch {
+    return {
+      errorAt: null,
+      routeKey: null,
+      routePath: null,
+      routeLabel: null,
+      message: null,
+    };
+  }
+}
+
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
@@ -387,6 +442,7 @@ export default function DashboardModule(): JSX.Element {
   const [simMonth, setSimMonth] = useState<string>("");
   const [simAmount, setSimAmount] = useState<number | null>(null);
   const [simLabel, setSimLabel] = useState<string>("");
+  const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
 
   const stateObject = state as unknown as Record<string, unknown>;
   const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [state]);
@@ -417,6 +473,15 @@ export default function DashboardModule(): JSX.Element {
       months: visibleMonths,
     });
   }, [stateObject, visibleMonths]);
+
+  const readiness = useMemo(() => {
+    return buildReadinessGate({
+      state: stateObject,
+      horizonMonths: 12,
+      runtimeErrorAt: runtimeRouteError.errorAt,
+      runtimeErrorRoute: runtimeRouteError.routePath,
+    });
+  }, [runtimeRouteError.errorAt, runtimeRouteError.routePath, stateObject]);
 
   useEffect(() => {
     if (!robustness.months.length) {
@@ -516,6 +581,18 @@ export default function DashboardModule(): JSX.Element {
     : {};
   const lastImportAt = typeof forecast.lastImportAt === "string" ? forecast.lastImportAt : null;
   const driftSummary = normalizeForecastDriftSummary(forecast.lastDriftSummary);
+  const driftReviewedComparedAt = typeof forecast.lastDriftReviewedComparedAt === "string"
+    ? forecast.lastDriftReviewedComparedAt
+    : null;
+  const driftReviewedAt = typeof forecast.lastDriftReviewedAt === "string"
+    ? forecast.lastDriftReviewedAt
+    : null;
+  const driftReviewedForCurrent = Boolean(
+    driftSummary.comparedAt
+    && driftReviewedComparedAt
+    && driftReviewedComparedAt === driftSummary.comparedAt
+    && driftReviewedAt,
+  );
   const importDate = lastImportAt ? new Date(lastImportAt) : null;
   const now = new Date();
   const msPerDay = 24 * 60 * 60 * 1000;
@@ -542,6 +619,17 @@ export default function DashboardModule(): JSX.Element {
   const actionFocusMonth = useMemo(() => {
     return robustness.months.find((entry) => !entry.robust)?.month || selectedMonth || visibleMonths[0] || null;
   }, [robustness.months, selectedMonth, visibleMonths]);
+
+  useEffect(() => {
+    const refreshRuntimeRouteError = () => setRuntimeRouteError(readRuntimeRouteErrorMeta());
+    refreshRuntimeRouteError();
+    window.addEventListener("v2:route-load-state", refreshRuntimeRouteError as EventListener);
+    window.addEventListener("storage", refreshRuntimeRouteError);
+    return () => {
+      window.removeEventListener("v2:route-load-state", refreshRuntimeRouteError as EventListener);
+      window.removeEventListener("storage", refreshRuntimeRouteError);
+    };
+  }, []);
 
   const pnlRowsByMonth = useMemo(
     () => buildDashboardPnlRowsByMonth({ breakdown: visibleBreakdown, state: stateObject }),
@@ -945,6 +1033,21 @@ export default function DashboardModule(): JSX.Element {
     setSimLabel("");
   }
 
+  async function markDriftReviewed(): Promise<void> {
+    if (!driftSummary.comparedAt) return;
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const stateDraft = next as unknown as Record<string, unknown>;
+      if (!stateDraft.forecast || typeof stateDraft.forecast !== "object") {
+        stateDraft.forecast = {};
+      }
+      const forecastDraft = stateDraft.forecast as Record<string, unknown>;
+      forecastDraft.lastDriftReviewedAt = nowIso();
+      forecastDraft.lastDriftReviewedComparedAt = driftSummary.comparedAt;
+      return next;
+    }, "v2:dashboard:forecast-drift-reviewed");
+  }
+
   const executiveFlag = ((state.settings as Record<string, unknown> | undefined)?.featureFlags as Record<string, unknown> | undefined)?.executiveDashboardV2;
   const executiveEnabled = executiveFlag !== false;
 
@@ -995,6 +1098,36 @@ export default function DashboardModule(): JSX.Element {
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <div className="v2-dashboard-signal-grid">
+        <Card className="v2-dashboard-signal-card v2-dashboard-readiness-card">
+          <Statistic
+            title={signalTitle(
+              "Readiness Gate",
+              "Go/No-Go vor großer Datenpflege. Alle Checks müssen grün sein.",
+            )}
+            value={readiness.ready ? "Bereit" : "Nicht bereit"}
+          />
+          <Space wrap>
+            <Tag color={readiness.ready ? "green" : "red"}>
+              {readiness.ready ? "Go" : "No-Go"}
+            </Tag>
+            <Tag color={readiness.ready ? "green" : "gold"}>
+              {readiness.robustMonthsCount}/{readiness.robustRequiredCount} robuste Monate
+            </Tag>
+          </Space>
+          {!readiness.ready && readiness.blockers.length ? (
+            <div className="v2-dashboard-readiness-blockers">
+              {readiness.blockers.slice(0, 2).map((blocker) => (
+                <div key={blocker.id} className="v2-dashboard-readiness-blocker-item">
+                  <Text type="secondary">{blocker.label}: {blocker.message}</Text>
+                  <Button size="small" onClick={() => navigate(blocker.route)}>Öffnen</Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Text type="secondary">Alle Gate-Checks erfüllt.</Text>
+          )}
+        </Card>
+
         <Card className="v2-dashboard-signal-card">
           <Statistic
             title={signalTitle(
@@ -1128,6 +1261,21 @@ export default function DashboardModule(): JSX.Element {
             <Paragraph type="secondary">
               Monatlicher Import mit Drift-Alarm (A/B Fokus, Profil: {driftSummary.thresholdProfile}).
             </Paragraph>
+            <Space wrap style={{ marginBottom: 8 }}>
+              <Tag color={driftReviewedForCurrent ? "green" : "gold"}>
+                Drift-Review: {driftReviewedForCurrent ? "geprüft" : "offen"}
+              </Tag>
+              {driftReviewedAt ? (
+                <Tag>Geprüft am: {new Date(driftReviewedAt).toLocaleDateString("de-DE")}</Tag>
+              ) : null}
+              <Button
+                size="small"
+                onClick={() => { void markDriftReviewed(); }}
+                disabled={!driftSummary.comparedAt || driftReviewedForCurrent || saving}
+              >
+                Drift geprüft
+              </Button>
+            </Space>
             <div className="v2-dashboard-forecast-ops">
               <div>Flagged SKUs: <strong>{formatNumber(driftSummary.flaggedSkuCount, 0)}</strong></div>
               <div>Flagged A/B: <strong>{formatNumber(driftSummary.flaggedABCount, 0)}</strong></div>

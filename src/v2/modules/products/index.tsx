@@ -97,6 +97,44 @@ interface ProductDraft {
   templateDdp: boolean;
 }
 
+interface BulkEditDraft {
+  scope: "filtered" | "selected";
+  selectedSkus: string[];
+  applyTemplateUnitPriceUsd: boolean;
+  templateUnitPriceUsd: number | null;
+  applyAvgSellingPriceGrossEUR: boolean;
+  avgSellingPriceGrossEUR: number | null;
+  applySellerboardMarginPct: boolean;
+  sellerboardMarginPct: number | null;
+  applyMoqUnits: boolean;
+  moqUnits: number | null;
+  applyProductionLeadTimeDaysDefault: boolean;
+  productionLeadTimeDaysDefault: number | null;
+  applyTemplateTransitDays: boolean;
+  templateTransitDays: number | null;
+  applyTemplateDdp: boolean;
+  templateDdp: boolean;
+}
+
+const BULK_EDIT_INITIAL: BulkEditDraft = {
+  scope: "filtered",
+  selectedSkus: [],
+  applyTemplateUnitPriceUsd: false,
+  templateUnitPriceUsd: null,
+  applyAvgSellingPriceGrossEUR: false,
+  avgSellingPriceGrossEUR: null,
+  applySellerboardMarginPct: false,
+  sellerboardMarginPct: null,
+  applyMoqUnits: false,
+  moqUnits: null,
+  applyProductionLeadTimeDaysDefault: false,
+  productionLeadTimeDaysDefault: null,
+  applyTemplateTransitDays: false,
+  templateTransitDays: null,
+  applyTemplateDdp: false,
+  templateDdp: true,
+};
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -231,13 +269,16 @@ export default function ProductsModule(): JSX.Element {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "prelaunch" | "inactive">("all");
   const [issueFilter, setIssueFilter] = useState<ProductIssueFilter>("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [logisticsManualOverride, setLogisticsManualOverride] = useState(false);
   const [advancedOpenKeys, setAdvancedOpenKeys] = useState<string[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("products"));
   const [expandFromQuery, setExpandFromQuery] = useState(false);
   const [form] = Form.useForm<ProductDraft>();
+  const [bulkForm] = Form.useForm<BulkEditDraft>();
   const draftValues = Form.useWatch([], form) as ProductDraft | undefined;
+  const bulkDraftValues = Form.useWatch([], bulkForm) as BulkEditDraft | undefined;
   const stateObject = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
   const displayNameMap = useMemo(() => readCollaborationDisplayNames(settings), [settings]);
@@ -348,6 +389,27 @@ export default function ProductsModule(): JSX.Element {
       }));
     return sortCategoryGroups(mapped, categoryOrderMap);
   }, [categoryLabelById, categoryOrderMap, rows]);
+
+  const bulkCandidateRows = useMemo(
+    () => rows.filter((row) => row.status === "active" || row.status === "prelaunch"),
+    [rows],
+  );
+
+  const bulkSkuOptions = useMemo(
+    () => bulkCandidateRows.map((row) => ({ value: row.sku, label: `${row.alias || row.sku} · ${row.sku}` })),
+    [bulkCandidateRows],
+  );
+
+  const bulkDraft = bulkDraftValues || BULK_EDIT_INITIAL;
+  const bulkTargetSkus = useMemo(() => {
+    if (bulkDraft.scope === "selected") {
+      const validSkuSet = new Set(bulkCandidateRows.map((row) => row.sku));
+      return (Array.isArray(bulkDraft.selectedSkus) ? bulkDraft.selectedSkus : [])
+        .map((sku) => String(sku || "").trim())
+        .filter((sku) => sku && validSkuSet.has(sku));
+    }
+    return bulkCandidateRows.map((row) => row.sku);
+  }, [bulkCandidateRows, bulkDraft.scope, bulkDraft.selectedSkus]);
 
   useEffect(() => {
     setExpandedCategories((current) => {
@@ -758,6 +820,134 @@ export default function ProductsModule(): JSX.Element {
     setModalOpen(true);
   }
 
+  function openBulkModal(): void {
+    bulkForm.setFieldsValue({
+      ...BULK_EDIT_INITIAL,
+      scope: "filtered",
+      selectedSkus: bulkCandidateRows.map((row) => row.sku),
+    });
+    setBulkModalOpen(true);
+  }
+
+  function extractTemplateAndFields(product: Record<string, unknown>): {
+    template: Record<string, unknown>;
+    fields: Record<string, unknown>;
+  } {
+    const templateSource = (product.template && typeof product.template === "object")
+      ? product.template as Record<string, unknown>
+      : {};
+    const fieldSource = (templateSource.fields && typeof templateSource.fields === "object")
+      ? templateSource.fields as Record<string, unknown>
+      : templateSource;
+    return {
+      template: templateSource,
+      fields: fieldSource,
+    };
+  }
+
+  function validateBulkInput(values: BulkEditDraft, targetSkus: string[]): void {
+    if (!targetSkus.length) {
+      throw new Error("Keine aktiven/prelaunch SKUs im aktuellen Zielumfang.");
+    }
+    const hasAnyField = (
+      values.applyTemplateUnitPriceUsd
+      || values.applyAvgSellingPriceGrossEUR
+      || values.applySellerboardMarginPct
+      || values.applyMoqUnits
+      || values.applyProductionLeadTimeDaysDefault
+      || values.applyTemplateTransitDays
+      || values.applyTemplateDdp
+    );
+    if (!hasAnyField) {
+      throw new Error("Bitte mindestens ein Feld für den Bulk-Update aktivieren.");
+    }
+
+    const requireFinite = (flag: boolean, value: unknown, label: string): void => {
+      if (!flag) return;
+      const number = Number(value);
+      if (!Number.isFinite(number)) {
+        throw new Error(`Bitte gültigen Wert setzen: ${label}.`);
+      }
+    };
+    requireFinite(values.applyTemplateUnitPriceUsd, values.templateUnitPriceUsd, "Ø EK (USD)");
+    requireFinite(values.applyAvgSellingPriceGrossEUR, values.avgSellingPriceGrossEUR, "Ø VK (EUR)");
+    requireFinite(values.applySellerboardMarginPct, values.sellerboardMarginPct, "Marge (%)");
+    requireFinite(values.applyMoqUnits, values.moqUnits, "MOQ");
+    requireFinite(values.applyProductionLeadTimeDaysDefault, values.productionLeadTimeDaysDefault, "Production Lead Time");
+    requireFinite(values.applyTemplateTransitDays, values.templateTransitDays, "Transit-Tage");
+  }
+
+  async function applyBulkEdit(values: BulkEditDraft): Promise<void> {
+    const validSkuSet = new Set(bulkCandidateRows.map((row) => row.sku));
+    const targetSkus = values.scope === "selected"
+      ? (Array.isArray(values.selectedSkus) ? values.selectedSkus : [])
+        .map((sku) => String(sku || "").trim())
+        .filter((sku) => sku && validSkuSet.has(sku))
+      : bulkCandidateRows.map((row) => row.sku).filter((sku) => validSkuSet.has(sku));
+    const targetSkuSet = new Set(targetSkus);
+    validateBulkInput(values, targetSkus);
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const products = Array.isArray(next.products) ? [...next.products] : [];
+      const now = nowIso();
+      let updatedCount = 0;
+
+      next.products = products.map((entry) => {
+        const product = entry as Record<string, unknown>;
+        const sku = String(product.sku || "").trim();
+        if (!sku || !targetSkuSet.has(sku)) return product;
+        const status = String(product.status || "active").trim().toLowerCase();
+        const inScope = status === "active" || status === "prelaunch" || status === "aktiv" || status === "not_launched" || status === "planned";
+        if (!inScope) return product;
+
+        const updated: Record<string, unknown> = { ...product };
+        const { template, fields } = extractTemplateAndFields(product);
+        const nextFields: Record<string, unknown> = { ...fields };
+
+        if (values.applyAvgSellingPriceGrossEUR) {
+          updated.avgSellingPriceGrossEUR = Number(values.avgSellingPriceGrossEUR);
+        }
+        if (values.applySellerboardMarginPct) {
+          updated.sellerboardMarginPct = Number(values.sellerboardMarginPct);
+        }
+        if (values.applyMoqUnits) {
+          updated.moqUnits = Math.max(0, Math.round(Number(values.moqUnits)));
+        }
+        if (values.applyProductionLeadTimeDaysDefault) {
+          updated.productionLeadTimeDaysDefault = Math.max(0, Math.round(Number(values.productionLeadTimeDaysDefault)));
+        }
+        if (values.applyTemplateUnitPriceUsd) {
+          nextFields.unitPriceUsd = Number(values.templateUnitPriceUsd);
+        }
+        if (values.applyTemplateTransitDays) {
+          nextFields.transitDays = Math.max(0, Math.round(Number(values.templateTransitDays)));
+        }
+        if (values.applyTemplateDdp) {
+          nextFields.ddp = Boolean(values.templateDdp);
+        }
+
+        updated.template = {
+          ...template,
+          scope: template.scope || "SKU",
+          name: template.name || "Standard (SKU)",
+          fields: nextFields,
+        };
+        updated.updatedAt = now;
+        updatedCount += 1;
+        return updated;
+      });
+
+      if (!updatedCount) {
+        throw new Error("Keine passenden aktiven/prelaunch SKUs im Zielumfang gefunden.");
+      }
+
+      return next;
+    }, "v2:products:bulk-update");
+    message.success(`Bulk-Update gespeichert (${targetSkus.length} SKU${targetSkus.length === 1 ? "" : "s"}).`);
+    setBulkModalOpen(false);
+    bulkForm.resetFields();
+  }
+
   async function handleSave(values: ProductDraft): Promise<void> {
     if (modalCollab.readOnly) {
       throw new Error("Dieses Produkt wird gerade von einem anderen Nutzer bearbeitet.");
@@ -927,6 +1117,9 @@ export default function ProductsModule(): JSX.Element {
               >
                 Produkt hinzufuegen
               </Button>
+              <Button onClick={openBulkModal}>
+                Bulk bearbeiten
+              </Button>
             </Space>
             <Space wrap>
               <Tag color={issueCounts.needsFix > 0 ? "gold" : "green"}>Korrekturbedarf: {issueCounts.needsFix}</Tag>
@@ -993,6 +1186,138 @@ export default function ProductsModule(): JSX.Element {
           />
         )}
       </Card>
+
+      <Modal
+        title="Bulk-Stammdaten bearbeiten"
+        rootClassName="v2-form-modal"
+        open={bulkModalOpen}
+        onCancel={() => {
+          setBulkModalOpen(false);
+          bulkForm.resetFields();
+        }}
+        onOk={() => {
+          void bulkForm.validateFields().then((values) => applyBulkEdit(values)).catch(() => {});
+        }}
+        width={900}
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message={`Bulk-Editor für aktive/prelaunch SKUs (${bulkCandidateRows.length} verfügbar)`}
+          description="Bulk-Änderungen schreiben explizit auf Produkt-Ebene. Herkunft in Modal/Liste bleibt danach konsistent als „Produkt“."
+        />
+        <Form<BulkEditDraft>
+          form={bulkForm}
+          layout="vertical"
+          initialValues={BULK_EDIT_INITIAL}
+        >
+          <div className="v2-form-row">
+            <Form.Item name="scope" label="Zielumfang" style={{ flex: 1 }}>
+              <Select
+                options={[
+                  { value: "filtered", label: "Alle aktiven/prelaunch aus aktuellem Filter" },
+                  { value: "selected", label: "Manuelle SKU-Auswahl" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="Ziel-SKUs (Preview)" style={{ width: 220 }}>
+              <Input value={String(bulkTargetSkus.length)} disabled />
+            </Form.Item>
+          </div>
+
+          {bulkDraft.scope === "selected" ? (
+            <Form.Item name="selectedSkus" label="SKUs auswählen">
+              <Select
+                mode="multiple"
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder="SKU(s) wählen"
+                options={bulkSkuOptions}
+              />
+            </Form.Item>
+          ) : null}
+
+          <div className="v2-bulk-grid">
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applyTemplateUnitPriceUsd" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>Ø EK (USD)</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="templateUnitPriceUsd" style={{ marginBottom: 0, minWidth: 180 }}>
+                <DeNumberInput mode="decimal" min={0} disabled={!bulkDraft.applyTemplateUnitPriceUsd} />
+              </Form.Item>
+            </div>
+
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applyAvgSellingPriceGrossEUR" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>Ø VK (EUR)</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="avgSellingPriceGrossEUR" style={{ marginBottom: 0, minWidth: 180 }}>
+                <DeNumberInput mode="decimal" min={0} disabled={!bulkDraft.applyAvgSellingPriceGrossEUR} />
+              </Form.Item>
+            </div>
+
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applySellerboardMarginPct" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>Marge (%)</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="sellerboardMarginPct" style={{ marginBottom: 0, minWidth: 180 }}>
+                <DeNumberInput mode="percent" min={0} max={100} disabled={!bulkDraft.applySellerboardMarginPct} />
+              </Form.Item>
+            </div>
+
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applyMoqUnits" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>MOQ (Units)</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="moqUnits" style={{ marginBottom: 0, minWidth: 180 }}>
+                <DeNumberInput mode="int" min={0} disabled={!bulkDraft.applyMoqUnits} />
+              </Form.Item>
+            </div>
+
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applyProductionLeadTimeDaysDefault" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>Production Lead Time (Tage)</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="productionLeadTimeDaysDefault" style={{ marginBottom: 0, minWidth: 180 }}>
+                <DeNumberInput mode="int" min={0} disabled={!bulkDraft.applyProductionLeadTimeDaysDefault} />
+              </Form.Item>
+            </div>
+
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applyTemplateTransitDays" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>Transit-Tage</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="templateTransitDays" style={{ marginBottom: 0, minWidth: 180 }}>
+                <DeNumberInput mode="int" min={0} disabled={!bulkDraft.applyTemplateTransitDays} />
+              </Form.Item>
+            </div>
+
+            <div className="v2-bulk-field-row">
+              <Form.Item name="applyTemplateDdp" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>DDP / Incoterm-Flag</Checkbox>
+              </Form.Item>
+              <Tag className={sourceChipClass("product", false)}>Produkt</Tag>
+              <Form.Item name="templateDdp" style={{ marginBottom: 0, minWidth: 180 }}>
+                <Select
+                  disabled={!bulkDraft.applyTemplateDdp}
+                  options={[
+                    { value: true, label: "DDP = Ja" },
+                    { value: false, label: "DDP = Nein" },
+                  ]}
+                />
+              </Form.Item>
+            </div>
+          </div>
+        </Form>
+      </Modal>
 
       <Modal
         title={editing ? `Produkt bearbeiten: ${editing.sku}` : "Produkt hinzufuegen"}

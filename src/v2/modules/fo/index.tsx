@@ -15,7 +15,6 @@ import {
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
-import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
@@ -40,7 +39,10 @@ import {
   computeScheduleFromOrderDate,
   convertToEur,
   createPoFromFo,
+  createPoFromFos,
   extractSupplierTerms,
+  isFoConvertibleStatus,
+  normalizeFoStatus,
   normalizeFoRecord,
   nowIso,
   resolveProductBySku,
@@ -76,6 +78,7 @@ interface FoRow {
   id: string;
   sku: string;
   alias: string;
+  supplierId: string;
   supplierName: string;
   units: number;
   targetDeliveryDate: string | null;
@@ -84,6 +87,7 @@ interface FoRow {
   etaDate: string | null;
   landedCostEur: number;
   status: string;
+  convertedPoNo: string | null;
   recommendationText: string;
   recommendationUnits: number | null;
   raw: Record<string, unknown>;
@@ -97,29 +101,9 @@ interface FoPaymentPreviewRow {
   amount: number;
   plannedEur: number;
   dueDate: string | null;
-  status: "open" | "paid";
-  paidDate: string | null;
-  paymentId: string | null;
-  paidEurActual: number | null;
-  paidUsdActual: number | null;
-  paidBy: string | null;
-  method: string | null;
-  note: string;
-  invoiceDriveUrl: string;
-  invoiceFolderDriveUrl: string;
-}
-
-interface FoPaymentBookingValues {
-  selectedEventIds: string[];
-  paidDate: string;
-  method: string;
-  paidBy: string;
-  amountActualEur: number | null;
-  amountActualUsd: number | null;
-  paymentId: string;
-  invoiceDriveUrl: string;
-  invoiceFolderDriveUrl: string;
-  note: string;
+  triggerEvent: string;
+  offsetDays: number;
+  offsetMonths: number;
 }
 
 interface CoverageDemandBreakdownRow {
@@ -128,10 +112,6 @@ interface CoverageDemandBreakdownRow {
   forecastMonthUnits: number | null;
   demandUnitsInWindow: number;
   usedFallback: boolean;
-}
-
-function randomId(prefix: string): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function formatDate(value: unknown): string {
@@ -184,11 +164,11 @@ function normalizeCoverageDemandBreakdown(input: unknown): CoverageDemandBreakdo
 }
 
 function statusTag(status: string): JSX.Element {
-  const normalized = String(status || "DRAFT").toUpperCase();
+  const normalized = normalizeFoStatus(status);
+  if (normalized === "ACTIVE") return <Tag color="green">Active</Tag>;
   if (normalized === "CONVERTED") return <Tag color="blue">Converted</Tag>;
-  if (normalized === "PLANNED") return <Tag color="green">Planned</Tag>;
-  if (normalized === "CANCELLED") return <Tag color="default">Cancelled</Tag>;
-  return <Tag color="orange">Draft</Tag>;
+  if (normalized === "ARCHIVED") return <Tag color="default">Archived</Tag>;
+  return <Tag color="gold">Draft</Tag>;
 }
 
 function formatFoPaymentCategory(category: FoPaymentPreviewRow["category"]): string {
@@ -197,28 +177,6 @@ function formatFoPaymentCategory(category: FoPaymentPreviewRow["category"]): str
   if (category === "duty") return "Custom Duties";
   if (category === "eust") return "Einfuhrumsatzsteuer";
   return "EUSt Erstattung";
-}
-
-function normalizeFoPaymentStatus(value: unknown): "open" | "paid" {
-  return String(value || "").toLowerCase() === "paid" ? "paid" : "open";
-}
-
-function buildFoPaymentFilename(input: {
-  paidDate: string;
-  foId: string;
-  alias: string;
-  units: number;
-  selectedRows: FoPaymentPreviewRow[];
-}): string {
-  const date = String(input.paidDate || "").trim() || "YYYY-MM-DD";
-  const foNo = String(input.foId || "").slice(-6).toUpperCase() || "FO";
-  const alias = String(input.alias || "").trim().replace(/\s+/g, "-").replace(/[\\/:*?"<>|]/g, "-") || "Alias";
-  const units = Number.isFinite(Number(input.units)) ? Math.max(0, Math.round(Number(input.units))) : 0;
-  const labels = Array.from(
-    new Set((input.selectedRows || []).map((row) => formatFoPaymentCategory(row.category))),
-  ).map((entry) => entry.replace(/\s+/g, "-").replace(/[\\/:*?"<>|]/g, "-"));
-  const paymentChunk = labels.length ? labels.join("+") : "Payment";
-  return `${date}_FO-${foNo}_${alias}_${units}u_${paymentChunk}.pdf`.replace(/-+/g, "-");
 }
 
 function isProductActive(product: Record<string, unknown>): boolean {
@@ -240,6 +198,30 @@ function suggestNextPoNo(pos: unknown[]): string {
   });
   if (best > 0) return String(best + 1);
   return String((pos || []).length + 1);
+}
+
+function normalizeIsoDate(value: unknown): string | null {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  return text;
+}
+
+function compareIsoDate(a: string | null, b: string | null): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b);
+}
+
+function resolveFoTargetDeliveryDate(fo: Record<string, unknown>): string | null {
+  return (
+    normalizeIsoDate(fo.targetDeliveryDate)
+    || normalizeIsoDate(fo.deliveryDate)
+    || normalizeIsoDate(fo.etaDate)
+  );
 }
 
 function round2(value: number): number {
@@ -365,12 +347,14 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [convertTargetId, setConvertTargetId] = useState<string | null>(null);
   const [convertPoNo, setConvertPoNo] = useState("");
   const [convertOrderDate, setConvertOrderDate] = useState("");
+  const [mergeSelection, setMergeSelection] = useState<string[]>([]);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergePoNo, setMergePoNo] = useState("");
+  const [mergeOrderDate, setMergeOrderDate] = useState("");
+  const [mergeTargetMode, setMergeTargetMode] = useState<"earliest" | "manual">("earliest");
+  const [mergeManualTargetDate, setMergeManualTargetDate] = useState("");
+  const [mergeAllowMixedTerms, setMergeAllowMixedTerms] = useState(false);
   const [form] = Form.useForm<FoFormValues>();
-  const [paymentForm] = Form.useForm<FoPaymentBookingValues>();
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [paymentEditingId, setPaymentEditingId] = useState<string | null>(null);
-  const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
-  const [paymentInitialEventIds, setPaymentInitialEventIds] = useState<string[]>([]);
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -431,32 +415,6 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     () => buildFoRecommendationContext(stateObj),
     [state.forecast, state.inventory, state.pos, state.fos],
   );
-  const paymentRecordById = useMemo(() => {
-    const map = new Map<string, Record<string, unknown>>();
-    (Array.isArray(state.payments) ? state.payments : []).forEach((entry) => {
-      const row = entry as Record<string, unknown>;
-      const id = String(row.id || "").trim();
-      if (!id) return;
-      map.set(id, row);
-    });
-    return map;
-  }, [state.payments]);
-  const paymentMethodOptions = useMemo(() => [
-    { value: "Alibaba Trade Assurance", label: "Alibaba Trade Assurance" },
-    { value: "Wise Transfer", label: "Wise Transfer" },
-    { value: "PayPal", label: "PayPal" },
-    { value: "SEPA Bank Transfer", label: "SEPA Bank Transfer" },
-    { value: "Kreditkarte", label: "Kreditkarte" },
-  ], []);
-  const payerHint = useMemo(() => {
-    const labels = new Set<string>();
-    Object.entries(displayNameMap || {}).forEach(([email, name]) => {
-      const text = String(name || email || "").trim();
-      if (text) labels.add(text);
-    });
-    if (syncSession.email) labels.add(String(syncSession.email).trim());
-    return Array.from(labels).join(" / ");
-  }, [displayNameMap, syncSession.email]);
 
   const rows = useMemo(() => {
     const allRows = (Array.isArray(state.fos) ? state.fos : []).map((entry) => {
@@ -517,6 +475,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         id: String(fo.id || ""),
         sku,
         alias: product?.alias || sku || "—",
+        supplierId: String(fo.supplierId || ""),
         supplierName: supplier?.name || "—",
         units: Number(fo.units || 0),
         targetDeliveryDate: fo.targetDeliveryDate ? String(fo.targetDeliveryDate) : null,
@@ -524,7 +483,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         etdDate: schedule.etdDate || null,
         etaDate: schedule.etaDate || null,
         landedCostEur: round2(costs.landedCostEur),
-        status: String(fo.status || "DRAFT").toUpperCase(),
+        status: normalizeFoStatus(fo.status),
+        convertedPoNo: fo.convertedPoNo ? String(fo.convertedPoNo) : null,
         recommendationText,
         recommendationUnits,
         raw: fo,
@@ -555,7 +515,96 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     supplierRows,
   ]);
 
+  const foById = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    (Array.isArray(state.fos) ? state.fos : []).forEach((entry) => {
+      const row = entry as Record<string, unknown>;
+      const id = String(row.id || "").trim();
+      if (!id) return;
+      map.set(id, row);
+    });
+    return map;
+  }, [state.fos]);
+
+  const mergeSelectedFos = useMemo(() => {
+    return mergeSelection
+      .map((id) => foById.get(id) || null)
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .filter((entry) => isFoConvertibleStatus(entry.status));
+  }, [foById, mergeSelection]);
+
+  const mergeEarliestTargetDate = useMemo(() => {
+    return mergeSelectedFos
+      .map((fo) => resolveFoTargetDeliveryDate(fo))
+      .filter((value): value is string => Boolean(value))
+      .sort((a, b) => compareIsoDate(a, b))[0] || "";
+  }, [mergeSelectedFos]);
+
+  const mergeResolvedTargetDate = useMemo(() => {
+    if (mergeTargetMode === "manual") return normalizeIsoDate(mergeManualTargetDate) || null;
+    return normalizeIsoDate(mergeEarliestTargetDate) || null;
+  }, [mergeEarliestTargetDate, mergeManualTargetDate, mergeTargetMode]);
+
+  const mergeSupplierIds = useMemo(
+    () => Array.from(new Set(mergeSelectedFos.map((fo) => String(fo.supplierId || "").trim()).filter(Boolean))),
+    [mergeSelectedFos],
+  );
+  const mergeHasSupplierMismatch = mergeSupplierIds.length > 1;
+  const mergeTransportModes = useMemo(
+    () => Array.from(new Set(mergeSelectedFos.map((fo) => String(fo.transportMode || "").trim().toUpperCase()).filter(Boolean))),
+    [mergeSelectedFos],
+  );
+  const mergeIncoterms = useMemo(
+    () => Array.from(new Set(mergeSelectedFos.map((fo) => String(fo.incoterm || "").trim().toUpperCase()).filter(Boolean))),
+    [mergeSelectedFos],
+  );
+  const mergeHasMixedTerms = mergeTransportModes.length > 1 || mergeIncoterms.length > 1;
+  const mergeTimelineRows = useMemo(() => {
+    if (!mergeResolvedTargetDate) return [];
+    return mergeSelectedFos.map((fo) => {
+      const target = resolveFoTargetDeliveryDate(fo);
+      const compare = compareIsoDate(target, mergeResolvedTargetDate);
+      const deviation = compare < 0 ? "Zu spät bei gemeinsamer PO" : compare > 0 ? "Früher als Ziel" : "Passt";
+      return {
+        id: String(fo.id || ""),
+        sku: String(fo.sku || ""),
+        targetDate: target,
+        deviation,
+        status: compare,
+      };
+    });
+  }, [mergeResolvedTargetDate, mergeSelectedFos]);
+
+  useEffect(() => {
+    setMergeSelection((current) =>
+      current.filter((id) => {
+        const fo = foById.get(id);
+        return Boolean(fo) && isFoConvertibleStatus(fo?.status);
+      }),
+    );
+  }, [foById]);
+
   const columns = useMemo<ColumnDef<FoRow>[]>(() => [
+    {
+      header: "Merge",
+      meta: { width: 84, minWidth: 84 },
+      cell: ({ row }) => {
+        const canSelect = isFoConvertibleStatus(row.original.status);
+        return (
+          <Checkbox
+            checked={mergeSelection.includes(row.original.id)}
+            disabled={!canSelect}
+            onChange={(event) => {
+              const checked = event.target.checked;
+              setMergeSelection((current) => {
+                if (checked) return Array.from(new Set([...current, row.original.id]));
+                return current.filter((entry) => entry !== row.original.id);
+              });
+            }}
+          />
+        );
+      },
+    },
     {
       header: "FO",
       cell: ({ row }) => String(row.original.id || "").slice(-6).toUpperCase(),
@@ -610,6 +659,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         <div className="v2-actions-nowrap">
           <Button
             size="small"
+            disabled={!isFoConvertibleStatus(row.original.status)}
             onClick={() => {
               openEditModal(row.original.raw);
             }}
@@ -618,7 +668,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           </Button>
           <Button
             size="small"
-            disabled={String(row.original.status || "").toUpperCase() === "CONVERTED"}
+            disabled={!isFoConvertibleStatus(row.original.status)}
             onClick={() => {
               setConvertTargetId(row.original.id);
               setConvertPoNo(suggestNextPoNo(Array.isArray(state.pos) ? state.pos : []));
@@ -628,9 +678,23 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           >
             Convert
           </Button>
+          {row.original.convertedPoNo ? (
+            <Button
+              size="small"
+              onClick={() => {
+                const params = new URLSearchParams();
+                params.set("source", "fo_convert");
+                params.set("poNo", String(row.original.convertedPoNo || ""));
+                navigate(`/v2/orders/po?${params.toString()}`);
+              }}
+            >
+              PO öffnen
+            </Button>
+          ) : null}
           <Button
             size="small"
             danger
+            disabled={!isFoConvertibleStatus(row.original.status)}
             onClick={() => {
               Modal.confirm({
                 title: "FO loeschen?",
@@ -650,7 +714,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         </div>
       ),
     },
-  ], [saveWith, state.pos]);
+  ], [mergeSelection, navigate, saveWith, state.pos]);
 
   const draftValues = Form.useWatch([], form) as FoFormValues | undefined;
   const selectedDraftProduct = useMemo(() => {
@@ -860,14 +924,6 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     [liveRecommendationBreakdown],
   );
 
-  const editingFoPayments = useMemo(() => {
-    if (!editingId) return null;
-    const match = (Array.isArray(state.fos) ? state.fos : [])
-      .find((entry) => String((entry as Record<string, unknown>).id || "") === editingId) as Record<string, unknown> | undefined;
-    if (!match || !Array.isArray(match.payments)) return null;
-    return match.payments;
-  }, [editingId, state.fos]);
-
   const livePaymentPreviewRows = useMemo<FoPaymentPreviewRow[]>(() => {
     if (!draftValues) return [];
     const paymentRows = buildFoPayments({
@@ -882,11 +938,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       eustRatePct: draftValues.eustRatePct,
       fxRate: draftValues.fxRate,
       incoterm: draftValues.incoterm,
-      existingPayments: editingFoPayments,
+      vatRefundLagMonths: settings.vatRefundLagMonths,
     });
     return paymentRows.map((row) => {
-      const paymentId = row.paymentId ? String(row.paymentId) : null;
-      const paymentRecord = paymentId ? (paymentRecordById.get(paymentId) || null) : null;
       const plannedEur = row.currency === "EUR"
         ? Number(row.amount || 0)
         : convertToEur(row.amount, row.currency, draftValues.fxRate);
@@ -898,45 +952,17 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         amount: Number(row.amount || 0),
         plannedEur: Number.isFinite(plannedEur) ? plannedEur : 0,
         dueDate: row.dueDate ? String(row.dueDate) : null,
-        status: normalizeFoPaymentStatus(row.status || paymentRecord?.status),
-        paidDate: row.paidDate ? String(row.paidDate) : (paymentRecord?.paidDate ? String(paymentRecord.paidDate) : null),
-        paymentId,
-        paidEurActual: Number.isFinite(Number(row.paidEurActual))
-          ? Number(row.paidEurActual)
-          : (Number.isFinite(Number(paymentRecord?.amountActualEurTotal)) ? Number(paymentRecord?.amountActualEurTotal) : null),
-        paidUsdActual: Number.isFinite(Number(row.paidUsdActual))
-          ? Number(row.paidUsdActual)
-          : (Number.isFinite(Number(paymentRecord?.amountActualUsdTotal)) ? Number(paymentRecord?.amountActualUsdTotal) : null),
-        paidBy: row.paidBy ? String(row.paidBy) : (paymentRecord?.payer ? String(paymentRecord.payer) : null),
-        method: row.method ? String(row.method) : (paymentRecord?.method ? String(paymentRecord.method) : null),
-        note: String(row.note || paymentRecord?.note || ""),
-        invoiceDriveUrl: String(row.invoiceDriveUrl || paymentRecord?.invoiceDriveUrl || ""),
-        invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || paymentRecord?.invoiceFolderDriveUrl || ""),
+        triggerEvent: String(row.triggerEvent || "ORDER_DATE"),
+        offsetDays: Number(row.offsetDays || 0),
+        offsetMonths: Number(row.offsetMonths || 0),
       };
     });
-  }, [draftValues, editingFoPayments, liveSchedule, paymentRecordById]);
+  }, [draftValues, liveSchedule, settings.vatRefundLagMonths]);
 
   const supplierPercentSum = useMemo(
     () => sumSupplierPercent(draftValues?.paymentTerms || []),
     [draftValues?.paymentTerms],
   );
-  const paymentSelectedIds = Form.useWatch("selectedEventIds", paymentForm) as string[] | undefined;
-  const paymentDraftValues = Form.useWatch([], paymentForm) as FoPaymentBookingValues | undefined;
-  const paymentSelectedRows = useMemo(() => {
-    const selected = new Set((paymentSelectedIds || []).map((entry) => String(entry || "").trim()));
-    return livePaymentPreviewRows.filter((row) => selected.has(row.id));
-  }, [livePaymentPreviewRows, paymentSelectedIds]);
-  const suggestedPaymentFilename = useMemo(() => {
-    if (!paymentDraftValues || !draftValues) return "";
-    const alias = productBySku.get(String(draftValues.sku || ""))?.alias || String(draftValues.sku || "");
-    return buildFoPaymentFilename({
-      paidDate: paymentDraftValues.paidDate,
-      foId: String(draftValues.id || editingId || "FO"),
-      alias,
-      units: Number(draftValues.units || 0),
-      selectedRows: paymentSelectedRows,
-    });
-  }, [draftValues, editingId, paymentDraftValues, paymentSelectedRows, productBySku]);
 
   useEffect(() => {
     if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
@@ -972,7 +998,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       id: existing?.id ? String(existing.id) : undefined,
       sku: seedSku,
       supplierId,
-      status: String(existing?.status || "DRAFT").toUpperCase() as FoStatus,
+      status: normalizeFoStatus(existing?.status || prefill?.status || "DRAFT"),
       targetDeliveryDate: String(prefill?.targetDeliveryDate || existing?.targetDeliveryDate || new Date().toISOString().slice(0, 10)),
       units,
       transportMode: String(existing?.transportMode || productDefaults.transportMode || "SEA").toUpperCase(),
@@ -1042,151 +1068,19 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     setModalOpen(true);
   }
 
-  function openPaymentBookingModal(seed?: FoPaymentPreviewRow | null): void {
-    if (!editingId) {
-      message.info("Bitte FO zuerst speichern, danach koennen Zahlungen verbucht werden.");
+  function openMergeModalFromSelection(): void {
+    const selected = mergeSelectedFos;
+    if (selected.length < 2) {
+      message.warning("Bitte mindestens 2 aktive FOs fuer den Merge auswaehlen.");
       return;
     }
-    const today = new Date().toISOString().slice(0, 10);
-    const fromSeed = seed || null;
-    const fromPaymentId = fromSeed?.paymentId || null;
-    const selectableRows = livePaymentPreviewRows.filter((row) => row.category !== "eust_refund" && row.amount >= 0);
-    const selectedRows = fromPaymentId
-      ? selectableRows.filter((entry) => entry.paymentId === fromPaymentId)
-      : (fromSeed ? [fromSeed] : selectableRows.filter((entry) => entry.status !== "paid"));
-    const selectedEventIds = selectedRows.map((entry) => entry.id);
-    const plannedSum = selectedRows.reduce((sum, entry) => sum + Number(entry.plannedEur || 0), 0);
-    const paymentRecord = fromPaymentId ? (paymentRecordById.get(fromPaymentId) || null) : null;
-    const requestedPaymentId = String(
-      paymentRecord?.id
-      || fromPaymentId
-      || normalizePaymentId(randomId("pay"))
-      || randomId("pay"),
-    );
-    paymentForm.setFieldsValue({
-      selectedEventIds,
-      paidDate: String(paymentRecord?.paidDate || fromSeed?.paidDate || today),
-      method: String(paymentRecord?.method || fromSeed?.method || "Alibaba Trade Assurance"),
-      paidBy: String(paymentRecord?.payer || fromSeed?.paidBy || ownDisplayName || syncSession.email || ""),
-      amountActualEur: Number.isFinite(Number(paymentRecord?.amountActualEurTotal))
-        ? Number(paymentRecord?.amountActualEurTotal)
-        : Math.round(plannedSum * 100) / 100,
-      amountActualUsd: Number.isFinite(Number(paymentRecord?.amountActualUsdTotal))
-        ? Number(paymentRecord?.amountActualUsdTotal)
-        : null,
-      paymentId: requestedPaymentId,
-      invoiceDriveUrl: String(paymentRecord?.invoiceDriveUrl || fromSeed?.invoiceDriveUrl || ""),
-      invoiceFolderDriveUrl: String(paymentRecord?.invoiceFolderDriveUrl || fromSeed?.invoiceFolderDriveUrl || ""),
-      note: String(paymentRecord?.note || fromSeed?.note || ""),
-    });
-    setPaymentInitialEventIds(selectedEventIds);
-    setPaymentEditingId(paymentRecord?.id ? String(paymentRecord.id) : null);
-    setPaymentModalError(null);
-    setPaymentModalOpen(true);
-  }
-
-  async function savePaymentBooking(values: FoPaymentBookingValues): Promise<void> {
-    if (modalCollab.readOnly) throw new Error("Nur Lesemodus: keine Zahlungen speichern.");
-    if (!editingId) throw new Error("FO muss zuerst gespeichert werden.");
-    const selectedIds = Array.from(new Set((values.selectedEventIds || []).map((entry) => String(entry || "").trim()).filter(Boolean)));
-    if (!selectedIds.length) throw new Error("Bitte mindestens einen Zahlungsbaustein waehlen.");
-    if (!values.paidDate) throw new Error("Bitte ein Zahlungsdatum setzen.");
-    if (!values.method.trim()) throw new Error("Bitte eine Zahlungsmethode waehlen.");
-    if (!values.paidBy.trim()) throw new Error("Bitte angeben, wer gezahlt hat.");
-    const amountActualEur = Number(values.amountActualEur);
-    if (!Number.isFinite(amountActualEur) || amountActualEur < 0) throw new Error("Bitte einen gueltigen Ist-Betrag in EUR eingeben.");
-    if (values.invoiceDriveUrl && !isHttpUrl(values.invoiceDriveUrl)) throw new Error("Invoice-Link muss mit http:// oder https:// beginnen.");
-    if (values.invoiceFolderDriveUrl && !isHttpUrl(values.invoiceFolderDriveUrl)) throw new Error("Folder-Link muss mit http:// oder https:// beginnen.");
-
-    const paymentId = String(normalizePaymentId(values.paymentId) || normalizePaymentId(randomId("pay")) || randomId("pay"));
-    const selectedRows = livePaymentPreviewRows.filter((entry) => selectedIds.includes(entry.id));
-    const allocations = allocatePayment(amountActualEur, selectedRows.map((row) => ({ id: row.id, plannedEur: row.plannedEur })));
-    if (!allocations || !allocations.length) throw new Error("Konnte die Zahlung nicht auf die gewaehlten Bausteine verteilen.");
-    const amountActualUsdRaw = Number(values.amountActualUsd);
-    const amountActualUsd = Number.isFinite(amountActualUsdRaw) ? amountActualUsdRaw : null;
-    const plannedSum = selectedRows.reduce((sum, row) => sum + Number(row.plannedEur || 0), 0);
-    const usdByEvent = new Map<string, number>(
-      amountActualUsd != null && plannedSum > 0
-        ? selectedRows.map((row) => [
-          row.id,
-          Math.round((amountActualUsd * (Number(row.plannedEur || 0) / plannedSum)) * 100) / 100,
-        ])
-        : [],
-    );
-
-    await saveWith((current) => {
-      const next = ensureAppStateV2(current);
-      const fos = Array.isArray(next.fos) ? [...next.fos] : [];
-      const foIndex = fos.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === editingId);
-      if (foIndex < 0) throw new Error("FO nicht gefunden.");
-      const fo = { ...(fos[foIndex] as Record<string, unknown>) };
-      const payments = Array.isArray(fo.payments)
-        ? [...(fo.payments as Record<string, unknown>[])]
-        : [];
-      const paymentById = new Map(payments.map((entry) => [String(entry.id || ""), { ...(entry as Record<string, unknown>) }]));
-
-      paymentInitialEventIds.forEach((eventId) => {
-        if (selectedIds.includes(eventId)) return;
-        const row = paymentById.get(eventId);
-        if (!row) return;
-        if (row.paymentId && row.paymentId !== paymentId) return;
-        row.status = "open";
-        row.paidDate = null;
-        row.paymentId = null;
-        row.paidEurActual = null;
-        row.paidUsdActual = null;
-        row.method = null;
-        row.paidBy = null;
-        row.note = null;
-      });
-
-      allocations.forEach((allocation) => {
-        const row = paymentById.get(allocation.eventId);
-        if (!row) return;
-        row.status = "paid";
-        row.paidDate = values.paidDate;
-        row.paymentId = paymentId;
-        row.paidEurActual = Number(allocation.actual || 0);
-        row.paidUsdActual = usdByEvent.get(allocation.eventId) ?? null;
-        row.method = values.method.trim();
-        row.paidBy = values.paidBy.trim();
-        row.note = values.note?.trim() || null;
-        row.invoiceDriveUrl = values.invoiceDriveUrl?.trim() || "";
-        row.invoiceFolderDriveUrl = values.invoiceFolderDriveUrl?.trim() || "";
-      });
-
-      fo.payments = Array.from(paymentById.values());
-      fo.updatedAt = nowIso();
-      fos[foIndex] = fo;
-      next.fos = fos;
-
-      const statePayments = Array.isArray(next.payments) ? [...next.payments] : [];
-      const payload: Record<string, unknown> = {
-        id: paymentId,
-        paidDate: values.paidDate,
-        method: values.method.trim(),
-        payer: values.paidBy.trim(),
-        currency: "EUR",
-        amountActualEurTotal: amountActualEur,
-        amountActualUsdTotal: amountActualUsd,
-        coveredEventIds: selectedIds,
-        note: values.note?.trim() || null,
-        invoiceDriveUrl: values.invoiceDriveUrl?.trim() || "",
-        invoiceFolderDriveUrl: values.invoiceFolderDriveUrl?.trim() || "",
-      };
-      const upsertIndex = statePayments.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === paymentId);
-      if (upsertIndex >= 0) statePayments[upsertIndex] = { ...(statePayments[upsertIndex] as Record<string, unknown>), ...payload };
-      else statePayments.push(payload);
-      next.payments = statePayments;
-      return next;
-    }, "v2:fo:payment-booking");
-
-    setPaymentModalOpen(false);
-    setPaymentEditingId(null);
-    setPaymentInitialEventIds([]);
-    setPaymentModalError(null);
-    paymentForm.resetFields();
-    message.success("FO-Zahlung wurde gespeichert.");
+    const targetDate = mergeEarliestTargetDate || "";
+    setMergePoNo(suggestNextPoNo(Array.isArray(state.pos) ? state.pos : []));
+    setMergeOrderDate("");
+    setMergeTargetMode("earliest");
+    setMergeManualTargetDate(targetDate);
+    setMergeAllowMixedTerms(false);
+    setMergeOpen(true);
   }
 
   async function saveFo(values: FoFormValues): Promise<void> {
@@ -1238,6 +1132,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       supplierTerms: terms,
       values: values as unknown as Record<string, unknown>,
       schedule,
+      vatRefundLagMonths: settings.vatRefundLagMonths,
     });
 
     await saveWith((current) => {
@@ -1275,6 +1170,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         throw new Error("FO nicht gefunden.");
       }
       const fo = { ...(fos[foIndex] as Record<string, unknown>) };
+      if (!isFoConvertibleStatus(fo.status)) {
+        throw new Error("Nur aktive FOs (Draft/Active) koennen konvertiert werden.");
+      }
       const po = createPoFromFo({
         fo,
         poNumber: poNo,
@@ -1308,6 +1206,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         eustRatePct: fo.eustRatePct,
         fxRate: fo.fxRate,
         incoterm: fo.incoterm,
+        vatRefundLagMonths: (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths,
       });
 
       fos[foIndex] = {
@@ -1327,6 +1226,111 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
     setConvertOpen(false);
     setConvertTargetId(null);
+    setMergeSelection((current) => current.filter((entry) => entry !== targetId));
+    message.success(`FO wurde in PO ${poNo} konvertiert.`);
+  }
+
+  async function convertFoMerge(): Promise<void> {
+    const sourceFos = mergeSelectedFos;
+    if (sourceFos.length < 2) {
+      throw new Error("Bitte mindestens 2 FOs auswaehlen.");
+    }
+    if (mergeHasSupplierMismatch) {
+      throw new Error("Merge ist nur mit gleichem Lieferanten erlaubt.");
+    }
+    if (mergeHasMixedTerms && !mergeAllowMixedTerms) {
+      throw new Error("Bitte gemischte Transport/Incoterm explizit bestaetigen.");
+    }
+    const poNo = String(mergePoNo || "").trim();
+    if (!poNo) throw new Error("PO Nummer ist erforderlich.");
+    const targetDate = mergeResolvedTargetDate;
+    if (mergeTargetMode === "manual" && !targetDate) {
+      throw new Error("Bitte ein manuelles Ziel-Lieferdatum setzen.");
+    }
+
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const pos = Array.isArray(next.pos) ? [...next.pos] : [];
+      const fos = Array.isArray(next.fos) ? [...next.fos] : [];
+      if (pos.some((entry) => String((entry as Record<string, unknown>).poNo || "") === poNo)) {
+        throw new Error(`PO Nummer ${poNo} existiert bereits.`);
+      }
+      const sourceIds = sourceFos.map((fo) => String(fo.id || ""));
+      const selectedFromState = fos
+        .filter((entry) => sourceIds.includes(String((entry as Record<string, unknown>).id || "")))
+        .map((entry) => ({ ...(entry as Record<string, unknown>) }));
+      if (selectedFromState.length !== sourceFos.length) {
+        throw new Error("Nicht alle ausgewaehlten FOs konnten geladen werden.");
+      }
+      if (selectedFromState.some((fo) => !isFoConvertibleStatus(fo.status))) {
+        throw new Error("Enthaelt bereits konvertierte oder archivierte FOs.");
+      }
+      const po = createPoFromFos({
+        fos: selectedFromState,
+        poNumber: poNo,
+        orderDateOverride: mergeOrderDate || null,
+        targetDeliveryDate: targetDate,
+      });
+      pos.push(po);
+
+      const supplierMap = new Map(
+        (Array.isArray(next.suppliers) ? next.suppliers : [])
+          .map((entry) => entry as Record<string, unknown>)
+          .map((entry) => [String(entry.id || ""), entry]),
+      );
+      const vatRefundLagMonths = (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths;
+
+      const updatedFos = fos.map((entry) => {
+        const fo = entry as Record<string, unknown>;
+        const foId = String(fo.id || "");
+        if (!sourceIds.includes(foId)) return fo;
+        const supplier = supplierMap.get(String(fo.supplierId || "")) || null;
+        const supplierTerms = extractSupplierTerms(fo.payments, supplier || undefined);
+        const schedule = computeScheduleFromOrderDate({
+          orderDate: mergeOrderDate || po.orderDate || fo.orderDate,
+          productionLeadTimeDays: fo.productionLeadTimeDays,
+          logisticsLeadTimeDays: fo.logisticsLeadTimeDays,
+          bufferDays: fo.bufferDays,
+          deliveryDate: targetDate || fo.targetDeliveryDate,
+        });
+        const payments = buildFoPayments({
+          supplierTerms,
+          schedule,
+          unitPrice: fo.unitPrice,
+          units: fo.units,
+          currency: fo.currency,
+          freight: fo.freight,
+          freightCurrency: fo.freightCurrency,
+          dutyRatePct: fo.dutyRatePct,
+          eustRatePct: fo.eustRatePct,
+          fxRate: fo.fxRate,
+          incoterm: fo.incoterm,
+          vatRefundLagMonths,
+        });
+        return {
+          ...fo,
+          ...schedule,
+          payments,
+          status: "CONVERTED",
+          convertedPoId: po.id,
+          convertedPoNo: po.poNo,
+          updatedAt: nowIso(),
+        };
+      });
+
+      next.pos = pos;
+      next.fos = updatedFos;
+      return next;
+    }, "v2:fo:merge-convert");
+
+    setMergeOpen(false);
+    setMergeSelection([]);
+    setMergeAllowMixedTerms(false);
+    setMergeOrderDate("");
+    setMergeManualTargetDate("");
+    setMergePoNo("");
+    setMergeTargetMode("earliest");
+    message.success(`FO-Merge erstellt PO ${poNo}.`);
   }
 
   useEffect(() => {
@@ -1341,6 +1345,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     const prefill: Partial<FoFormValues> = {
       sku,
       units: suggestedUnits,
+      status: "ACTIVE",
     };
     if (product?.supplierId) prefill.supplierId = String(product.supplierId);
     if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
@@ -1357,7 +1362,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             <div>
               <Title level={3}>Forecast Orders</Title>
               <Paragraph>
-                Backward Scheduling, FO-Empfehlung und Conversion nach PO in einem durchgängigen Flow.
+                FO ist ein Planobjekt je SKU (inkl. Plan-Meilensteinen). Zahlungen werden erst nach PO-Conversion im PO-Flow bestätigt.
               </Paragraph>
             </div>
           </div>
@@ -1393,6 +1398,13 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             ]}
             style={{ width: 190 }}
           />
+          <Button
+            onClick={openMergeModalFromSelection}
+            disabled={mergeSelectedFos.length < 2}
+          >
+            Create PO from FOs
+          </Button>
+          <Tag>{mergeSelectedFos.length} ausgewählt</Tag>
         </div>
         <TanStackGrid
           data={rows}
@@ -1782,24 +1794,13 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               )}
             </Form.List>
             <div style={{ marginTop: 12 }}>
-              <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
-                <Text strong>Zahlungsfaelligkeiten (Preview)</Text>
-                <Button
-                  size="small"
-                  onClick={() => openPaymentBookingModal(null)}
-                  disabled={!editingId || !livePaymentPreviewRows.length || modalCollab.readOnly}
-                >
-                  Sammelzahlung buchen
-                </Button>
-              </Space>
-              {!editingId ? (
-                <Alert
-                  type="info"
-                  showIcon
-                  style={{ marginTop: 8 }}
-                  message="FO zuerst speichern, danach koennen Zahlungen verbucht werden."
-                />
-              ) : null}
+              <Text strong>Zahlungsfaelligkeiten (Plan)</Text>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 8 }}
+                message="FOs erzeugen nur Plan-Meilensteine. Zahlungen werden ausschließlich in POs bestätigt."
+              />
               <div className="v2-stats-table-wrap" style={{ marginTop: 8 }}>
                 <table className="v2-stats-table" data-layout="auto">
                   <thead>
@@ -1807,14 +1808,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                       <th>Typ</th>
                       <th>Label</th>
                       <th>Soll</th>
-                      <th>Ist</th>
-                      <th>Währung</th>
+                      <th>Waehrung</th>
                       <th>Fällig</th>
-                      <th>Status</th>
-                      <th>Paid</th>
-                      <th>Methode / Von</th>
-                      <th>Invoice / Folder</th>
-                      <th>Aktionen</th>
+                      <th>Regel</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1825,44 +1821,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                             <td>{formatFoPaymentCategory(row.category)}</td>
                             <td>{row.label}</td>
                             <td>{formatCurrency(row.plannedEur)}</td>
-                            <td>{row.paidEurActual != null ? formatCurrency(row.paidEurActual) : "—"}</td>
                             <td>{row.currency}</td>
                             <td>{formatDate(row.dueDate)}</td>
-                            <td>{row.status === "paid" ? "Bezahlt" : "Offen"}</td>
-                            <td>{formatDate(row.paidDate)}</td>
-                            <td>
-                              {row.method || row.paidBy ? (
-                                <Space direction="vertical" size={0}>
-                                  <Text>{row.method || "—"}</Text>
-                                  <Text type="secondary">{row.paidBy || "—"}</Text>
-                                </Space>
-                              ) : "—"}
-                            </td>
-                            <td>
-                              <Space direction="vertical" size={0}>
-                                {row.invoiceDriveUrl && isHttpUrl(row.invoiceDriveUrl) ? (
-                                  <a href={row.invoiceDriveUrl} target="_blank" rel="noreferrer">Invoice</a>
-                                ) : <Text type="secondary">Invoice —</Text>}
-                                {row.invoiceFolderDriveUrl && isHttpUrl(row.invoiceFolderDriveUrl) ? (
-                                  <a href={row.invoiceFolderDriveUrl} target="_blank" rel="noreferrer">Folder</a>
-                                ) : <Text type="secondary">Folder —</Text>}
-                              </Space>
-                            </td>
-                            <td>
-                              <Button
-                                size="small"
-                                onClick={() => openPaymentBookingModal(row)}
-                                disabled={!editingId || modalCollab.readOnly || row.category === "eust_refund"}
-                              >
-                                {row.status === "paid" ? "Bearbeiten" : "Zahlung buchen"}
-                              </Button>
-                            </td>
+                            <td>{`${row.triggerEvent} + ${formatNumber(row.offsetDays, 0)}d + ${formatNumber(row.offsetMonths, 0)}m`}</td>
                           </tr>
                         );
                       })
                     ) : (
                       <tr>
-                        <td colSpan={11}>Keine Zahlungszeilen.</td>
+                        <td colSpan={6}>Keine Zahlungszeilen.</td>
                       </tr>
                     )}
                   </tbody>
@@ -1874,137 +1841,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       </Modal>
 
       <Modal
-        title="FO Zahlung verbuchen"
-        open={paymentModalOpen}
-        width={900}
-        onCancel={() => {
-          setPaymentModalOpen(false);
-          setPaymentEditingId(null);
-          setPaymentInitialEventIds([]);
-          setPaymentModalError(null);
-          paymentForm.resetFields();
-        }}
-        onOk={() => {
-          setPaymentModalError(null);
-          void paymentForm.validateFields().then((values) => savePaymentBooking(values)).catch((saveError) => {
-            if (saveError?.errorFields) return;
-            setPaymentModalError(String(saveError instanceof Error ? saveError.message : saveError));
-          });
-        }}
-      >
-        {paymentModalError ? (
-          <Alert type="error" showIcon message={paymentModalError} style={{ marginBottom: 10 }} />
-        ) : null}
-        <Form form={paymentForm} layout="vertical">
-          <Form.Item
-            name="selectedEventIds"
-            label="Welche Zahlungsbausteine sind in dieser Zahlung enthalten?"
-            rules={[{ required: true, message: "Bitte mindestens einen Baustein waehlen." }]}
-          >
-            <Checkbox.Group style={{ width: "100%" }}>
-              <Space direction="vertical" style={{ width: "100%" }}>
-                {livePaymentPreviewRows
-                  .filter((row) => row.category !== "eust_refund" && row.amount >= 0)
-                  .map((row) => {
-                    const lockedByOtherPayment = row.status === "paid"
-                      && row.paymentId
-                      && row.paymentId !== paymentEditingId
-                      && !paymentInitialEventIds.includes(row.id);
-                    return (
-                      <Card key={row.id} size="small" style={{ width: "100%" }}>
-                        <Checkbox value={row.id} disabled={lockedByOtherPayment}>
-                          <Space size={10} wrap>
-                            <Text strong>{formatFoPaymentCategory(row.category)}</Text>
-                            <Text type="secondary">{row.label}</Text>
-                            <Text type="secondary">Due {formatDate(row.dueDate)}</Text>
-                            <Text>{formatCurrency(row.plannedEur)}</Text>
-                            {row.status === "paid" ? <Tag color="green">Bereits bezahlt</Tag> : <Tag>Offen</Tag>}
-                            {row.paymentId ? <Text type="secondary">Payment-ID {row.paymentId}</Text> : null}
-                          </Space>
-                        </Checkbox>
-                      </Card>
-                    );
-                  })}
-              </Space>
-            </Checkbox.Group>
-          </Form.Item>
-
-          <Space align="start" wrap style={{ width: "100%" }}>
-            <Form.Item name="paidDate" label="Zahlungsdatum" style={{ width: 170 }} rules={[{ required: true }]}>
-              <Input type="date" />
-            </Form.Item>
-            <Form.Item name="method" label="Zahlungsmethode" style={{ minWidth: 230, flex: 1 }} rules={[{ required: true }]}>
-              <Select showSearch optionFilterProp="label" options={paymentMethodOptions} />
-            </Form.Item>
-            <Form.Item name="paidBy" label="Bezahlt durch" style={{ minWidth: 220, flex: 1 }} rules={[{ required: true }]}>
-              <Input placeholder={payerHint || "Name oder E-Mail"} />
-            </Form.Item>
-          </Space>
-
-          <Space align="start" wrap style={{ width: "100%" }}>
-            <Form.Item name="amountActualEur" label="Ist-Betrag EUR" style={{ width: 180 }} rules={[{ required: true }]}>
-              <DeNumberInput mode="decimal" min={0} />
-            </Form.Item>
-            <Form.Item name="amountActualUsd" label="Ist-Betrag USD (optional)" style={{ width: 210 }}>
-              <DeNumberInput mode="decimal" min={0} />
-            </Form.Item>
-            <Form.Item name="paymentId" label="Payment-ID (intern)" style={{ minWidth: 300, flex: 1 }}>
-              <Input placeholder="pay-..." />
-            </Form.Item>
-          </Space>
-
-          <Space align="start" wrap style={{ width: "100%" }}>
-            <Form.Item name="invoiceDriveUrl" label="Invoice Link (Google Drive)" style={{ minWidth: 360, flex: 1 }}>
-              <Input placeholder="https://..." />
-            </Form.Item>
-            <Button
-              style={{ marginTop: 31 }}
-              disabled={!isHttpUrl(String(paymentDraftValues?.invoiceDriveUrl || ""))}
-              onClick={() => window.open(String(paymentDraftValues?.invoiceDriveUrl || ""), "_blank", "noopener,noreferrer")}
-            >
-              Link oeffnen
-            </Button>
-          </Space>
-          <Space align="start" wrap style={{ width: "100%" }}>
-            <Form.Item name="invoiceFolderDriveUrl" label="Ordner-Link (Google Drive)" style={{ minWidth: 360, flex: 1 }}>
-              <Input placeholder="https://..." />
-            </Form.Item>
-            <Button
-              style={{ marginTop: 31 }}
-              disabled={!isHttpUrl(String(paymentDraftValues?.invoiceFolderDriveUrl || ""))}
-              onClick={() => window.open(String(paymentDraftValues?.invoiceFolderDriveUrl || ""), "_blank", "noopener,noreferrer")}
-            >
-              Ordner oeffnen
-            </Button>
-          </Space>
-
-          <Form.Item name="note" label="Notiz">
-            <Input.TextArea rows={2} placeholder="Optionaler Hinweis" />
-          </Form.Item>
-
-          <Card size="small">
-            <Space direction="vertical" style={{ width: "100%" }} size={6}>
-              <Text strong>Dateiname-Vorschlag fuer Rechnung</Text>
-              <Text code>{suggestedPaymentFilename || "—"}</Text>
-              <div>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    if (!suggestedPaymentFilename) return;
-                    void navigator.clipboard.writeText(suggestedPaymentFilename);
-                    message.success("Dateiname kopiert.");
-                  }}
-                >
-                  Dateiname kopieren
-                </Button>
-              </div>
-            </Space>
-          </Card>
-        </Form>
-      </Modal>
-
-      <Modal
-        title="FO in PO konvertieren"
+        title="Einzel-FO in PO konvertieren"
         open={convertOpen}
         onCancel={() => setConvertOpen(false)}
         onOk={() => {
@@ -2021,6 +1858,132 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           <Input value={convertPoNo} onChange={(event) => setConvertPoNo(event.target.value)} />
           <Text>Order Date (optional)</Text>
           <Input type="date" value={convertOrderDate} onChange={(event) => setConvertOrderDate(event.target.value)} />
+        </Space>
+      </Modal>
+
+      <Modal
+        title="Mehrere FOs zu einer PO bündeln"
+        open={mergeOpen}
+        width={960}
+        onCancel={() => setMergeOpen(false)}
+        onOk={() => {
+          void convertFoMerge().catch((mergeError: unknown) => {
+            Modal.error({
+              title: "Merge fehlgeschlagen",
+              content: mergeError instanceof Error ? mergeError.message : String(mergeError),
+            });
+          });
+        }}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Text type="secondary">
+            {mergeSelectedFos.length} FO(s) ausgewählt. Ergebnis ist eine Multi-SKU-PO mit PO-basierten Zahlungsmeilensteinen.
+          </Text>
+          <Space align="start" wrap style={{ width: "100%" }}>
+            <div style={{ minWidth: 220, flex: 1 }}>
+              <Text>PO Nummer</Text>
+              <Input value={mergePoNo} onChange={(event) => setMergePoNo(event.target.value)} />
+            </div>
+            <div style={{ minWidth: 220, flex: 1 }}>
+              <Text>Order Date (optional)</Text>
+              <Input type="date" value={mergeOrderDate} onChange={(event) => setMergeOrderDate(event.target.value)} />
+            </div>
+          </Space>
+
+          <div>
+            <Text strong>Ziel-Liefertermin der PO</Text>
+            <Space direction="vertical" style={{ marginTop: 6, width: "100%" }}>
+              <Checkbox
+                checked={mergeTargetMode === "earliest"}
+                onChange={(event) => setMergeTargetMode(event.target.checked ? "earliest" : "manual")}
+              >
+                Frühester FO-Zieltermin verwenden ({formatDate(mergeEarliestTargetDate || null)})
+              </Checkbox>
+              <Checkbox
+                checked={mergeTargetMode === "manual"}
+                onChange={(event) => setMergeTargetMode(event.target.checked ? "manual" : "earliest")}
+              >
+                Manuelles Ziel setzen
+              </Checkbox>
+              {mergeTargetMode === "manual" ? (
+                <Input
+                  type="date"
+                  value={mergeManualTargetDate}
+                  onChange={(event) => setMergeManualTargetDate(event.target.value)}
+                  style={{ maxWidth: 240 }}
+                />
+              ) : null}
+            </Space>
+          </div>
+
+          {mergeHasSupplierMismatch ? (
+            <Alert
+              type="error"
+              showIcon
+              message="FO-Merge nur bei gleichem Lieferanten erlaubt."
+            />
+          ) : null}
+          {mergeHasMixedTerms ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="Gemischte Incoterms/Transportmodi erkannt."
+              description={
+                <div>
+                  <div>Incoterms: {mergeIncoterms.join(", ") || "—"}</div>
+                  <div>Transport: {mergeTransportModes.join(", ") || "—"}</div>
+                  <Checkbox
+                    checked={mergeAllowMixedTerms}
+                    onChange={(event) => setMergeAllowMixedTerms(event.target.checked)}
+                    style={{ marginTop: 8 }}
+                  >
+                    Ich habe den Mix geprüft und möchte trotzdem bündeln.
+                  </Checkbox>
+                </div>
+              }
+            />
+          ) : null}
+
+          <div className="v2-stats-table-wrap">
+            <table className="v2-stats-table" data-layout="auto">
+              <thead>
+                <tr>
+                  <th>FO</th>
+                  <th>SKU</th>
+                  <th>Units</th>
+                  <th>FO Ziel</th>
+                  <th>Abweichung zur PO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mergeSelectedFos.length ? mergeSelectedFos.map((fo) => {
+                  const target = resolveFoTargetDeliveryDate(fo);
+                  const row = mergeTimelineRows.find((entry) => entry.id === String(fo.id || ""));
+                  return (
+                    <tr key={String(fo.id || "")}>
+                      <td>{String(fo.id || "").slice(-6).toUpperCase()}</td>
+                      <td>{String(fo.sku || "—")}</td>
+                      <td>{formatNumber(fo.units, 0)}</td>
+                      <td>{formatDate(target)}</td>
+                      <td>
+                        {row ? (
+                          row.status < 0
+                            ? <Tag color="red">{row.deviation}</Tag>
+                            : row.status > 0
+                              ? <Tag color="gold">{row.deviation}</Tag>
+                              : <Tag color="green">{row.deviation}</Tag>
+                        ) : "—"}
+                      </td>
+                    </tr>
+                  );
+                }) : (
+                  <tr>
+                    <td colSpan={5}>Keine FOs gewählt.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </Space>
       </Modal>
     </div>

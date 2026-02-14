@@ -32,6 +32,19 @@ function normalizeKey(value: unknown): string {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeFoStatus(value: unknown): string {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "DRAFT";
+  if (raw === "PLANNED") return "ACTIVE";
+  if (raw === "CANCELLED") return "ARCHIVED";
+  return raw;
+}
+
+function isFoPlanningStatus(value: unknown): boolean {
+  const status = normalizeFoStatus(value);
+  return status === "DRAFT" || status === "ACTIVE";
+}
+
 function parseNumber(value: unknown): number {
   const parsed = parseDeNumber(value);
   if (!Number.isFinite(parsed as number)) return 0;
@@ -353,6 +366,7 @@ export function buildPaymentJournalRowsFromState(
 
   foRecords.forEach((entry) => {
     const record = entry as Record<string, unknown>;
+    if (!isFoPlanningStatus(record?.status)) return;
     if (!record || !Array.isArray(record.payments)) return;
     const supplierName = resolveSupplierName(record, supplierNameMap);
     const skuAliases = record.sku
@@ -370,29 +384,8 @@ export function buildPaymentJournalRowsFromState(
       const currency = String(payment.currency || "EUR");
       const planned = currency === "EUR" ? rawAmount : (fxRate > 0 ? rawAmount / fxRate : rawAmount);
       const dueDate = String(payment.dueDate || "");
-      const paymentId = String(payment.paymentId || "");
-      const paymentRecord = paymentId ? (paymentIndexes.byId.get(paymentId) || null) : null;
-      const status: "PAID" | "OPEN" = (
-        String(payment.status || "").toUpperCase() === "PAID"
-        || Boolean(paymentRecord)
-      ) ? "PAID" : "OPEN";
-      const paidDate = String(payment.paidDate || paymentRecord?.paidDate || "");
-      const actualFromPayment = Number(payment.paidEurActual);
-      let amountActualEur: number | null = Number.isFinite(actualFromPayment) ? actualFromPayment : null;
-      if (amountActualEur == null && paymentRecord?.allocations && Array.isArray(paymentRecord.allocations)) {
-        const allocation = (paymentRecord.allocations as Record<string, unknown>[]).find(
-          (entry) => String(entry?.eventId || "") === String(payment.id || ""),
-        );
-        if (allocation && Number.isFinite(Number(allocation.amountEur))) {
-          amountActualEur = Number(allocation.amountEur);
-        }
-      }
-      if (amountActualEur == null && paymentRecord) {
-        const covered = Array.isArray(paymentRecord.coveredEventIds) ? paymentRecord.coveredEventIds : [];
-        if (covered.length <= 1 && Number.isFinite(Number(paymentRecord.amountActualEurTotal))) {
-          amountActualEur = Number(paymentRecord.amountActualEurTotal);
-        }
-      }
+      const status: "PAID" | "OPEN" = "OPEN";
+      const paidDate = "";
       const entityId = String(record.id || record.foNumber || "");
       const eventId = String(payment.id || `${entityId}-${paymentType}-${dueDate}`);
       const rowId = `FO-${entityId}-${paymentType}-${dueDate || ""}`;
@@ -409,14 +402,14 @@ export function buildPaymentJournalRowsFromState(
         status,
         dueDate,
         paidDate,
-        paymentId,
+        paymentId: "",
         amountPlannedEur: planned,
-        amountActualEur,
-        payer: String(payment.paidBy || paymentRecord?.payer || ""),
-        paymentMethod: String(payment.method || paymentRecord?.method || ""),
-        note: String(payment.note || paymentRecord?.note || ""),
+        amountActualEur: null,
+        payer: "",
+        paymentMethod: "",
+        note: "",
         internalId: String(record.id || rowId),
-        issues: status === "PAID" && !paidDate ? ["PAID_WITHOUT_DATE"] : [],
+        issues: [],
       });
     });
   });

@@ -1497,7 +1497,16 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("source") !== "inventory_projection") return;
+    const source = params.get("source");
+    if (source === "fo_convert") {
+      const poNo = String(params.get("poNo") || "").trim();
+      if (poNo) {
+        setSearch(poNo);
+      }
+      navigate(location.pathname, { replace: true });
+      return;
+    }
+    if (source !== "inventory_projection") return;
     const sku = String(params.get("sku") || "").trim();
     if (!sku) return;
     const product = productRows.find((entry) => entry.sku === sku) || null;

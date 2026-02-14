@@ -5,6 +5,7 @@ const fs = require("node:fs");
 
 const {
   computePoAggregateMetrics,
+  createPoFromFos,
   mapSupplierTermsToPoMilestones,
 } = require("../../.test-build/migration/v2/domain/orderUtils.js");
 const { buildPaymentRows } = require("../../.test-build/migration/ui/orderEditorFactory.js");
@@ -137,6 +138,58 @@ test("po multi-sku flow: supplier milestones are goods-based and freight stays s
   const supplierTotal = Number(deposit.plannedEur || 0) + Number(balance.plannedEur || 0);
   assert.equal(supplierTotal, 400);
   assert.equal(Number(freight.plannedEur || 0), 90);
+});
+
+test("po multi-sku flow: FO merge creates a single multi-item PO with critical path", () => {
+  const po = createPoFromFos({
+    poNumber: "PO-FO-MERGE-1",
+    targetDeliveryDate: "2026-08-31",
+    fos: [
+      {
+        id: "fo-a",
+        supplierId: "sup-1",
+        sku: "SKU-A",
+        units: 120,
+        unitPrice: 4.5,
+        freight: 100,
+        freightCurrency: "EUR",
+        fxRate: 1.1,
+        productionLeadTimeDays: 40,
+        bufferDays: 5,
+        logisticsLeadTimeDays: 35,
+        transportMode: "SEA",
+        incoterm: "EXW",
+        dutyRatePct: 8,
+        eustRatePct: 19,
+      },
+      {
+        id: "fo-b",
+        supplierId: "sup-1",
+        sku: "SKU-B",
+        units: 80,
+        unitPrice: 6.2,
+        freight: 80,
+        freightCurrency: "EUR",
+        fxRate: 1.1,
+        productionLeadTimeDays: 28,
+        bufferDays: 0,
+        logisticsLeadTimeDays: 49,
+        transportMode: "SEA",
+        incoterm: "EXW",
+        dutyRatePct: 8,
+        eustRatePct: 19,
+      },
+    ],
+  });
+
+  assert.equal(po.poNo, "PO-FO-MERGE-1");
+  assert.equal(Array.isArray(po.items), true);
+  assert.equal(po.items.length, 2);
+  assert.equal(po.units, 200);
+  assert.equal(po.prodDays, 45);
+  assert.equal(po.transitDays, 49);
+  assert.equal(po.etaManual, "2026-08-31");
+  assert.deepEqual(po.sourceFoIds, ["fo-a", "fo-b"]);
 });
 
 test("po multi-sku flow: PO module enforces supplier scope and mirror fields", () => {

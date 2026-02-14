@@ -58,6 +58,39 @@ const RANGE_OPTIONS: Array<{ value: ForecastRangeMode; label: string; count: num
   { value: "all", label: "Alle", count: null },
 ];
 
+interface DriftSummaryMeta {
+  comparedAt: string | null;
+  thresholdProfile: string;
+  flaggedSkuCount: number;
+  flaggedABCount: number;
+  flaggedMonthCount: number;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function normalizeDriftSummary(value: unknown): DriftSummaryMeta {
+  if (!value || typeof value !== "object") {
+    return {
+      comparedAt: null,
+      thresholdProfile: "medium",
+      flaggedSkuCount: 0,
+      flaggedABCount: 0,
+      flaggedMonthCount: 0,
+    };
+  }
+  const raw = value as Record<string, unknown>;
+  const comparedAt = typeof raw.comparedAt === "string" ? raw.comparedAt : null;
+  return {
+    comparedAt,
+    thresholdProfile: String(raw.thresholdProfile || "medium"),
+    flaggedSkuCount: Number(raw.flaggedSkuCount || 0),
+    flaggedABCount: Number(raw.flaggedABCount || 0),
+    flaggedMonthCount: Number(raw.flaggedMonthCount || 0),
+  };
+}
+
 function ensureForecastContainers(state: Record<string, unknown>): void {
   if (!state.forecast || typeof state.forecast !== "object") {
     state.forecast = {
@@ -113,6 +146,22 @@ export default function ForecastModule(): JSX.Element {
   const forecast = (state.forecast || {}) as Record<string, unknown>;
   const forecastImport = (forecast.forecastImport || {}) as Record<string, unknown>;
   const stateObject = state as unknown as Record<string, unknown>;
+  const driftSummary = useMemo(
+    () => normalizeDriftSummary(forecast.lastDriftSummary),
+    [forecast.lastDriftSummary],
+  );
+  const driftReviewedComparedAt = typeof forecast.lastDriftReviewedComparedAt === "string"
+    ? forecast.lastDriftReviewedComparedAt
+    : null;
+  const driftReviewedAt = typeof forecast.lastDriftReviewedAt === "string"
+    ? forecast.lastDriftReviewedAt
+    : null;
+  const driftReviewedForCurrent = Boolean(
+    driftSummary.comparedAt
+    && driftReviewedComparedAt
+    && driftReviewedComparedAt === driftSummary.comparedAt
+    && driftReviewedAt,
+  );
 
   useEffect(() => {
     setManualDraft(normalizeManualMap((forecast.forecastManual || {}) as Record<string, unknown>));
@@ -371,6 +420,19 @@ export default function ForecastModule(): JSX.Element {
     }, `v2:forecast:import:${importMode}`);
   }
 
+  async function markDriftReviewed(): Promise<void> {
+    if (!driftSummary.comparedAt) return;
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const nextState = next as unknown as Record<string, unknown>;
+      ensureForecastContainers(nextState);
+      const forecastTarget = nextState.forecast as Record<string, unknown>;
+      forecastTarget.lastDriftReviewedAt = nowIso();
+      forecastTarget.lastDriftReviewedComparedAt = driftSummary.comparedAt;
+      return next;
+    }, "v2:forecast:drift-reviewed");
+  }
+
   async function transferRevenueToInputs(): Promise<void> {
     if (!transferSelection.length) return;
     await saveWith((current) => {
@@ -516,6 +578,29 @@ export default function ForecastModule(): JSX.Element {
           ) : (
             <Text type="secondary">Noch keine Importdaten geladen.</Text>
           )}
+          <Space wrap>
+            <Tag color={driftReviewedForCurrent ? "green" : "gold"}>
+              Drift-Review: {driftReviewedForCurrent ? "geprüft" : "offen"}
+            </Tag>
+            <Tag>
+              Profil: {driftSummary.thresholdProfile} · Flagged A/B: {formatDisplay(driftSummary.flaggedABCount, 0)}
+            </Tag>
+            {driftSummary.comparedAt ? (
+              <Tag>Verglichen: {new Date(driftSummary.comparedAt).toLocaleDateString("de-DE")}</Tag>
+            ) : (
+              <Tag color="default">Kein Driftvergleich</Tag>
+            )}
+            {driftReviewedAt ? (
+              <Tag>Geprüft am: {new Date(driftReviewedAt).toLocaleDateString("de-DE")}</Tag>
+            ) : null}
+            <Button
+              size="small"
+              onClick={() => { void markDriftReviewed(); }}
+              disabled={!driftSummary.comparedAt || driftReviewedForCurrent}
+            >
+              Drift geprüft
+            </Button>
+          </Space>
         </Space>
       </Card>
 
