@@ -1,30 +1,18 @@
 import { deriveShippingPerUnitEur } from "../../domain/costing/shipping.js";
 import {
-  resolveCurrency,
-  resolveDdp,
-  resolveFxRate,
-  resolveLogisticsPerUnitEur,
-  resolveProductionLeadTimeDays,
-  resolveSupplierContext,
-  resolveTransportMode,
-  resolveTransportLeadTimeDays,
-  resolveUnitPriceUsd,
-  toNumber,
-} from "../../lib/productDefaults.js";
+  resolveMasterDataHierarchy,
+  type HierarchySource,
+  type ResolvedHierarchyField,
+} from "./masterDataHierarchy";
 
-type FieldSource =
-  | "product_override"
-  | "product_base"
-  | "supplier_default"
-  | "settings_default"
-  | "computed"
-  | "none";
+type FieldSource = HierarchySource | "computed";
 
 interface ResolvedField<T> {
   value: T | null;
   source: FieldSource;
   sourceLabel: string;
   hint: string;
+  required?: boolean;
 }
 
 interface ProductFieldResolutionResult {
@@ -49,44 +37,18 @@ interface ProductFieldResolutionResult {
 }
 
 function sourceLabel(source: FieldSource): string {
-  if (source === "product_override") return "Produkt-Override";
-  if (source === "product_base") return "Produkt";
-  if (source === "supplier_default") return "Supplier Default";
-  if (source === "settings_default") return "Settings Default";
+  if (source === "order_override") return "Diese PO/FO";
+  if (source === "product") return "Produkt";
+  if (source === "supplier") return "Lieferant";
+  if (source === "settings") return "Settings";
   if (source === "computed") return "Berechnet";
-  return "Keine Quelle";
+  return "Fehlt";
 }
 
-function buildField<T>(value: T | null, source: FieldSource, hint: string): ResolvedField<T> {
-  return {
-    value,
-    source,
-    sourceLabel: sourceLabel(source),
-    hint,
-  };
-}
-
-function toFieldSource(
-  source: unknown,
-  options: {
-    override: boolean;
-  } = { override: false },
-): FieldSource {
-  if (options.override) return "product_override";
-  if (source === "product") return "product_base";
-  if (source === "productSupplier" || source === "supplier") return "supplier_default";
-  if (source === "settings") return "settings_default";
-  if (source === "computed") return "computed";
-  return "none";
-}
-
-function asUpper(value: unknown, fallback: string): string {
-  const text = String(value || "").trim().toUpperCase();
-  return text || fallback;
-}
-
-function normalizeBool(value: unknown): boolean {
-  return value === true || value === 1 || value === "true";
+function toNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function templateFields(product: Record<string, unknown>): Record<string, unknown> {
@@ -99,16 +61,30 @@ function templateFields(product: Record<string, unknown>): Record<string, unknow
   return fields || {};
 }
 
-function pickNumber(value: unknown): number | null {
-  const parsed = toNumber(value);
-  return Number.isFinite(parsed) ? Number(parsed) : null;
+function buildField<T>(source: ResolvedHierarchyField<T>, hint: string): ResolvedField<T> {
+  return {
+    value: source.value,
+    source: source.source,
+    sourceLabel: sourceLabel(source.source),
+    hint,
+    required: source.required,
+  };
 }
 
-function pickPositiveNumber(value: unknown): number | null {
-  const parsed = toNumber(value);
+function fieldFromValue<T>(value: T | null, source: FieldSource, hint: string, required = false): ResolvedField<T> {
+  return {
+    value,
+    source,
+    sourceLabel: sourceLabel(source),
+    hint,
+    required,
+  };
+}
+
+function pickPositive(value: unknown): number | null {
+  const parsed = Number(value);
   if (!Number.isFinite(parsed)) return null;
-  const next = Number(parsed);
-  return next > 0 ? next : null;
+  return parsed > 0 ? parsed : null;
 }
 
 export function resolveProductFieldResolution(input: {
@@ -120,180 +96,67 @@ export function resolveProductFieldResolution(input: {
   const state = input.state || {};
   const settings = (state.settings || {}) as Record<string, unknown>;
   const template = templateFields(product);
-  const sku = String(product.sku || "").trim();
 
-  const { supplier, productSupplier } = resolveSupplierContext(
+  const hierarchy = resolveMasterDataHierarchy({
     state,
-    sku,
-    input.supplierId || String(product.supplierId || ""),
-  );
+    product,
+    sku: String(product.sku || ""),
+    supplierId: input.supplierId || String(product.supplierId || ""),
+    orderContext: "product",
+  });
 
-  const moqOverride = pickPositiveNumber(product.moqOverrideUnits);
-  const moqBase = pickPositiveNumber(product.moqUnits);
-  const moqDefault = pickPositiveNumber(settings.moqDefaultUnits);
-  const moqEffective = moqOverride != null
-    ? buildField(moqOverride, "product_override", "Produktspezifisches MOQ.")
-    : (moqBase != null
-      ? buildField(moqBase, "product_base", "Produktwert ohne Override.")
-      : buildField(moqDefault, moqDefault != null ? "settings_default" : "none", "Default aus Settings (MOQ)."));
+  const moqEffective = buildField(hierarchy.fields.moqUnits, "MOQ für Einkaufsplanung.");
 
-  const safetyOverride = pickPositiveNumber(product.safetyStockDohOverride);
-  const safetyDefault = pickPositiveNumber(settings.safetyStockDohDefault);
+  const safetyOverride = pickPositive(product.safetyStockDohOverride);
+  const safetyDefault = pickPositive(settings.safetyStockDohDefault);
   const safetyDohEffective = safetyOverride != null
-    ? buildField(safetyOverride, "product_override", "Produktspezifischer Safety-Wert.")
-    : buildField(
-      safetyDefault,
-      safetyDefault != null ? "settings_default" : "none",
-      "Default aus Settings (Safety Stock DOH).",
-    );
+    ? fieldFromValue(safetyOverride, "product", "Produktspezifischer Safety-Wert.")
+    : fieldFromValue(safetyDefault, safetyDefault != null ? "settings" : "missing", "Default aus Settings (Safety Stock DOH).");
 
-  const coverageOverride = pickPositiveNumber(product.foCoverageDohOverride);
-  const coverageDefault = pickPositiveNumber(settings.foCoverageDohDefault);
+  const coverageOverride = pickPositive(product.foCoverageDohOverride);
+  const coverageDefault = pickPositive(settings.foCoverageDohDefault);
   const coverageDohEffective = coverageOverride != null
-    ? buildField(coverageOverride, "product_override", "Produktspezifischer Coverage-Wert.")
-    : buildField(
-      coverageDefault,
-      coverageDefault != null ? "settings_default" : "none",
-      "Default aus Settings (FO Coverage DOH).",
-    );
+    ? fieldFromValue(coverageOverride, "product", "Produktspezifischer Coverage-Wert.")
+    : fieldFromValue(coverageDefault, coverageDefault != null ? "settings" : "missing", "Default aus Settings (FO Coverage DOH).");
 
-  const productLeadOverride = pickPositiveNumber(product.productionLeadTimeDaysDefault) != null;
-  const productionLead = resolveProductionLeadTimeDays({
-    product,
-    productSupplier,
-    supplier,
-    settings,
-  });
-  const productionLeadValue = pickPositiveNumber(productionLead.value);
-  const productionLeadDays = buildField(
-    productionLeadValue,
-    productionLeadValue != null
-      ? toFieldSource(productionLead.source, { override: productLeadOverride })
-      : "none",
-    "Produktionszeit fuer Planung/Bestellung.",
-  );
+  const transportValue = String(template.transportMode || template.transport || "SEA").toUpperCase() || "SEA";
+  const transportSource: FieldSource = template.transportMode || template.transport ? "product" : "settings";
 
-  const unitPrice = resolveUnitPriceUsd({ product, productSupplier });
-  const unitPriceValue = pickPositiveNumber(unitPrice.value);
-  const unitPriceUsd = buildField(
-    unitPriceValue,
-    unitPriceValue != null ? toFieldSource(unitPrice.source) : "none",
-    "Stueckpreis in USD fuer Kostenkalkulation.",
-  );
-
-  const fx = resolveFxRate(product, settings);
-  const fxValue = pickPositiveNumber(fx.value);
-  const fxRate = buildField(
-    fxValue,
-    fxValue != null ? toFieldSource(fx.source) : "none",
-    "FX in USD je EUR fuer Umrechnung.",
-  );
-
-  const logistics = resolveLogisticsPerUnitEur({
-    product,
-    productSupplier,
-    fxRate: fx.value,
-    unitPriceUsd: unitPrice.value,
-  });
-  const logisticsValue = pickPositiveNumber(logistics.value);
-  const logisticsPerUnitEur = buildField(
-    logisticsValue,
-    logisticsValue != null
-      ? toFieldSource(logistics.source, {
-        override: pickPositiveNumber(product.logisticsPerUnitEur ?? product.freightPerUnitEur) != null,
-      })
-      : "none",
-    "Logistik-/Importanteil je Einheit in EUR.",
-  );
-
-  const transport = asUpper(resolveTransportMode({ product, transportMode: template.transportMode }), "SEA");
-  const transportSource = template.transportMode || template.transport
-    ? "product"
-    : "settings";
-  const transportMode = buildField(
-    transport,
-    toFieldSource(transportSource),
-    "Transportmodus fuer ETA/Lead-Time.",
-  );
-
-  const transit = resolveTransportLeadTimeDays({
-    settings,
-    product,
-    transportMode: transport,
-  });
-  const transitValue = pickPositiveNumber(transit.value);
-  const transitDays = buildField(
-    transitValue,
-    transitValue != null ? toFieldSource(transit.source) : "none",
-    "Transitzeit in Tagen fuer Planung.",
-  );
-
-  const currencyValue = asUpper(
-    resolveCurrency({ product, productSupplier, supplier, settings }),
-    asUpper(settings.defaultCurrency, "EUR"),
-  );
-  const currencySource = template.currency
-    ? "product"
-    : (supplier?.currencyDefault ? "supplier" : "settings");
-  const currency = buildField(
-    currencyValue,
-    toFieldSource(currencySource),
-    "Waehrung fuer Kostenwerte.",
-  );
-
-  const dutyValue = pickNumber(product.dutyRatePct ?? template.dutyPct ?? settings.dutyRatePct);
-  const dutySource = pickNumber(product.dutyRatePct) != null
-    ? "product"
-    : (pickNumber(template.dutyPct) != null ? "product" : "settings");
-  const dutyPct = buildField(
-    dutyValue,
-    dutyValue != null ? toFieldSource(dutySource) : "none",
-    "Zollsatz in Prozent.",
-  );
-
-  const eustValue = pickNumber(product.eustRatePct ?? template.vatImportPct ?? settings.eustRatePct);
-  const eustSource = pickNumber(product.eustRatePct) != null
-    ? "product"
-    : (pickNumber(template.vatImportPct) != null ? "product" : "settings");
-  const eustPct = buildField(
-    eustValue,
-    eustValue != null ? toFieldSource(eustSource) : "none",
-    "EUSt-Satz in Prozent.",
-  );
-
-  const ddpValue = normalizeBool(resolveDdp({ product, settings }));
-  const ddpSource = typeof template.ddp === "boolean"
-    ? "product"
-    : (typeof settings.defaultDdp === "boolean" ? "settings" : "none");
-  const ddp = buildField(
-    ddpValue,
-    toFieldSource(ddpSource),
-    "DDP = Importkosten in Lieferpreis enthalten.",
-  );
+  const logisticsSource = hierarchy.fields.logisticsPerUnitEur.value != null
+    ? buildField(hierarchy.fields.logisticsPerUnitEur, "Logistik-/Importanteil je Einheit in EUR.")
+    : fieldFromValue(null, "missing", "Logistik-/Importanteil je Einheit in EUR.");
 
   const shippingSuggestion = deriveShippingPerUnitEur({
-    unitCostUsd: unitPrice.value,
-    landedUnitCostEur: pickNumber(product.landedUnitCostEur),
-    fxEurUsd: fx.value,
+    unitCostUsd: hierarchy.fields.unitPriceUsd.value,
+    landedUnitCostEur: toNumber(product.landedUnitCostEur),
+    fxEurUsd: hierarchy.fields.fxRate.value,
   });
+
+  const logisticsPerUnitEur = logisticsSource.value != null
+    ? logisticsSource
+    : fieldFromValue(
+      toNumber(shippingSuggestion.value),
+      Number.isFinite(Number(shippingSuggestion.value)) ? "computed" : "missing",
+      "Logistik-/Importanteil je Einheit in EUR.",
+    );
 
   return {
     moqEffective,
     safetyDohEffective,
     coverageDohEffective,
-    productionLeadDays,
-    unitPriceUsd,
-    fxRate,
+    productionLeadDays: buildField(hierarchy.fields.productionLeadTimeDays, "Produktionszeit für Planung/Bestellung."),
+    unitPriceUsd: buildField(hierarchy.fields.unitPriceUsd, "Stückpreis in USD für Kostenkalkulation."),
+    fxRate: buildField(hierarchy.fields.fxRate, "FX in USD je EUR für Umrechnung."),
     logisticsPerUnitEur,
-    transportMode,
-    transitDays,
-    currency,
-    dutyPct,
-    eustPct,
-    ddp,
+    transportMode: fieldFromValue(transportValue, transportSource, "Transportmodus für ETA/Lead-Time."),
+    transitDays: buildField(hierarchy.fields.transitDays, "Transitzeit in Tagen für Planung."),
+    currency: buildField(hierarchy.fields.currency, "Währung für Kostenwerte."),
+    dutyPct: buildField(hierarchy.fields.dutyRatePct, "Zollsatz in Prozent."),
+    eustPct: buildField(hierarchy.fields.eustRatePct, "EUSt-Satz in Prozent."),
+    ddp: buildField(hierarchy.fields.ddp, "DDP = Importkosten in Lieferpreis enthalten."),
     shippingSuggestion: {
-      value: pickNumber(shippingSuggestion.value),
-      goodsCostEur: pickNumber(shippingSuggestion.goodsCostEur),
+      value: toNumber(shippingSuggestion.value),
+      goodsCostEur: toNumber(shippingSuggestion.goodsCostEur),
       warning: shippingSuggestion.warning === true,
     },
   };

@@ -1,7 +1,7 @@
 import { computeAbcClassification } from "../../domain/abcClassification.js";
 import { computeInventoryProjection } from "../../domain/inventoryProjection.js";
 import { parseDeNumber } from "../../lib/dataHealth.js";
-import { evaluateProductCompleteness } from "../../lib/productCompleteness.js";
+import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 
 export type RobustnessSeverity = "error" | "warning";
 export type RobustnessCheckStatus = "ok" | "error";
@@ -196,7 +196,7 @@ function buildRevenueInputIssues(state: Record<string, unknown>, products: Recor
     if (!Number.isFinite(price as number) || Number(price) <= 0) {
       missingPrice.push(ref);
     }
-    const completeness = evaluateProductCompleteness(product, { state });
+    const completeness = evaluateProductCompletenessV2({ product, state });
     if (completeness?.status === "blocked") {
       blockedCompleteness.push(ref);
     }

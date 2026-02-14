@@ -12,7 +12,7 @@
     "test:parity:migration": "npm run test:parity:migration:build && npm run test:parity:migration:run",
     "test:parity:payments:run": "node --test tests/v2/payments-export.parity.test.cjs",
     "test:parity:payments": "npm run test:parity:migration:build && npm run test:parity:payments:run",
-    "test:parity:pofo:run": "node --test tests/v2/po-fo-payments.parity.test.cjs tests/v2/po-multisku-flow.parity.test.cjs",
+    "test:parity:pofo:run": "node --test tests/v2/po-fo-payments.parity.test.cjs tests/v2/po-multisku-flow.parity.test.cjs tests/v2/master-data-hierarchy.parity.test.cjs",
     "test:parity:pofo": "npm run test:parity:migration:build && npm run test:parity:pofo:run",
     "test:parity:performance:run": "node --test tests/v2/performance.parity.test.cjs",
     "test:parity:performance": "npm run test:parity:migration:build && npm run test:parity:performance:run",

@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Form,
   Input,
@@ -39,6 +40,10 @@ interface SettingsDraft {
   defaultCurrency: string;
   fxRate: number | null;
   eurUsdRate: number | null;
+  defaultProductionLeadTimeDays: number;
+  dutyRatePct: number;
+  eustRatePct: number;
+  defaultDdp: boolean;
   safetyStockDohDefault: number;
   foCoverageDohDefault: number;
   moqDefaultUnits: number;
@@ -90,6 +95,10 @@ function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
     defaultCurrency: String(state.defaultCurrency || "EUR"),
     fxRate,
     eurUsdRate,
+    defaultProductionLeadTimeDays: Math.max(0, toNumber(state.defaultProductionLeadTimeDays, 45)),
+    dutyRatePct: Math.max(0, toNumber(state.dutyRatePct, 0)),
+    eustRatePct: Math.max(0, toNumber(state.eustRatePct, 0)),
+    defaultDdp: state.defaultDdp === true,
     safetyStockDohDefault: Math.max(0, toNumber(state.safetyStockDohDefault, 60)),
     foCoverageDohDefault: Math.max(0, toNumber(state.foCoverageDohDefault, 90)),
     moqDefaultUnits: Math.max(0, Math.round(toNumber(state.moqDefaultUnits, 500))),
@@ -116,6 +125,10 @@ function normalizeDraft(values: SettingsDraft): string {
     defaultCurrency: String(values.defaultCurrency || ""),
     fxRate: toOptionalNumber(values.fxRate),
     eurUsdRate: toOptionalNumber(values.eurUsdRate),
+    defaultProductionLeadTimeDays: Number(values.defaultProductionLeadTimeDays || 0),
+    dutyRatePct: Number(values.dutyRatePct || 0),
+    eustRatePct: Number(values.eustRatePct || 0),
+    defaultDdp: values.defaultDdp === true,
     safetyStockDohDefault: Number(values.safetyStockDohDefault || 0),
     foCoverageDohDefault: Number(values.foCoverageDohDefault || 0),
     moqDefaultUnits: Number(values.moqDefaultUnits || 0),
@@ -286,6 +299,10 @@ export default function SettingsModule(): JSX.Element {
         defaultCurrency: values.defaultCurrency,
         fxRate,
         eurUsdRate,
+        defaultProductionLeadTimeDays: Math.max(0, Math.round(values.defaultProductionLeadTimeDays)),
+        dutyRatePct: Math.max(0, Number(values.dutyRatePct || 0)),
+        eustRatePct: Math.max(0, Number(values.eustRatePct || 0)),
+        defaultDdp: values.defaultDdp === true,
         safetyStockDohDefault: Math.max(0, Math.round(values.safetyStockDohDefault)),
         foCoverageDohDefault: Math.max(0, Math.round(values.foCoverageDohDefault)),
         moqDefaultUnits: Math.max(0, Math.round(values.moqDefaultUnits)),
@@ -563,13 +580,36 @@ export default function SettingsModule(): JSX.Element {
               </Form.Item>
             </Col>
             <Col xs={24} md={8}>
-              <Form.Item label="CNY Start" name="cnyStart">
-                <Input type="date" />
+              <Form.Item label="Default Production Lead Time (Tage)" name="defaultProductionLeadTimeDays">
+                <DeNumberInput mode="int" min={0} />
               </Form.Item>
             </Col>
           </Row>
 
           <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item label="Default Zollsatz %" name="dutyRatePct">
+                <DeNumberInput mode="percent" min={0} max={100} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="Default EUSt %" name="eustRatePct">
+                <DeNumberInput mode="percent" min={0} max={100} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item name="defaultDdp" valuePropName="checked" style={{ marginTop: 30 }}>
+                <Checkbox>Default DDP aktiv</Checkbox>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item label="CNY Start" name="cnyStart">
+                <Input type="date" />
+              </Form.Item>
+            </Col>
             <Col xs={24} md={8}>
               <Form.Item label="CNY Ende" name="cnyEnd">
                 <Input type="date" />

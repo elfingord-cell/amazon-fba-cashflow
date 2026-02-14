@@ -22,7 +22,9 @@ import { DeNumberInput } from "../../components/DeNumberInput";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { resolveProductFieldResolution, type ResolvedField } from "../../domain/productFieldResolution";
+import { evaluateProductCompletenessV2 } from "../../domain/productCompletenessV2";
 import { buildProductGridRows, type ProductGridRow } from "../../domain/tableModels";
+import { sourceChipClass } from "../../domain/masterDataHierarchy";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
 import {
@@ -498,7 +500,7 @@ export default function ProductsModule(): JSX.Element {
     ];
   }, [form, productsGridMode, saveWith, supplierLabelById]);
 
-  const resolvedDraft = useMemo(() => {
+  const draftProductRecord = useMemo(() => {
     const baseRaw = (editing?.raw || {}) as Record<string, unknown>;
     const baseTemplate = (((baseRaw.template as Record<string, unknown> | undefined)?.fields as Record<string, unknown> | undefined)
       || (baseRaw.template as Record<string, unknown> | undefined)
@@ -540,12 +542,21 @@ export default function ProductsModule(): JSX.Element {
       },
     };
 
-    return resolveProductFieldResolution({
-      product: draftProduct,
-      state: stateObject,
-      supplierId: current.supplierId || null,
-    });
+    return draftProduct;
   }, [draftValues, editing, settings.defaultCurrency, settings.fxRate, stateObject]);
+
+  const resolvedDraft = useMemo(() => {
+    return resolveProductFieldResolution({
+      product: draftProductRecord,
+      state: stateObject,
+      supplierId: String(draftProductRecord.supplierId || ""),
+    });
+  }, [draftProductRecord, stateObject]);
+
+  const draftCompleteness = useMemo(
+    () => evaluateProductCompletenessV2({ product: draftProductRecord, state: stateObject }),
+    [draftProductRecord, stateObject],
+  );
 
   const shippingSuggestion = useMemo(() => {
     const values = draftValues || ({} as ProductDraft);
@@ -588,10 +599,15 @@ export default function ProductsModule(): JSX.Element {
     field: ResolvedField<number | string | boolean>,
     options?: { digits?: number; kind?: "number" | "text" | "boolean"; extraHint?: string },
   ): JSX.Element {
+    const source = String(field.source || "missing") as "order_override" | "product" | "supplier" | "settings" | "missing" | "computed";
+    const missingRequired = field.source === "missing" && field.required === true;
     return (
       <span className="v2-field-meta">
         <span>Effektiv: {formatResolvedField(field, options)}</span>
-        <span>Quelle: {field.sourceLabel}</span>
+        <span className="v2-field-meta-source">
+          <span>Quelle:</span>
+          <span className={sourceChipClass(source === "computed" ? "settings" : source, missingRequired)}>{field.sourceLabel}</span>
+        </span>
         <span>{options?.extraHint || field.hint}</span>
       </span>
     );
@@ -614,7 +630,7 @@ export default function ProductsModule(): JSX.Element {
               resetField(field);
             }}
           >
-            Default
+            Zuruecksetzen
           </Button>
         ) : null}
       </span>
@@ -697,6 +713,15 @@ export default function ProductsModule(): JSX.Element {
 
       if (!payload.createdAt) {
         payload.createdAt = now;
+      }
+
+      const completeness = evaluateProductCompletenessV2({
+        product: payload,
+        state: next as unknown as Record<string, unknown>,
+      });
+      if (completeness.status === "blocked" && completeness.blockScope) {
+        const fields = completeness.blockingMissing.map((entry) => entry.label).slice(0, 5).join(", ");
+        throw new Error(`Blockierende Stammdaten fehlen: ${fields}${completeness.blockingMissing.length > 5 ? " ..." : ""}`);
       }
 
       if (existingIndex >= 0) {
@@ -906,6 +931,25 @@ export default function ProductsModule(): JSX.Element {
             <Input />
           </Form.Item>
 
+          {draftCompleteness.status !== "ok" ? (
+            <Alert
+              style={{ marginBottom: 10 }}
+              type={draftCompleteness.status === "blocked" && draftCompleteness.blockScope ? "error" : "warning"}
+              showIcon
+              message={draftCompleteness.status === "blocked" && draftCompleteness.blockScope
+                ? "Blockierende Stammdaten fehlen"
+                : "Stammdaten prüfen"}
+              description={[
+                draftCompleteness.blockingMissing.length
+                  ? `Blocker: ${draftCompleteness.blockingMissing.map((entry) => entry.label).join(", ")}`
+                  : null,
+                draftCompleteness.importantMissing.length
+                  ? `Wichtig: ${draftCompleteness.importantMissing.map((entry) => entry.label).join(", ")}`
+                  : null,
+              ].filter(Boolean).join(" · ")}
+            />
+          ) : null}
+
           <div className="v2-form-section">
             <div className="v2-form-section-head">
               <Title level={5} className="v2-form-section-title">Basis</Title>
@@ -979,7 +1023,21 @@ export default function ProductsModule(): JSX.Element {
                 style={{ gridColumn: "1 / -1" }}
                 extra={(
                   <span className="v2-field-meta">
-                    <span>Effektiv: {formatNumber(asNumber(draftValues?.logisticsPerUnitEur), 2)} · Quelle: {logisticsManualOverride ? "Produkt-Override" : resolvedDraft.logisticsPerUnitEur.sourceLabel}</span>
+                    <span>Effektiv: {formatNumber(asNumber(draftValues?.logisticsPerUnitEur), 2)}</span>
+                    <span className="v2-field-meta-source">
+                      <span>Quelle:</span>
+                      <span className={sourceChipClass(
+                        logisticsManualOverride
+                          ? "product"
+                          : (resolvedDraft.logisticsPerUnitEur.source === "computed"
+                            ? "settings"
+                            : resolvedDraft.logisticsPerUnitEur.source),
+                        false,
+                      )}
+                      >
+                        {logisticsManualOverride ? "Produkt" : resolvedDraft.logisticsPerUnitEur.sourceLabel}
+                      </span>
+                    </span>
                     <span>Vorschlag: {formatNumber(asNumber(shippingSuggestion.value), 2)} EUR/Stk (Formel: Landed - (USD/FX))</span>
                     <span>Warenkosten-Anteil aus USD/FX: {formatNumber(asNumber(shippingSuggestion.goodsCostEur), 2)} EUR/Stk</span>
                     <span>Kann je nach Datenbasis auch Zoll/EUSt/Importnebenkosten enthalten.</span>

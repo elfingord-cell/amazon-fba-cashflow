@@ -78,6 +78,7 @@ export interface AppStateV2 extends UnknownRecord {
   settings?: UnknownRecord;
   products?: UnknownRecord[];
   suppliers?: UnknownRecord[];
+  productSuppliers?: UnknownRecord[];
   pos?: UnknownRecord[];
   fos?: UnknownRecord[];
   payments?: UnknownRecord[];

@@ -1,5 +1,5 @@
 import { parseDeNumber } from "../../lib/dataHealth.js";
-import { evaluateProductCompleteness } from "../../lib/productCompleteness.js";
+import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 import { currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 
 export type ProductStatusFilter = "all" | "active" | "prelaunch" | "inactive";
@@ -100,7 +100,7 @@ export function buildProductGridRows(input: {
     const product = entry as Record<string, unknown>;
     const template = templateFields(product);
     const sku = String(product.sku || "");
-    const completeness = evaluateProductCompleteness(product, { state: input.state })?.status || "blocked";
+    const completeness = evaluateProductCompletenessV2({ product, state: input.state })?.status || "blocked";
     return {
       id: String(product.id || (sku ? `prod-${sku}` : `prod-${index}`)),
       sku,

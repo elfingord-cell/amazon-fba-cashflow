@@ -19,6 +19,8 @@ import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/util
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
+import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
+import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSyncSession } from "../../sync/session";
@@ -262,40 +264,44 @@ function templateFields(product: Record<string, unknown> | null | undefined): Re
 }
 
 function resolveFoProductPrefill(input: {
+  state: Record<string, unknown>;
   product: Record<string, unknown> | null;
   supplier: Record<string, unknown> | null;
   settings: Record<string, unknown>;
+  supplierId?: string;
   units: number;
 }): Partial<FoFormValues> {
   const product = input.product || {};
-  const supplier = input.supplier || {};
   const settings = input.settings || {};
   const template = templateFields(product);
+  const hierarchy = resolveMasterDataHierarchy({
+    state: input.state || {},
+    product,
+    sku: String(product.sku || ""),
+    supplierId: input.supplierId || String(product.supplierId || ""),
+    orderContext: "fo",
+  });
 
-  const unitPrice = toNumberOrNull(template.unitPriceUsd) ?? 0;
-  const fxRate = toNumberOrNull(template.fxRate) ?? toNumberOrNull(settings.fxRate) ?? 0;
-  const logisticsPerUnit = toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur) ?? 0;
+  const unitPrice = Number(hierarchy.fields.unitPriceUsd.value || 0);
+  const fxRate = Number(hierarchy.fields.fxRate.value || settings.fxRate || 0);
+  const logisticsPerUnit = Number(hierarchy.fields.logisticsPerUnitEur.value || 0);
   const freight = Math.max(0, round2(logisticsPerUnit * Math.max(0, Number(input.units || 0))));
   const transportMode = String(template.transportMode || "SEA").toUpperCase();
-  const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
-  const logisticsLead = toPositiveNumberOrNull(template.transitDays)
-    ?? toPositiveNumberOrNull(transportLeadMap[transportMode.toLowerCase()])
-    ?? 45;
-  const productionLead = toPositiveNumberOrNull(product.productionLeadTimeDaysDefault)
-    ?? toPositiveNumberOrNull(template.productionDays)
-    ?? toPositiveNumberOrNull(settings.defaultProductionLeadTimeDays)
-    ?? 45;
-  const ddp = template.ddp === true;
+  const logisticsLead = Number(hierarchy.fields.transitDays.value || 45);
+  const productionLead = Number(hierarchy.fields.productionLeadTimeDays.value || 45);
+  const ddp = hierarchy.fields.ddp.value === true;
+  const incoterm = hierarchy.fields.incoterm.value || (ddp ? "DDP" : "EXW");
+  const currency = hierarchy.fields.currency.value || String(settings.defaultCurrency || "EUR").toUpperCase();
 
   return {
     transportMode,
-    incoterm: String(ddp ? "DDP" : (supplier.incotermDefault || "EXW")).toUpperCase(),
+    incoterm: String(incoterm).toUpperCase(),
     unitPrice,
-    currency: String(template.currency || supplier.currencyDefault || settings.defaultCurrency || "EUR").toUpperCase(),
+    currency: String(currency).toUpperCase(),
     freight,
     freightCurrency: "EUR",
-    dutyRatePct: toNumberOrNull(product.dutyRatePct ?? template.dutyPct ?? settings.dutyRatePct) ?? 0,
-    eustRatePct: toNumberOrNull(product.eustRatePct ?? template.vatImportPct ?? settings.eustRatePct) ?? 0,
+    dutyRatePct: Number(hierarchy.fields.dutyRatePct.value || 0),
+    eustRatePct: Number(hierarchy.fields.eustRatePct.value || 0),
     fxRate,
     productionLeadTimeDays: Math.max(0, Math.round(productionLead)),
     logisticsLeadTimeDays: Math.max(0, Math.round(logisticsLead)),
@@ -643,6 +649,151 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   ], [saveWith, state.pos]);
 
   const draftValues = Form.useWatch([], form) as FoFormValues | undefined;
+  const selectedDraftProduct = useMemo(() => {
+    const sku = String(draftValues?.sku || "").trim();
+    return sku ? (productBySku.get(sku)?.raw || null) : null;
+  }, [draftValues?.sku, productBySku]);
+
+  const foHierarchy = useMemo(() => {
+    return resolveMasterDataHierarchy({
+      state: stateObj,
+      product: selectedDraftProduct || undefined,
+      sku: String(draftValues?.sku || ""),
+      supplierId: String(draftValues?.supplierId || selectedDraftProduct?.supplierId || ""),
+      orderContext: "fo",
+      orderOverrides: {
+        unitPrice: draftValues?.unitPrice,
+        productionLeadTimeDays: draftValues?.productionLeadTimeDays,
+        logisticsLeadTimeDays: draftValues?.logisticsLeadTimeDays,
+        dutyRatePct: draftValues?.dutyRatePct,
+        eustRatePct: draftValues?.eustRatePct,
+        incoterm: draftValues?.incoterm,
+        currency: draftValues?.currency,
+        fxRate: draftValues?.fxRate,
+      },
+    });
+  }, [
+    draftValues?.currency,
+    draftValues?.dutyRatePct,
+    draftValues?.eustRatePct,
+    draftValues?.fxRate,
+    draftValues?.incoterm,
+    draftValues?.logisticsLeadTimeDays,
+    draftValues?.productionLeadTimeDays,
+    draftValues?.sku,
+    draftValues?.supplierId,
+    draftValues?.unitPrice,
+    selectedDraftProduct,
+    stateObj,
+  ]);
+
+  const foHierarchyBase = useMemo(() => {
+    return resolveMasterDataHierarchy({
+      state: stateObj,
+      product: selectedDraftProduct || undefined,
+      sku: String(draftValues?.sku || ""),
+      supplierId: String(draftValues?.supplierId || selectedDraftProduct?.supplierId || ""),
+      orderContext: "fo",
+    });
+  }, [draftValues?.sku, draftValues?.supplierId, selectedDraftProduct, stateObj]);
+
+  const foBlocking = useMemo(() => {
+    return evaluateOrderBlocking({
+      product: selectedDraftProduct,
+      state: stateObj,
+      supplierId: String(draftValues?.supplierId || selectedDraftProduct?.supplierId || ""),
+      orderContext: "fo",
+      orderOverrides: {
+        unitPrice: draftValues?.unitPrice,
+        productionLeadTimeDays: draftValues?.productionLeadTimeDays,
+        logisticsLeadTimeDays: draftValues?.logisticsLeadTimeDays,
+        dutyRatePct: draftValues?.dutyRatePct,
+        eustRatePct: draftValues?.eustRatePct,
+        incoterm: draftValues?.incoterm,
+      },
+    });
+  }, [
+    draftValues?.dutyRatePct,
+    draftValues?.eustRatePct,
+    draftValues?.incoterm,
+    draftValues?.logisticsLeadTimeDays,
+    draftValues?.productionLeadTimeDays,
+    draftValues?.supplierId,
+    draftValues?.unitPrice,
+    selectedDraftProduct,
+    stateObj,
+  ]);
+
+  function resetFoFieldFromHierarchy(field: "unitPrice" | "productionLeadTimeDays" | "logisticsLeadTimeDays" | "dutyRatePct" | "eustRatePct" | "incoterm" | "currency" | "fxRate"): void {
+    if (field === "unitPrice") {
+      form.setFieldValue("unitPrice", Number(foHierarchyBase.fields.unitPriceUsd.value || 0));
+      return;
+    }
+    if (field === "productionLeadTimeDays") {
+      form.setFieldValue("productionLeadTimeDays", Number(foHierarchyBase.fields.productionLeadTimeDays.value || 0));
+      return;
+    }
+    if (field === "logisticsLeadTimeDays") {
+      form.setFieldValue("logisticsLeadTimeDays", Number(foHierarchyBase.fields.transitDays.value || 0));
+      return;
+    }
+    if (field === "dutyRatePct") {
+      form.setFieldValue("dutyRatePct", Number(foHierarchyBase.fields.dutyRatePct.value || 0));
+      return;
+    }
+    if (field === "eustRatePct") {
+      form.setFieldValue("eustRatePct", Number(foHierarchyBase.fields.eustRatePct.value || 0));
+      return;
+    }
+    if (field === "incoterm") {
+      form.setFieldValue("incoterm", String(foHierarchyBase.fields.incoterm.value || "EXW"));
+      return;
+    }
+    if (field === "currency") {
+      form.setFieldValue("currency", String(foHierarchyBase.fields.currency.value || settings.defaultCurrency || "EUR"));
+      return;
+    }
+    form.setFieldValue("fxRate", Number(foHierarchyBase.fields.fxRate.value || settings.fxRate || 0));
+  }
+
+  function adoptFoFieldToProduct(field: "unitPriceUsd" | "productionLeadTimeDays" | "transitDays" | "dutyRatePct" | "eustRatePct" | "ddp", value: unknown): void {
+    const sku = String(selectedDraftProduct?.sku || draftValues?.sku || "").trim();
+    if (!sku) return;
+    Modal.confirm({
+      title: "Als neuen Produkt-Stammdatenwert uebernehmen?",
+      content: `SKU ${sku}: Wert wird in den Produktstammdaten gespeichert.`,
+      okText: "Uebernehmen",
+      cancelText: "Abbrechen",
+      onOk: () => {
+        Modal.confirm({
+          title: "Bist du sicher?",
+          content: "Diese Aenderung beeinflusst zukuenftige FO/PO Prefills.",
+          okText: "Ja, speichern",
+          cancelText: "Nein",
+          onOk: async () => {
+            await saveWith((current) => {
+              const next = ensureAppStateV2(current);
+              const products = Array.isArray(next.products) ? [...next.products] : [];
+              const index = products.findIndex((entry) => String((entry as Record<string, unknown>).sku || "").trim().toLowerCase() === sku.toLowerCase());
+              if (index < 0) return next;
+              const base = products[index] as Record<string, unknown>;
+              products[index] = {
+                ...applyAdoptedFieldToProduct({
+                  product: base,
+                  field,
+                  value,
+                }),
+                updatedAt: nowIso(),
+              };
+              next.products = products;
+              return next;
+            }, "v2:fo:adopt-masterdata");
+            message.success("Produkt-Stammdaten aktualisiert.");
+          },
+        });
+      },
+    });
+  }
 
   const leadTimeSourceInfo = useMemo(() => {
     const sku = String(draftValues?.sku || "").trim();
@@ -805,9 +956,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     const supplier = supplierById.get(supplierId) || null;
     const units = Number(prefill?.units ?? existing?.units ?? 0);
     const productDefaults = resolveFoProductPrefill({
+      state: stateObj,
       product: seedProduct?.raw || null,
       supplier: supplier || null,
       settings,
+      supplierId,
       units,
     });
     const supplierTerms = extractSupplierTerms(existing?.payments, supplier || undefined);
@@ -844,9 +997,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     const supplierId = String(product.supplierId || current.supplierId || "");
     const supplier = supplierById.get(supplierId) || null;
     const defaults = resolveFoProductPrefill({
+      state: stateObj,
       product: product.raw,
       supplier: supplier || null,
       settings,
+      supplierId,
       units: Number(unitsOverride ?? current.units ?? 0),
     });
     form.setFieldsValue({
@@ -1033,6 +1188,25 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   async function saveFo(values: FoFormValues): Promise<void> {
     if (modalCollab.readOnly) {
       throw new Error("Dieser FO wird gerade von einem anderen Nutzer bearbeitet.");
+    }
+    const sku = String(values.sku || "").trim();
+    const product = sku ? resolveProductBySku(productRows.map((entry) => entry.raw), sku) : null;
+    const blocking = evaluateOrderBlocking({
+      product,
+      state: stateObj,
+      supplierId: String(values.supplierId || product?.supplierId || ""),
+      orderContext: "fo",
+      orderOverrides: {
+        unitPrice: values.unitPrice,
+        productionLeadTimeDays: values.productionLeadTimeDays,
+        logisticsLeadTimeDays: values.logisticsLeadTimeDays,
+        dutyRatePct: values.dutyRatePct,
+        eustRatePct: values.eustRatePct,
+        incoterm: values.incoterm,
+      },
+    });
+    if (blocking.blocked) {
+      throw new Error(`Blockierende Stammdaten fehlen: ${blocking.issues.map((entry) => entry.label).join(", ")}`);
     }
     const terms = (values.paymentTerms || []).map((row) => ({
       id: row.id,
@@ -1396,6 +1570,55 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               Quelle Leadtime: Produktion = {leadTimeSourceInfo.production} · Logistik = {leadTimeSourceInfo.logistics}
             </Text>
           </div>
+
+          {foBlocking.blocked ? (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="Blockierende Stammdaten fehlen"
+              description={foBlocking.issues.map((entry) => entry.label).join(", ")}
+            />
+          ) : null}
+
+          <Card size="small" style={{ marginBottom: 12 }}>
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Text strong>Stammdaten-Herkunft (FO)</Text>
+              <div className="v2-source-row">
+                <span>Unit Price</span>
+                <span className={sourceChipClass(foHierarchy.fields.unitPriceUsd.source, true)}>{foHierarchy.fields.unitPriceUsd.label}</span>
+                <Button size="small" onClick={() => resetFoFieldFromHierarchy("unitPrice")}>Zuruecksetzen</Button>
+                <Button size="small" onClick={() => adoptFoFieldToProduct("unitPriceUsd", draftValues?.unitPrice)}>Als Produktwert uebernehmen</Button>
+              </div>
+              <div className="v2-source-row">
+                <span>Production Lead</span>
+                <span className={sourceChipClass(foHierarchy.fields.productionLeadTimeDays.source, true)}>{foHierarchy.fields.productionLeadTimeDays.label}</span>
+                <Button size="small" onClick={() => resetFoFieldFromHierarchy("productionLeadTimeDays")}>Zuruecksetzen</Button>
+                <Button size="small" onClick={() => adoptFoFieldToProduct("productionLeadTimeDays", draftValues?.productionLeadTimeDays)}>Als Produktwert uebernehmen</Button>
+              </div>
+              <div className="v2-source-row">
+                <span>Logistics Lead</span>
+                <span className={sourceChipClass(foHierarchy.fields.transitDays.source, false)}>{foHierarchy.fields.transitDays.label}</span>
+                <Button size="small" onClick={() => resetFoFieldFromHierarchy("logisticsLeadTimeDays")}>Zuruecksetzen</Button>
+                <Button size="small" onClick={() => adoptFoFieldToProduct("transitDays", draftValues?.logisticsLeadTimeDays)}>Als Produktwert uebernehmen</Button>
+              </div>
+              <div className="v2-source-row">
+                <span>Duty / EUSt</span>
+                <span className={sourceChipClass(foHierarchy.fields.dutyRatePct.source, false)}>{foHierarchy.fields.dutyRatePct.label}</span>
+                <span className={sourceChipClass(foHierarchy.fields.eustRatePct.source, false)}>{foHierarchy.fields.eustRatePct.label}</span>
+                <Button size="small" onClick={() => resetFoFieldFromHierarchy("dutyRatePct")}>Duty reset</Button>
+                <Button size="small" onClick={() => resetFoFieldFromHierarchy("eustRatePct")}>EUSt reset</Button>
+                <Button size="small" onClick={() => adoptFoFieldToProduct("dutyRatePct", draftValues?.dutyRatePct)}>Duty uebernehmen</Button>
+                <Button size="small" onClick={() => adoptFoFieldToProduct("eustRatePct", draftValues?.eustRatePct)}>EUSt uebernehmen</Button>
+              </div>
+              <div className="v2-source-row">
+                <span>Incoterm</span>
+                <span className={sourceChipClass(foHierarchy.fields.incoterm.source, true)}>{foHierarchy.fields.incoterm.label}</span>
+                <Button size="small" onClick={() => resetFoFieldFromHierarchy("incoterm")}>Zuruecksetzen</Button>
+                <Button size="small" onClick={() => adoptFoFieldToProduct("ddp", String(draftValues?.incoterm || "").toUpperCase() === "DDP")}>Als Produktwert uebernehmen</Button>
+              </div>
+            </Space>
+          </Card>
 
           <Card size="small" style={{ marginBottom: 12 }}>
             <Space direction="vertical" size={4}>

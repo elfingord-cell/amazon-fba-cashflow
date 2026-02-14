@@ -19,6 +19,8 @@ import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
+import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
 import {
   computePoAggregateMetrics,
   computeScheduleFromOrderDate,
@@ -290,8 +292,10 @@ function templateFields(product: Record<string, unknown> | null | undefined): Re
 }
 
 function resolvePoProductPrefill(input: {
+  state: Record<string, unknown>;
   product: Record<string, unknown> | null;
   settings: Record<string, unknown>;
+  supplierId?: string;
   supplierDefaultProdDays?: number;
   units: number;
 }): {
@@ -310,19 +314,30 @@ function resolvePoProductPrefill(input: {
   const product = input.product || {};
   const settings = input.settings || {};
   const template = templateFields(product);
+  const hierarchy = resolveMasterDataHierarchy({
+    state: input.state || {},
+    product,
+    sku: String(product.sku || ""),
+    supplierId: input.supplierId || String(product.supplierId || ""),
+    orderContext: "po",
+  });
 
   const transport = String(template.transportMode || "SEA").toLowerCase() as "sea" | "rail" | "air";
   const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
-  const transitDays = toNumberOrNull(template.transitDays)
+  const transitDays = toNumberOrNull(hierarchy.fields.transitDays.value)
+    ?? toNumberOrNull(template.transitDays)
     ?? toNumberOrNull(transportLeadMap[transport])
     ?? 45;
-  const prodDays = toNumberOrNull(product.productionLeadTimeDaysDefault ?? template.productionDays)
+  const prodDays = toNumberOrNull(hierarchy.fields.productionLeadTimeDays.value)
+    ?? toNumberOrNull(product.productionLeadTimeDaysDefault ?? template.productionDays)
     ?? toNumberOrNull(input.supplierDefaultProdDays)
     ?? toNumberOrNull(settings.defaultProductionLeadTimeDays)
     ?? 60;
-  const unitCostUsd = toNumberOrNull(template.unitPriceUsd) ?? 0;
+  const unitCostUsd = toNumberOrNull(hierarchy.fields.unitPriceUsd.value) ?? toNumberOrNull(template.unitPriceUsd) ?? 0;
   const fxOverride = toNumberOrNull(template.fxRate ?? settings.fxRate) ?? 0;
-  const logisticsPerUnit = toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur) ?? 0;
+  const logisticsPerUnit = toNumberOrNull(hierarchy.fields.logisticsPerUnitEur.value)
+    ?? toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur)
+    ?? 0;
   const freightEur = Math.max(0, Math.round(logisticsPerUnit * Math.max(0, Number(input.units || 0)) * 100) / 100);
 
   return {
@@ -333,10 +348,10 @@ function resolvePoProductPrefill(input: {
     unitExtraUsd: 0,
     extraFlatUsd: 0,
     freightEur,
-    dutyRatePct: toNumberOrNull(product.dutyRatePct ?? template.dutyPct ?? settings.dutyRatePct) ?? 0,
-    eustRatePct: toNumberOrNull(product.eustRatePct ?? template.vatImportPct ?? settings.eustRatePct) ?? 0,
+    dutyRatePct: toNumberOrNull(hierarchy.fields.dutyRatePct.value) ?? toNumberOrNull(product.dutyRatePct ?? template.dutyPct ?? settings.dutyRatePct) ?? 0,
+    eustRatePct: toNumberOrNull(hierarchy.fields.eustRatePct.value) ?? toNumberOrNull(product.eustRatePct ?? template.vatImportPct ?? settings.eustRatePct) ?? 0,
     fxOverride,
-    ddp: template.ddp === true,
+    ddp: hierarchy.fields.ddp.value === true || template.ddp === true,
   };
 }
 
@@ -696,6 +711,149 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     });
   }, [draftItems, draftPoRecord, draftValues?.fxOverride, draftValues?.orderDate, poSettings.fxRate]);
 
+  const primaryDraftItem = draftItems[0] || null;
+  const primaryDraftProduct = useMemo(() => {
+    if (!primaryDraftItem?.sku) return null;
+    return productBySku.get(primaryDraftItem.sku)?.raw || null;
+  }, [primaryDraftItem?.sku, productBySku]);
+
+  const poHierarchy = useMemo(() => {
+    return resolveMasterDataHierarchy({
+      state: stateObj,
+      product: primaryDraftProduct || undefined,
+      sku: String(primaryDraftItem?.sku || ""),
+      supplierId: String(draftValues?.supplierId || primaryDraftProduct?.supplierId || ""),
+      orderContext: "po",
+      orderOverrides: {
+        unitCostUsd: primaryDraftItem?.unitCostUsd,
+        prodDays: primaryDraftItem?.prodDays,
+        transitDays: primaryDraftItem?.transitDays,
+        dutyRatePct: draftValues?.dutyRatePct,
+        eustRatePct: draftValues?.eustRatePct,
+        ddp: draftValues?.ddp,
+        incoterm: draftValues?.ddp ? "DDP" : "EXW",
+      },
+    });
+  }, [
+    draftValues?.ddp,
+    draftValues?.dutyRatePct,
+    draftValues?.eustRatePct,
+    draftValues?.supplierId,
+    primaryDraftItem?.prodDays,
+    primaryDraftItem?.sku,
+    primaryDraftItem?.transitDays,
+    primaryDraftItem?.unitCostUsd,
+    primaryDraftProduct,
+    stateObj,
+  ]);
+
+  const poHierarchyBase = useMemo(() => {
+    return resolveMasterDataHierarchy({
+      state: stateObj,
+      product: primaryDraftProduct || undefined,
+      sku: String(primaryDraftItem?.sku || ""),
+      supplierId: String(draftValues?.supplierId || primaryDraftProduct?.supplierId || ""),
+      orderContext: "po",
+    });
+  }, [draftValues?.supplierId, primaryDraftItem?.sku, primaryDraftProduct, stateObj]);
+
+  const poBlockingPrimary = useMemo(() => {
+    return evaluateOrderBlocking({
+      product: primaryDraftProduct,
+      state: stateObj,
+      supplierId: String(draftValues?.supplierId || primaryDraftProduct?.supplierId || ""),
+      orderContext: "po",
+      orderOverrides: {
+        unitCostUsd: primaryDraftItem?.unitCostUsd,
+        prodDays: primaryDraftItem?.prodDays,
+        transitDays: primaryDraftItem?.transitDays,
+        dutyRatePct: draftValues?.dutyRatePct,
+        eustRatePct: draftValues?.eustRatePct,
+        ddp: draftValues?.ddp,
+        incoterm: draftValues?.ddp ? "DDP" : "EXW",
+      },
+    });
+  }, [
+    draftValues?.ddp,
+    draftValues?.dutyRatePct,
+    draftValues?.eustRatePct,
+    draftValues?.supplierId,
+    primaryDraftItem?.prodDays,
+    primaryDraftItem?.transitDays,
+    primaryDraftItem?.unitCostUsd,
+    primaryDraftProduct,
+    stateObj,
+  ]);
+
+  function resetPrimaryPoField(field: "unitCostUsd" | "prodDays" | "transitDays" | "dutyRatePct" | "eustRatePct" | "ddp"): void {
+    if (!primaryDraftItem) return;
+    const currentItems = normalizePoItems(form.getFieldValue("items"), null).map((entry) => normalizeDraftItem(entry));
+    const index = currentItems.findIndex((entry) => entry.id === primaryDraftItem.id);
+    if (field === "unitCostUsd" && index >= 0) {
+      currentItems[index] = { ...currentItems[index], unitCostUsd: Number(poHierarchyBase.fields.unitPriceUsd.value || 0) };
+      form.setFieldValue("items", currentItems);
+      return;
+    }
+    if (field === "prodDays" && index >= 0) {
+      currentItems[index] = { ...currentItems[index], prodDays: Math.round(Number(poHierarchyBase.fields.productionLeadTimeDays.value || 0)) };
+      form.setFieldValue("items", currentItems);
+      return;
+    }
+    if (field === "transitDays" && index >= 0) {
+      currentItems[index] = { ...currentItems[index], transitDays: Math.round(Number(poHierarchyBase.fields.transitDays.value || 0)) };
+      form.setFieldValue("items", currentItems);
+      return;
+    }
+    if (field === "dutyRatePct") {
+      form.setFieldValue("dutyRatePct", Number(poHierarchyBase.fields.dutyRatePct.value || 0));
+      return;
+    }
+    if (field === "eustRatePct") {
+      form.setFieldValue("eustRatePct", Number(poHierarchyBase.fields.eustRatePct.value || 0));
+      return;
+    }
+    form.setFieldValue("ddp", poHierarchyBase.fields.ddp.value === true);
+  }
+
+  function adoptPoFieldToProduct(field: "unitPriceUsd" | "productionLeadTimeDays" | "transitDays" | "dutyRatePct" | "eustRatePct" | "ddp", value: unknown): void {
+    const sku = String(primaryDraftItem?.sku || "").trim();
+    if (!sku) return;
+    Modal.confirm({
+      title: "Als neuen Produkt-Stammdatenwert uebernehmen?",
+      content: `SKU ${sku}: Wert wird in den Produktstammdaten gespeichert.`,
+      okText: "Uebernehmen",
+      cancelText: "Abbrechen",
+      onOk: () => {
+        Modal.confirm({
+          title: "Bist du sicher?",
+          content: "Diese Aenderung beeinflusst zukuenftige FO/PO Prefills.",
+          okText: "Ja, speichern",
+          cancelText: "Nein",
+          onOk: async () => {
+            await saveWith((current) => {
+              const next = ensureAppStateV2(current);
+              const products = Array.isArray(next.products) ? [...next.products] : [];
+              const index = products.findIndex((entry) => String((entry as Record<string, unknown>).sku || "").trim().toLowerCase() === sku.toLowerCase());
+              if (index < 0) return next;
+              const base = products[index] as Record<string, unknown>;
+              products[index] = {
+                ...applyAdoptedFieldToProduct({
+                  product: base,
+                  field,
+                  value,
+                }),
+                updatedAt: nowIso(),
+              };
+              next.products = products;
+              return next;
+            }, "v2:po:adopt-masterdata");
+            message.success("Produkt-Stammdaten aktualisiert.");
+          },
+        });
+      },
+    });
+  }
+
   const supplierSkuOptions = useMemo(() => {
     const supplierId = String(selectedSupplierId || "");
     if (!supplierId) return [];
@@ -819,8 +977,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     if (!seedItems.length && prefillSku) {
       const product = productBySku.get(prefillSku) || null;
       const defaults = resolvePoProductPrefill({
+        state: stateObj,
         product: product?.raw || null,
         settings,
+        supplierId,
         supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
         units: prefillUnits,
       });
@@ -841,8 +1001,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       const fallbackUnits = Math.max(0, Math.round(Number(existing.units || 0)));
       const product = productBySku.get(fallbackSku) || null;
       const defaults = resolvePoProductPrefill({
+        state: stateObj,
         product: product?.raw || null,
         settings,
+        supplierId,
         supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
         units: fallbackUnits,
       });
@@ -864,8 +1026,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     });
     const firstProduct = productBySku.get(String(supplierScopedItems[0]?.sku || prefillSku || existing?.sku || "")) || null;
     const defaults = resolvePoProductPrefill({
+      state: stateObj,
       product: firstProduct?.raw || null,
       settings,
+      supplierId,
       supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
       units: supplierScopedItems[0]?.units || prefillUnits,
     });
@@ -914,8 +1078,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     const supplierId = String(current.supplierId || product.supplierId || "");
     const supplier = supplierById.get(supplierId) || null;
     const defaults = resolvePoProductPrefill({
+      state: stateObj,
       product: product.raw,
       settings,
+      supplierId,
       supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
       units: Number(items[index]?.units || 0),
     });
@@ -953,8 +1119,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       const product = productBySku.get(cleanSku);
       if (!product || String(product.supplierId || "") !== supplierId) return;
       const defaults = resolvePoProductPrefill({
+        state: stateObj,
         product: product.raw,
         settings,
+        supplierId,
         supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
         units: 0,
       });
@@ -974,8 +1142,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     form.setFieldsValue({
       items: [...currentItems, ...additions],
       transport: current.transport || resolvePoProductPrefill({
+        state: stateObj,
         product: productBySku.get(additions[0].sku)?.raw || null,
         settings,
+        supplierId,
         supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
         units: additions[0].units,
       }).transport,
@@ -1224,6 +1394,45 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     ));
     if (invalidItem) {
       throw new Error(`SKU ${invalidItem.sku} ist unvollstaendig. Bitte Units, Unit Cost, Prod Days und Transit Days pflegen.`);
+    }
+    const hierarchyBlock = normalizedItems.find((item) => {
+      const product = productBySku.get(item.sku)?.raw || null;
+      if (!product) return false;
+      const result = evaluateOrderBlocking({
+        product,
+        state: stateObj,
+        supplierId,
+        orderContext: "po",
+        orderOverrides: {
+          unitCostUsd: item.unitCostUsd,
+          prodDays: item.prodDays,
+          transitDays: item.transitDays,
+          dutyRatePct: values.dutyRatePct,
+          eustRatePct: values.eustRatePct,
+          ddp: values.ddp,
+          incoterm: values.ddp ? "DDP" : "EXW",
+        },
+      });
+      return result.blocked;
+    });
+    if (hierarchyBlock) {
+      const product = productBySku.get(hierarchyBlock.sku)?.raw || null;
+      const result = evaluateOrderBlocking({
+        product,
+        state: stateObj,
+        supplierId,
+        orderContext: "po",
+        orderOverrides: {
+          unitCostUsd: hierarchyBlock.unitCostUsd,
+          prodDays: hierarchyBlock.prodDays,
+          transitDays: hierarchyBlock.transitDays,
+          dutyRatePct: values.dutyRatePct,
+          eustRatePct: values.eustRatePct,
+          ddp: values.ddp,
+          incoterm: values.ddp ? "DDP" : "EXW",
+        },
+      });
+      throw new Error(`SKU ${hierarchyBlock.sku}: blockierende Stammdaten fehlen (${result.issues.map((entry) => entry.label).join(", ")}).`);
     }
     const sum = milestoneSum(values.milestones || []);
     if (Math.abs(sum - 100) > 0.01) {
@@ -1656,6 +1865,60 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               </div>
             </div>
           </Card>
+
+          <Card size="small" style={{ marginBottom: 12 }}>
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Text strong>Stammdaten-Herkunft (PO)</Text>
+              {!primaryDraftItem ? (
+                <Text type="secondary">Bitte mindestens eine SKU erfassen.</Text>
+              ) : (
+                <>
+                  <div className="v2-source-row">
+                    <span>Primary SKU</span>
+                    <Text>{primaryDraftItem.sku}</Text>
+                  </div>
+                  <div className="v2-source-row">
+                    <span>Unit Cost USD</span>
+                    <span className={sourceChipClass(poHierarchy.fields.unitPriceUsd.source, true)}>{poHierarchy.fields.unitPriceUsd.label}</span>
+                    <Button size="small" onClick={() => resetPrimaryPoField("unitCostUsd")}>Zuruecksetzen</Button>
+                    <Button size="small" onClick={() => adoptPoFieldToProduct("unitPriceUsd", primaryDraftItem.unitCostUsd)}>Als Produktwert uebernehmen</Button>
+                  </div>
+                  <div className="v2-source-row">
+                    <span>Prod / Transit</span>
+                    <span className={sourceChipClass(poHierarchy.fields.productionLeadTimeDays.source, true)}>{poHierarchy.fields.productionLeadTimeDays.label}</span>
+                    <span className={sourceChipClass(poHierarchy.fields.transitDays.source, false)}>{poHierarchy.fields.transitDays.label}</span>
+                    <Button size="small" onClick={() => resetPrimaryPoField("prodDays")}>Prod reset</Button>
+                    <Button size="small" onClick={() => resetPrimaryPoField("transitDays")}>Transit reset</Button>
+                  </div>
+                  <div className="v2-source-row">
+                    <span>Duty / EUSt</span>
+                    <span className={sourceChipClass(poHierarchy.fields.dutyRatePct.source, false)}>{poHierarchy.fields.dutyRatePct.label}</span>
+                    <span className={sourceChipClass(poHierarchy.fields.eustRatePct.source, false)}>{poHierarchy.fields.eustRatePct.label}</span>
+                    <Button size="small" onClick={() => resetPrimaryPoField("dutyRatePct")}>Duty reset</Button>
+                    <Button size="small" onClick={() => resetPrimaryPoField("eustRatePct")}>EUSt reset</Button>
+                    <Button size="small" onClick={() => adoptPoFieldToProduct("dutyRatePct", draftValues?.dutyRatePct)}>Duty uebernehmen</Button>
+                    <Button size="small" onClick={() => adoptPoFieldToProduct("eustRatePct", draftValues?.eustRatePct)}>EUSt uebernehmen</Button>
+                  </div>
+                  <div className="v2-source-row">
+                    <span>DDP</span>
+                    <span className={sourceChipClass(poHierarchy.fields.ddp.source, true)}>{poHierarchy.fields.ddp.label}</span>
+                    <Button size="small" onClick={() => resetPrimaryPoField("ddp")}>Zuruecksetzen</Button>
+                    <Button size="small" onClick={() => adoptPoFieldToProduct("ddp", draftValues?.ddp === true)}>Als Produktwert uebernehmen</Button>
+                  </div>
+                </>
+              )}
+            </Space>
+          </Card>
+
+          {poBlockingPrimary.blocked ? (
+            <Alert
+              className="v2-po-warning"
+              type="error"
+              showIcon
+              message="Blockierende Stammdaten fehlen"
+              description={poBlockingPrimary.issues.map((entry) => entry.label).join(", ")}
+            />
+          ) : null}
 
           {selectedSupplierId && !supplierSkuOptions.length ? (
             <Alert

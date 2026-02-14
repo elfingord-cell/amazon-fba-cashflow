@@ -1000,6 +1000,13 @@
   line-height: 1.35;
 }
 
+.v2-field-meta-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .v2-field-meta-row {
   display: inline-flex;
   align-items: center;
@@ -1010,6 +1017,55 @@
 .v2-field-reset {
   height: 20px !important;
   padding-inline: 4px !important;
+}
+
+.v2-source-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(15, 27, 45, 0.18);
+  border-radius: 999px;
+  background: #fff;
+  color: #0f1b2d;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 2px 8px;
+  font-weight: 600;
+}
+
+.v2-source-chip--override {
+  border-color: rgba(15, 27, 45, 0.28);
+  background: rgba(15, 27, 45, 0.08);
+}
+
+.v2-source-chip--supplier {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+.v2-source-chip--settings {
+  border-color: rgba(100, 116, 139, 0.35);
+  background: rgba(148, 163, 184, 0.18);
+  color: #334155;
+}
+
+.v2-source-chip--missing {
+  border-color: rgba(220, 38, 38, 0.52);
+  background: rgba(220, 38, 38, 0.12);
+  color: #991b1b;
+}
+
+.v2-source-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(15, 27, 45, 0.08);
+}
+
+.v2-source-row:last-child {
+  border-bottom: 0;
 }
 
 .v2-inline-collapse .ant-collapse-item {
