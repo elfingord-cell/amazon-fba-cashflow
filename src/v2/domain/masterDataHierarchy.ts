@@ -1,5 +1,4 @@
 import { parseDeNumber } from "../../lib/dataHealth.js";
-import { resolveSupplierContext } from "../../lib/productDefaults.js";
 
 export type HierarchySource = "order_override" | "product" | "supplier" | "settings" | "missing";
 
@@ -212,6 +211,31 @@ function findProductBySku(state: Record<string, unknown>, sku: string): Record<s
   return products.find((entry) => normalizeText(entry?.sku).toLowerCase() === needle) || null;
 }
 
+function findSupplierById(state: Record<string, unknown>, supplierId: string): Record<string, unknown> | null {
+  const needle = normalizeText(supplierId);
+  if (!needle) return null;
+  const suppliers = Array.isArray(state.suppliers) ? state.suppliers as Record<string, unknown>[] : [];
+  return suppliers.find((entry) => normalizeText(entry?.id) === needle) || null;
+}
+
+function findProductSupplierLink(
+  state: Record<string, unknown>,
+  sku: string,
+  supplierId: string,
+): Record<string, unknown> | null {
+  const skuKey = normalizeText(sku).toLowerCase();
+  if (!skuKey) return null;
+  const links = Array.isArray(state.productSuppliers) ? state.productSuppliers as Record<string, unknown>[] : [];
+  const matches = links.filter((entry) => normalizeText(entry?.sku).toLowerCase() === skuKey);
+  if (!matches.length) return null;
+  if (supplierId) {
+    const direct = matches.find((entry) => normalizeText(entry?.supplierId) === supplierId);
+    if (direct) return direct;
+  }
+  const preferred = matches.find((entry) => entry?.isPreferred === true);
+  return preferred || matches[0] || null;
+}
+
 function resolveTransportMode(template: Record<string, unknown>, orderOverrides: Record<string, unknown>): string {
   const override = normalizeText(orderOverrides.transportMode || orderOverrides.transport || "").toUpperCase();
   if (override) return override;
@@ -233,20 +257,11 @@ export function resolveMasterDataHierarchy(input: ResolveMasterDataInput): Maste
     : findProductBySku(state, seedSku);
   const sku = normalizeText(seedSku || resolvedProduct?.sku);
 
-  const supplierContext = resolveSupplierContext(
-    state,
-    sku,
-    normalizeText(input.supplierId || orderOverrides.supplierId || resolvedProduct?.supplierId),
-  ) as {
-    supplier?: Record<string, unknown> | null;
-    supplierId?: string | null;
-    productSupplier?: Record<string, unknown> | null;
-  };
-
   const product = resolvedProduct || null;
-  const supplier = supplierContext.supplier || null;
-  const productSupplier = supplierContext.productSupplier || null;
-  const supplierId = normalizeText(input.supplierId || orderOverrides.supplierId || supplierContext.supplierId || product?.supplierId);
+  const supplierId = normalizeText(input.supplierId || orderOverrides.supplierId || product?.supplierId);
+  const productSupplier = findProductSupplierLink(state, sku, supplierId);
+  const resolvedSupplierId = normalizeText(supplierId || productSupplier?.supplierId);
+  const supplier = findSupplierById(state, resolvedSupplierId);
 
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
@@ -433,7 +448,7 @@ export function resolveMasterDataHierarchy(input: ResolveMasterDataInput): Maste
 
   return {
     sku,
-    supplierId,
+    supplierId: resolvedSupplierId,
     product,
     supplier,
     productSupplier,

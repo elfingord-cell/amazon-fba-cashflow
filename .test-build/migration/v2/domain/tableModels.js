@@ -14,7 +14,7 @@ exports.buildForecastProducts = buildForecastProducts;
 exports.filterForecastProducts = filterForecastProducts;
 exports.buildForecastRevenueByMonth = buildForecastRevenueByMonth;
 const dataHealth_js_1 = require("../../lib/dataHealth.js");
-const productCompleteness_js_1 = require("../../lib/productCompleteness.js");
+const productCompletenessV2_1 = require("./productCompletenessV2");
 const months_1 = require("./months");
 function asNumber(value) {
     if (value === null || value === undefined || value === "")
@@ -32,7 +32,12 @@ function templateFields(product) {
     return fields || {};
 }
 function normalizeStatus(value) {
-    return String(value || "active") === "inactive" ? "inactive" : "active";
+    const normalized = String(value || "active").trim().toLowerCase();
+    if (normalized === "inactive")
+        return "inactive";
+    if (normalized === "prelaunch" || normalized === "not_launched" || normalized === "planned")
+        return "prelaunch";
+    return "active";
 }
 function buildCategoryLabelMap(state) {
     const map = new Map();
@@ -62,7 +67,7 @@ function buildProductGridRows(input) {
         const product = entry;
         const template = templateFields(product);
         const sku = String(product.sku || "");
-        const completeness = (0, productCompleteness_js_1.evaluateProductCompleteness)(product, { state: input.state })?.status || "blocked";
+        const completeness = (0, productCompletenessV2_1.evaluateProductCompletenessV2)({ product, state: input.state })?.status || "blocked";
         return {
             id: String(product.id || (sku ? `prod-${sku}` : `prod-${index}`)),
             sku,
@@ -109,7 +114,7 @@ function isForecastProductActive(product) {
     const status = String(product.status || "").trim().toLowerCase();
     if (!status)
         return true;
-    return status === "active" || status === "aktiv";
+    return status === "active" || status === "aktiv" || status === "prelaunch" || status === "not_launched" || status === "planned";
 }
 function normalizeManualMap(source) {
     const out = {};
