@@ -97,6 +97,25 @@ interface ProductDraft {
   templateDdp: boolean;
 }
 
+const PRODUCT_FIELD_LABELS: Partial<Record<keyof ProductDraft, string>> = {
+  sku: "SKU",
+  alias: "Alias",
+  hsCode: "HS-Code",
+  goodsDescription: "Warenbeschreibung",
+  supplierId: "Supplier",
+  categoryId: "Kategorie",
+  status: "Status",
+  avgSellingPriceGrossEUR: "Verkaufspreis (EUR)",
+  sellerboardMarginPct: "Marge %",
+  moqUnits: "MOQ Units",
+  landedUnitCostEur: "Einstand (EUR)",
+  logisticsPerUnitEur: "Shipping (EUR/Stk)",
+  productionLeadTimeDaysDefault: "Production Lead Time",
+  templateUnitPriceUsd: "EK (USD)",
+  templateTransitDays: "Transit-Tage",
+  templateDdp: "Incoterm / DDP",
+};
+
 interface BulkEditDraft {
   scope: "filtered" | "selected";
   selectedSkus: string[];
@@ -701,6 +720,38 @@ export default function ProductsModule(): JSX.Element {
     const issue = fieldIssues.get(field);
     if (!issue || !issue.messages.length) return undefined;
     return `Prüfen: ${issue.messages.join(" · ")}`;
+  }
+
+  const orderedFieldIssues = useMemo(() => {
+    return Array.from(fieldIssues.entries()).map(([field, issue]) => ({
+      field,
+      level: issue.level,
+      messages: issue.messages,
+      label: PRODUCT_FIELD_LABELS[field] || String(field),
+    }));
+  }, [fieldIssues]);
+
+  function focusIssueField(field: keyof ProductDraft): void {
+    if (ADVANCED_FORM_FIELDS.has(field)) {
+      setAdvancedOpenKeys(["advanced"]);
+    }
+    window.setTimeout(() => {
+      try {
+        form.scrollToField(field, { block: "center" });
+      } catch {
+        // noop
+      }
+      const instance = form.getFieldInstance(field) as { focus?: () => void } | undefined;
+      if (instance && typeof instance.focus === "function") {
+        instance.focus();
+      }
+    }, 80);
+  }
+
+  function focusFirstIssueField(): void {
+    const first = orderedFieldIssues[0]?.field;
+    if (!first) return;
+    focusIssueField(first);
   }
 
   const shippingSuggestion = useMemo(() => {
@@ -1337,7 +1388,15 @@ export default function ProductsModule(): JSX.Element {
             });
             return;
           }
-          void form.validateFields().then((values) => handleSave(values)).catch(() => {});
+          void form.validateFields()
+            .then((values) => handleSave(values))
+            .catch((saveError: unknown) => {
+              focusFirstIssueField();
+              const errorMessage = saveError instanceof Error
+                ? saveError.message
+                : "Stammdaten prüfen";
+              message.warning(errorMessage);
+            });
         }}
         width={1060}
       >
@@ -1381,14 +1440,34 @@ export default function ProductsModule(): JSX.Element {
               message={draftCompleteness.status === "blocked" && draftCompleteness.blockScope
                 ? "Blockierende Stammdaten fehlen"
                 : "Stammdaten prüfen"}
-              description={[
-                draftCompleteness.blockingMissing.length
-                  ? `Blocker: ${draftCompleteness.blockingMissing.map((entry) => entry.label).join(", ")}`
-                  : null,
-                draftCompleteness.importantMissing.length
-                  ? `Wichtig: ${draftCompleteness.importantMissing.map((entry) => entry.label).join(", ")}`
-                  : null,
-              ].filter(Boolean).join(" · ")}
+              description={(
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <span>
+                    {[
+                      draftCompleteness.blockingMissing.length
+                        ? `Blocker: ${draftCompleteness.blockingMissing.map((entry) => entry.label).join(", ")}`
+                        : null,
+                      draftCompleteness.importantMissing.length
+                        ? `Wichtig: ${draftCompleteness.importantMissing.map((entry) => entry.label).join(", ")}`
+                        : null,
+                    ].filter(Boolean).join(" · ")}
+                  </span>
+                  {orderedFieldIssues.length ? (
+                    <div className="v2-issue-chip-row">
+                      {orderedFieldIssues.map((issue) => (
+                        <Button
+                          key={String(issue.field)}
+                          size="small"
+                          className={`v2-issue-chip ${issue.level === "error" ? "is-error" : "is-warning"}`}
+                          onClick={() => focusIssueField(issue.field)}
+                        >
+                          {issue.label}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </Space>
+              )}
             />
           ) : null}
 

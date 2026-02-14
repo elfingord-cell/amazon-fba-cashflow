@@ -24,7 +24,9 @@
     "test:parity:sync": "npm run test:parity:migration:build && npm run test:parity:sync:run",
     "test:parity:v2": "npm run test:parity:migration:build && npm run test:parity:migration:run && npm run test:parity:sync:run && npm run test:parity:payments:run && npm run test:parity:pofo:run && npm run test:parity:performance:run && npm run test:parity:responsive:run && npm run test:parity:routes:run",
     "test:parity:accounting": "node --test src/domain/accountantReport.test.js",
-    "test:parity": "node --test src/domain/parity.golden.test.js src/domain/cashflow.fixcost.test.js src/domain/inventoryProjection.test.js src/domain/outflowStack.test.js src/domain/vatPreview.test.js src/domain/foSuggestion.test.js src/domain/accountantReport.test.js && npm run test:parity:v2"
+    "test:parity": "node --test src/domain/parity.golden.test.js src/domain/cashflow.fixcost.test.js src/domain/inventoryProjection.test.js src/domain/outflowStack.test.js src/domain/vatPreview.test.js src/domain/foSuggestion.test.js src/domain/accountantReport.test.js && npm run test:parity:v2",
+    "test:preflight:quick": "npm run test:parity:routes:run && npm run test:parity:pofo:run",
+    "test:preflight": "npm run build && npm run test:parity"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",

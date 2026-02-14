@@ -171,6 +171,10 @@ function statusTag(status: string): JSX.Element {
   return <Tag color="gold">Draft</Tag>;
 }
 
+function nextPlanningStatus(status: FoStatus): FoStatus {
+  return status === "ACTIVE" ? "DRAFT" : "ACTIVE";
+}
+
 function formatFoPaymentCategory(category: FoPaymentPreviewRow["category"]): string {
   if (category === "supplier") return "Supplier";
   if (category === "freight") return "Shipping China -> 3PL";
@@ -659,12 +663,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         <div className="v2-actions-nowrap">
           <Button
             size="small"
-            disabled={!isFoConvertibleStatus(row.original.status)}
             onClick={() => {
               openEditModal(row.original.raw);
             }}
           >
-            Bearbeiten
+            {isFoConvertibleStatus(row.original.status) ? "Bearbeiten" : "Details"}
           </Button>
           <Button
             size="small"
@@ -717,6 +720,20 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   ], [mergeSelection, navigate, saveWith, state.pos]);
 
   const draftValues = Form.useWatch([], form) as FoFormValues | undefined;
+  const editingRow = useMemo(
+    () => (editingId ? rows.find((entry) => entry.id === editingId) || null : null),
+    [editingId, rows],
+  );
+  const draftStatus = useMemo<FoStatus>(() => {
+    return normalizeFoStatus(draftValues?.status || editingRow?.status || "DRAFT");
+  }, [draftValues?.status, editingRow?.status]);
+  const draftStatusLocked = !isFoConvertibleStatus(draftStatus);
+  const modalFieldLocked = modalCollab.readOnly || draftStatusLocked;
+  const draftConvertedPoNo = String(
+    editingRow?.convertedPoNo
+    || (editingRow?.raw?.convertedPoNo as string | undefined)
+    || "",
+  ).trim();
   const selectedDraftProduct = useMemo(() => {
     const sku = String(draftValues?.sku || "").trim();
     return sku ? (productBySku.get(sku)?.raw || null) : null;
@@ -1018,7 +1035,6 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   }
 
   function applyProductDefaults(skuValue: string, unitsOverride?: number): void {
-    if (editingId) return;
     const sku = String(skuValue || "").trim();
     if (!sku) return;
     const product = productBySku.get(sku) || null;
@@ -1089,18 +1105,42 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     }
     const sku = String(values.sku || "").trim();
     const product = sku ? resolveProductBySku(productRows.map((entry) => entry.raw), sku) : null;
+    const derivedSupplierId = String(product?.supplierId || "").trim();
+    const supplierId = String(derivedSupplierId || values.supplierId || "").trim();
+    if (!supplierId) {
+      throw new Error("Supplier ist erforderlich.");
+    }
+    if (!product && !values.supplierId) {
+      throw new Error("SKU nicht gefunden. Bitte Produkt prüfen.");
+    }
+    const existing = editingId
+      ? rows.find((entry) => entry.id === editingId)?.raw || null
+      : null;
+    const existingStatus = normalizeFoStatus(existing?.status || "DRAFT");
+    const requestedStatus = normalizeFoStatus(values.status || existingStatus || "DRAFT");
+    let sanitizedStatus: FoStatus = requestedStatus;
+    if (existing && !isFoConvertibleStatus(existingStatus)) {
+      sanitizedStatus = existingStatus;
+    } else if (!isFoConvertibleStatus(requestedStatus)) {
+      sanitizedStatus = existing ? existingStatus : "DRAFT";
+    }
+    const sanitizedValues: FoFormValues = {
+      ...values,
+      supplierId,
+      status: sanitizedStatus,
+    };
     const blocking = evaluateOrderBlocking({
       product,
       state: stateObj,
-      supplierId: String(values.supplierId || product?.supplierId || ""),
+      supplierId,
       orderContext: "fo",
       orderOverrides: {
-        unitPrice: values.unitPrice,
-        productionLeadTimeDays: values.productionLeadTimeDays,
-        logisticsLeadTimeDays: values.logisticsLeadTimeDays,
-        dutyRatePct: values.dutyRatePct,
-        eustRatePct: values.eustRatePct,
-        incoterm: values.incoterm,
+        unitPrice: sanitizedValues.unitPrice,
+        productionLeadTimeDays: sanitizedValues.productionLeadTimeDays,
+        logisticsLeadTimeDays: sanitizedValues.logisticsLeadTimeDays,
+        dutyRatePct: sanitizedValues.dutyRatePct,
+        eustRatePct: sanitizedValues.eustRatePct,
+        incoterm: sanitizedValues.incoterm,
       },
     });
     if (blocking.blocked) {
@@ -1118,19 +1158,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (Math.abs(sumPercent - 100) > 0.01) {
       throw new Error("Supplier Payment Terms muessen in Summe 100% ergeben.");
     }
-    const existing = editingId
-      ? rows.find((entry) => entry.id === editingId)?.raw || null
-      : null;
     const schedule = computeFoSchedule({
-      targetDeliveryDate: values.targetDeliveryDate,
-      productionLeadTimeDays: values.productionLeadTimeDays,
-      logisticsLeadTimeDays: values.logisticsLeadTimeDays,
-      bufferDays: values.bufferDays,
+      targetDeliveryDate: sanitizedValues.targetDeliveryDate,
+      productionLeadTimeDays: sanitizedValues.productionLeadTimeDays,
+      logisticsLeadTimeDays: sanitizedValues.logisticsLeadTimeDays,
+      bufferDays: sanitizedValues.bufferDays,
     });
     const normalized = normalizeFoRecord({
       existing,
       supplierTerms: terms,
-      values: values as unknown as Record<string, unknown>,
+      values: sanitizedValues as unknown as Record<string, unknown>,
       schedule,
       vatRefundLagMonths: settings.vatRefundLagMonths,
     });
@@ -1423,7 +1460,14 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           setModalOpen(false);
         }}
         onOk={() => {
-          if (modalCollab.readOnly) {
+          if (modalFieldLocked) {
+            if (draftStatusLocked && !modalCollab.readOnly) {
+              Modal.info({
+                title: "Read-only FO",
+                content: "Konvertierte oder archivierte FOs sind schreibgeschuetzt. Bitte ueber PO weiterarbeiten.",
+              });
+              return;
+            }
             Modal.warning({
               title: "Nur Lesemodus",
               content: `${modalCollab.remoteUserLabel || "Kollege"} bearbeitet diesen FO. Bitte Bearbeitung übernehmen oder warten.`,
@@ -1451,17 +1495,48 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             Entwurf von {modalCollab.remoteUserLabel || "Kollege"} wird live gespiegelt.
           </Tag>
         ) : null}
+        <Space style={{ width: "100%", marginBottom: 10 }} wrap>
+          <Text type="secondary">Status:</Text>
+          {statusTag(draftStatus)}
+          {isFoConvertibleStatus(draftStatus) ? (
+            <Button
+              size="small"
+              disabled={modalFieldLocked}
+              onClick={() => form.setFieldValue("status", nextPlanningStatus(draftStatus))}
+            >
+              {draftStatus === "ACTIVE" ? "Als Draft markieren" : "Als Active markieren"}
+            </Button>
+          ) : (
+            <Tag color="default">Read-only</Tag>
+          )}
+          {draftConvertedPoNo ? (
+            <Button
+              size="small"
+              onClick={() => {
+                const params = new URLSearchParams();
+                params.set("source", "fo_convert");
+                params.set("poNo", draftConvertedPoNo);
+                navigate(`/v2/orders/po?${params.toString()}`);
+              }}
+            >
+              Zugehoerige PO oeffnen
+            </Button>
+          ) : null}
+        </Space>
         <Form
           name="v2-fo-modal"
           form={form}
           layout="vertical"
-          disabled={modalCollab.readOnly}
+          disabled={modalFieldLocked}
           onValuesChange={(changedValues) => {
-            if (modalCollab.readOnly) return;
+            if (modalFieldLocked) return;
             modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
           }}
         >
           <Form.Item name="id" hidden>
+            <Input />
+          </Form.Item>
+          <Form.Item name="status" hidden>
             <Input />
           </Form.Item>
           <Space style={{ width: "100%" }} align="start" wrap>
@@ -1490,6 +1565,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               rules={[{ required: true, message: "Supplier ist erforderlich." }]}
             >
               <Select
+                disabled
                 showSearch
                 optionFilterProp="label"
                 options={supplierRows.map((supplier) => ({
@@ -1497,13 +1573,6 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                   label: supplier.name,
                 }))}
               />
-            </Form.Item>
-            <Form.Item
-              name="status"
-              label="Status"
-              style={{ width: 170 }}
-            >
-              <Select options={FO_STATUS_VALUES.map((status) => ({ value: status, label: status }))} />
             </Form.Item>
           </Space>
 
@@ -1567,6 +1636,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               <DeNumberInput mode="int" min={0} />
             </Form.Item>
             <Button
+              disabled={modalFieldLocked}
               onClick={() => {
                 const values = form.getFieldsValue();
                 const supplier = supplierById.get(String(values.supplierId || ""));
@@ -1603,35 +1673,35 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               <div className="v2-source-row">
                 <span>Unit Price</span>
                 <span className={sourceChipClass(foHierarchy.fields.unitPriceUsd.source, true)}>{foHierarchy.fields.unitPriceUsd.label}</span>
-                <Button size="small" onClick={() => resetFoFieldFromHierarchy("unitPrice")}>Zuruecksetzen</Button>
-                <Button size="small" onClick={() => adoptFoFieldToProduct("unitPriceUsd", draftValues?.unitPrice)}>Als Produktwert uebernehmen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => resetFoFieldFromHierarchy("unitPrice")}>Zuruecksetzen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => adoptFoFieldToProduct("unitPriceUsd", draftValues?.unitPrice)}>Als Produktwert uebernehmen</Button>
               </div>
               <div className="v2-source-row">
                 <span>Production Lead</span>
                 <span className={sourceChipClass(foHierarchy.fields.productionLeadTimeDays.source, true)}>{foHierarchy.fields.productionLeadTimeDays.label}</span>
-                <Button size="small" onClick={() => resetFoFieldFromHierarchy("productionLeadTimeDays")}>Zuruecksetzen</Button>
-                <Button size="small" onClick={() => adoptFoFieldToProduct("productionLeadTimeDays", draftValues?.productionLeadTimeDays)}>Als Produktwert uebernehmen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => resetFoFieldFromHierarchy("productionLeadTimeDays")}>Zuruecksetzen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => adoptFoFieldToProduct("productionLeadTimeDays", draftValues?.productionLeadTimeDays)}>Als Produktwert uebernehmen</Button>
               </div>
               <div className="v2-source-row">
                 <span>Logistics Lead</span>
                 <span className={sourceChipClass(foHierarchy.fields.transitDays.source, false)}>{foHierarchy.fields.transitDays.label}</span>
-                <Button size="small" onClick={() => resetFoFieldFromHierarchy("logisticsLeadTimeDays")}>Zuruecksetzen</Button>
-                <Button size="small" onClick={() => adoptFoFieldToProduct("transitDays", draftValues?.logisticsLeadTimeDays)}>Als Produktwert uebernehmen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => resetFoFieldFromHierarchy("logisticsLeadTimeDays")}>Zuruecksetzen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => adoptFoFieldToProduct("transitDays", draftValues?.logisticsLeadTimeDays)}>Als Produktwert uebernehmen</Button>
               </div>
               <div className="v2-source-row">
                 <span>Duty / EUSt</span>
                 <span className={sourceChipClass(foHierarchy.fields.dutyRatePct.source, false)}>{foHierarchy.fields.dutyRatePct.label}</span>
                 <span className={sourceChipClass(foHierarchy.fields.eustRatePct.source, false)}>{foHierarchy.fields.eustRatePct.label}</span>
-                <Button size="small" onClick={() => resetFoFieldFromHierarchy("dutyRatePct")}>Duty reset</Button>
-                <Button size="small" onClick={() => resetFoFieldFromHierarchy("eustRatePct")}>EUSt reset</Button>
-                <Button size="small" onClick={() => adoptFoFieldToProduct("dutyRatePct", draftValues?.dutyRatePct)}>Duty uebernehmen</Button>
-                <Button size="small" onClick={() => adoptFoFieldToProduct("eustRatePct", draftValues?.eustRatePct)}>EUSt uebernehmen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => resetFoFieldFromHierarchy("dutyRatePct")}>Duty reset</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => resetFoFieldFromHierarchy("eustRatePct")}>EUSt reset</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => adoptFoFieldToProduct("dutyRatePct", draftValues?.dutyRatePct)}>Duty uebernehmen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => adoptFoFieldToProduct("eustRatePct", draftValues?.eustRatePct)}>EUSt uebernehmen</Button>
               </div>
               <div className="v2-source-row">
                 <span>Incoterm</span>
                 <span className={sourceChipClass(foHierarchy.fields.incoterm.source, true)}>{foHierarchy.fields.incoterm.label}</span>
-                <Button size="small" onClick={() => resetFoFieldFromHierarchy("incoterm")}>Zuruecksetzen</Button>
-                <Button size="small" onClick={() => adoptFoFieldToProduct("ddp", String(draftValues?.incoterm || "").toUpperCase() === "DDP")}>Als Produktwert uebernehmen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => resetFoFieldFromHierarchy("incoterm")}>Zuruecksetzen</Button>
+                <Button size="small" disabled={modalFieldLocked} onClick={() => adoptFoFieldToProduct("ddp", String(draftValues?.incoterm || "").toUpperCase() === "DDP")}>Als Produktwert uebernehmen</Button>
               </div>
             </Space>
           </Card>
@@ -1763,11 +1833,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                       >
                         <DeNumberInput mode="int" />
                       </Form.Item>
-                      <Button danger onClick={() => remove(field.name)}>X</Button>
+                      <Button danger disabled={modalFieldLocked} onClick={() => remove(field.name)}>X</Button>
                     </Space>
                   ))}
                   <Space>
                     <Button
+                      disabled={modalFieldLocked}
                       onClick={() => add({
                         label: "Milestone",
                         percent: 0,
@@ -1779,6 +1850,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                       Milestone
                     </Button>
                     <Button
+                      disabled={modalFieldLocked}
                       onClick={() => {
                         const supplierId = String(form.getFieldValue("supplierId") || "");
                         const supplier = supplierById.get(supplierId) || null;

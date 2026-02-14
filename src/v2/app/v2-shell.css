@@ -922,9 +922,8 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
-  contain: inline-size;
 }
 
 .v2-products-grid-host .v2-products-grid-wrap {
@@ -932,11 +931,35 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
 }
 
 .v2-products-grid-host .v2-stats-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+}
+
+.v2-issue-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.v2-issue-chip {
+  border-radius: 999px;
+}
+
+.v2-issue-chip.is-error {
+  border-color: rgba(220, 38, 38, 0.45);
+  background: rgba(254, 242, 242, 1);
+  color: #b91c1c;
+}
+
+.v2-issue-chip.is-warning {
+  border-color: rgba(217, 119, 6, 0.45);
+  background: rgba(255, 247, 237, 1);
+  color: #b45309;
 }
 
 .v2-category-count {
