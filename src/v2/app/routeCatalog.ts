@@ -16,24 +16,28 @@ import {
   FundProjectionScreenOutlined,
   PieChartOutlined,
 } from "@ant-design/icons";
-import type { ComponentType } from "react";
+import { lazy, type ComponentType } from "react";
 
-import DashboardModule from "../modules/dashboard";
-import ProductsModule from "../modules/products";
-import ForecastModule from "../modules/forecast";
-import AbcInsightsModule from "../modules/abc-insights";
-import InventorySnapshotPage from "../modules/inventory/snapshot";
-import InventoryProjectionPage from "../modules/inventory/projection";
-import OrdersModule from "../modules/orders";
-import SuppliersModule from "../modules/suppliers";
-import SettingsModule from "../modules/settings";
-import InputsModule from "../modules/inputs";
-import FixcostsModule from "../modules/fixcosts";
-import VatModule from "../modules/vat";
-import ExportImportModule from "../modules/export-import";
-import AccountingExportModule from "../modules/accounting-export";
-import PlanModule from "../modules/plan";
-import DebugModule from "../modules/debug";
+function lazyRoute(importer: () => Promise<{ default: ComponentType<any> }>): ComponentType<any> {
+  return lazy(importer) as unknown as ComponentType<any>;
+}
+
+const DashboardModule = lazyRoute(() => import("../modules/dashboard"));
+const ProductsModule = lazyRoute(() => import("../modules/products"));
+const ForecastModule = lazyRoute(() => import("../modules/forecast"));
+const AbcInsightsModule = lazyRoute(() => import("../modules/abc-insights"));
+const InventorySnapshotPage = lazyRoute(() => import("../modules/inventory/snapshot"));
+const InventoryProjectionPage = lazyRoute(() => import("../modules/inventory/projection"));
+const OrdersModule = lazyRoute(() => import("../modules/orders"));
+const SuppliersModule = lazyRoute(() => import("../modules/suppliers"));
+const SettingsModule = lazyRoute(() => import("../modules/settings"));
+const InputsModule = lazyRoute(() => import("../modules/inputs"));
+const FixcostsModule = lazyRoute(() => import("../modules/fixcosts"));
+const VatModule = lazyRoute(() => import("../modules/vat"));
+const ExportImportModule = lazyRoute(() => import("../modules/export-import"));
+const AccountingExportModule = lazyRoute(() => import("../modules/accounting-export"));
+const PlanModule = lazyRoute(() => import("../modules/plan"));
+const DebugModule = lazyRoute(() => import("../modules/debug"));
 
 export type V2RouteSection = "overview" | "operations" | "masterdata" | "closing" | "tools";
 

@@ -130,6 +130,10 @@ interface CoverageDemandBreakdownRow {
   usedFallback: boolean;
 }
 
+function randomId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function formatDate(value: unknown): string {
   if (!value) return "—";
   const [year, month, day] = String(value).split("-").map(Number);

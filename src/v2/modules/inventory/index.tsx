@@ -1041,6 +1041,24 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
   ], []);
 
+  const anchorForecastGapSkus = Array.isArray(projection.anchorForecastGapSkus)
+    ? projection.anchorForecastGapSkus as string[]
+    : [];
+  const anchorSkuFallbackSkus = Array.isArray(projection.anchorSkuFallbackSkus)
+    ? projection.anchorSkuFallbackSkus as string[]
+    : [];
+  const anchorSkuMissingHistory = Array.isArray(projection.anchorSkuMissingHistory)
+    ? projection.anchorSkuMissingHistory as string[]
+    : [];
+  const anchorSkuFallbackSet = useMemo(
+    () => new Set(anchorSkuFallbackSkus.map((sku) => String(sku || "").trim())),
+    [anchorSkuFallbackSkus],
+  );
+  const anchorMissingHistorySet = useMemo(
+    () => new Set(anchorSkuMissingHistory.map((sku) => String(sku || "").trim())),
+    [anchorSkuMissingHistory],
+  );
+
   const projectionColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => {
     const base: ColumnDef<InventoryProductRow>[] = [
       {
@@ -1268,24 +1286,6 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
-
-  const anchorForecastGapSkus = Array.isArray(projection.anchorForecastGapSkus)
-    ? projection.anchorForecastGapSkus as string[]
-    : [];
-  const anchorSkuFallbackSkus = Array.isArray(projection.anchorSkuFallbackSkus)
-    ? projection.anchorSkuFallbackSkus as string[]
-    : [];
-  const anchorSkuMissingHistory = Array.isArray(projection.anchorSkuMissingHistory)
-    ? projection.anchorSkuMissingHistory as string[]
-    : [];
-  const anchorSkuFallbackSet = useMemo(
-    () => new Set(anchorSkuFallbackSkus.map((sku) => String(sku || "").trim())),
-    [anchorSkuFallbackSkus],
-  );
-  const anchorMissingHistorySet = useMemo(
-    () => new Set(anchorSkuMissingHistory.map((sku) => String(sku || "").trim())),
-    [anchorSkuMissingHistory],
-  );
   const anchorMode = String(projection.anchorMode || "no_snapshot");
   const anchorTargetMonth = normalizeMonthKey(projection.anchorTargetMonth || projection.anchorMonth);
   const projectionTodayMonth = projectionBaseMonth;

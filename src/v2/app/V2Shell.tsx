@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Component, Suspense, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -44,6 +44,43 @@ const { Text } = Typography;
 interface AuthFormValues {
   email: string;
   password: string;
+}
+
+interface RouteErrorBoundaryProps {
+  children: ReactNode;
+  resetKey: string;
+}
+
+interface RouteErrorBoundaryState {
+  error: Error | null;
+}
+
+class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBoundaryState> {
+  state: RouteErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): RouteErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps: RouteErrorBoundaryProps): void {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.error) {
+      return (
+        <Alert
+          type="error"
+          showIcon
+          message="Tab konnte nicht geladen werden"
+          description={this.state.error.message || "Unbekannter Fehler beim Laden dieses Tabs."}
+        />
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function sectionLabel(section: string): string {
@@ -508,7 +545,13 @@ export function V2Routes(): JSX.Element {
           <Route
             key={route.key}
             path={route.path}
-            element={<route.Component />}
+            element={(
+              <RouteErrorBoundary resetKey={route.key}>
+                <Suspense fallback={<Alert type="info" showIcon message="Tab wird geladen..." />}>
+                  <route.Component />
+                </Suspense>
+              </RouteErrorBoundary>
+            )}
           />
         ))}
       </Route>
