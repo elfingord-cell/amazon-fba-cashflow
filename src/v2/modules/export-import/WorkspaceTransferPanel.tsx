@@ -227,15 +227,21 @@ export function WorkspaceTransferPanel(): JSX.Element {
       return;
     }
 
-    const confirmed = window.confirm("Workspace durch diese JSON-Datei ersetzen?");
-    if (!confirmed) return;
+ 	    const confirmed = window.confirm("Workspace durch diese JSON-Datei ersetzen?");
+  	    if (!confirmed) return;
 
-    const backupId = createWorkspaceBackup("v2:workspace-transfer:pre-import", ensureAppStateV2(state));
-    await saveWith(() => ensureAppStateV2(input), "v2:workspace-transfer:import");
-    const resultMessage = `Import erfolgreich. Backup: ${backupId}`;
-    setImportResult(resultMessage);
-    messageApi.success(resultMessage);
-  }
+	    const inputState = ensureAppStateV2(input);
+	    const backupId = createWorkspaceBackup("v2:workspace-transfer:pre-import", ensureAppStateV2(state));
+	    try {
+	      await saveWith(() => inputState, "v2:workspace-transfer:import");
+	      const resultMessage = `Import erfolgreich. Backup: ${backupId}`;
+	      setImportResult(resultMessage);
+	      messageApi.success(resultMessage);
+	    } catch (error) {
+	      const reason = error instanceof Error ? error.message : "Unbekannter Fehler";
+	      messageApi.error(`Import fehlgeschlagen: ${reason}`);
+	    }
+	  }
 
   return (
     <div className="v2-import-wizard">

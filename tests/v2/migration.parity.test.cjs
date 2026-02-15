@@ -145,18 +145,24 @@ test("migration apply: replace_workspace saves mapped target state exactly", asy
 });
 
 test("migration apply: merge_upsert keeps existing values and reports conflicts", () => {
-  const currentState = ensureAppStateV2({
-    settings: {
-      openingBalance: "99,00",
-      keepFlag: true,
-      nested: {
+    const currentState = ensureAppStateV2({
+      settings: {
+        openingBalance: "99,00",
+        keepFlag: true,
+        nested: {
         shared: "existing",
         existingOnly: "x",
       },
-    },
-    products: [{ id: "prod-existing", sku: "SKU-1", alias: "Bestehend" }],
-    suppliers: [{ id: "sup-1", name: "Lieferant Bestehend" }],
-  });
+      },
+      products: [{ id: "prod-existing", sku: "SKU-1", alias: "Bestehend" }],
+      suppliers: [{ id: "sup-1", name: "Lieferant Bestehend" }],
+      legacyMeta: {
+        unmapped: {
+          shared: "from-current",
+          currentOnly: "current",
+        },
+      },
+    });
 
   const incomingBundle = runLegacyDryRun({
     settings: {
@@ -175,6 +181,14 @@ test("migration apply: merge_upsert keeps existing values and reports conflicts"
       { name: "Lieferant Neu" },
     ],
   });
+  incomingBundle.mappedState.legacyMeta = {
+    ...incomingBundle.mappedState.legacyMeta,
+    unmapped: {
+      ...(incomingBundle.mappedState.legacyMeta?.unmapped || {}),
+      shared: "from-incoming",
+      incomingOnly: "incoming",
+    },
+  };
 
   const resolved = resolveDryRunApplication(incomingBundle, "merge_upsert", currentState);
   const nextState = ensureAppStateV2(resolved.nextState);
@@ -192,6 +206,11 @@ test("migration apply: merge_upsert keeps existing values and reports conflicts"
   assert.equal(nextState.settings.nested.shared, "existing");
   assert.equal(nextState.settings.nested.existingOnly, "x");
   assert.equal(nextState.settings.nested.incomingOnly, "y");
+  assert.deepEqual(nextState.legacyMeta.unmapped, {
+    shared: "from-current",
+    currentOnly: "current",
+    incomingOnly: "incoming",
+  });
 
   const conflictIssues = resolved.report.issues.filter((issue) => issue.code === "MERGE_CONFLICT_EXISTING_WINS");
   assert.ok(conflictIssues.length >= 2);

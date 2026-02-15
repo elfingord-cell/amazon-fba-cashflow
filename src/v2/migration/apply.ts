@@ -121,7 +121,15 @@ function mergeUpsert(
   next.fixcostOverrides = mergeObjectExistingWins(currentState.fixcostOverrides, incomingState.fixcostOverrides) as Record<string, unknown>;
   next.monthlyActuals = mergeObjectExistingWins(currentState.monthlyActuals, incomingState.monthlyActuals) as Record<string, unknown>;
 
-  next.legacyMeta = ensureAppStateV2(currentState).legacyMeta;
+  const legacyMetaCurrent = ensureAppStateV2(currentState).legacyMeta;
+  const legacyMetaIncoming = ensureAppStateV2(incomingState).legacyMeta;
+  next.legacyMeta = {
+    importHistory: legacyMetaCurrent.importHistory || [],
+    unmapped: {
+      ...asObject(legacyMetaIncoming.unmapped),
+      ...asObject(legacyMetaCurrent.unmapped),
+    },
+  };
   next.schemaVersion = 2;
 
   return { next, issues };
