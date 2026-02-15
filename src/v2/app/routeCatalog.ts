@@ -35,6 +35,7 @@ const SuppliersModule = lazyRoute(() => import("../modules/suppliers"));
 const SettingsModule = lazyRoute(() => import("../modules/settings"));
 const InputsModule = lazyRoute(() => import("../modules/inputs"));
 const FixcostsModule = lazyRoute(() => import("../modules/fixcosts"));
+const DividendPlanningModule = lazyRoute(() => import("../modules/dividend-planning"));
 const VatModule = lazyRoute(() => import("../modules/vat"));
 const ExportImportModule = lazyRoute(() => import("../modules/export-import"));
 const AccountingExportModule = lazyRoute(() => import("../modules/accounting-export"));
@@ -111,6 +112,14 @@ export const V2_ROUTES: V2RouteItem[] = [
     icon: ProjectOutlined,
     Component: FixcostsModule,
     redirectFrom: ["fixcosts"],
+  },
+  {
+    key: "closing-dividend-planning",
+    path: "abschluss/dividendenplanung",
+    label: "Dividendenplanung",
+    section: "closing",
+    icon: PieChartOutlined,
+    Component: DividendPlanningModule,
   },
   {
     key: "closing-vat",

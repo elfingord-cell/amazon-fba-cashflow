@@ -1538,6 +1538,95 @@
   font-weight: 600;
 }
 
+.v2-dividend-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.v2-dividend-band-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.v2-dividend-band-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.v2-dividend-field {
+  display: grid;
+  gap: 6px;
+}
+
+.v2-dividend-feasibility {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-dividend-calibration-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.v2-dividend-calibration-meta {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-dividend-issue-row {
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(248, 250, 252, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.v2-shell .ant-btn.v2-dividend-traffic {
+  border-radius: 999px;
+  border-width: 1px;
+}
+
+.v2-shell .ant-btn.v2-dividend-traffic--green {
+  border-color: rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.12);
+  color: #166534;
+}
+
+.v2-shell .ant-btn.v2-dividend-traffic--yellow {
+  border-color: rgba(202, 138, 4, 0.42);
+  background: rgba(234, 179, 8, 0.14);
+  color: #854d0e;
+}
+
+.v2-shell .ant-btn.v2-dividend-traffic--orange {
+  border-color: rgba(234, 88, 12, 0.45);
+  background: rgba(249, 115, 22, 0.14);
+  color: #9a3412;
+}
+
+.v2-shell .ant-btn.v2-dividend-traffic--red {
+  border-color: rgba(220, 38, 38, 0.42);
+  background: rgba(220, 38, 38, 0.12);
+  color: #991b1b;
+}
+
 @media (max-width: 992px) {
   .v2-dashboard-signal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1549,6 +1638,19 @@
 
   .v2-svi-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .v2-dividend-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .v2-dividend-band-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-dividend-issue-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .v2-form-row {
@@ -1581,6 +1683,10 @@
   }
 
   .v2-svi-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-dividend-kpi-grid {
     grid-template-columns: 1fr;
   }
 }
