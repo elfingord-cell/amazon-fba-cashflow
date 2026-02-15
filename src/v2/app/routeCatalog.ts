@@ -23,6 +23,7 @@ function lazyRoute(importer: () => Promise<{ default: ComponentType<any> }>): Co
 }
 
 const DashboardModule = lazyRoute(() => import("../modules/dashboard"));
+const SollIstModule = lazyRoute(() => import("../modules/soll-ist"));
 const ProductsModule = lazyRoute(() => import("../modules/products"));
 const ForecastModule = lazyRoute(() => import("../modules/forecast"));
 const AbcInsightsModule = lazyRoute(() => import("../modules/abc-insights"));
@@ -61,6 +62,7 @@ export interface V2RouteRedirect {
 
 export const V2_ROUTES: V2RouteItem[] = [
   { key: "dashboard", path: "dashboard", label: "Dashboard", section: "overview", icon: DashboardOutlined, Component: DashboardModule },
+  { key: "soll-ist", path: "soll-ist", label: "Soll vs. Ist", section: "overview", icon: CreditCardOutlined, Component: SollIstModule },
 
   { key: "forecast", path: "forecast", label: "Absatzprognose", section: "operations", icon: LineChartOutlined, Component: ForecastModule },
   { key: "inventory-snapshot", path: "inventory/snapshot", label: "Bestandsaufnahme", section: "operations", icon: InboxOutlined, Component: InventorySnapshotPage },
