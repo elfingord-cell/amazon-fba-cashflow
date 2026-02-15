@@ -79,6 +79,8 @@ export interface AppStateV2 extends UnknownRecord {
   legacyMeta: LegacyMeta;
   settings?: UnknownRecord;
   products?: UnknownRecord[];
+  planProducts?: UnknownRecord[];
+  planProductMappings?: UnknownRecord[];
   suppliers?: UnknownRecord[];
   productSuppliers?: UnknownRecord[];
   pos?: UnknownRecord[];

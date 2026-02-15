@@ -1,6 +1,7 @@
 import { parseDeNumber } from "../../lib/dataHealth.js";
 import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 import { currentMonthKey, monthRange, normalizeMonthKey } from "./months";
+import { buildPlanProductForecastRows } from "../../domain/planProducts.js";
 
 export type ProductStatusFilter = "all" | "active" | "prelaunch" | "inactive";
 export type ForecastViewMode = "units" | "revenue" | "profit";
@@ -39,6 +40,18 @@ export interface ForecastProductRow {
   isActive: boolean;
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
+  isPlan?: boolean;
+  plannedSku?: string | null;
+  sourceLabel?: "csv" | "plan";
+  relationType?: string | null;
+  seasonalityReferenceSku?: string | null;
+  baselineReferenceMonth?: number | null;
+  baselineUnitsInReferenceMonth?: number | null;
+  launchDate?: string | null;
+  rampUpWeeks?: number | null;
+  softLaunchStartSharePct?: number | null;
+  planProductId?: string | null;
+  plannedUnitsByMonth?: Record<string, number | null>;
 }
 
 export type ManualMap = Record<string, Record<string, number>>;
@@ -202,7 +215,10 @@ export function getEffectiveUnits(
   forecastImport: Record<string, unknown>,
   sku: string,
   month: string,
+  plannedUnitsByMonth?: Record<string, number | null>,
 ): number | null {
+  const planned = plannedUnitsByMonth?.[month];
+  if (Number.isFinite(planned as number)) return Number(planned);
   const manualValue = manual?.[sku]?.[month];
   if (Number.isFinite(manualValue)) return manualValue;
   return getImportValue(forecastImport, sku, month)?.units ?? null;
@@ -231,7 +247,7 @@ export function buildForecastProducts(
   state: Record<string, unknown>,
   categoriesById: Map<string, string>,
 ): ForecastProductRow[] {
-  return (Array.isArray(state.products) ? state.products : [])
+  const liveRows = (Array.isArray(state.products) ? state.products : [])
     .map((entry) => {
       const product = entry as Record<string, unknown>;
       const sku = String(product.sku || "").trim();
@@ -243,9 +259,45 @@ export function buildForecastProducts(
         isActive: isForecastProductActive(product),
         avgSellingPriceGrossEUR: parseDeNumber(product.avgSellingPriceGrossEUR),
         sellerboardMarginPct: parseDeNumber(product.sellerboardMarginPct),
+        sourceLabel: "csv",
       } satisfies ForecastProductRow;
     })
     .filter(Boolean) as ForecastProductRow[];
+
+  const planMonths = buildForecastMonths((state.settings || {}) as Record<string, unknown>);
+  const planRows = buildPlanProductForecastRows({ state, months: planMonths })
+    .map((row) => ({
+      sku: String(row.key || ""),
+      alias: String(row.alias || ""),
+      categoryLabel: row.categoryId
+        ? (categoriesById.get(String(row.categoryId || "")) || "Neue Produkte (Plan)")
+        : "Neue Produkte (Plan)",
+      isActive: String(row.status || "active") === "active",
+      avgSellingPriceGrossEUR: parseDeNumber(row.avgSellingPriceGrossEUR),
+      sellerboardMarginPct: null,
+      isPlan: true,
+      plannedSku: row.plannedSku ? String(row.plannedSku) : null,
+      sourceLabel: "plan",
+      relationType: row.relationType ? String(row.relationType) : null,
+      seasonalityReferenceSku: row.seasonalityReferenceSku ? String(row.seasonalityReferenceSku) : null,
+      baselineReferenceMonth: parseDeNumber(row.baselineReferenceMonth),
+      baselineUnitsInReferenceMonth: parseDeNumber(row.baselineUnitsInReferenceMonth),
+      launchDate: row.launchDate ? String(row.launchDate) : null,
+      rampUpWeeks: parseDeNumber(row.rampUpWeeks),
+      softLaunchStartSharePct: parseDeNumber(row.softLaunchStartSharePct),
+      planProductId: row.id ? String(row.id) : null,
+      plannedUnitsByMonth: (row.unitsByMonth && typeof row.unitsByMonth === "object")
+        ? row.unitsByMonth as Record<string, number | null>
+        : {},
+    }) satisfies ForecastProductRow)
+    .filter((row) => row.sku && row.alias);
+
+  return [...liveRows, ...planRows]
+    .sort((a, b) => {
+      const category = String(a.categoryLabel || "").localeCompare(String(b.categoryLabel || ""));
+      if (category !== 0) return category;
+      return String(a.alias || a.sku).localeCompare(String(b.alias || b.sku));
+    });
 }
 
 export function filterForecastProducts(input: {
@@ -267,7 +319,13 @@ export function filterForecastProducts(input: {
       }
       if (input.onlyWithForecast) {
         const hasValue = input.visibleMonths.some((month) => {
-          const value = getEffectiveUnits(input.manualDraft, input.forecastImport, product.sku, month);
+          const value = getEffectiveUnits(
+            input.manualDraft,
+            input.forecastImport,
+            product.sku,
+            month,
+            product.plannedUnitsByMonth,
+          );
           return Number.isFinite(value as number) && Number(value) > 0;
         });
         if (!hasValue) return false;
@@ -286,8 +344,15 @@ export function buildForecastRevenueByMonth(input: {
   const map = new Map<string, number>();
   input.allMonths.forEach((month) => map.set(month, 0));
   input.products.forEach((product) => {
+    if (!product.isActive) return;
     input.allMonths.forEach((month) => {
-      const units = getEffectiveUnits(input.manualDraft, input.forecastImport, product.sku, month);
+      const units = getEffectiveUnits(
+        input.manualDraft,
+        input.forecastImport,
+        product.sku,
+        month,
+        product.plannedUnitsByMonth,
+      );
       const revenue = deriveForecastValue("revenue", units, product);
       if (!Number.isFinite(revenue as number)) return;
       map.set(month, (map.get(month) || 0) + Number(revenue));

@@ -24,6 +24,7 @@ function lazyRoute(importer: () => Promise<{ default: ComponentType<any> }>): Co
 
 const DashboardModule = lazyRoute(() => import("../modules/dashboard"));
 const SollIstModule = lazyRoute(() => import("../modules/soll-ist"));
+const PlanProductsModule = lazyRoute(() => import("../modules/plan-products"));
 const ProductsModule = lazyRoute(() => import("../modules/products"));
 const ForecastModule = lazyRoute(() => import("../modules/forecast"));
 const AbcInsightsModule = lazyRoute(() => import("../modules/abc-insights"));
@@ -65,6 +66,7 @@ export const V2_ROUTES: V2RouteItem[] = [
   { key: "soll-ist", path: "soll-ist", label: "Soll vs. Ist", section: "overview", icon: CreditCardOutlined, Component: SollIstModule },
 
   { key: "forecast", path: "forecast", label: "Absatzprognose", section: "operations", icon: LineChartOutlined, Component: ForecastModule },
+  { key: "plan-products", path: "plan-products", label: "Neue Produkte", section: "operations", icon: TagsOutlined, Component: PlanProductsModule },
   { key: "inventory-snapshot", path: "inventory/snapshot", label: "Bestandsaufnahme", section: "operations", icon: InboxOutlined, Component: InventorySnapshotPage },
   {
     key: "inventory-projection",

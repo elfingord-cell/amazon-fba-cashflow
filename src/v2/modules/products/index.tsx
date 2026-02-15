@@ -12,6 +12,7 @@ import {
   Segmented,
   Select,
   Space,
+  Table,
   Tag,
   Typography,
 } from "antd";
@@ -22,8 +23,11 @@ import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "..
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { resolveProductFieldResolution, type ResolvedField } from "../../domain/productFieldResolution";
 import { evaluateProductCompletenessV2 } from "../../domain/productCompletenessV2";
+import { computeSeasonalityProfileFromForecastImport } from "../../domain/seasonalityProfile";
 import { buildProductGridRows, type ProductGridRow } from "../../domain/tableModels";
 import { sourceChipClass } from "../../domain/masterDataHierarchy";
+import { formatMonthLabel } from "../../domain/months";
+import { buildPlanVsLiveComparisonRows, normalizePlanProductMappingRecord } from "../../../domain/planProducts.js";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
 import {
@@ -219,6 +223,15 @@ function completenessTag(status: "blocked" | "warn" | "ok"): JSX.Element {
   return <Tag color="red">BLOCKED</Tag>;
 }
 
+function seasonalityClassificationTag(
+  value: "unterdurchschnittlich" | "durchschnittlich" | "ueberdurchschnittlich" | "keine_daten",
+): JSX.Element {
+  if (value === "ueberdurchschnittlich") return <Tag color="green">ueberdurchschnittlich</Tag>;
+  if (value === "unterdurchschnittlich") return <Tag color="orange">unterdurchschnittlich</Tag>;
+  if (value === "durchschnittlich") return <Tag color="blue">durchschnittlich</Tag>;
+  return <Tag>keine Daten</Tag>;
+}
+
 function normalizeStatusFilter(value: unknown): "all" | "active" | "prelaunch" | "inactive" | null {
   const raw = String(value || "").trim().toLowerCase();
   if (raw === "all" || raw === "active" || raw === "prelaunch" || raw === "inactive") return raw;
@@ -300,6 +313,12 @@ export default function ProductsModule(): JSX.Element {
   const bulkDraftValues = Form.useWatch([], bulkForm) as BulkEditDraft | undefined;
   const stateObject = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
+  const forecastState = (state.forecast && typeof state.forecast === "object")
+    ? state.forecast as Record<string, unknown>
+    : {};
+  const forecastImportMap = (forecastState.forecastImport && typeof forecastState.forecastImport === "object")
+    ? forecastState.forecastImport as Record<string, unknown>
+    : {};
   const displayNameMap = useMemo(() => readCollaborationDisplayNames(settings), [settings]);
   const ownDisplayName = useMemo(() => {
     return resolveCollaborationUserLabel({
@@ -324,16 +343,19 @@ export default function ProductsModule(): JSX.Element {
   useEffect(() => {
     if (appliedDashboardQueryRef.current) return;
     const params = new URLSearchParams(location.search);
-    if (params.get("source") !== "dashboard") return;
+    const source = String(params.get("source") || "");
+    if (source !== "dashboard" && source !== "plan-products") return;
     appliedDashboardQueryRef.current = true;
 
     const sku = String(params.get("sku") || "").trim();
     if (sku) setSearch(sku);
 
-    setIssueFilter(normalizeIssueFilter(params.get("issues")));
-    const nextStatus = normalizeStatusFilter(params.get("status"));
-    if (nextStatus) setStatusFilter(nextStatus);
-    if (params.get("expand") === "all") setExpandFromQuery(true);
+    if (source === "dashboard") {
+      setIssueFilter(normalizeIssueFilter(params.get("issues")));
+      const nextStatus = normalizeStatusFilter(params.get("status"));
+      if (nextStatus) setStatusFilter(nextStatus);
+      if (params.get("expand") === "all") setExpandFromQuery(true);
+    }
   }, [location.search]);
 
   const categories = useMemo(() => {
@@ -683,6 +705,45 @@ export default function ProductsModule(): JSX.Element {
     () => evaluateProductCompletenessV2({ product: draftProductRecord, state: stateObject }),
     [draftProductRecord, stateObject],
   );
+  const seasonalitySku = useMemo(
+    () => String(draftValues?.sku || editing?.sku || "").trim(),
+    [draftValues?.sku, editing?.sku],
+  );
+  const seasonalityProfile = useMemo(() => {
+    if (!seasonalitySku) return null;
+    return computeSeasonalityProfileFromForecastImport({
+      forecastImport: forecastImportMap,
+      sku: seasonalitySku,
+    });
+  }, [forecastImportMap, seasonalitySku]);
+  const seasonalityRows = useMemo(() => {
+    if (!seasonalityProfile) return [];
+    return seasonalityProfile.months.map((entry) => ({
+      key: String(entry.monthNumber),
+      monthLabel: entry.monthLabel,
+      factor: entry.factor,
+      averageUnits: entry.averageUnits,
+      sampleCount: entry.sampleCount,
+      classification: entry.classification,
+    }));
+  }, [seasonalityProfile]);
+  const latestPlanMapping = useMemo(() => {
+    const sku = String(draftValues?.sku || editing?.sku || "").trim();
+    if (!sku) return null;
+    const mappings = (Array.isArray(state.planProductMappings) ? state.planProductMappings : [])
+      .map((entry, index) => normalizePlanProductMappingRecord(entry as Record<string, unknown>, index))
+      .filter((entry) => entry.sku.toLowerCase() === sku.toLowerCase())
+      .sort((a, b) => String(b.mappedAt || "").localeCompare(String(a.mappedAt || "")));
+    return mappings[0] || null;
+  }, [draftValues?.sku, editing?.sku, state.planProductMappings]);
+  const planVsLiveRows = useMemo(() => {
+    if (!latestPlanMapping) return [];
+    return buildPlanVsLiveComparisonRows({
+      mapping: latestPlanMapping,
+      forecastImport: forecastImportMap,
+      maxMonths: 18,
+    });
+  }, [forecastImportMap, latestPlanMapping]);
 
   const fieldIssues = useMemo(() => {
     const map = new Map<keyof ProductDraft, { level: "error" | "warning"; messages: string[] }>();
@@ -1759,6 +1820,189 @@ export default function ProductsModule(): JSX.Element {
                         <Checkbox>DDP aktiv (Door-to-Door, Importkosten im Lieferpreis)</Checkbox>
                       </Form.Item>
                     </div>
+                  </div>
+                ),
+              },
+              {
+                key: "seasonality",
+                label: "Saisonalitaet (berechnet)",
+                children: (
+                  <div className="v2-form-section v2-form-section-nested">
+                    <div className="v2-form-section-head">
+                      <Title level={5} className="v2-form-section-title">Saisonalitaet aus Forecast-CSV</Title>
+                      <span className="v2-form-section-desc">Jan-Dez Faktoren aus den importierten Monats-Units je SKU.</span>
+                    </div>
+                    <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                      Wir nehmen die Monatsabsatze (Units) aus der importierten CSV, bilden fuer jeden Kalendermonat
+                      (z. B. alle Januare) den Durchschnitt und teilen ihn durch den durchschnittlichen Monatswert
+                      ueber alle Monate. So entstehen Multiplikatoren, die zeigen, wie stark oder schwach ein Monat
+                      typischerweise im Vergleich zum Durchschnitt ist.
+                    </Paragraph>
+                    {!seasonalitySku ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="Keine SKU gesetzt"
+                        description="Saisonalitaet wird angezeigt, sobald eine SKU im Produkt gesetzt ist."
+                      />
+                    ) : !seasonalityProfile ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={`Keine Forecast-Daten fuer SKU ${seasonalitySku}`}
+                        description="Bitte Forecast-CSV importieren. Das Profil wird aus den importierten Monats-Units abgeleitet."
+                      />
+                    ) : (
+                      <>
+                        <Space wrap style={{ marginBottom: 8 }}>
+                          <Tag color="blue">
+                            Zeitraum: {formatMonthLabel(seasonalityProfile.startMonth)} bis {formatMonthLabel(seasonalityProfile.endMonth)}
+                            {" "}({seasonalityProfile.sampleMonthCount} Monate)
+                          </Tag>
+                          <Tag color={seasonalityProfile.coveredMonthTypes === 12 ? "green" : "gold"}>
+                            Kalendermonate mit Daten: {seasonalityProfile.coveredMonthTypes}/12
+                          </Tag>
+                          <Tag>
+                            Ø Monats-Units (Basis): {formatNumber(seasonalityProfile.overallAverage, 2)}
+                          </Tag>
+                        </Space>
+                        <Table
+                          size="small"
+                          pagination={false}
+                          rowKey="key"
+                          dataSource={seasonalityRows}
+                          columns={[
+                            {
+                              title: "Monat",
+                              dataIndex: "monthLabel",
+                              key: "monthLabel",
+                              width: 100,
+                            },
+                            {
+                              title: "Faktor",
+                              dataIndex: "factor",
+                              key: "factor",
+                              align: "right" as const,
+                              render: (value: unknown) => formatNumber(asNumber(value), 2),
+                            },
+                            {
+                              title: "Ø Units",
+                              dataIndex: "averageUnits",
+                              key: "averageUnits",
+                              align: "right" as const,
+                              render: (value: unknown) => formatNumber(asNumber(value), 2),
+                            },
+                            {
+                              title: "Datenpunkte",
+                              dataIndex: "sampleCount",
+                              key: "sampleCount",
+                              align: "right" as const,
+                              render: (value: unknown) => formatNumber(asNumber(value), 0),
+                            },
+                            {
+                              title: "Einordnung",
+                              dataIndex: "classification",
+                              key: "classification",
+                              render: (value: "unterdurchschnittlich" | "durchschnittlich" | "ueberdurchschnittlich" | "keine_daten") =>
+                                seasonalityClassificationTag(value),
+                            },
+                          ]}
+                        />
+                        <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
+                          Faktor 1,00 = durchschnittlicher Monat, 1,40 = 40 % ueberdurchschnittlich, 0,70 = 30 % unterdurchschnittlich.
+                        </Paragraph>
+                      </>
+                    )}
+                  </div>
+                ),
+              },
+              {
+                key: "plan-vs-live",
+                label: "Plan-vs-Ist (Plan -> Live)",
+                children: (
+                  <div className="v2-form-section v2-form-section-nested">
+                    <div className="v2-form-section-head">
+                      <Title level={5} className="v2-form-section-title">Lessons Learned: Plan vs Live/CSV</Title>
+                      <span className="v2-form-section-desc">Monatlicher Vergleich nach Übernahme eines Plan-Produkts in eine Live-SKU.</span>
+                    </div>
+                    {!seasonalitySku ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="Keine SKU gesetzt"
+                        description="Plan-vs-Ist wird angezeigt, sobald eine SKU im Produkt gesetzt ist."
+                      />
+                    ) : !latestPlanMapping ? (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message="Kein Plan->Live Mapping für diese SKU"
+                        description="Die Ansicht wird automatisch verfügbar, sobald ein Plan-Produkt als gelauncht markiert und dieser SKU zugeordnet wurde."
+                      />
+                    ) : !planVsLiveRows.length ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="Noch keine überlappenden Monatsdaten"
+                        description="Für Plan oder Live/CSV sind aktuell keine gemeinsamen Monatswerte vorhanden."
+                      />
+                    ) : (
+                      <>
+                        <Space wrap style={{ marginBottom: 8 }}>
+                          <Tag color="blue">Plan: {latestPlanMapping.planProductAlias || latestPlanMapping.planProductId}</Tag>
+                          <Tag color="green">Live-SKU: {latestPlanMapping.sku}</Tag>
+                          <Tag>Übernommen: {latestPlanMapping.mappedAt ? new Date(latestPlanMapping.mappedAt).toLocaleDateString("de-DE") : "—"}</Tag>
+                          <Tag>Launch: {latestPlanMapping.launchDate || "—"}</Tag>
+                          <Tag color={planVsLiveRows.length >= 12 ? "green" : "gold"}>Monate im Vergleich: {planVsLiveRows.length}</Tag>
+                        </Space>
+                        <Table
+                          size="small"
+                          pagination={false}
+                          rowKey="month"
+                          dataSource={planVsLiveRows}
+                          columns={[
+                            {
+                              title: "Monat",
+                              dataIndex: "month",
+                              key: "month",
+                              render: (value: string) => formatMonthLabel(value),
+                            },
+                            {
+                              title: "Plan Units",
+                              dataIndex: "planUnits",
+                              key: "planUnits",
+                              align: "right" as const,
+                              render: (value: unknown) => formatNumber(asNumber(value), 0),
+                            },
+                            {
+                              title: "Live Units (CSV)",
+                              dataIndex: "liveUnits",
+                              key: "liveUnits",
+                              align: "right" as const,
+                              render: (value: unknown) => formatNumber(asNumber(value), 0),
+                            },
+                            {
+                              title: "Delta Units",
+                              dataIndex: "deltaUnits",
+                              key: "deltaUnits",
+                              align: "right" as const,
+                              render: (value: unknown) => formatNumber(asNumber(value), 0),
+                            },
+                            {
+                              title: "Delta %",
+                              dataIndex: "deltaPct",
+                              key: "deltaPct",
+                              align: "right" as const,
+                              render: (value: unknown) => {
+                                const parsed = asNumber(value);
+                                if (!Number.isFinite(parsed as number)) return "—";
+                                return `${formatNumber(parsed, 1)}%`;
+                              },
+                            },
+                          ]}
+                        />
+                      </>
+                    )}
                   </div>
                 ),
               },

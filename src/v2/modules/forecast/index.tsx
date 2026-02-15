@@ -240,12 +240,30 @@ export default function ForecastModule(): JSX.Element {
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
     const base: ColumnDef<ProductRow>[] = [
-      { header: "SKU", accessorKey: "sku", meta: { width: 190, minWidth: 190 } },
+      {
+        header: "SKU",
+        accessorKey: "sku",
+        meta: { width: 190, minWidth: 190 },
+        cell: ({ row }) => (
+          row.original.isPlan
+            ? (
+              <Space size={6}>
+                <Tag color="blue">Plan</Tag>
+                <span>{row.original.plannedSku || "Pre-SKU"}</span>
+              </Space>
+            )
+            : row.original.sku
+        ),
+      },
       { header: "Alias", accessorKey: "alias", meta: { width: 220, minWidth: 220 } },
       {
         header: "Status",
         meta: { width: 86, minWidth: 86 },
-        cell: ({ row }) => row.original.isActive ? <Tag color="green">Aktiv</Tag> : <Tag>Inaktiv</Tag>,
+        cell: ({ row }) => (
+          row.original.isPlan
+            ? <Tag color="blue">Plan</Tag>
+            : (row.original.isActive ? <Tag color="green">Aktiv</Tag> : <Tag>Inaktiv</Tag>)
+        ),
       },
     ];
 
@@ -257,9 +275,25 @@ export default function ForecastModule(): JSX.Element {
         const sku = row.original.sku;
         const manualValue = manualDraft?.[sku]?.[month];
         const imported = getImportValue(forecastImport, sku, month);
-        const effectiveUnits = getEffectiveUnits(manualDraft, forecastImport, sku, month);
+        const effectiveUnits = getEffectiveUnits(
+          manualDraft,
+          forecastImport,
+          sku,
+          month,
+          row.original.plannedUnitsByMonth,
+        );
 
         if (view === "units") {
+          if (row.original.isPlan) {
+            return (
+              <div className="v2-forecast-cell">
+                <div>{formatDisplay(effectiveUnits, 0)}</div>
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  Quelle: Plan (Baseline + Saisonalitaet)
+                </Text>
+              </div>
+            );
+          }
           return (
             <div className="v2-forecast-cell">
               <InputNumber

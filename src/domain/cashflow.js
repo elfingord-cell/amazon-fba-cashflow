@@ -1,6 +1,7 @@
 // src/domain/cashflow.js
 // Monatsaggregation (Sales×Payout + Extras – Outgoings – PO – FO)
 // + Utils als Named Exports: fmtEUR, fmtPct, parseEuro, parsePct
+import { buildPlanProductRevenueByMonth } from "./planProducts.js";
 
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 
@@ -851,6 +852,8 @@ export function computeSeries(state) {
   });
 
   const forecastEnabled = Boolean(s?.forecast?.settings?.useForecast);
+  const forecastMapLive = {};
+  const forecastMapPlan = {};
   const forecastMap = {};
   if (forecastEnabled) {
     if (s?.forecast?.forecastImport && typeof s.forecast.forecastImport === "object") {
@@ -859,7 +862,7 @@ export function computeSeries(state) {
           if (!month || !bucket[month]) return;
           const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
           if (!Number.isFinite(revenue)) return;
-          forecastMap[month] = (forecastMap[month] || 0) + revenue;
+          forecastMapLive[month] = (forecastMapLive[month] || 0) + revenue;
         });
       });
     } else if (Array.isArray(s?.forecast?.items)) {
@@ -870,9 +873,24 @@ export function computeSeries(state) {
         const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
         const price = parseEuro(item.priceEur ?? item.price ?? 0);
         const revenue = qty * price;
-        forecastMap[month] = (forecastMap[month] || 0) + revenue;
+        forecastMapLive[month] = (forecastMapLive[month] || 0) + revenue;
       });
     }
+
+    const planRevenueByMonth = buildPlanProductRevenueByMonth({
+      state: s,
+      months,
+    });
+    Object.entries(planRevenueByMonth || {}).forEach(([month, revenueRaw]) => {
+      if (!bucket[month]) return;
+      const revenue = parseEuro(revenueRaw);
+      if (!Number.isFinite(revenue)) return;
+      forecastMapPlan[month] = (forecastMapPlan[month] || 0) + revenue;
+    });
+
+    Object.keys(bucket).forEach((month) => {
+      forecastMap[month] = (forecastMapLive[month] || 0) + (forecastMapPlan[month] || 0);
+    });
   }
 
   const payoutPctMap = {};
@@ -891,20 +909,58 @@ export function computeSeries(state) {
     const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
     if (typeof revenue === 'undefined') return;
     const payoutPct = parsePct(payoutPctMap[m] || 0);
-    const amt = revenue * (payoutPct / 100);
     const date = monthEndFromKey(m);
-    pushEntry(m, baseEntry({
-      id: `sales-${m}`,
-      direction: amt >= 0 ? 'in' : 'out',
-      amount: Math.abs(amt),
-      label: forecastEnabled ? 'Amazon Payout (Prognose)' : 'Amazon Payout',
-      month: m,
-      date: isoDate(date),
-      kind: 'sales-payout',
-      group: amt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
-      source: 'sales',
-      sourceTab: '#eingaben',
-    }, { auto: false }));
+    if (!forecastEnabled) {
+      const amt = revenue * (payoutPct / 100);
+      pushEntry(m, baseEntry({
+        id: `sales-${m}`,
+        direction: amt >= 0 ? 'in' : 'out',
+        amount: Math.abs(amt),
+        label: 'Amazon Payout',
+        month: m,
+        date: isoDate(date),
+        kind: 'sales-payout',
+        group: amt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+        source: 'sales',
+        sourceTab: '#eingaben',
+      }, { auto: false }));
+      return;
+    }
+
+    const liveRevenue = forecastMapLive[m] || 0;
+    const planRevenue = forecastMapPlan[m] || 0;
+    const liveAmt = liveRevenue * (payoutPct / 100);
+    const planAmt = planRevenue * (payoutPct / 100);
+
+    if (Math.abs(liveAmt) > 0.000001) {
+      pushEntry(m, baseEntry({
+        id: `sales-live-${m}`,
+        direction: liveAmt >= 0 ? 'in' : 'out',
+        amount: Math.abs(liveAmt),
+        label: 'Amazon Payout (Prognose - Live/CSV)',
+        month: m,
+        date: isoDate(date),
+        kind: 'sales-payout',
+        group: liveAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+        source: 'sales',
+        sourceTab: '#forecast',
+      }, { auto: false }));
+    }
+
+    if (Math.abs(planAmt) > 0.000001) {
+      pushEntry(m, baseEntry({
+        id: `sales-plan-${m}`,
+        direction: planAmt >= 0 ? 'in' : 'out',
+        amount: Math.abs(planAmt),
+        label: 'Amazon Payout (Prognose - Plan)',
+        month: m,
+        date: isoDate(date),
+        kind: 'sales-payout',
+        group: planAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+        source: 'sales-plan',
+        sourceTab: '#forecast',
+      }, { auto: false }));
+    }
   });
 
   (Array.isArray(s.extras) ? s.extras : []).forEach(row => {
