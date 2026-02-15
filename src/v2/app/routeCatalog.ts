@@ -42,7 +42,7 @@ const AccountingExportModule = lazyRoute(() => import("../modules/accounting-exp
 const PlanModule = lazyRoute(() => import("../modules/plan"));
 const DebugModule = lazyRoute(() => import("../modules/debug"));
 
-export type V2RouteSection = "overview" | "operations" | "masterdata" | "closing" | "tools";
+export type V2RouteSection = "overview" | "operations" | "finance" | "mastertools";
 
 export interface V2RouteItem {
   key: string;
@@ -65,9 +65,19 @@ export interface V2RouteRedirect {
 export const V2_ROUTES: V2RouteItem[] = [
   { key: "dashboard", path: "dashboard", label: "Dashboard", section: "overview", icon: DashboardOutlined, Component: DashboardModule },
   { key: "soll-ist", path: "soll-ist", label: "Soll vs. Ist", section: "overview", icon: CreditCardOutlined, Component: SollIstModule },
+  { key: "abc-insights", path: "abc-insights", label: "ABC Insights", section: "overview", icon: PieChartOutlined, Component: AbcInsightsModule },
+  {
+    key: "closing-vat",
+    path: "abschluss/ust",
+    label: "USt Vorschau",
+    section: "overview",
+    icon: CalculatorOutlined,
+    Component: VatModule,
+    redirectFrom: ["vat"],
+  },
 
   { key: "forecast", path: "forecast", label: "Absatzprognose", section: "operations", icon: LineChartOutlined, Component: ForecastModule },
-  { key: "plan-products", path: "plan-products", label: "Neue Produkte", section: "operations", icon: TagsOutlined, Component: PlanProductsModule },
+  { key: "plan", path: "plan", label: "Planung", section: "operations", icon: ProjectOutlined, Component: PlanModule },
   { key: "inventory-snapshot", path: "inventory/snapshot", label: "Bestandsaufnahme", section: "operations", icon: InboxOutlined, Component: InventorySnapshotPage },
   {
     key: "inventory-projection",
@@ -88,18 +98,13 @@ export const V2_ROUTES: V2RouteItem[] = [
     Component: OrdersModule,
     redirectFrom: ["orders"],
   },
-  { key: "plan", path: "plan", label: "Plan", section: "operations", icon: ProjectOutlined, Component: PlanModule },
-  { key: "abc-insights", path: "abc-insights", label: "ABC Insights", section: "operations", icon: PieChartOutlined, Component: AbcInsightsModule },
-
-  { key: "products", path: "products", label: "Produkte", section: "masterdata", icon: TagsOutlined, Component: ProductsModule },
-  { key: "suppliers", path: "suppliers", label: "Suppliers", section: "masterdata", icon: TeamOutlined, Component: SuppliersModule },
-  { key: "settings", path: "settings", label: "Settings", section: "masterdata", icon: SettingOutlined, Component: SettingsModule },
+  { key: "plan-products", path: "plan-products", label: "Neue Produkte", section: "operations", icon: TagsOutlined, Component: PlanProductsModule },
 
   {
     key: "closing-inputs",
     path: "abschluss/eingaben",
     label: "Eingaben",
-    section: "closing",
+    section: "finance",
     icon: FormOutlined,
     Component: InputsModule,
     redirectFrom: ["inputs"],
@@ -108,7 +113,7 @@ export const V2_ROUTES: V2RouteItem[] = [
     key: "closing-fixcosts",
     path: "abschluss/fixkosten",
     label: "Fixkosten",
-    section: "closing",
+    section: "finance",
     icon: ProjectOutlined,
     Component: FixcostsModule,
     redirectFrom: ["fixcosts"],
@@ -117,35 +122,29 @@ export const V2_ROUTES: V2RouteItem[] = [
     key: "closing-dividend-planning",
     path: "abschluss/dividendenplanung",
     label: "Dividendenplanung",
-    section: "closing",
+    section: "finance",
     icon: PieChartOutlined,
     Component: DividendPlanningModule,
-  },
-  {
-    key: "closing-vat",
-    path: "abschluss/ust",
-    label: "USt Vorschau",
-    section: "closing",
-    icon: CalculatorOutlined,
-    Component: VatModule,
-    redirectFrom: ["vat"],
   },
   {
     key: "closing-accounting",
     path: "abschluss/buchhalter",
     label: "Buchhalter Export",
-    section: "closing",
+    section: "finance",
     icon: FileTextOutlined,
     Component: AccountingExportModule,
     redirectFrom: ["accounting-export"],
   },
 
-  { key: "export-import", path: "export-import", label: "Export / Import", section: "tools", icon: UploadOutlined, Component: ExportImportModule },
+  { key: "products", path: "products", label: "Produkte", section: "mastertools", icon: TagsOutlined, Component: ProductsModule },
+  { key: "suppliers", path: "suppliers", label: "Suppliers", section: "mastertools", icon: TeamOutlined, Component: SuppliersModule },
+  { key: "settings", path: "settings", label: "Settings", section: "mastertools", icon: SettingOutlined, Component: SettingsModule },
+  { key: "export-import", path: "export-import", label: "Export / Import", section: "mastertools", icon: UploadOutlined, Component: ExportImportModule },
   {
     key: "debug",
     path: "tools/debug",
     label: "Debug",
-    section: "tools",
+    section: "mastertools",
     icon: BugOutlined,
     Component: DebugModule,
     redirectFrom: ["debug"],

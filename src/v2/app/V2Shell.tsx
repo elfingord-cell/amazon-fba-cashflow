@@ -160,11 +160,10 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
 }
 
 function sectionLabel(section: string): string {
-  if (section === "overview") return "Ueberblick";
-  if (section === "operations") return "Operative Planung";
-  if (section === "masterdata") return "Stammdaten";
-  if (section === "closing") return "Monatsabschluss";
-  return "Mehr / Tools";
+  if (section === "overview") return "Übersicht & Analyse";
+  if (section === "operations") return "Operatives Geschäft";
+  if (section === "finance") return "Finanzen & Abschluss";
+  return "Stammdaten & Tools";
 }
 
 function formatUserLabel(session: ReturnType<typeof useSyncSession>, compact: boolean): string {
@@ -318,9 +317,8 @@ function V2Layout(): JSX.Element {
     const grouped: Record<string, unknown[]> = {
       overview: [],
       operations: [],
-      masterdata: [],
-      closing: [],
-      tools: [],
+      finance: [],
+      mastertools: [],
     };
 
     menuRoutes.forEach((route) => {
