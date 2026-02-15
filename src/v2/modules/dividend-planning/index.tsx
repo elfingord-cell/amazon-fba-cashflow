@@ -483,7 +483,7 @@ export default function DividendPlanningModule(): JSX.Element {
       const landedCost = Number(liveProduct?.landedUnitCostEur);
 
       const hasPrice = Number.isFinite(price) && price > 0;
-      const hasMargin = Number.isFinite(margin) && margin >= 0 && margin <= 100;
+      const hasMargin = Number.isFinite(margin) && margin > 0 && margin <= 100;
       let hasCostBasis = false;
 
       const missingForecastMonths: string[] = [];
@@ -508,17 +508,18 @@ export default function DividendPlanningModule(): JSX.Element {
 
         const revenueValue = deriveForecastValue("revenue", units, product);
         if (Number.isFinite(revenueValue as number)) {
-          productRevenue += Number(revenueValue);
+          const revenueForMonth = Number(revenueValue);
+          productRevenue += revenueForMonth;
+          if (hasMargin) {
+            const grossProfit = revenueForMonth * (margin / 100);
+            productCogs += (revenueForMonth - grossProfit);
+            hasCostBasis = true;
+            return;
+          }
         }
 
         if (Number.isFinite(landedCost) && landedCost > 0) {
           productCogs += units * landedCost;
-          hasCostBasis = true;
-          return;
-        }
-        if (hasPrice && hasMargin) {
-          const unitCost = price * (1 - (margin / 100));
-          productCogs += units * unitCost;
           hasCostBasis = true;
           return;
         }
@@ -1050,7 +1051,7 @@ export default function DividendPlanningModule(): JSX.Element {
       <Card>
         <Title level={5}>Plan-GuV ({selectedYear})</Title>
         <Text type="secondary">
-          Umsatzbasis = Forecast-Units × Ø VK-Preis (brutto). COGS werden aus Einstandspreisen bzw. Margen angenähert.
+          Umsatzbasis = Forecast-Units × Ø VK-Preis (brutto). COGS werden primär über Brutto-Marge je Produkt abgeleitet.
         </Text>
         <div className="v2-stats-table-wrap">
           <table className="v2-stats-table">

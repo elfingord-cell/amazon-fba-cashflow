@@ -274,7 +274,7 @@ export function buildForecastProducts(
         : "Neue Produkte (Plan)",
       isActive: String(row.status || "active") === "active",
       avgSellingPriceGrossEUR: parseDeNumber(row.avgSellingPriceGrossEUR),
-      sellerboardMarginPct: null,
+      sellerboardMarginPct: parseDeNumber(row.sellerboardMarginPct),
       isPlan: true,
       plannedSku: row.plannedSku ? String(row.plannedSku) : null,
       sourceLabel: "plan",

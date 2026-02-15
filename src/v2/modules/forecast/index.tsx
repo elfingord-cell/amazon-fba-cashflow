@@ -187,6 +187,15 @@ export default function ForecastModule(): JSX.Element {
     return buildForecastProducts(stateObject, categoriesById);
   }, [categoriesById, stateObject]);
 
+  const missingProfitMarginProducts = useMemo(() => {
+    return products
+      .filter((product) => product.isActive)
+      .filter((product) => {
+        const margin = Number(product.sellerboardMarginPct);
+        return !(Number.isFinite(margin) && margin > 0 && margin <= 100);
+      });
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
     return filterForecastProducts({
       products,
@@ -572,6 +581,27 @@ export default function ForecastModule(): JSX.Element {
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
+      {missingProfitMarginProducts.length ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={`Brutto-Marge fehlt für ${missingProfitMarginProducts.length} aktive Forecast-Produkt(e). Gewinn-Ansicht ist dadurch unvollständig.`}
+          description={(
+            <Space wrap>
+              <Text type="secondary">
+                Beispiele: {missingProfitMarginProducts.slice(0, 5).map((entry) => entry.sku).join(", ")}
+                {missingProfitMarginProducts.length > 5 ? " ..." : ""}
+              </Text>
+              <Button size="small" onClick={() => { window.location.hash = "/v2/products?issues=revenue&expand=all"; }}>
+                Produkte öffnen
+              </Button>
+              <Button size="small" onClick={() => { window.location.hash = "/v2/plan-products"; }}>
+                Neue Produkte öffnen
+              </Button>
+            </Space>
+          )}
+        />
+      ) : null}
 
       <Card>
         <Title level={4}>Ventory CSV Import</Title>

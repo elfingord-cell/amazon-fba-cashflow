@@ -43,6 +43,7 @@ interface PlanProductDraft {
   seasonalityReferenceSku: string;
   baselineReferenceSku?: string;
   avgSellingPriceGrossEUR: number | null;
+  sellerboardMarginPct: number | null;
   launchDate: string;
   rampUpWeeks: number | null;
   softLaunchStartSharePct: number | null;
@@ -96,6 +97,7 @@ function planDraftFromRow(row?: Record<string, unknown>): PlanProductDraft {
     seasonalityReferenceSku: normalized.seasonalityReferenceSku || "",
     baselineReferenceSku: normalized.baselineReferenceSku || "",
     avgSellingPriceGrossEUR: asNumber(normalized.avgSellingPriceGrossEUR),
+    sellerboardMarginPct: asNumber((normalized as Record<string, unknown>).sellerboardMarginPct),
     launchDate: normalized.launchDate || todayIsoDate(),
     rampUpWeeks: asNumber(normalized.rampUpWeeks),
     softLaunchStartSharePct: asNumber(normalized.softLaunchStartSharePct),
@@ -199,6 +201,7 @@ export default function PlanProductsModule(): JSX.Element {
       seasonalityReferenceSku: "",
       baselineReferenceSku: "",
       avgSellingPriceGrossEUR: null,
+      sellerboardMarginPct: null,
       launchDate: todayIsoDate(),
       rampUpWeeks: 8,
       softLaunchStartSharePct: 0,
@@ -237,6 +240,10 @@ export default function PlanProductsModule(): JSX.Element {
     const price = Number(values.avgSellingPriceGrossEUR || 0);
     if (!Number.isFinite(price) || price <= 0) {
       throw new Error("Bitte einen gültigen Preis (EUR) für Revenue-Berechnung pflegen.");
+    }
+    const grossMargin = Number(values.sellerboardMarginPct || 0);
+    if (!Number.isFinite(grossMargin) || grossMargin <= 0 || grossMargin > 100) {
+      throw new Error("Bitte eine gültige Brutto-Marge (%) > 0 und <= 100 pflegen.");
     }
     const launchDate = normalizeIsoDate(values.launchDate);
     if (!launchDate) {
@@ -279,6 +286,7 @@ export default function PlanProductsModule(): JSX.Element {
         seasonalityReferenceSku: String(values.seasonalityReferenceSku || "").trim(),
         baselineReferenceSku: String(values.baselineReferenceSku || "").trim(),
         avgSellingPriceGrossEUR: price,
+        sellerboardMarginPct: grossMargin,
         launchDate,
         rampUpWeeks,
         softLaunchStartSharePct,
@@ -479,6 +487,13 @@ export default function PlanProductsModule(): JSX.Element {
               render: (value: unknown) => formatNumber(value, 2),
             },
             {
+              title: "Brutto-Marge %",
+              dataIndex: "sellerboardMarginPct",
+              key: "sellerboardMarginPct",
+              align: "right" as const,
+              render: (value: unknown) => formatNumber(value, 2),
+            },
+            {
               title: "Launch & Ramp",
               key: "launchRamp",
               render: (_, row: Record<string, unknown>) => (
@@ -590,12 +605,31 @@ export default function PlanProductsModule(): JSX.Element {
                 options={categories.map((entry) => ({ value: entry.id, label: entry.name }))}
               />
             </Form.Item>
+          </div>
+
+          <div className="v2-form-row">
             <Form.Item
               name="avgSellingPriceGrossEUR"
               label="Preis (EUR) für Revenue"
               rules={[{ required: true, message: "Preis ist erforderlich." }]}
             >
               <DeNumberInput mode="decimal" min={0} />
+            </Form.Item>
+            <Form.Item
+              name="sellerboardMarginPct"
+              label="Brutto-Marge (%)"
+              rules={[
+                { required: true, message: "Marge ist erforderlich." },
+                {
+                  validator: (_, value) => {
+                    const margin = Number(value);
+                    if (Number.isFinite(margin) && margin > 0 && margin <= 100) return Promise.resolve();
+                    return Promise.reject(new Error("Marge muss > 0 und <= 100 sein."));
+                  },
+                },
+              ]}
+            >
+              <DeNumberInput mode="percent" min={0} max={100} />
             </Form.Item>
           </div>
 

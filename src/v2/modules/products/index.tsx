@@ -69,7 +69,6 @@ const COMPLETENESS_FIELD_TO_FORM_FIELDS: Record<string, Array<keyof ProductDraft
 
 const ADVANCED_FORM_FIELDS = new Set<keyof ProductDraft>([
   "moqUnits",
-  "sellerboardMarginPct",
   "templateDdp",
 ]);
 
@@ -1133,6 +1132,10 @@ export default function ProductsModule(): JSX.Element {
     if (!sku) {
       throw new Error("SKU ist erforderlich.");
     }
+    const grossMargin = Number(values.sellerboardMarginPct);
+    if (!Number.isFinite(grossMargin) || grossMargin <= 0 || grossMargin > 100) {
+      throw new Error("Brutto-Marge muss > 0 und <= 100 sein.");
+    }
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
       const products = Array.isArray(next.products) ? [...next.products] : [];
@@ -1174,7 +1177,7 @@ export default function ProductsModule(): JSX.Element {
         categoryId: values.categoryId || null,
         status: values.status || "active",
         avgSellingPriceGrossEUR: values.avgSellingPriceGrossEUR,
-        sellerboardMarginPct: values.sellerboardMarginPct,
+        sellerboardMarginPct: grossMargin,
         moqUnits: values.moqUnits,
         safetyStockDohOverride: values.safetyStockDohOverride,
         foCoverageDohOverride: values.foCoverageDohOverride,
@@ -1661,8 +1664,29 @@ export default function ProductsModule(): JSX.Element {
                 style={{ flex: 1 }}
                 validateStatus={fieldValidateStatus("avgSellingPriceGrossEUR")}
                 help={fieldHelp("avgSellingPriceGrossEUR")}
+                rules={[{ required: true, message: "Verkaufspreis ist erforderlich." }]}
               >
                 <DeNumberInput mode="decimal" min={0} />
+              </Form.Item>
+              <Form.Item
+                name="sellerboardMarginPct"
+                label="Brutto-Marge %"
+                style={{ flex: 1 }}
+                validateStatus={fieldValidateStatus("sellerboardMarginPct")}
+                help={fieldHelp("sellerboardMarginPct")}
+                rules={[
+                  { required: true, message: "Marge ist erforderlich." },
+                  {
+                    validator: (_, value) => {
+                      const margin = Number(value);
+                      if (Number.isFinite(margin) && margin > 0 && margin <= 100) return Promise.resolve();
+                      return Promise.reject(new Error("Marge muss > 0 und <= 100 sein."));
+                    },
+                  },
+                ]}
+                extra={<span className="v2-field-meta">Wird für Gewinn-/Deckungsbeitragsrechnung genutzt.</span>}
+              >
+                <DeNumberInput mode="percent" min={0} max={100} />
               </Form.Item>
               <Form.Item
                 name="templateUnitPriceUsd"
@@ -1794,18 +1818,6 @@ export default function ProductsModule(): JSX.Element {
                       >
                         <DeNumberInput mode="int" min={0} />
                       </Form.Item>
-                      <Form.Item
-                        name="sellerboardMarginPct"
-                        label="Sellerboard Marge %"
-                        style={{ flex: 1 }}
-                        validateStatus={fieldValidateStatus("sellerboardMarginPct")}
-                        help={fieldHelp("sellerboardMarginPct")}
-                        extra={<span className="v2-field-meta">Optional fuer Legacy-Kompatibilitaet / Reporting.</span>}
-                      >
-                        <DeNumberInput mode="percent" min={0} max={100} />
-                      </Form.Item>
-                    </div>
-                    <div className="v2-form-row">
                       <Form.Item
                         name="safetyStockDohOverride"
                         label={labelWithReset("Safety Stock DOH Override", "safetyStockDohOverride")}

@@ -166,6 +166,7 @@ export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
   const baselineReferenceMonth = asMonthNumber(row.baselineReferenceMonth);
   const baselineUnitsInReferenceMonth = asNumber(row.baselineUnitsInReferenceMonth);
   const avgSellingPriceGrossEUR = asNumber(row.avgSellingPriceGrossEUR);
+  const sellerboardMarginPct = asNumber(row.sellerboardMarginPct);
   const launchDate = normalizeIsoDate(row.launchDate);
   const rampUpWeeks = asPositiveInt(row.rampUpWeeks);
   const softLaunchStartSharePctRaw = asNumber(row.softLaunchStartSharePct);
@@ -187,6 +188,7 @@ export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
     baselineUnitsInReferenceMonth,
     baselineReferenceSku: normalizeSku(row.baselineReferenceSku),
     avgSellingPriceGrossEUR,
+    sellerboardMarginPct,
     launchDate,
     rampUpWeeks,
     softLaunchStartSharePct,
