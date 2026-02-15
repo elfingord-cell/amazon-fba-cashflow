@@ -20,6 +20,7 @@ import {
 import type { ColumnDef } from "@tanstack/react-table";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import ReactECharts from "echarts-for-react";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { resolveProductFieldResolution, type ResolvedField } from "../../domain/productFieldResolution";
@@ -224,15 +225,6 @@ function completenessTag(status: "blocked" | "warn" | "ok"): JSX.Element {
   return <Tag color="red">BLOCKED</Tag>;
 }
 
-function seasonalityClassificationTag(
-  value: "unterdurchschnittlich" | "durchschnittlich" | "ueberdurchschnittlich" | "keine_daten",
-): JSX.Element {
-  if (value === "ueberdurchschnittlich") return <Tag color="green">ueberdurchschnittlich</Tag>;
-  if (value === "unterdurchschnittlich") return <Tag color="orange">unterdurchschnittlich</Tag>;
-  if (value === "durchschnittlich") return <Tag color="blue">durchschnittlich</Tag>;
-  return <Tag>keine Daten</Tag>;
-}
-
 function normalizeStatusFilter(value: unknown): "all" | "active" | "prelaunch" | "inactive" | null {
   const raw = String(value || "").trim().toLowerCase();
   if (raw === "all" || raw === "active" || raw === "prelaunch" || raw === "inactive") return raw;
@@ -301,6 +293,7 @@ export default function ProductsModule(): JSX.Element {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "prelaunch" | "inactive">("all");
   const [issueFilter, setIssueFilter] = useState<ProductIssueFilter>("all");
+  const [seasonalityMetric, setSeasonalityMetric] = useState<"factor" | "units">("factor");
   const [modalOpen, setModalOpen] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
@@ -719,23 +712,86 @@ export default function ProductsModule(): JSX.Element {
   }, [forecastImportMap, seasonalitySku]);
   const seasonalityChartRows = useMemo(() => {
     if (!seasonalityProfile) return [];
-    const availableFactors = seasonalityProfile.months
-      .map((entry) => Number(entry.factor))
-      .filter((value): value is number => Number.isFinite(value));
-    const maxFactor = availableFactors.length ? Math.max(...availableFactors) : 1;
-    const scaleMax = Math.max(1, maxFactor);
-
     return seasonalityProfile.months.map((entry) => ({
       key: String(entry.monthNumber),
       monthLabel: entry.monthLabel,
       factor: entry.factor,
       averageUnits: entry.averageUnits,
       sampleCount: entry.sampleCount,
-      classification: entry.classification,
-      widthPercent: entry.factor ? (Math.min(100, (Number(entry.factor) / scaleMax) * 100)) : 0,
-      scaleMax: Number(scaleMax),
+      value: seasonalityMetric === "factor" ? entry.factor : entry.averageUnits,
     }));
-  }, [seasonalityProfile]);
+  }, [seasonalityProfile, seasonalityMetric]);
+  const seasonalityChartOptions = useMemo(() => {
+    if (!seasonalityProfile) return null;
+      const xLabels = seasonalityChartRows.map((entry) => entry.monthLabel);
+      const values = seasonalityChartRows.map((entry) => {
+        return typeof entry.value === "number" ? entry.value : null;
+      });
+      const yAxisLabel = seasonalityMetric === "factor" ? "Saisonalitäts-Faktor" : "Ø Units";
+      const yMax = seasonalityMetric === "factor"
+        ? 2
+        : Math.max(...values.filter((value): value is number => Number.isFinite(value)), 0);
+      return {
+        tooltip: {
+          trigger: "axis",
+          formatter: (params: unknown) => {
+            const points = Array.isArray(params) ? params : [];
+            const primary = points[0];
+            if (!primary || typeof primary !== "object") return "";
+            const rawDataIndex = Number((primary as { dataIndex?: number }).dataIndex);
+            const row = Number.isFinite(rawDataIndex) ? seasonalityChartRows[rawDataIndex] : null;
+            if (!row) return "";
+            const value = typeof row.value === "number" ? row.value : null;
+            const axisValue = String((primary as { axisValue?: unknown }).axisValue || "");
+            const formattedValue = seasonalityMetric === "factor"
+              ? formatNumber(value, 2)
+              : `${formatNumber(value, 1)} Units`;
+            const factorText = seasonalityMetric === "factor" ? "Faktor" : "Ø Units";
+            return `${axisValue}<br/>${factorText}: ${formattedValue}<br/>Datenpunkte: ${row.sampleCount}`;
+          },
+          valueFormatter: (value: number) => {
+            if (!Number.isFinite(value)) return "—";
+            if (seasonalityMetric === "factor") return formatNumber(value, 2);
+            return `${formatNumber(value, 1)} Units`;
+          },
+        },
+      grid: {
+        left: 48,
+        right: 16,
+        top: 24,
+        bottom: 32,
+      },
+      xAxis: {
+        type: "category",
+        data: xLabels,
+        axisLine: { show: true },
+        },
+        yAxis: {
+        type: "value",
+        name: yAxisLabel,
+        scale: yMax > 0 ? false : true,
+        min: seasonalityMetric === "factor" ? 0 : undefined,
+        max: seasonalityMetric === "factor" ? Math.max(2, yMax) : undefined,
+        axisLabel: {
+          formatter: (value: number) => {
+            if (!Number.isFinite(value)) return "—";
+            return seasonalityMetric === "factor" ? value.toFixed(2) : formatNumber(value, 1);
+          },
+        },
+      },
+      series: [
+        {
+          name: yAxisLabel,
+          type: "line",
+          data: values,
+          smooth: true,
+          showSymbol: true,
+          symbolSize: 6,
+          lineStyle: { width: 2 },
+        },
+      ],
+    };
+  }, [seasonalityProfile, seasonalityChartRows, seasonalityMetric]);
   const latestPlanMapping = useMemo(() => {
     const sku = String(draftValues?.sku || editing?.sku || "").trim();
     if (!sku) return null;
@@ -1863,46 +1919,40 @@ export default function ProductsModule(): JSX.Element {
                       />
                     ) : (
                       <>
-                        <Space wrap style={{ marginBottom: 8 }}>
-                          <Tag color="blue">
-                            Zeitraum: {formatMonthLabel(seasonalityProfile.startMonth)} bis {formatMonthLabel(seasonalityProfile.endMonth)}
-                            {" "}({seasonalityProfile.sampleMonthCount} Monate)
-                          </Tag>
-                          <Tag color={seasonalityProfile.coveredMonthTypes === 12 ? "green" : "gold"}>
-                            Kalendermonate mit Daten: {seasonalityProfile.coveredMonthTypes}/12
-                          </Tag>
-                          <Tag>
-                            Ø Monats-Units (Basis): {formatNumber(seasonalityProfile.overallAverage, 1)} (aus {seasonalityProfile.sampleMonthCount} Monatsdaten)
-                          </Tag>
-                        </Space>
-                        <div className="v2-seasonality-chart" role="group" aria-label="Saisonalitaetsfaktoren">
-                          {seasonalityChartRows.map((entry) => (
-                            <Tooltip
-                              key={entry.key}
-                              title={`Faktor: ${formatNumber(asNumber(entry.factor), 2)} | Ø Units: ${formatNumber(asNumber(entry.averageUnits), 1)} | Datenpunkte: ${entry.sampleCount}`}
-                            >
-                              <div className="v2-seasonality-chart-row">
-                                <span className="v2-seasonality-month">{entry.monthLabel}</span>
-                                <div className="v2-seasonality-bar-track">
-                                  <div className="v2-seasonality-average-line" style={{ left: `${(1 / (entry.scaleMax || 1)) * 100}%` }} />
-                                  <div
-                                    className={`v2-seasonality-bar v2-seasonality-bar--${entry.classification}`}
-                                    style={{ width: `${entry.widthPercent}%` }}
-                                  />
-                                </div>
-                                <span className="v2-seasonality-value">
-                                  {formatNumber(asNumber(entry.factor), 2)}
-                                  <span className="v2-seasonality-subvalue">
-                                    {formatNumber(asNumber(entry.averageUnits), 1)} / n={entry.sampleCount}
-                                  </span>
-                                </span>
-                              </div>
-                            </Tooltip>
-                          ))}
+                        <div className="v2-seasonality-headline">
+                          <Space wrap style={{ marginBottom: 8 }}>
+                            <Tag color="blue">
+                              Zeitraum: {formatMonthLabel(seasonalityProfile.startMonth)} bis {formatMonthLabel(seasonalityProfile.endMonth)}
+                              {" "}({seasonalityProfile.sampleMonthCount} Monate)
+                            </Tag>
+                            <Tag color={seasonalityProfile.coveredMonthTypes === 12 ? "green" : "gold"}>
+                              Kalendermonate mit Daten: {seasonalityProfile.coveredMonthTypes}/12
+                            </Tag>
+                            <Tag>
+                              Ø Monats-Units (Basis): {formatNumber(seasonalityProfile.overallAverage, 1)} (aus {seasonalityProfile.sampleMonthCount} Monatsdaten)
+                            </Tag>
+                          </Space>
+                          <Segmented
+                            options={[
+                              { value: "factor", label: "Faktor" },
+                              { value: "units", label: "Absatz (Units)" },
+                            ]}
+                            value={seasonalityMetric}
+                            onChange={(value) => setSeasonalityMetric(value as "factor" | "units")}
+                          />
                         </div>
-                        <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
-                          Faktor 1,00 = durchschnittlicher Monat, 1,40 = 40 % ueberdurchschnittlich, 0,70 = 30 % unterdurchschnittlich.
-                        </Paragraph>
+                        <div className="v2-seasonality-chart-wrap">
+                          <ReactECharts
+                            style={{ height: 240 }}
+                            option={seasonalityChartOptions || undefined}
+                            opts={{ renderer: "canvas" }}
+                          />
+                        </div>
+                          <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
+                            {seasonalityMetric === "factor"
+                              ? "Faktor 1,00 = durchschnittlicher Monat, 1,40 = 40 % ueberdurchschnittlich, 0,70 = 30 % unterdurchschnittlich."
+                              : "Auftragsvolumen in Units zeigt den berechneten Monatsdurchschnitt aus der Forecast-CSV."}
+                          </Paragraph>
                       </>
                     )}
                   </div>
