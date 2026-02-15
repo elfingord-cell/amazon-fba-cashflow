@@ -13,6 +13,7 @@ import {
   Select,
   Space,
   Table,
+  Tooltip,
   Tag,
   Typography,
 } from "antd";
@@ -716,8 +717,14 @@ export default function ProductsModule(): JSX.Element {
       sku: seasonalitySku,
     });
   }, [forecastImportMap, seasonalitySku]);
-  const seasonalityRows = useMemo(() => {
+  const seasonalityChartRows = useMemo(() => {
     if (!seasonalityProfile) return [];
+    const availableFactors = seasonalityProfile.months
+      .map((entry) => Number(entry.factor))
+      .filter((value): value is number => Number.isFinite(value));
+    const maxFactor = availableFactors.length ? Math.max(...availableFactors) : 1;
+    const scaleMax = Math.max(1, maxFactor);
+
     return seasonalityProfile.months.map((entry) => ({
       key: String(entry.monthNumber),
       monthLabel: entry.monthLabel,
@@ -725,6 +732,8 @@ export default function ProductsModule(): JSX.Element {
       averageUnits: entry.averageUnits,
       sampleCount: entry.sampleCount,
       classification: entry.classification,
+      widthPercent: entry.factor ? (Math.min(100, (Number(entry.factor) / scaleMax) * 100)) : 0,
+      scaleMax: Number(scaleMax),
     }));
   }, [seasonalityProfile]);
   const latestPlanMapping = useMemo(() => {
@@ -1863,51 +1872,34 @@ export default function ProductsModule(): JSX.Element {
                             Kalendermonate mit Daten: {seasonalityProfile.coveredMonthTypes}/12
                           </Tag>
                           <Tag>
-                            Ø Monats-Units (Basis): {formatNumber(seasonalityProfile.overallAverage, 2)}
+                            Ø Monats-Units (Basis): {formatNumber(seasonalityProfile.overallAverage, 1)} (aus {seasonalityProfile.sampleMonthCount} Monatsdaten)
                           </Tag>
                         </Space>
-                        <Table
-                          size="small"
-                          pagination={false}
-                          rowKey="key"
-                          dataSource={seasonalityRows}
-                          columns={[
-                            {
-                              title: "Monat",
-                              dataIndex: "monthLabel",
-                              key: "monthLabel",
-                              width: 100,
-                            },
-                            {
-                              title: "Faktor",
-                              dataIndex: "factor",
-                              key: "factor",
-                              align: "right" as const,
-                              render: (value: unknown) => formatNumber(asNumber(value), 2),
-                            },
-                            {
-                              title: "Ø Units",
-                              dataIndex: "averageUnits",
-                              key: "averageUnits",
-                              align: "right" as const,
-                              render: (value: unknown) => formatNumber(asNumber(value), 2),
-                            },
-                            {
-                              title: "Datenpunkte",
-                              dataIndex: "sampleCount",
-                              key: "sampleCount",
-                              align: "right" as const,
-                              render: (value: unknown) => formatNumber(asNumber(value), 0),
-                            },
-                            {
-                              title: "Einordnung",
-                              dataIndex: "classification",
-                              key: "classification",
-                              render: (value: "unterdurchschnittlich" | "durchschnittlich" | "ueberdurchschnittlich" | "keine_daten") =>
-                                seasonalityClassificationTag(value),
-                            },
-                          ]}
-                        />
+                        <div className="v2-seasonality-chart" role="group" aria-label="Saisonalitaetsfaktoren">
+                          {seasonalityChartRows.map((entry) => (
+                            <Tooltip
+                              key={entry.key}
+                              title={`Faktor: ${formatNumber(asNumber(entry.factor), 2)} | Ø Units: ${formatNumber(asNumber(entry.averageUnits), 1)} | Datenpunkte: ${entry.sampleCount}`}
+                            >
+                              <div className="v2-seasonality-chart-row">
+                                <span className="v2-seasonality-month">{entry.monthLabel}</span>
+                                <div className="v2-seasonality-bar-track">
+                                  <div className="v2-seasonality-average-line" style={{ left: `${(1 / (entry.scaleMax || 1)) * 100}%` }} />
+                                  <div
+                                    className={`v2-seasonality-bar v2-seasonality-bar--${entry.classification}`}
+                                    style={{ width: `${entry.widthPercent}%` }}
+                                  />
+                                </div>
+                                <span className="v2-seasonality-value">
+                                  {formatNumber(asNumber(entry.factor), 2)}
+                                  <span className="v2-seasonality-subvalue">
+                                    {formatNumber(asNumber(entry.averageUnits), 1)} / n={entry.sampleCount}
+                                  </span>
+                                </span>
+                              </div>
+                            </Tooltip>
+                          ))}
+                        </div>
                         <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
                           Faktor 1,00 = durchschnittlicher Monat, 1,40 = 40 % ueberdurchschnittlich, 0,70 = 30 % unterdurchschnittlich.
                         </Paragraph>
