@@ -64,6 +64,7 @@ export interface PoRecordV2 extends UnknownRecord {
   orderDate?: string | null;
   etdManual?: string | null;
   etaManual?: string | null;
+  arrivalDate?: string | null;
   items?: PoItem[];
   sku?: string;
   units?: number;

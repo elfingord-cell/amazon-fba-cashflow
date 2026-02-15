@@ -39,6 +39,7 @@ function buildReportLines(report) {
   const inventory = report?.inventory || {};
   const deposits = Array.isArray(report?.deposits) ? report.deposits : [];
   const arrivals = Array.isArray(report?.arrivals) ? report.arrivals : [];
+  const poLedger = Array.isArray(report?.poLedger) ? report.poLedger : [];
   const quality = Array.isArray(report?.quality) ? report.quality : [];
   const lines = [
     `Buchhaltungsbericht ${month}`,
@@ -75,6 +76,22 @@ function buildReportLines(report) {
   });
   if (arrivals.length > 12) {
     lines.push(`  ... ${arrivals.length - 12} weitere Zeilen in XLSX/CSV`);
+  }
+
+  lines.push("");
+  lines.push("Anzahlungen + Wareneingang (PO)");
+  lines.push(`- Anzahl Zeilen gesamt: ${poLedger.length}`);
+  lines.push(`- Relevante Zeilen für ${month}: ${poLedger.filter((row) => row.monthMarker).length}`);
+  lines.push("-");
+  poLedger.slice(0, 50).forEach((row) => {
+    const marker = row.monthMarker ? "[MONAT]" : "[     ]";
+    const depositEur = Number(row.depositActualEurMonth || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const depositUsd = Number(row.depositAmountUsdMonth || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const arrivalText = row.arrivalDate || row.etaDate || "n/a";
+    lines.push(`  ${marker} ${row.poNumber || "PO"} | ${row.supplier || "-"} | EUR ${depositEur} | USD ${depositUsd} | ETD ${row.etdDate || "n/a"} | ETA ${row.etaDate || "n/a"} | Arrival ${arrivalText}`);
+  });
+  if (poLedger.length > 50) {
+    lines.push(`  ... ${poLedger.length - 50} weitere Zeilen in XLSX/CSV`);
   }
 
   lines.push("");

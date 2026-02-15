@@ -197,8 +197,39 @@ test("accountant report: applies paid and arrival month filters", () => {
   const arrivalPoNumbers = report.arrivals.map((row) => row.poNumber).sort();
   assert.deepEqual(arrivalPoNumbers, ["PO-1001", "PO-1003"]);
 
+  assert.equal(report.poLedger.length, 3);
+  const ledgerPo1 = report.poLedger.find((row) => row.poNumber === "PO-1001");
+  const ledgerPo2 = report.poLedger.find((row) => row.poNumber === "PO-1002");
+  const ledgerPo3 = report.poLedger.find((row) => row.poNumber === "PO-1003");
+  assert.ok(ledgerPo1);
+  assert.ok(ledgerPo2);
+  assert.ok(ledgerPo3);
+  assert.equal(ledgerPo1?.monthMarker, true);
+  assert.equal(ledgerPo1?.monthMarkerReason, "deposit+arrival");
+  assert.equal(ledgerPo3?.monthMarkerReason, "arrival");
+  assert.equal(ledgerPo2?.monthMarker, false);
+  assert.equal(ledgerPo1?.depositActualEurMonth, 340);
+  assert.ok(Math.abs(Number(ledgerPo1?.depositAmountUsdMonth || 0) - 129) < 0.0001);
+
   assert.ok(report.quality.some((issue) => issue.code === "PAID_WITHOUT_DATE"));
   assert.ok(report.quality.some((issue) => issue.code === "ARRIVAL_FROM_ETA"));
+});
+
+test("accountant report: explicit arrivalDate overrides ETA in arrivals and ledger", () => {
+  const state = createState();
+  state.pos[0].arrivalDate = "2026-01-28";
+  const report = buildAccountantReportData(state, {
+    month: "2026-01",
+    scope: "core",
+  });
+
+  const arrivalPo1 = report.arrivals.find((row) => row.poNumber === "PO-1001");
+  const ledgerPo1 = report.poLedger.find((row) => row.poNumber === "PO-1001");
+  assert.ok(arrivalPo1);
+  assert.ok(ledgerPo1);
+  assert.equal(arrivalPo1?.arrivalDate, "2026-01-28");
+  assert.equal(ledgerPo1?.arrivalDate, "2026-01-28");
+  assert.equal(ledgerPo1?.arrivalSource, "actual");
 });
 
 test("accountant report: keeps export possible without snapshot and uses override", () => {
@@ -231,6 +262,7 @@ test("accountant report bundle: zip contains required core files and optional jo
   assert.ok(coreNames.includes("buchhaltung_2026-01_warenbestand.csv"));
   assert.ok(coreNames.includes("buchhaltung_2026-01_anzahlungen_po.csv"));
   assert.ok(coreNames.includes("buchhaltung_2026-01_wareneingang_po.csv"));
+  assert.ok(coreNames.includes("buchhaltung_2026-01_anzahlung_wareneingang_po.csv"));
   assert.ok(coreNames.includes("buchhaltung_2026-01_email.txt"));
   assert.equal(coreNames.includes("buchhaltung_2026-01_zahlungsjournal.csv"), false);
 

@@ -562,6 +562,101 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
   return rows.sort((a, b) => String(a.arrivalDate || "").localeCompare(String(b.arrivalDate || "")));
 }
 
+function buildPoLedgerSection(state, request, productMaps, supplierMap, quality, qualitySeen) {
+  const settings = buildSettings(state);
+  const month = request.month;
+  const rows = [];
+
+  (Array.isArray(state?.pos) ? state.pos : []).forEach((record) => {
+    if (!record || record.archived) return;
+    if (String(record.status || "").toUpperCase() === "CANCELLED") return;
+
+    const workingRecord = structuredClone(record);
+    const paymentRows = buildPaymentRows(workingRecord, PO_CONFIG, settings, state?.payments || []);
+    const goodsUsd = computeGoodsUsd(record);
+    const arrivalInfo = resolveArrivalDate(record);
+    const units = getPoItems(record).reduce((sum, item) => sum + parseUnits(item?.units), 0);
+
+    let depositActualEurMonth = 0;
+    let hasDepositActual = false;
+    let depositAmountUsdMonth = 0;
+    let hasDepositUsd = false;
+
+    paymentRows.forEach((payment) => {
+      const status = String(payment?.status || "").toUpperCase();
+      const typeLabel = String(payment?.typeLabel || "");
+      const isDeposit = /deposit|anzahlung/i.test(typeLabel);
+      if (!isDeposit) return;
+      if (status !== "PAID") return;
+      if (monthFromDate(payment?.paidDate) !== month) return;
+
+      const actualEur = Number(payment?.paidEurActual);
+      if (Number.isFinite(actualEur)) {
+        depositActualEurMonth += actualEur;
+        hasDepositActual = true;
+      }
+
+      const milestone = (Array.isArray(record?.milestones) ? record.milestones : []).find((entry) => entry?.id === payment?.id);
+      const percent = parseMoney(milestone?.percent);
+      if (Number.isFinite(goodsUsd) && Number.isFinite(percent)) {
+        depositAmountUsdMonth += (goodsUsd * percent) / 100;
+        hasDepositUsd = true;
+      }
+    });
+
+    const hasActualArrival = arrivalInfo.source === "arrivalDate" || arrivalInfo.source === "arrivalDateDe";
+    const arrivalDate = arrivalInfo.date;
+    const arrivalMonth = monthFromDate(arrivalDate);
+    const monthMarkerDeposit = hasDepositActual || hasDepositUsd;
+    const monthMarkerArrival = arrivalMonth === month;
+    const monthMarker = monthMarkerDeposit || monthMarkerArrival;
+
+    let monthMarkerReason = "none";
+    if (monthMarkerDeposit && monthMarkerArrival) monthMarkerReason = "deposit+arrival";
+    else if (monthMarkerDeposit) monthMarkerReason = "deposit";
+    else if (monthMarkerArrival) monthMarkerReason = "arrival";
+
+    const rowIssues = [];
+    if (!arrivalDate) {
+      rowIssues.push("MISSING_ARRIVAL_DATE");
+      addQualityIssue(quality, qualitySeen, {
+        code: "MISSING_ARRIVAL_DATE",
+        severity: "warning",
+        message: `PO ${record.poNo || record.id || "-"}: kein Arrival/ETA Datum vorhanden.`,
+        entityType: "PO",
+        entityId: String(record.id || record.poNo || ""),
+      });
+    } else if (!hasActualArrival) {
+      rowIssues.push("ARRIVAL_FROM_ETA");
+    }
+
+    rows.push({
+      poNumber: String(record.poNo || record.id || ""),
+      supplier: resolveSupplierName(record, supplierMap),
+      skuAliases: resolveSkuAliases(record, productMaps.aliasBySku),
+      units,
+      depositActualEurMonth: hasDepositActual ? depositActualEurMonth : null,
+      depositAmountUsdMonth: hasDepositUsd ? depositAmountUsdMonth : null,
+      etdDate: resolveEtdDate(record),
+      etaDate: resolveEtaDate(record),
+      arrivalDate,
+      arrivalSource: hasActualArrival ? "actual" : (arrivalDate ? "eta" : "missing"),
+      monthMarker,
+      monthMarkerReason,
+      issues: rowIssues,
+    });
+  });
+
+  return rows.sort((left, right) => {
+    if (left.monthMarker !== right.monthMarker) return left.monthMarker ? -1 : 1;
+    const leftDate = String(left.arrivalDate || left.etaDate || "9999-12-31");
+    const rightDate = String(right.arrivalDate || right.etaDate || "9999-12-31");
+    const dateCompare = leftDate.localeCompare(rightDate);
+    if (dateCompare !== 0) return dateCompare;
+    return String(left.poNumber || "").localeCompare(String(right.poNumber || ""));
+  });
+}
+
 function normalizeJournalPaymentType(typeLabel, eventType) {
   const label = String(typeLabel || "").toLowerCase();
   if (eventType === "fx_fee" || label.includes("fx")) return null;
@@ -663,6 +758,7 @@ function buildEmailDraft(report, options = {}) {
     `buchhaltung_${month}_warenbestand.csv`,
     `buchhaltung_${month}_anzahlungen_po.csv`,
     `buchhaltung_${month}_wareneingang_po.csv`,
+    `buchhaltung_${month}_anzahlung_wareneingang_po.csv`,
   ];
 
   if (report.request.scope === "core_plus_journal") {
@@ -683,6 +779,7 @@ function buildEmailDraft(report, options = {}) {
     `- Warenbestand zum Monatsende (${report.inventory.snapshotAsOf || "n/a"}): ${Number.isFinite(Number(report.inventory.totalValueEur)) ? `${Number(report.inventory.totalValueEur).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR` : "kein Wert verfuegbar"}`,
     `- Lieferanzahlungen (PO, paidDate im Monat): ${report.deposits.length} Zeilen`,
     `- Wareneingaenge (PO, Arrival/ETA im Monat): ${report.arrivals.length} Zeilen`,
+    `- Kombiliste Anzahlungen + Wareneingang (PO): ${(report.poLedger || []).length} Zeilen`,
     `- Datenqualitaetshinweise: ${(report.quality || []).length}`,
     "",
     "Anlagen:",
@@ -722,6 +819,7 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
   const inventory = buildInventorySection(sourceState, request, options, productMaps, quality, qualitySeen);
   const deposits = buildDepositsSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
   const arrivals = buildArrivalsSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
+  const poLedger = buildPoLedgerSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
 
   let journalRows = [];
   if (request.scope === "core_plus_journal") {
@@ -745,6 +843,7 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
     inventoryRows: inventory.rows,
     deposits,
     arrivals,
+    poLedger,
     journalRows,
     quality,
   };
@@ -796,6 +895,22 @@ function buildCsvPayloads(report) {
     { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
   ]);
 
+  const poLedgerCsv = toCsv(report.poLedger || [], [
+    { key: "monthMarker", label: "monthMarker", format: (value) => value ? "yes" : "no" },
+    { key: "monthMarkerReason", label: "monthMarkerReason" },
+    { key: "poNumber", label: "poNumber" },
+    { key: "supplier", label: "supplier" },
+    { key: "skuAliases", label: "skuAliases" },
+    { key: "units", label: "units" },
+    { key: "depositActualEurMonth", label: "depositActualEurMonth", format: formatCsvNumber },
+    { key: "depositAmountUsdMonth", label: "depositAmountUsdMonth", format: formatCsvNumber },
+    { key: "etdDate", label: "etdDate" },
+    { key: "etaDate", label: "etaDate" },
+    { key: "arrivalDate", label: "arrivalDate" },
+    { key: "arrivalSource", label: "arrivalSource" },
+    { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
+  ]);
+
   let journalCsv = null;
   if (Array.isArray(report.journalRows) && report.journalRows.length) {
     journalCsv = toCsv(report.journalRows, [
@@ -819,6 +934,7 @@ function buildCsvPayloads(report) {
     inventoryCsv,
     depositsCsv,
     arrivalsCsv,
+    poLedgerCsv,
     journalCsv,
   };
 }
@@ -835,6 +951,7 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
     csvInventory: `buchhaltung_${month}_warenbestand.csv`,
     csvDeposits: `buchhaltung_${month}_anzahlungen_po.csv`,
     csvArrivals: `buchhaltung_${month}_wareneingang_po.csv`,
+    csvPoLedger: `buchhaltung_${month}_anzahlung_wareneingang_po.csv`,
     csvJournal: `buchhaltung_${month}_zahlungsjournal.csv`,
     emailTxt: `buchhaltung_${month}_email.txt`,
     zip: `buchhaltung_${month}_paket.zip`,
@@ -852,6 +969,7 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
     files.csvInventory = new Blob([csvPayloads.inventoryCsv], { type: "text/csv;charset=utf-8" });
     files.csvDeposits = new Blob([csvPayloads.depositsCsv], { type: "text/csv;charset=utf-8" });
     files.csvArrivals = new Blob([csvPayloads.arrivalsCsv], { type: "text/csv;charset=utf-8" });
+    files.csvPoLedger = new Blob([csvPayloads.poLedgerCsv], { type: "text/csv;charset=utf-8" });
     if (csvPayloads.journalCsv) {
       files.csvJournal = new Blob([csvPayloads.journalCsv], { type: "text/csv;charset=utf-8" });
     }
@@ -866,6 +984,7 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
   if (files.csvInventory) zipEntries.push({ name: fileNames.csvInventory, data: files.csvInventory });
   if (files.csvDeposits) zipEntries.push({ name: fileNames.csvDeposits, data: files.csvDeposits });
   if (files.csvArrivals) zipEntries.push({ name: fileNames.csvArrivals, data: files.csvArrivals });
+  if (files.csvPoLedger) zipEntries.push({ name: fileNames.csvPoLedger, data: files.csvPoLedger });
   if (files.csvJournal) zipEntries.push({ name: fileNames.csvJournal, data: files.csvJournal });
   if (files.emailDraftTxt) zipEntries.push({ name: fileNames.emailTxt, data: files.emailDraftTxt });
 

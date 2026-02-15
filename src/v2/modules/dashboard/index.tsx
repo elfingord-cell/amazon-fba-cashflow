@@ -8,6 +8,7 @@ import {
   Col,
   Input,
   InputNumber,
+  message,
   Row,
   Select,
   Space,
@@ -29,6 +30,7 @@ import {
 } from "../../domain/dashboardRobustness";
 import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
+import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
@@ -98,6 +100,11 @@ const ROUTE_ERROR_STORAGE_KEY = "v2:last-route-error";
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function todayIsoDate(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 interface SimulatedBreakdownRow extends DashboardBreakdownRow {
@@ -435,6 +442,7 @@ function readRuntimeRouteErrorMeta(): RuntimeRouteErrorMeta {
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
+  const [messageApi, contextHolder] = message.useMessage();
   const [range, setRange] = useState<DashboardRange>("next12");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
@@ -442,6 +450,7 @@ export default function DashboardModule(): JSX.Element {
   const [simMonth, setSimMonth] = useState<string>("");
   const [simAmount, setSimAmount] = useState<number | null>(null);
   const [simLabel, setSimLabel] = useState<string>("");
+  const [poArrivalDrafts, setPoArrivalDrafts] = useState<Record<string, string>>({});
   const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
 
   const stateObject = state as unknown as Record<string, unknown>;
@@ -615,10 +624,18 @@ export default function DashboardModule(): JSX.Element {
 
   const selectedMonthData = selectedMonth ? robustness.monthMap.get(selectedMonth) || null : null;
   const currentMonth = currentMonthKey();
+  const todayIso = todayIsoDate();
   const currentMonthIdx = monthIndex(currentMonth);
   const actionFocusMonth = useMemo(() => {
     return robustness.months.find((entry) => !entry.robust)?.month || selectedMonth || visibleMonths[0] || null;
   }, [robustness.months, selectedMonth, visibleMonths]);
+  const poArrivalTasks = useMemo<PoArrivalTask[]>(() => {
+    return buildPoArrivalTasks({
+      state: stateObject,
+      month: currentMonth,
+      todayIso,
+    });
+  }, [currentMonth, stateObject, todayIso]);
 
   useEffect(() => {
     const refreshRuntimeRouteError = () => setRuntimeRouteError(readRuntimeRouteErrorMeta());
@@ -630,6 +647,27 @@ export default function DashboardModule(): JSX.Element {
       window.removeEventListener("storage", refreshRuntimeRouteError);
     };
   }, []);
+
+  useEffect(() => {
+    setPoArrivalDrafts((current) => {
+      const validIds = new Set(poArrivalTasks.map((task) => task.id));
+      let changed = false;
+      const next: Record<string, string> = {};
+      Object.entries(current).forEach(([id, value]) => {
+        if (!validIds.has(id)) {
+          changed = true;
+          return;
+        }
+        next[id] = value;
+      });
+      poArrivalTasks.forEach((task) => {
+        if (next[task.id]) return;
+        next[task.id] = task.arrivalDate || todayIso;
+        changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [poArrivalTasks, todayIso]);
 
   const pnlRowsByMonth = useMemo(
     () => buildDashboardPnlRowsByMonth({ breakdown: visibleBreakdown, state: stateObject }),
@@ -1048,6 +1086,30 @@ export default function DashboardModule(): JSX.Element {
     }, "v2:dashboard:forecast-drift-reviewed");
   }
 
+  async function savePoArrivalDate(poId: string, dateIso: string | null, source: string): Promise<void> {
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const pos = Array.isArray(next.pos) ? next.pos : [];
+        next.pos = pos.map((entry) => {
+          if (!entry || typeof entry !== "object") return entry;
+          const record = entry as Record<string, unknown>;
+          const recordId = String(record.id || record.poNo || "").trim();
+          if (recordId !== poId) return record;
+          return {
+            ...record,
+            arrivalDate: dateIso || null,
+          };
+        });
+        return next;
+      }, source);
+      messageApi.success(dateIso ? "Wareneingang gespeichert." : "Wareneingang zurückgesetzt.");
+    } catch (saveError) {
+      console.error(saveError);
+      messageApi.error(saveError instanceof Error ? saveError.message : "Wareneingang konnte nicht gespeichert werden.");
+    }
+  }
+
   const executiveFlag = ((state.settings as Record<string, unknown> | undefined)?.featureFlags as Record<string, unknown> | undefined)?.executiveDashboardV2;
   const executiveEnabled = executiveFlag !== false;
 
@@ -1065,6 +1127,7 @@ export default function DashboardModule(): JSX.Element {
 
   return (
     <div className="v2-page">
+      {contextHolder}
       <Card className="v2-intro-card">
         <div className="v2-page-head">
           <div>
@@ -1323,6 +1386,101 @@ export default function DashboardModule(): JSX.Element {
                     </div>
                   ) : (
                     <Alert type="success" showIcon message="Keine kritischen Drift-Abweichungen im letzten Vergleich." />
+                  )}
+                </Card>
+              </Col>
+
+              <Col xs={24} xl={24}>
+                <Card>
+                  <Title level={4}>PO Wareneingang bestätigen</Title>
+                  <Paragraph type="secondary">
+                    Sichtbar sind POs mit ETA im aktuellen Monat sowie überfällige ETA ohne bestätigten Wareneingang.
+                  </Paragraph>
+                  {!poArrivalTasks.length ? (
+                    <Alert type="success" showIcon message="Keine offenen PO-Wareneingänge für den aktuellen Scope." />
+                  ) : (
+                    <div className="v2-table-shell v2-scroll-host">
+                      <table className="v2-stats-table" data-layout="auto">
+                        <thead>
+                          <tr>
+                            <th>PO</th>
+                            <th>Supplier</th>
+                            <th>Alias</th>
+                            <th>Stückzahl</th>
+                            <th>ETA</th>
+                            <th>Status</th>
+                            <th>Aktionen</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {poArrivalTasks.map((task) => {
+                            const draftDate = poArrivalDrafts[task.id] || task.arrivalDate || todayIso;
+                            const dateInputValid = /^\d{4}-\d{2}-\d{2}$/.test(draftDate);
+                            return (
+                              <tr key={task.id}>
+                                <td>{task.poNumber || "PO"}</td>
+                                <td>{task.supplier || "-"}</td>
+                                <td>{task.skuAliases || "-"}</td>
+                                <td>{formatNumber(task.units, 0)}</td>
+                                <td>{formatIsoDate(task.etaDate)}</td>
+                                <td>
+                                  {task.arrivalDate ? (
+                                    <Tag color="green">Angekommen am {formatIsoDate(task.arrivalDate)}</Tag>
+                                  ) : task.isOverdue ? (
+                                    <Tag color="red">Überfällig</Tag>
+                                  ) : (
+                                    <Tag color="gold">Offen</Tag>
+                                  )}
+                                </td>
+                                <td>
+                                  <Space wrap>
+                                    <Button
+                                      size="small"
+                                      onClick={() => { void savePoArrivalDate(task.id, todayIso, "v2:dashboard:po-arrival-today"); }}
+                                      disabled={saving}
+                                    >
+                                      Heute
+                                    </Button>
+                                    <Input
+                                      type="date"
+                                      value={draftDate}
+                                      onChange={(event) => {
+                                        const nextDate = event.target.value || "";
+                                        setPoArrivalDrafts((current) => ({
+                                          ...current,
+                                          [task.id]: nextDate,
+                                        }));
+                                      }}
+                                      style={{ width: 160 }}
+                                    />
+                                    <Button
+                                      size="small"
+                                      onClick={() => {
+                                        if (!dateInputValid) return;
+                                        void savePoArrivalDate(task.id, draftDate, "v2:dashboard:po-arrival-date");
+                                      }}
+                                      disabled={saving || !dateInputValid || draftDate === task.arrivalDate}
+                                    >
+                                      Datum setzen
+                                    </Button>
+                                    {task.arrivalDate ? (
+                                      <Button
+                                        size="small"
+                                        danger
+                                        onClick={() => { void savePoArrivalDate(task.id, null, "v2:dashboard:po-arrival-clear"); }}
+                                        disabled={saving}
+                                      >
+                                        Zurücksetzen
+                                      </Button>
+                                    ) : null}
+                                  </Space>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </Card>
               </Col>

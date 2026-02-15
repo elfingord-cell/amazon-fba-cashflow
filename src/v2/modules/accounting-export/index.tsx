@@ -43,6 +43,22 @@ type ArrivalRow = {
   issues: string[];
 };
 
+type PoLedgerRow = {
+  monthMarker: boolean;
+  monthMarkerReason: string;
+  poNumber: string;
+  supplier: string;
+  skuAliases: string;
+  units: number | null;
+  depositActualEurMonth: number | null;
+  depositAmountUsdMonth: number | null;
+  etdDate: string | null;
+  etaDate: string | null;
+  arrivalDate: string | null;
+  arrivalSource: string;
+  issues: string[];
+};
+
 type QualityRow = {
   code: string;
   severity: string;
@@ -152,6 +168,26 @@ export default function AccountingExportModule(): JSX.Element {
     { header: "Arrival", cell: ({ row }) => formatDate(row.original.arrivalDate) },
     { header: "Units", cell: ({ row }) => formatInt(row.original.units || 0) },
     { header: "Goods EUR", cell: ({ row }) => formatCurrency(row.original.goodsEur) },
+    { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
+  ], []);
+
+  const poLedgerColumns = useMemo<ColumnDef<PoLedgerRow>[]>(() => [
+    {
+      header: "Monat relevant",
+      cell: ({ row }) => row.original.monthMarker
+        ? <Tag color="green">{row.original.monthMarkerReason || "ja"}</Tag>
+        : <Tag color="default">nein</Tag>,
+    },
+    { header: "PO", accessorKey: "poNumber" },
+    { header: "Supplier", accessorKey: "supplier" },
+    { header: "SKU Alias", accessorKey: "skuAliases" },
+    { header: "Units", cell: ({ row }) => formatInt(row.original.units || 0) },
+    { header: "Deposit EUR (Monat)", cell: ({ row }) => formatCurrency(row.original.depositActualEurMonth) },
+    { header: "Deposit USD (Monat)", cell: ({ row }) => formatCurrency(row.original.depositAmountUsdMonth) },
+    { header: "ETD", cell: ({ row }) => formatDate(row.original.etdDate) },
+    { header: "ETA", cell: ({ row }) => formatDate(row.original.etaDate) },
+    { header: "Ankunft", cell: ({ row }) => formatDate(row.original.arrivalDate || row.original.etaDate) },
+    { header: "Source", accessorKey: "arrivalSource" },
     { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
   ], []);
 
@@ -265,6 +301,8 @@ export default function AccountingExportModule(): JSX.Element {
             </div>
             <Tag color="blue">Anzahlungen: {preview.deposits.length}</Tag>
             <Tag color="blue">Wareneingaenge: {preview.arrivals.length}</Tag>
+            <Tag color="blue">Kombi-Zeilen: {(preview.poLedger || []).length}</Tag>
+            <Tag color="default">Monat markiert: {(preview.poLedger || []).filter((row: PoLedgerRow) => row.monthMarker).length}</Tag>
             <Tag color={preview.quality.length ? "red" : "green"}>Issues: {preview.quality.length}</Tag>
           </div>
         </div>
@@ -301,6 +339,15 @@ export default function AccountingExportModule(): JSX.Element {
           data={(preview.deposits || []) as DepositRow[]}
           columns={depositColumns}
           minTableWidth={1180}
+          tableLayout="auto"
+        />
+      </Card>
+
+      <Card title="Anzahlungen + Wareneingang (PO)" loading={loading}>
+        <TanStackGrid
+          data={(preview.poLedger || []) as PoLedgerRow[]}
+          columns={poLedgerColumns}
+          minTableWidth={1600}
           tableLayout="auto"
         />
       </Card>

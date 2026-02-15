@@ -102,6 +102,7 @@ function buildSheets(report) {
   const inventoryRows = report.inventoryRows || [];
   const deposits = report.deposits || [];
   const arrivals = report.arrivals || [];
+  const poLedger = report.poLedger || [];
 
   const summaryRows = [
     ["Monat", report.request?.month || ""],
@@ -112,6 +113,7 @@ function buildSheets(report) {
     ["In Transit Units", inventory.totalInTransitUnits],
     ["Anzahlungen PO", deposits.length],
     ["Wareneingaenge PO", arrivals.length],
+    ["Anzahlungen+Ankunft PO", poLedger.length],
     ["Manual Override Used", inventory.manualOverrideUsed ? "yes" : "no"],
     ["Quality Issues", (report.quality || []).length],
   ];
@@ -209,11 +211,45 @@ function buildSheets(report) {
     ]);
   });
 
+  const poLedgerRows = [[
+    "Month Marker",
+    "Month Marker Reason",
+    "PO Number",
+    "Supplier",
+    "SKU Aliases",
+    "Units",
+    "Deposit Actual EUR (Month)",
+    "Deposit Amount USD (Month)",
+    "ETD Date",
+    "ETA Date",
+    "Arrival Date",
+    "Arrival Source",
+    "Issues",
+  ]];
+  poLedger.forEach((row) => {
+    poLedgerRows.push([
+      row.monthMarker ? "yes" : "no",
+      row.monthMarkerReason || "",
+      row.poNumber || "",
+      row.supplier || "",
+      row.skuAliases || "",
+      row.units,
+      row.depositActualEurMonth,
+      row.depositAmountUsdMonth,
+      row.etdDate || "",
+      row.etaDate || "",
+      row.arrivalDate || "",
+      row.arrivalSource || "",
+      (row.issues || []).join(" | "),
+    ]);
+  });
+
   const sheets = [
     { name: "Summary", rows: summaryRows },
     { name: "Warenbestand", rows: inventorySheetRows },
     { name: "Anzahlungen_PO", rows: depositRows },
     { name: "Wareneingang_PO", rows: arrivalRows },
+    { name: "Anzahlungen_Ankunft_PO", rows: poLedgerRows },
     { name: "Quality", rows: mapIssueRows(report.quality || []) },
   ];
 
