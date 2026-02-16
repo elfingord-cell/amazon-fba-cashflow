@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -8,9 +8,11 @@ import {
   Input,
   message,
   Modal,
+  Segmented,
   Select,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -30,6 +32,7 @@ import {
   PO_ANCHORS,
   randomId,
 } from "../../domain/orderUtils";
+import { formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
@@ -59,6 +62,7 @@ interface PoFormValues {
   orderDate: string;
   etdManual?: string;
   etaManual?: string;
+  arrivalDate?: string;
   transport: "sea" | "rail" | "air";
   dutyRatePct: number;
   dutyIncludeFreight: boolean;
@@ -82,7 +86,19 @@ interface PoItemDraft {
   freightEur: number;
 }
 
-interface PoRow {
+interface PoTimelineMarkerRow {
+  id: string;
+  typeLabel: string;
+  label: string;
+  dueDate: string | null;
+  plannedEur: number;
+  status: "open" | "paid";
+  paidDate: string | null;
+  eventType: string | null;
+  direction: "out" | "in" | "neutral";
+}
+
+interface PoViewRow {
   id: string;
   poNo: string;
   sku: string;
@@ -90,12 +106,16 @@ interface PoRow {
   skuCount: number;
   supplierName: string;
   orderDate: string | null;
+  productionEndDate: string | null;
   etdDate: string | null;
   etaDate: string | null;
+  arrivalDate: string | null;
   goodsEur: number;
   openEur: number;
   paidEur: number;
-  statusText: string;
+  statusText: "open" | "mixed" | "paid_only";
+  itemSkusText: string;
+  timelineMarkers: PoTimelineMarkerRow[];
   raw: Record<string, unknown>;
 }
 
@@ -115,6 +135,7 @@ interface PoPaymentRow {
   invoiceDriveUrl: string;
   invoiceFolderDriveUrl: string;
   eventType: string | null;
+  direction?: "out" | "in" | "neutral";
 }
 
 interface PoPaymentFormValues {
@@ -142,6 +163,53 @@ interface PoAggregateSnapshot {
 interface PoCreatePrefill extends Partial<PoFormValues> {
   sku?: string;
   units?: number;
+}
+
+interface TimelineRange {
+  startMs: number;
+  endMs: number;
+  totalDays: number;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function parseIsoDate(value: unknown): Date | null {
+  if (!value) return null;
+  const raw = String(value || "").trim();
+  const [year, month, day] = raw.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
+function toTimelinePercent(date: Date | null, range: TimelineRange): number {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return 0;
+  const clamped = Math.min(Math.max(date.getTime(), range.startMs), range.endMs);
+  const diffDays = (clamped - range.startMs) / MS_PER_DAY;
+  return Math.max(0, Math.min(100, (diffDays / range.totalDays) * 100));
+}
+
+function determineTimelineStartMonth(input: {
+  state: Record<string, unknown>;
+  rows: PoViewRow[];
+}): string {
+  const settings = (input.state.settings || {}) as Record<string, unknown>;
+  const explicit = normalizeMonthKey(settings.startMonth);
+  if (explicit) return explicit;
+  const firstOrder = input.rows
+    .map((row) => row.orderDate)
+    .filter((value): value is string => Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value)))
+    .sort()[0];
+  if (firstOrder) return firstOrder.slice(0, 7);
+  return new Date().toISOString().slice(0, 7);
+}
+
+function determineTimelineHorizon(state: Record<string, unknown>): number {
+  const settings = (state.settings || {}) as Record<string, unknown>;
+  const horizon = Number(settings.horizonMonths || 0);
+  if (!Number.isFinite(horizon) || horizon <= 0) return 12;
+  return Math.round(horizon);
 }
 
 function formatDate(value: unknown): string {
@@ -186,8 +254,9 @@ function statusTag(status: string): JSX.Element {
 }
 
 function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "label">): string {
-  if (row.eventType === "duty") return "Custom Duties";
+  if (row.eventType === "duty") return "Zoll";
   if (row.eventType === "eust") return "Einfuhrumsatzsteuer";
+  if (row.eventType === "vat_refund") return "EUSt-Erstattung";
   if (row.eventType === "freight") return "Shipping China -> 3PL";
   if (row.eventType === "fx_fee") return "FX Gebuehr";
   const base = String(row.typeLabel || row.label || "").trim();
@@ -429,6 +498,7 @@ function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | nu
     orderDate: values.orderDate || null,
     etdManual: values.etdManual || null,
     etaManual: values.etaManual || null,
+    arrivalDate: values.arrivalDate || null,
     units: Math.max(0, Math.round(aggregated.units || 0)),
     unitCostUsd: Number(firstItem?.unitCostUsd || 0),
     unitExtraUsd: Number(firstItem?.unitExtraUsd || 0),
@@ -464,7 +534,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const syncSession = useSyncSession();
   const [search, setSearch] = useState("");
-  const [includeArchived, setIncludeArchived] = useState(false);
+  const [archiveFilter, setArchiveFilter] = useState<"active" | "archived" | "all">("active");
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "open" | "mixed" | "paid_only">("all");
+  const [onlyOpenPayments, setOnlyOpenPayments] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [skuPickerValues, setSkuPickerValues] = useState<string[]>([]);
@@ -474,6 +546,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const [paymentEditingId, setPaymentEditingId] = useState<string | null>(null);
   const [paymentModalError, setPaymentModalError] = useState<string | null>(null);
   const [paymentInitialEventIds, setPaymentInitialEventIds] = useState<string[]>([]);
+  const [markerPendingAction, setMarkerPendingAction] = useState<{ poId: string; eventId: string } | null>(null);
+  const [modalFocusTarget, setModalFocusTarget] = useState<"payments" | "shipping" | "arrival" | null>(null);
+  const paymentSectionRef = useRef<HTMLDivElement | null>(null);
+  const poViewMode = useMemo<"table" | "timeline">(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("view") === "timeline" ? "timeline" : "table";
+  }, [location.search]);
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -534,7 +613,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
   const productBySku = useMemo(() => new Map(productRows.map((entry) => [entry.sku, entry])), [productRows]);
 
-  const rows = useMemo(() => {
+  const canonicalRows = useMemo<PoViewRow[]>(() => {
     const paymentRecords = Array.isArray(state.payments) ? state.payments : [];
     return (Array.isArray(state.pos) ? state.pos : [])
       .map((entry) => {
@@ -556,12 +635,46 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         const etaDate = String(po.etaManual || schedule.etaDate || "");
         const goodsEur = Number(itemMetrics.goodsEur || 0);
         const skuCount = itemMetrics.items.length;
+        const itemSkusText = Array.isArray(po.items)
+          ? (po.items as Record<string, unknown>[]).map((row) => String(row?.sku || "")).join(" ")
+          : "";
         const paymentRows = (() => {
           try {
             const cloned = structuredClone(po);
-            return buildPaymentRows(cloned, PO_CONFIG, poSettings, paymentRecords as Record<string, unknown>[]);
+            return buildPaymentRows(cloned, PO_CONFIG, poSettings, paymentRecords as Record<string, unknown>[]) as PoPaymentRow[];
           } catch {
-            return [];
+            return [] as PoPaymentRow[];
+          }
+        })();
+        const timelineMarkers = (() => {
+          try {
+            const cloned = structuredClone(po);
+            return (buildPaymentRows(
+              cloned,
+              PO_CONFIG,
+              poSettings,
+              paymentRecords as Record<string, unknown>[],
+              { includeIncoming: true },
+            ) as PoPaymentRow[])
+              .map((row): PoTimelineMarkerRow => ({
+                id: String(row.id || ""),
+                typeLabel: String(row.typeLabel || ""),
+                label: String(row.label || ""),
+                dueDate: row.dueDate ? String(row.dueDate) : null,
+                plannedEur: Number(row.plannedEur || 0),
+                status: row.status === "paid" ? "paid" : "open",
+                paidDate: row.paidDate ? String(row.paidDate) : null,
+                eventType: row.eventType ? String(row.eventType) : null,
+                direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
+              }))
+              .filter((row) => row.id && row.plannedEur > 0)
+              .sort((left, right) => {
+                const dateCompare = String(left.dueDate || "").localeCompare(String(right.dueDate || ""));
+                if (dateCompare !== 0) return dateCompare;
+                return String(left.label || "").localeCompare(String(right.label || ""));
+              });
+          } catch {
+            return [] as PoTimelineMarkerRow[];
           }
         })();
         const paidEur = paymentRows
@@ -570,7 +683,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         const openEur = paymentRows
           .filter((row) => row.status !== "paid")
           .reduce((sum, row) => sum + Number(row.plannedEur || 0), 0);
-        const statusText = openEur <= 0 && paidEur > 0
+        const statusText: PoViewRow["statusText"] = openEur <= 0 && paidEur > 0
           ? "paid_only"
           : (openEur > 0 && paidEur > 0 ? "mixed" : "open");
         return {
@@ -581,34 +694,79 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           skuCount,
           supplierName: supplierNameById.get(String(po.supplierId || "")) || "—",
           orderDate: po.orderDate ? String(po.orderDate) : null,
+          productionEndDate: schedule.productionEndDate ? String(schedule.productionEndDate) : null,
           etdDate: etdDate || null,
           etaDate: etaDate || null,
+          arrivalDate: po.arrivalDate ? String(po.arrivalDate) : null,
           goodsEur,
           openEur,
           paidEur,
           statusText,
+          itemSkusText,
+          timelineMarkers,
           raw: po,
-        } satisfies PoRow;
-      })
-      .filter((row) => {
-        if (!includeArchived && row.raw.archived) return false;
-        const needle = search.trim().toLowerCase();
-        if (!needle) return true;
-        const itemSkus = Array.isArray(row.raw.items)
-          ? (row.raw.items as Record<string, unknown>[]).map((entry) => String(entry?.sku || "")).join(" ")
-          : "";
-        return [
-          row.poNo,
-          row.sku,
-          row.alias,
-          row.supplierName,
-          itemSkus,
-        ].join(" ").toLowerCase().includes(needle);
+        } as PoViewRow;
       })
       .sort((a, b) => String(a.poNo || "").localeCompare(String(b.poNo || "")));
-  }, [includeArchived, poSettings, productBySku, search, state.payments, state.pos, supplierNameById]);
+  }, [poSettings, productBySku, state.payments, state.pos, supplierNameById]);
 
-  const columns = useMemo<ColumnDef<PoRow>[]>(() => [
+  const filteredRows = useMemo<PoViewRow[]>(() => {
+    const needle = search.trim().toLowerCase();
+    return canonicalRows.filter((row) => {
+      const archived = row.raw.archived === true;
+      if (archiveFilter === "active" && archived) return false;
+      if (archiveFilter === "archived" && !archived) return false;
+      if (paymentStatusFilter !== "all" && row.statusText !== paymentStatusFilter) return false;
+      if (onlyOpenPayments && row.openEur <= 0) return false;
+      if (!needle) return true;
+      return [
+        row.poNo,
+        row.sku,
+        row.alias,
+        row.supplierName,
+        row.itemSkusText,
+      ].join(" ").toLowerCase().includes(needle);
+    });
+  }, [archiveFilter, canonicalRows, onlyOpenPayments, paymentStatusFilter, search]);
+
+  const timelineStartMonth = useMemo(
+    () => determineTimelineStartMonth({ state: stateObj, rows: filteredRows }),
+    [filteredRows, stateObj],
+  );
+  const timelineHorizon = useMemo(() => determineTimelineHorizon(stateObj), [stateObj]);
+  const timelineMonths = useMemo(
+    () => monthRange(timelineStartMonth, timelineHorizon),
+    [timelineHorizon, timelineStartMonth],
+  );
+  const timelineRange = useMemo<TimelineRange | null>(() => {
+    if (!timelineMonths.length) return null;
+    const startDate = parseIsoDate(`${timelineMonths[0]}-01`);
+    if (!startDate) return null;
+    const endDate = new Date(startDate.getTime());
+    endDate.setUTCMonth(endDate.getUTCMonth() + timelineHorizon);
+    return {
+      startMs: startDate.getTime(),
+      endMs: endDate.getTime(),
+      totalDays: Math.max(1, (endDate.getTime() - startDate.getTime()) / MS_PER_DAY),
+    };
+  }, [timelineHorizon, timelineMonths]);
+  const todayLinePct = useMemo(() => {
+    if (!timelineRange) return 0;
+    return toTimelinePercent(new Date(), timelineRange);
+  }, [timelineRange]);
+
+  function updatePoViewMode(next: "table" | "timeline"): void {
+    const params = new URLSearchParams(location.search);
+    if (next === "timeline") params.set("view", "timeline");
+    else params.delete("view");
+    const query = params.toString();
+    navigate({
+      pathname: location.pathname,
+      search: query ? `?${query}` : "",
+    }, { replace: true });
+  }
+
+  const columns = useMemo<ColumnDef<PoViewRow>[]>(() => [
     { header: "PO", accessorKey: "poNo", meta: { width: 98 } },
     {
       header: "Produkt",
@@ -698,9 +856,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
   const draftPoRecord = useMemo(() => {
     if (!draftValues) return null;
-    const existing = editingId ? rows.find((row) => row.id === editingId)?.raw || null : null;
+    const existing = editingId ? canonicalRows.find((row) => row.id === editingId)?.raw || null : null;
     return toPoRecord({ ...draftValues, items: draftItems }, existing);
-  }, [draftItems, draftValues, editingId, rows]);
+  }, [canonicalRows, draftItems, draftValues, editingId]);
 
   const draftAggregate = useMemo(() => {
     return computePoAggregateMetrics({
@@ -912,6 +1070,51 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     }
   }, [draftPoRecord, poSettings, state.payments]);
 
+  useEffect(() => {
+    if (!markerPendingAction || !modalOpen) return;
+    if (editingId !== markerPendingAction.poId) return;
+    if (!draftPoRecord) return;
+    const markerRow = draftPaymentRows.find((row) => row.id === markerPendingAction.eventId) || null;
+    if (markerRow) {
+      openPaymentBookingModal(markerRow);
+      setMarkerPendingAction(null);
+      return;
+    }
+    setModalFocusTarget("payments");
+    setMarkerPendingAction(null);
+  }, [draftPaymentRows, draftPoRecord, editingId, markerPendingAction, modalOpen]);
+
+  useEffect(() => {
+    if (!modalOpen || !modalFocusTarget) return;
+    const focusWithScroll = (element: HTMLElement | null): void => {
+      if (!element) return;
+      element.scrollIntoView({ block: "center", behavior: "smooth" });
+      element.focus();
+    };
+    const frame = window.requestAnimationFrame(() => {
+      if (modalFocusTarget === "payments") {
+        const section = paymentSectionRef.current;
+        if (section) {
+          section.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+        setModalFocusTarget(null);
+        return;
+      }
+      if (modalFocusTarget === "shipping") {
+        focusWithScroll(document.getElementById("v2-po-etd-manual"));
+        setModalFocusTarget(null);
+        return;
+      }
+      if (modalFocusTarget === "arrival") {
+        focusWithScroll(document.getElementById("v2-po-arrival-date"));
+        setModalFocusTarget(null);
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [modalFocusTarget, modalOpen]);
+
   const paymentRecordById = useMemo(() => {
     const map = new Map<string, Record<string, unknown>>();
     (Array.isArray(state.payments) ? state.payments : []).forEach((entry) => {
@@ -1047,6 +1250,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       orderDate: String(prefill?.orderDate || existing?.orderDate || new Date().toISOString().slice(0, 10)),
       etdManual: String(prefill?.etdManual || existing?.etdManual || ""),
       etaManual: String(prefill?.etaManual || existing?.etaManual || ""),
+      arrivalDate: String(prefill?.arrivalDate || existing?.arrivalDate || ""),
       transport: (String(existing?.transport || defaults.transport || "sea").toLowerCase() as "sea" | "rail" | "air"),
       dutyRatePct: Number(existing?.dutyRatePct ?? defaults.dutyRatePct ?? settings.dutyRatePct ?? 0),
       dutyIncludeFreight: existing?.dutyIncludeFreight !== false,
@@ -1182,6 +1386,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
   function openCreateModal(prefill?: PoCreatePrefill): void {
     setEditingId(null);
+    setModalFocusTarget(null);
     const draft = buildDefaultDraft(null, prefill);
     form.setFieldsValue({
       ...draft,
@@ -1191,11 +1396,17 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setModalOpen(true);
   }
 
-  function openEditModal(existing: Record<string, unknown>): void {
+  function openEditModal(existing: Record<string, unknown>, focusTarget: "payments" | "shipping" | "arrival" | null = null): void {
     setEditingId(String(existing.id || ""));
+    setModalFocusTarget(focusTarget);
     form.setFieldsValue(buildDefaultDraft(existing));
     setSkuPickerValues([]);
     setModalOpen(true);
+  }
+
+  function openTimelinePayment(row: PoViewRow, marker: PoTimelineMarkerRow): void {
+    setMarkerPendingAction({ poId: row.id, eventId: marker.id });
+    openEditModal(row.raw, "payments");
   }
 
   function openPaymentBookingModal(seed?: PoPaymentRow | null): void {
@@ -1439,7 +1650,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       throw new Error("Milestone Prozentwerte muessen 100% ergeben.");
     }
     const existing = editingId
-      ? rows.find((row) => row.id === editingId)?.raw || null
+      ? canonicalRows.find((row) => row.id === editingId)?.raw || null
       : null;
     const nextValues: PoFormValues = {
       ...values,
@@ -1490,6 +1701,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     modalCollab.clearDraft();
 
     setModalOpen(false);
+    setModalFocusTarget(null);
+    setMarkerPendingAction(null);
     setEditingId(null);
     setSkuPickerValues([]);
     form.resetFields();
@@ -1498,12 +1711,26 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const source = params.get("source");
+    const clearHandledParams = (keys: string[]): void => {
+      let changed = false;
+      keys.forEach((key) => {
+        if (!params.has(key)) return;
+        params.delete(key);
+        changed = true;
+      });
+      if (!changed) return;
+      const query = params.toString();
+      navigate({
+        pathname: location.pathname,
+        search: query ? `?${query}` : "",
+      }, { replace: true });
+    };
     if (source === "fo_convert") {
       const poNo = String(params.get("poNo") || "").trim();
       if (poNo) {
         setSearch(poNo);
       }
-      navigate(location.pathname, { replace: true });
+      clearHandledParams(["source", "poNo"]);
       return;
     }
     if (source !== "inventory_projection") return;
@@ -1523,7 +1750,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     if (recommendedOrderDate) prefill.orderDate = recommendedOrderDate;
 
     openCreateModal(prefill);
-    navigate(location.pathname, { replace: true });
+    clearHandledParams(["source", "sku", "suggestedUnits", "requiredArrivalDate", "recommendedOrderDate"]);
   }, [location.pathname, location.search, navigate, productRows]);
 
   return (
@@ -1542,9 +1769,14 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
             <Button type="primary" onClick={() => openCreateModal()}>Neue PO</Button>
-            <Checkbox checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)}>
-              Archiv anzeigen
-            </Checkbox>
+            <Segmented
+              value={poViewMode}
+              options={[
+                { label: "Tabelle", value: "table" },
+                { label: "Timeline", value: "timeline" },
+              ]}
+              onChange={(value) => updatePoViewMode(String(value) === "timeline" ? "timeline" : "table")}
+            />
             {saving ? <Tag color="processing">Speichern...</Tag> : null}
             {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
           </div>
@@ -1562,13 +1794,162 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             onChange={(event) => setSearch(event.target.value)}
             style={{ width: 320, maxWidth: "100%" }}
           />
+          <Select
+            value={archiveFilter}
+            onChange={(value) => setArchiveFilter(String(value) as "active" | "archived" | "all")}
+            options={[
+              { value: "active", label: "Aktiv" },
+              { value: "archived", label: "Archiv" },
+              { value: "all", label: "Aktiv + Archiv" },
+            ]}
+            style={{ width: 170 }}
+          />
+          <Select
+            value={paymentStatusFilter}
+            onChange={(value) => setPaymentStatusFilter(String(value) as "all" | "open" | "mixed" | "paid_only")}
+            options={[
+              { value: "all", label: "Status: Alle" },
+              { value: "open", label: "Status: Offen" },
+              { value: "mixed", label: "Status: Teilweise bezahlt" },
+              { value: "paid_only", label: "Status: Bezahlt" },
+            ]}
+            style={{ width: 220 }}
+          />
+          <Checkbox checked={onlyOpenPayments} onChange={(event) => setOnlyOpenPayments(event.target.checked)}>
+            Nur POs mit offenen Zahlungen
+          </Checkbox>
         </div>
-        <TanStackGrid
-          data={rows}
-          columns={columns}
-          minTableWidth={1360}
-          tableLayout="auto"
-        />
+        {poViewMode === "table" ? (
+          <TanStackGrid
+            data={filteredRows}
+            columns={columns}
+            minTableWidth={1360}
+            tableLayout="auto"
+          />
+        ) : (
+          <div className="v2-po-timeline">
+            <div
+              className="v2-po-timeline-head"
+              style={{ "--po-timeline-cols": timelineMonths.length } as CSSProperties}
+            >
+              <div className="v2-po-timeline-head-cell v2-po-timeline-head-cell--meta">PO / Supplier</div>
+              {timelineMonths.map((month) => (
+                <div key={month} className="v2-po-timeline-head-cell">{formatMonthLabel(month)}</div>
+              ))}
+            </div>
+
+            {!filteredRows.length ? (
+              <Alert
+                type="info"
+                showIcon
+                message="Keine POs für die aktuelle Suche/Filter."
+              />
+            ) : null}
+
+            {filteredRows.map((row) => {
+              const orderDate = parseIsoDate(row.orderDate);
+              const productionEndDate = parseIsoDate(row.productionEndDate);
+              const etdDate = parseIsoDate(row.etdDate);
+              const etaDate = parseIsoDate(row.etaDate);
+              const productionLeft = timelineRange ? toTimelinePercent(orderDate, timelineRange) : 0;
+              const productionEnd = timelineRange ? toTimelinePercent(productionEndDate, timelineRange) : 0;
+              const transitLeft = timelineRange ? toTimelinePercent(etdDate, timelineRange) : 0;
+              const transitEnd = timelineRange ? toTimelinePercent(etaDate, timelineRange) : 0;
+              const productionWidth = Math.max(0.75, productionEnd - productionLeft);
+              const transitWidth = Math.max(0.75, transitEnd - transitLeft);
+              return (
+                <div key={row.id} className="v2-po-timeline-row">
+                  <button
+                    type="button"
+                    className="v2-po-timeline-meta"
+                    onClick={() => openEditModal(row.raw)}
+                  >
+                    <div className="v2-po-timeline-title">{row.poNo || "PO"}</div>
+                    <div className="v2-po-timeline-subtitle">
+                      {row.supplierName} · {row.skuCount > 1 ? `Multi-SKU (${row.skuCount}), Start ${row.sku}` : row.alias}
+                    </div>
+                    <div className="v2-po-timeline-subtitle">
+                      Order {formatDate(row.orderDate)} · ETA {formatDate(row.etaDate)}
+                    </div>
+                    <div className="v2-po-timeline-action-row">
+                      <Button
+                        size="small"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditModal(row.raw, "shipping");
+                        }}
+                      >
+                        Versendet am...
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditModal(row.raw, "arrival");
+                        }}
+                      >
+                        Empfangen am...
+                      </Button>
+                    </div>
+                  </button>
+                  <div className="v2-po-timeline-track">
+                    <div className="v2-po-timeline-track-bg" />
+                    {timelineRange ? (
+                      <div className="v2-po-timeline-today" style={{ left: `${todayLinePct}%` }} title="Heute" />
+                    ) : null}
+                    {timelineRange && productionWidth > 0 ? (
+                      <div
+                        className="v2-po-timeline-segment v2-po-timeline-segment--production"
+                        style={{ left: `${productionLeft}%`, width: `${productionWidth}%` }}
+                        title="Produktion"
+                      />
+                    ) : null}
+                    {timelineRange && transitWidth > 0 ? (
+                      <div
+                        className="v2-po-timeline-segment v2-po-timeline-segment--transit"
+                        style={{ left: `${transitLeft}%`, width: `${transitWidth}%` }}
+                        title="Transit"
+                      />
+                    ) : null}
+                    {timelineRange ? row.timelineMarkers.map((marker) => {
+                      const dueDate = parseIsoDate(marker.dueDate);
+                      const markerLeft = toTimelinePercent(dueDate, timelineRange);
+                      const markerClass = marker.status === "paid"
+                        ? "v2-po-timeline-marker v2-po-timeline-marker--paid"
+                        : "v2-po-timeline-marker v2-po-timeline-marker--open";
+                      const markerTypeClass = marker.direction === "in" ? "v2-po-timeline-marker--incoming" : "";
+                      const tooltip = [
+                        `${paymentTypeLabel(marker)} (${marker.status === "paid" ? "bezahlt" : "offen"})`,
+                        `Soll: ${formatCurrency(marker.plannedEur)}`,
+                        `Faellig: ${formatDate(marker.dueDate)}`,
+                        marker.paidDate ? `Bezahlt am: ${formatDate(marker.paidDate)}` : "Bezahlt am: —",
+                      ].join("\n");
+                      return (
+                        <Tooltip key={marker.id} title={<span style={{ whiteSpace: "pre-line" }}>{tooltip}</span>}>
+                          <button
+                            type="button"
+                            className={`${markerClass} ${markerTypeClass}`.trim()}
+                            style={{ left: `${markerLeft}%` }}
+                            onClick={() => openTimelinePayment(row, marker)}
+                            aria-label={`${paymentTypeLabel(marker)} fuer ${row.poNo}`}
+                          />
+                        </Tooltip>
+                      );
+                    }) : null}
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="v2-po-timeline-legend">
+              <span><span className="v2-po-timeline-legend-box v2-po-timeline-legend-box--production" /> Produktion</span>
+              <span><span className="v2-po-timeline-legend-box v2-po-timeline-legend-box--transit" /> Transit</span>
+              <span><span className="v2-po-timeline-legend-dot v2-po-timeline-legend-dot--open" /> Zahlung offen</span>
+              <span><span className="v2-po-timeline-legend-dot v2-po-timeline-legend-dot--paid" /> Zahlung bezahlt</span>
+              <span><span className="v2-po-timeline-legend-line" /> Heute</span>
+            </div>
+          </div>
+        )}
       </Card>
 
       <Modal
@@ -1578,6 +1959,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         onCancel={() => {
           modalCollab.clearDraft();
           setModalOpen(false);
+          setModalFocusTarget(null);
+          setMarkerPendingAction(null);
           setSkuPickerValues([]);
         }}
         onOk={() => {
@@ -1663,10 +2046,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               <Input type="date" />
             </Form.Item>
             <Form.Item name="etdManual" label="ETD Manual" style={{ width: 190 }}>
-              <Input type="date" />
+              <Input id="v2-po-etd-manual" type="date" />
             </Form.Item>
             <Form.Item name="etaManual" label="ETA Manual" style={{ width: 190 }}>
               <Input type="date" />
+            </Form.Item>
+            <Form.Item name="arrivalDate" label="Empfangen am" style={{ width: 190 }}>
+              <Input id="v2-po-arrival-date" type="date" />
             </Form.Item>
             <Form.Item name="fxOverride" label="FX Override" style={{ width: 150 }}>
               <DeNumberInput mode="fx" min={0} />
@@ -2009,7 +2395,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             </Form.List>
           </Card>
 
-          <Card size="small">
+          <div ref={paymentSectionRef}>
+            <Card size="small">
             <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
               <Text strong>Event / Payment Preview</Text>
               <Button
@@ -2114,7 +2501,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             ) : (
               <Text type="secondary">Preview erscheint nach Eingabe.</Text>
             )}
-          </Card>
+            </Card>
+          </div>
         </Form>
       </Modal>
 

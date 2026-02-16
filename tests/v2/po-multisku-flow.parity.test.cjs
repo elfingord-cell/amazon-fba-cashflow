@@ -140,6 +140,71 @@ test("po multi-sku flow: supplier milestones are goods-based and freight stays s
   assert.equal(Number(freight.plannedEur || 0), 90);
 });
 
+test("po timeline event coverage: timeline view can include refund and all payment milestones", () => {
+  const record = {
+    id: "po-timeline-1",
+    poNo: "PO-TL-1",
+    supplierId: "sup-1",
+    orderDate: "2026-03-01",
+    prodDays: 30,
+    transitDays: 20,
+    dutyRatePct: 6.5,
+    eustRatePct: 19,
+    dutyIncludeFreight: true,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
+    items: [
+      {
+        id: "po-tl-item-1",
+        sku: "SKU-A",
+        units: 100,
+        unitCostUsd: 5,
+        unitExtraUsd: 0,
+        extraFlatUsd: 0,
+      },
+    ],
+    freightEur: 120,
+    milestones: [
+      { id: "ms-dep", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "ms-bal", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+    autoEvents: [
+      { id: "auto-freight", type: "freight", enabled: true },
+      { id: "auto-duty", type: "duty", enabled: true },
+      { id: "auto-eust", type: "eust", enabled: true },
+      { id: "auto-vat", type: "vat_refund", enabled: true },
+      { id: "auto-fx", type: "fx_fee", enabled: false },
+    ],
+    paymentLog: {},
+  };
+
+  const settings = {
+    fxRate: 1,
+    fxFeePct: 0,
+    dutyRatePct: 6.5,
+    dutyIncludeFreight: true,
+    eustRatePct: 19,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
+    freightLagDays: 0,
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+
+  const defaultRows = buildPaymentRows(record, PO_CONFIG, settings, []);
+  const timelineRows = buildPaymentRows(record, PO_CONFIG, settings, [], { includeIncoming: true });
+  const timelineTypes = new Set(timelineRows.map((row) => String(row.eventType || "")));
+  const timelineLabels = timelineRows.map((row) => String(row.typeLabel || row.label || ""));
+
+  assert.equal(defaultRows.some((row) => String(row.eventType || "") === "vat_refund"), false);
+  assert.equal(timelineTypes.has("freight"), true);
+  assert.equal(timelineTypes.has("duty"), true);
+  assert.equal(timelineTypes.has("eust"), true);
+  assert.equal(timelineTypes.has("vat_refund"), true);
+  assert.equal(timelineLabels.some((label) => label.toLowerCase().includes("deposit")), true);
+  assert.equal(timelineLabels.some((label) => label.toLowerCase().includes("balance")), true);
+});
+
 test("po multi-sku flow: FO merge creates a single multi-item PO with critical path", () => {
   const po = createPoFromFos({
     poNumber: "PO-FO-MERGE-1",
@@ -201,4 +266,23 @@ test("po multi-sku flow: PO module enforces supplier scope and mirror fields", (
   assert.match(source, /prodDays: Number\(aggregated\.prodDays/);
   assert.match(source, /transitDays: Number\(aggregated\.transitDays/);
   assert.match(source, /freightEur: Number\(aggregated\.freightEur/);
+});
+
+test("po timeline integration: table and timeline reuse shared filtered rows", () => {
+  const source = readPoModuleSource();
+
+  assert.match(source, /const filteredRows = useMemo/);
+  assert.match(source, /data=\{filteredRows\}/);
+  assert.match(source, /filteredRows\.map\(\(row\) =>/);
+  assert.match(source, /paymentStatusFilter/);
+  assert.match(source, /onlyOpenPayments/);
+});
+
+test("po timeline marker click opens payment flow with modal fallback", () => {
+  const source = readPoModuleSource();
+
+  assert.match(source, /setMarkerPendingAction/);
+  assert.match(source, /openTimelinePayment/);
+  assert.match(source, /openPaymentBookingModal\(markerRow\)/);
+  assert.match(source, /setModalFocusTarget\("payments"\)/);
 });

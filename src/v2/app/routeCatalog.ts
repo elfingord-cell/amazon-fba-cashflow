@@ -39,7 +39,6 @@ const DividendPlanningModule = lazyRoute(() => import("../modules/dividend-plann
 const VatModule = lazyRoute(() => import("../modules/vat"));
 const ExportImportModule = lazyRoute(() => import("../modules/export-import"));
 const AccountingExportModule = lazyRoute(() => import("../modules/accounting-export"));
-const PlanModule = lazyRoute(() => import("../modules/plan"));
 const DebugModule = lazyRoute(() => import("../modules/debug"));
 
 export type V2RouteSection = "overview" | "operations" | "finance" | "mastertools";
@@ -77,7 +76,6 @@ export const V2_ROUTES: V2RouteItem[] = [
   },
 
   { key: "forecast", path: "forecast", label: "Absatzprognose", section: "operations", icon: LineChartOutlined, Component: ForecastModule },
-  { key: "plan", path: "plan", label: "Planung", section: "operations", icon: ProjectOutlined, Component: PlanModule },
   { key: "inventory-snapshot", path: "inventory/snapshot", label: "Bestandsaufnahme", section: "operations", icon: InboxOutlined, Component: InventorySnapshotPage },
   {
     key: "inventory-projection",
@@ -162,6 +160,7 @@ const ROUTE_META_REDIRECTS: V2RouteRedirect[] = V2_ROUTES.flatMap((route) => {
 
 export const V2_ROUTE_REDIRECTS: V2RouteRedirect[] = [
   ...ROUTE_META_REDIRECTS,
+  { from: "plan", to: "orders/po?view=timeline" },
   { from: "fo", to: "orders/fo" },
   { from: "po", to: "orders/po" },
   { from: "payments-export", to: "abschluss/buchhalter" },

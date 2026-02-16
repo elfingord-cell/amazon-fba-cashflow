@@ -105,12 +105,12 @@ export default function OrdersModule(): JSX.Element {
         items={[
           {
             key: "po",
-            label: "Purchase Orders",
+            label: "Bestellungen (PO)",
             children: <PoModule embedded />,
           },
           {
             key: "fo",
-            label: "Forecast Orders",
+            label: "Forecast Orders (FO)",
             children: <FoModule embedded />,
           },
         ]}

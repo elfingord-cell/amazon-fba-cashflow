@@ -947,6 +947,7 @@ function suggestedInvoiceFilename(record, paidDate) {
 function mapPaymentType(evt, milestone) {
   if (evt.type === "freight") return "Fracht";
   if (evt.type === "eust") return "EUSt";
+  if (evt.type === "vat_refund") return "EUSt-Erstattung";
   if (evt.type === "duty") return "Other";
   if (evt.type === "fx_fee") return "Other";
   const label = String(milestone?.label || evt.label || "").toLowerCase();
@@ -979,18 +980,28 @@ function buildInvoiceKeyEvents(selectedEvents) {
   return `${unique.slice(0, 2).join("+")}+more`;
 }
 
-function buildPaymentRows(record, config, settings, paymentRecords = []) {
+function buildPaymentRows(record, config, settings, paymentRecords = [], options = {}) {
+  const includeIncoming = options?.includeIncoming === true;
+  const includeZeroAmount = options?.includeZeroAmount === true;
   ensurePaymentLog(record);
   const milestones = Array.isArray(record.milestones) ? record.milestones : [];
   const msMap = new Map(milestones.map(item => [item.id, item]));
   const paymentMap = buildPaymentMap(paymentRecords);
   const events = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
   return events
-    .filter(evt => evt && Number(evt.amount || 0) < 0)
+    .filter((evt) => {
+      if (!evt) return false;
+      const amount = Number(evt.amount || 0);
+      if (!Number.isFinite(amount)) return false;
+      if (amount < 0) return true;
+      if (amount > 0) return includeIncoming;
+      return includeZeroAmount;
+    })
     .map(evt => {
       const log = record.paymentLog?.[evt.id] || {};
       const paymentInternalId = ensurePaymentInternalId(record, evt.id);
-      const planned = Math.abs(Number(evt.amount || 0));
+      const amount = Number(evt.amount || 0);
+      const planned = Math.abs(amount);
       const payment = log.paymentId ? paymentMap.get(log.paymentId) : null;
       const status = log.status === "paid" || payment ? "paid" : "open";
       const paidDate = log.paidDate || payment?.paidDate || null;
@@ -1011,6 +1022,7 @@ function buildPaymentRows(record, config, settings, paymentRecords = []) {
         invoiceDriveUrl: payment?.invoiceDriveUrl || "",
         invoiceFolderDriveUrl: payment?.invoiceFolderDriveUrl || "",
         eventType: evt.type || null,
+        direction: amount < 0 ? "out" : (amount > 0 ? "in" : "neutral"),
       };
     });
 }

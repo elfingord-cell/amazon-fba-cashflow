@@ -40,6 +40,19 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
     const routeCatalog = await server.ssrLoadModule("/src/v2/app/routeCatalog.ts");
     const routes = Array.isArray(routeCatalog.V2_ROUTES) ? routeCatalog.V2_ROUTES : [];
     assert.ok(routes.length > 0, "Keine V2-Routen gefunden.");
+    assert.equal(
+      routes.some((route) => String(route?.key || "") === "plan"),
+      false,
+      "Plan-Route darf nicht mehr als eigener V2-Tab erscheinen.",
+    );
+    const redirects = Array.isArray(routeCatalog.V2_ROUTE_REDIRECTS) ? routeCatalog.V2_ROUTE_REDIRECTS : [];
+    const planRedirect = redirects.find((entry) => String(entry?.from || "") === "plan");
+    assert.ok(planRedirect, "Redirect fuer /v2/plan fehlt.");
+    assert.equal(
+      String(planRedirect.to || ""),
+      "orders/po?view=timeline",
+      "Plan-Redirect muss auf PO-Timeline zeigen.",
+    );
 
     const failures = [];
     for (const route of routes) {
