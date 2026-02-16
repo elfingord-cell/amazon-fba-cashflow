@@ -33,6 +33,7 @@ import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/mont
 import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
+import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModuleExpandedCategoryKeys } from "../../state/uiPrefs";
 import { useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
@@ -133,6 +134,34 @@ const PNL_GROUP_ORDER: Array<{ key: DashboardPnlRow["group"]; label: string }> =
   { key: "outflow", label: "Sonstige Auszahlungen" },
   { key: "other", label: "Sonstige" },
 ];
+
+const DASHBOARD_SECTION_KEYS = new Set([
+  "signals",
+  "cashflow",
+  "actions",
+  "robustness",
+  "simulation",
+  "pnl",
+  "actuals",
+  "kpis",
+]);
+
+const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["signals", "cashflow"];
+
+function normalizeDashboardSectionKeys(value: readonly string[]): string[] {
+  const next = new Set<string>();
+  value.forEach((entry) => {
+    const key = String(entry || "").trim();
+    if (DASHBOARD_SECTION_KEYS.has(key)) {
+      next.add(key);
+    }
+  });
+  return Array.from(next);
+}
+
+function toActiveKeys(value: string | string[]): string[] {
+  return Array.isArray(value) ? value : value ? [value] : [];
+}
 
 function formatCurrency(value: unknown): string {
   const number = Number(value);
@@ -443,6 +472,7 @@ export default function DashboardModule(): JSX.Element {
   const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
   const [messageApi, contextHolder] = message.useMessage();
+  const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
   const [range, setRange] = useState<DashboardRange>("next12");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
@@ -452,6 +482,11 @@ export default function DashboardModule(): JSX.Element {
   const [simLabel, setSimLabel] = useState<string>("");
   const [poArrivalDrafts, setPoArrivalDrafts] = useState<Record<string, string>>({});
   const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
+  const [openSections, setOpenSections] = useState<string[]>(() => {
+    const stored = getModuleExpandedCategoryKeys("dashboard");
+    if (!hasStoredDashboardSections) return DEFAULT_DASHBOARD_OPEN_SECTIONS.slice();
+    return normalizeDashboardSectionKeys(stored);
+  });
 
   const stateObject = state as unknown as Record<string, unknown>;
   const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [state]);
@@ -525,6 +560,14 @@ export default function DashboardModule(): JSX.Element {
       setSimMonth(visibleMonths[0]);
     }
   }, [simMonth, visibleMonths]);
+
+  useEffect(() => {
+    setModuleExpandedCategoryKeys("dashboard", openSections);
+  }, [openSections]);
+
+  const handleDashboardSectionsChange = (value: string | string[]) => {
+    setOpenSections(normalizeDashboardSectionKeys(toActiveKeys(value)));
+  };
 
   const simulationDraft = useMemo<SimulationEventDraft | null>(() => {
     if (!simMonth || !Number.isFinite(simAmount as number) || Number(simAmount) <= 0) return null;
@@ -1162,6 +1205,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "signals",
           label: "Executive Signals",
@@ -1269,6 +1314,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "cashflow",
           label: "Kontostand & Cashflow",
@@ -1300,6 +1347,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "actions",
           label: "Action Center & Forecast Ops",
@@ -1491,6 +1540,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "robustness",
           label: "Robustheits-Matrix",
@@ -1589,6 +1640,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "simulation",
           label: "Payout Planner (Simulation)",
@@ -1671,6 +1724,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "pnl",
           label: "Monatliche PnL (Drilldown)",
@@ -1693,6 +1748,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "actuals",
           label: "Plan/Ist Drilldown",
@@ -1715,6 +1772,8 @@ export default function DashboardModule(): JSX.Element {
 
       <Collapse
         className="v2-dashboard-module-collapse"
+        activeKey={openSections}
+        onChange={handleDashboardSectionsChange}
         items={[{
           key: "kpis",
           label: "KPI-Übersicht",

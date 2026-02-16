@@ -276,6 +276,9 @@ test("po timeline integration: table and timeline reuse shared filtered rows", (
   assert.match(source, /filteredRows\.map\(\(row\) =>/);
   assert.match(source, /paymentStatusFilter/);
   assert.match(source, /onlyOpenPayments/);
+  assert.match(source, /combineDutyAndEustRows/);
+  assert.match(source, /Umsatzsteuer \+ Zoll/);
+  assert.match(source, /tax_duty_combined/);
   assert.match(source, /\.filter\(\(row\) => row\.eventType !== "vat_refund"\)/);
   assert.match(source, /\.filter\(\(row\) => String\(row\.eventType \|\| ""\) !== "vat_refund"\)/);
 });

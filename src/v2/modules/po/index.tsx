@@ -88,6 +88,7 @@ interface PoItemDraft {
 
 interface PoTimelineMarkerRow {
   id: string;
+  eventIds?: string[];
   typeLabel: string;
   label: string;
   dueDate: string | null;
@@ -121,6 +122,7 @@ interface PoViewRow {
 
 interface PoPaymentRow {
   id: string;
+  eventIds?: string[];
   typeLabel: string;
   label: string;
   dueDate: string | null;
@@ -253,7 +255,92 @@ function statusTag(status: string): JSX.Element {
   return <Tag color="blue">Offen</Tag>;
 }
 
+function eventIdsOfRow(row: Pick<PoPaymentRow, "id" | "eventIds">): string[] {
+  const ids = Array.isArray(row.eventIds) ? row.eventIds : [];
+  const clean = ids.map((entry) => String(entry || "").trim()).filter(Boolean);
+  if (clean.length) return Array.from(new Set(clean));
+  const fallback = String(row.id || "").trim();
+  return fallback ? [fallback] : [];
+}
+
+function maxIsoDate(values: Array<string | null | undefined>): string | null {
+  const dates = values
+    .map((value) => String(value || "").trim())
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort();
+  return dates.length ? dates[dates.length - 1] : null;
+}
+
+function paymentFlowSortRank(entry: Pick<PoPaymentRow, "eventType" | "label" | "typeLabel">): number {
+  const eventType = String(entry.eventType || "").toLowerCase();
+  const text = `${String(entry.typeLabel || "")} ${String(entry.label || "")}`.toLowerCase();
+  if (text.includes("deposit")) return 1;
+  if (text.includes("balance")) return 2;
+  if (eventType === "freight" || text.includes("shipping") || text.includes("fracht")) return 3;
+  if (eventType === "tax_duty_combined" || eventType === "duty" || eventType === "eust" || text.includes("zoll") || text.includes("umsatzsteuer")) return 4;
+  return 5;
+}
+
+function sortPaymentRowsByFlow(rows: PoPaymentRow[]): PoPaymentRow[] {
+  return [...rows].sort((left, right) => {
+    const dateCompare = String(left.dueDate || "").localeCompare(String(right.dueDate || ""));
+    if (dateCompare !== 0) return dateCompare;
+    const rankCompare = paymentFlowSortRank(left) - paymentFlowSortRank(right);
+    if (rankCompare !== 0) return rankCompare;
+    return String(left.label || "").localeCompare(String(right.label || ""));
+  });
+}
+
+function combineDutyAndEustRows(rows: PoPaymentRow[]): PoPaymentRow[] {
+  if (!rows.length) return rows;
+  const dutyRows = rows.filter((entry) => entry.eventType === "duty");
+  const eustRows = rows.filter((entry) => entry.eventType === "eust");
+  if (!dutyRows.length || !eustRows.length) return sortPaymentRowsByFlow(rows);
+
+  const sortedDuty = sortPaymentRowsByFlow(dutyRows);
+  const sortedEust = sortPaymentRowsByFlow(eustRows);
+  const pairCount = Math.min(sortedDuty.length, sortedEust.length);
+  const used = new Set<string>();
+  const combinedRows: PoPaymentRow[] = [];
+
+  for (let index = 0; index < pairCount; index += 1) {
+    const duty = sortedDuty[index];
+    const eust = sortedEust[index];
+    used.add(duty.id);
+    used.add(eust.id);
+    const paymentIds = Array.from(new Set([duty.paymentId, eust.paymentId].map((entry) => String(entry || "").trim()).filter(Boolean)));
+    const paidTogether = duty.status === "paid" && eust.status === "paid" && paymentIds.length === 1;
+    const mergedEventIds = Array.from(new Set([...eventIdsOfRow(duty), ...eventIdsOfRow(eust)]));
+    const mergedPaidActual = [duty.paidEurActual, eust.paidEurActual].every((value) => Number.isFinite(Number(value)))
+      ? Number(duty.paidEurActual || 0) + Number(eust.paidEurActual || 0)
+      : null;
+    combinedRows.push({
+      id: `tax-duty-${mergedEventIds.join("+") || `${duty.id}+${eust.id}`}`,
+      eventIds: mergedEventIds,
+      typeLabel: "Umsatzsteuer + Zoll",
+      label: "Umsatzsteuer + Zoll",
+      dueDate: maxIsoDate([duty.dueDate, eust.dueDate]),
+      plannedEur: Number(duty.plannedEur || 0) + Number(eust.plannedEur || 0),
+      status: paidTogether ? "paid" : "open",
+      paidDate: paidTogether ? maxIsoDate([duty.paidDate, eust.paidDate]) : null,
+      paidEurActual: paidTogether ? mergedPaidActual : null,
+      paymentId: paidTogether ? paymentIds[0] : null,
+      method: paidTogether ? String(duty.method || eust.method || "") || null : null,
+      paidBy: paidTogether ? String(duty.paidBy || eust.paidBy || "") || null : null,
+      note: paidTogether ? String(duty.note || eust.note || "") : "",
+      invoiceDriveUrl: paidTogether ? String(duty.invoiceDriveUrl || eust.invoiceDriveUrl || "") : "",
+      invoiceFolderDriveUrl: paidTogether ? String(duty.invoiceFolderDriveUrl || eust.invoiceFolderDriveUrl || "") : "",
+      eventType: "tax_duty_combined",
+      direction: "out",
+    });
+  }
+
+  const passthroughRows = rows.filter((entry) => !used.has(entry.id));
+  return sortPaymentRowsByFlow([...passthroughRows, ...combinedRows]);
+}
+
 function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "label">): string {
+  if (row.eventType === "tax_duty_combined") return "Umsatzsteuer + Zoll";
   if (row.eventType === "duty") return "Forwarder-Rechnung (Zoll)";
   if (row.eventType === "eust") return "Forwarder-Rechnung (EUSt)";
   if (row.eventType === "vat_refund") return "EUSt-Erstattung";
@@ -264,14 +351,11 @@ function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "l
 }
 
 function timelineMarkerSortRank(marker: Pick<PoTimelineMarkerRow, "eventType" | "label" | "typeLabel">): number {
-  const eventType = String(marker.eventType || "").toLowerCase();
-  const text = `${String(marker.typeLabel || "")} ${String(marker.label || "")}`.toLowerCase();
-  if (text.includes("deposit")) return 1;
-  if (text.includes("balance")) return 2;
-  if (eventType === "freight" || text.includes("shipping") || text.includes("fracht")) return 3;
-  if (eventType === "duty" || text.includes("zoll")) return 4;
-  if (eventType === "eust") return 5;
-  return 6;
+  return paymentFlowSortRank({
+    eventType: marker.eventType,
+    label: marker.label,
+    typeLabel: marker.typeLabel,
+  });
 }
 
 function paymentMethodOptions(): Array<{ value: string; label: string }> {
@@ -659,26 +743,42 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         })();
         const timelineMarkers = (() => {
           try {
-            const cloned = structuredClone(po);
-            return (buildPaymentRows(
-              cloned,
-              PO_CONFIG,
-              poSettings,
-              paymentRecords as Record<string, unknown>[],
-            ) as PoPaymentRow[])
-              .map((row): PoTimelineMarkerRow => ({
+            return combineDutyAndEustRows(
+              paymentRows
+                .map((row): PoPaymentRow => ({
                 id: String(row.id || ""),
+                eventIds: [String(row.id || "")],
                 typeLabel: String(row.typeLabel || ""),
                 label: String(row.label || ""),
                 dueDate: row.dueDate ? String(row.dueDate) : null,
                 plannedEur: Number(row.plannedEur || 0),
                 status: row.status === "paid" ? "paid" : "open",
                 paidDate: row.paidDate ? String(row.paidDate) : null,
+                paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
+                paymentId: row.paymentId ? String(row.paymentId) : null,
+                method: row.method ? String(row.method) : null,
+                paidBy: row.paidBy ? String(row.paidBy) : null,
+                note: String(row.note || ""),
+                invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
+                invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
                 eventType: row.eventType ? String(row.eventType) : null,
                 direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
               }))
               .filter((row) => row.eventType !== "vat_refund")
-              .filter((row) => row.id && row.plannedEur > 0)
+              .filter((row) => row.id && row.plannedEur > 0),
+            )
+              .map((row): PoTimelineMarkerRow => ({
+                id: row.id,
+                eventIds: eventIdsOfRow(row),
+                typeLabel: row.typeLabel,
+                label: row.label,
+                dueDate: row.dueDate,
+                plannedEur: row.plannedEur,
+                status: row.status,
+                paidDate: row.paidDate,
+                eventType: row.eventType,
+                direction: row.direction || "out",
+              }))
               .sort((left, right) => {
                 const dateCompare = String(left.dueDate || "").localeCompare(String(right.dueDate || ""));
                 if (dateCompare !== 0) return dateCompare;
@@ -1051,7 +1151,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     return warnings;
   }, [draftItems]);
 
-  const draftPaymentRows = useMemo<PoPaymentRow[]>(() => {
+  const draftPaymentRowsRaw = useMemo<PoPaymentRow[]>(() => {
     if (!draftPoRecord) return [];
     try {
       const cloned = structuredClone(draftPoRecord);
@@ -1065,6 +1165,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         .filter((row) => String(row.eventType || "") !== "vat_refund")
         .map((row) => ({
           id: String(row.id || ""),
+          eventIds: [String(row.id || "")],
           typeLabel: String(row.typeLabel || ""),
           label: String(row.label || ""),
           dueDate: row.dueDate ? String(row.dueDate) : null,
@@ -1084,6 +1185,11 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       return [];
     }
   }, [draftPoRecord, poSettings, state.payments]);
+
+  const draftPaymentRows = useMemo<PoPaymentRow[]>(
+    () => combineDutyAndEustRows(draftPaymentRowsRaw),
+    [draftPaymentRowsRaw],
+  );
 
   useEffect(() => {
     if (!markerPendingAction || !modalOpen) return;
@@ -1435,7 +1541,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     const selectedRows = fromPaymentId
       ? draftPaymentRows.filter((entry) => entry.paymentId === fromPaymentId)
       : (fromSeed ? [fromSeed] : draftPaymentRows.filter((entry) => entry.status !== "paid"));
-    const selectedEventIds = selectedRows.map((entry) => entry.id);
+    const selectedRowIds = selectedRows.map((entry) => entry.id);
+    const selectedEventIds = Array.from(new Set(selectedRows.flatMap((entry) => eventIdsOfRow(entry))));
     const plannedSum = selectedRows.reduce((sum, entry) => sum + Number(entry.plannedEur || 0), 0);
     const paymentRecord = fromPaymentId ? (paymentRecordById.get(fromPaymentId) || null) : null;
     const requestedPaymentId = String(
@@ -1445,7 +1552,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       || randomId("pay"),
     );
     paymentForm.setFieldsValue({
-      selectedEventIds,
+      selectedEventIds: selectedRowIds,
       paidDate: String(paymentRecord?.paidDate || fromSeed?.paidDate || today),
       method: String(paymentRecord?.method || fromSeed?.method || "Alibaba Trade Assurance"),
       paidBy: String(paymentRecord?.payer || fromSeed?.paidBy || ownDisplayName || syncSession.email || ""),
@@ -1469,8 +1576,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   async function savePaymentBooking(values: PoPaymentFormValues): Promise<void> {
     if (modalCollab.readOnly) throw new Error("Nur Lesemodus: keine Zahlungen speichern.");
     if (!editingId) throw new Error("PO muss zuerst gespeichert werden.");
-    const selectedIds = Array.from(new Set((values.selectedEventIds || []).map((entry) => String(entry || "").trim()).filter(Boolean)));
-    if (!selectedIds.length) throw new Error("Bitte mindestens einen Zahlungsbaustein auswaehlen.");
+    const selectedRowIds = Array.from(new Set((values.selectedEventIds || []).map((entry) => String(entry || "").trim()).filter(Boolean)));
+    if (!selectedRowIds.length) throw new Error("Bitte mindestens einen Zahlungsbaustein auswaehlen.");
     if (!values.paidDate) throw new Error("Bitte ein Zahlungsdatum setzen.");
     if (!values.method.trim()) throw new Error("Bitte eine Zahlungsmethode waehlen.");
     if (!values.paidBy.trim()) throw new Error("Bitte angeben, wer gezahlt hat.");
@@ -1486,7 +1593,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     }
 
     const paymentId = String(normalizePaymentId(values.paymentId) || normalizePaymentId(randomId("pay")) || randomId("pay"));
-    const selectedRows = draftPaymentRows.filter((entry) => selectedIds.includes(entry.id));
+    const selectedDisplayRows = draftPaymentRows.filter((entry) => selectedRowIds.includes(entry.id));
+    const selectedIds = Array.from(new Set(selectedDisplayRows.flatMap((entry) => eventIdsOfRow(entry))));
+    if (!selectedIds.length) throw new Error("Bitte mindestens einen gueltigen Zahlungsbaustein auswaehlen.");
+    const selectedRows = draftPaymentRowsRaw.filter((entry) => selectedIds.includes(entry.id));
     const allocations = allocatePayment(amountActualEur, selectedRows.map((row) => ({ id: row.id, plannedEur: row.plannedEur })));
     if (!allocations || !allocations.length) throw new Error("Konnte die Zahlung nicht auf die gewaehlten Bausteine verteilen.");
 
