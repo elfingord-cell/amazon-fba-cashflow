@@ -122,6 +122,10 @@ function formatInt(value) {
   return Math.round(Number(value)).toLocaleString("de-DE", { maximumFractionDigits: 0 });
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function filterProductsBySearch(products, search) {
   const term = String(search || "").trim().toLowerCase();
   if (!term) return products;
@@ -906,11 +910,20 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
   `;
 }
 
-function buildProjectionTable({ state, view, snapshot, products, categories, months }) {
+function buildProjectionTable({
+  state,
+  view,
+  snapshot,
+  products,
+  categories,
+  months,
+  projectionData = null,
+  inboundData = null,
+}) {
   const filtered = filterProductsBySearch(products, view.search);
   const groups = buildCategoryGroups(filtered, categories);
   const forecastBySku = new Map();
-  const projection = computeInventoryProjection({
+  const projection = projectionData || computeInventoryProjection({
     state,
     months,
     products: filtered,
@@ -936,7 +949,7 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
     const sku = String(item.sku || "").trim();
     if (sku) snapshotMap.set(sku, item);
   });
-  const { inboundMap, missingEtaSkus } = buildInboundMap(state);
+  const { inboundMap, missingEtaSkus } = inboundData || buildInboundMap(state);
   const abcBySku = computeAbcClassification(state).bySku;
 
   const rows = groups.map(group => {
@@ -949,6 +962,11 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
       const coverageDaysValue = resolveCoverageDays(product, state);
       const safetyDaysLabel = Number.isFinite(safetyDaysValue) ? formatInt(safetyDaysValue) : "—";
       const coverageDaysLabel = Number.isFinite(coverageDaysValue) ? formatInt(coverageDaysValue) : "—";
+      const drilldownButton = `
+        <button class="inventory-drilldown-trigger" type="button" data-action="open-drilldown" data-sku="${escapeHtml(sku)}" data-alias="${escapeHtml(alias)}" title="SKU Verlauf öffnen" aria-label="SKU Verlauf öffnen">
+          <span aria-hidden="true">&#128200;</span>
+        </button>
+      `;
       let inboundDetailIndex = 0;
       const cells = months.map(month => {
         const skuInbound = inboundMap.get(sku);
@@ -1018,7 +1036,12 @@ function buildProjectionTable({ state, view, snapshot, products, categories, mon
       return `
         <tr class="inventory-row ${collapsed ? "is-collapsed" : ""}" data-sku="${escapeHtml(sku)}" data-category="${escapeHtml(group.id)}">
           <td class="inventory-col-sku sticky-cell">${missingEta}${escapeHtml(sku)}</td>
-          <td class="inventory-col-alias sticky-cell">${escapeHtml(alias)}</td>
+          <td class="inventory-col-alias sticky-cell">
+            <div class="inventory-alias-cell">
+              <span class="inventory-alias-text">${escapeHtml(alias)}</span>
+              ${drilldownButton}
+            </div>
+          </td>
           <td class="inventory-col-abc sticky-cell">${escapeHtml(abcClass)}</td>
           <td class="inventory-col-safety-days sticky-cell num">${escapeHtml(safetyDaysLabel)}</td>
           <td class="inventory-col-coverage-days sticky-cell num">${escapeHtml(coverageDaysLabel)}</td>
@@ -1149,6 +1172,15 @@ export function render(root) {
   const projectionMonths = Number(state.inventory?.settings?.projectionMonths || 12);
   const projectionOptions = [6, 12, 18];
   const months = buildMonthRange(selectedMonth, projectionOptions.includes(projectionMonths) ? projectionMonths : 12);
+  const filteredProjectionProducts = filterProductsBySearch(products, view.search);
+  const projectionData = computeInventoryProjection({
+    state,
+    months,
+    products: filteredProjectionProducts,
+    snapshot,
+    projectionMode: view.projectionMode,
+  });
+  const inboundData = buildInboundMap(state);
 
   const isPlanView = view.projectionMode === "plan";
   const exportData = buildSnapshotExportData({
@@ -1244,7 +1276,16 @@ export function render(root) {
       </div>
       <div class="inventory-table-wrap ui-table-shell">
         <div class="inventory-table-scroll ui-scroll-host">
-          ${buildProjectionTable({ state, view, snapshot, products, categories, months })}
+          ${buildProjectionTable({
+            state,
+            view,
+            snapshot,
+            products,
+            categories,
+            months,
+            projectionData,
+            inboundData,
+          })}
         </div>
       </div>
       <div class="inventory-legend">
@@ -1481,6 +1522,16 @@ export function render(root) {
       render(root);
     });
     projectionTable.addEventListener("click", (event) => {
+      const drilldownTrigger = event.target.closest("button.inventory-drilldown-trigger[data-action='open-drilldown']");
+      if (drilldownTrigger) {
+        const sku = String(drilldownTrigger.getAttribute("data-sku") || "").trim();
+        const alias = String(drilldownTrigger.getAttribute("data-alias") || sku).trim();
+        if (!sku) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openInventoryDrilldown({ sku, alias });
+        return;
+      }
       const toggle = event.target.closest("button.tree-toggle[data-category]");
       if (toggle) return;
       const cell = event.target.closest("td.inventory-projection-cell");
@@ -1499,6 +1550,9 @@ export function render(root) {
   let activeTooltipTarget = null;
   let projectionPopover = null;
   let projectionPopoverCell = null;
+  let drilldownOverlay = null;
+  let drilldownMode = "units";
+  let drilldownHideTimer = null;
 
   function positionTooltip(event) {
     if (!tooltipLayer || tooltipLayer.hidden) return;
@@ -1613,6 +1667,379 @@ export function render(root) {
     positionProjectionPopover(cell);
   }
 
+  function closeInventoryDrilldown() {
+    if (drilldownHideTimer) {
+      clearTimeout(drilldownHideTimer);
+      drilldownHideTimer = null;
+    }
+    if (!drilldownOverlay) return;
+    drilldownOverlay.remove();
+    drilldownOverlay = null;
+    drilldownMode = "units";
+  }
+
+  function buildDrilldownRows(sku) {
+    const skuProjection = projectionData.perSkuMonth.get(sku) || new Map();
+    const skuInbound = inboundData.inboundMap.get(sku) || new Map();
+    return months.map(month => {
+      const data = skuProjection.get(month) || null;
+      const inboundEntry = skuInbound.get(month) || null;
+      return {
+        month,
+        endAvailable: Number.isFinite(data?.endAvailable) ? Number(data.endAvailable) : null,
+        doh: Number.isFinite(data?.doh) ? Number(data.doh) : null,
+        safetyUnits: Number.isFinite(data?.safetyUnits) ? Number(data.safetyUnits) : null,
+        safetyDays: Number.isFinite(data?.safetyDays) ? Number(data.safetyDays) : null,
+        forecastUnits: Number.isFinite(data?.forecastUnits) ? Number(data.forecastUnits) : null,
+        events: Array.isArray(inboundEntry?.events) ? inboundEntry.events : [],
+      };
+    });
+  }
+
+  function buildDrilldownTooltipHtml({ alias, monthData }) {
+    const stockLabel = drilldownMode === "doh"
+      ? "Bestand Monatsende (DOH)"
+      : "Bestand Monatsende (DE verfügbar)";
+    const stockValue = drilldownMode === "doh"
+      ? (Number.isFinite(monthData.doh) ? `${formatInt(monthData.doh)} DOH` : "—")
+      : (Number.isFinite(monthData.endAvailable) ? `${formatInt(monthData.endAvailable)} Units` : "—");
+    const planValue = Number.isFinite(monthData.forecastUnits)
+      ? `${formatInt(monthData.forecastUnits)} Units`
+      : "—";
+    const arrivalsHtml = monthData.events.length
+      ? monthData.events.map(event => {
+        const linkButton = event.open
+          ? `<button class="btn sm secondary inventory-link" type="button" data-route="${escapeHtml(event.route || "")}" data-open="${escapeHtml(event.open || "")}">Open ${escapeHtml(event.type || "")}</button>`
+          : "";
+        return `
+          <div class="inventory-drilldown-arrival">
+            <div class="inventory-drilldown-arrival-main">
+              <div><strong>${escapeHtml(event.type || "—")} ${escapeHtml(event.label || event.id || "—")}</strong></div>
+              <div class="muted">${escapeHtml(event.date || "—")}</div>
+            </div>
+            <div class="inventory-drilldown-arrival-meta">
+              <div>+${formatInt(event.qty)} Units</div>
+              ${linkButton}
+            </div>
+          </div>
+        `;
+      }).join("")
+      : `<div class="inventory-drilldown-tooltip-empty">Keine Ankünfte.</div>`;
+
+    return `
+      <div class="inventory-drilldown-tooltip-header">
+        <div class="inventory-drilldown-tooltip-title">${escapeHtml(monthData.month)}</div>
+        <div class="muted">${escapeHtml(alias || "—")}</div>
+      </div>
+      <div class="inventory-drilldown-tooltip-kpis">
+        <div>${stockLabel}: <strong>${stockValue}</strong></div>
+        <div>Plan-Absatz: <strong>${planValue}</strong></div>
+      </div>
+      <div class="inventory-drilldown-tooltip-arrivals">${arrivalsHtml}</div>
+    `;
+  }
+
+  function positionDrilldownTooltip(tooltip, event) {
+    if (!tooltip || !event) return;
+    const offset = 14;
+    const maxX = window.innerWidth - tooltip.offsetWidth - 12;
+    const maxY = window.innerHeight - tooltip.offsetHeight - 12;
+    const x = clamp(event.clientX + offset, 8, Math.max(8, maxX));
+    const y = clamp(event.clientY + offset, 8, Math.max(8, maxY));
+    tooltip.style.left = `${x}px`;
+    tooltip.style.top = `${y}px`;
+  }
+
+  function hideDrilldownTooltip(tooltip) {
+    if (!tooltip) return;
+    tooltip.hidden = true;
+    tooltip.innerHTML = "";
+  }
+
+  function renderInventoryDrilldownChart(overlay, { sku, alias }) {
+    const chartHost = overlay?.querySelector("[data-drilldown-chart]");
+    const tooltip = overlay?.querySelector(".inventory-drilldown-tooltip");
+    if (!chartHost || !tooltip) return;
+
+    if (drilldownHideTimer) {
+      clearTimeout(drilldownHideTimer);
+      drilldownHideTimer = null;
+    }
+    hideDrilldownTooltip(tooltip);
+
+    const rows = buildDrilldownRows(sku).map(entry => {
+      const riskClass = view.showSafety
+        ? getProjectionSafetyClass({
+          endAvailable: entry.endAvailable,
+          safetyUnits: entry.safetyUnits,
+          doh: entry.doh,
+          safetyDays: entry.safetyDays,
+          projectionMode: drilldownMode === "doh" ? "doh" : "units",
+        })
+        : "";
+      return { ...entry, riskClass };
+    });
+
+    if (!rows.length) {
+      chartHost.innerHTML = `<div class="muted">Keine Projektion vorhanden.</div>`;
+      return;
+    }
+
+    const monthCount = rows.length;
+    const monthWidth = 72;
+    const marginLeft = 56;
+    const marginRight = 20;
+    const trendTop = 18;
+    const trendHeight = 210;
+    const planTop = trendTop + trendHeight + 36;
+    const planHeight = 86;
+    const axisBottom = planTop + planHeight;
+    const chartWidth = marginLeft + marginRight + (monthCount * monthWidth);
+    const chartHeight = axisBottom + 34;
+    const stockValues = rows.map(entry => (drilldownMode === "doh" ? entry.doh : entry.endAvailable));
+    const safetyValues = rows.map(entry => (drilldownMode === "doh" ? entry.safetyDays : entry.safetyUnits));
+    const valueCandidates = stockValues.filter(value => Number.isFinite(value));
+    if (view.showSafety) {
+      safetyValues.forEach(value => {
+        if (Number.isFinite(value)) valueCandidates.push(value);
+      });
+    }
+    let minValue = valueCandidates.length ? Math.min(...valueCandidates) : 0;
+    let maxValue = valueCandidates.length ? Math.max(...valueCandidates) : 1;
+    minValue = Math.min(minValue, 0);
+    if (maxValue <= minValue) maxValue = minValue + 1;
+    const maxPlan = Math.max(
+      1,
+      ...rows.map(entry => (Number.isFinite(entry.forecastUnits) ? entry.forecastUnits : 0)),
+    );
+    const xForIndex = (index) => marginLeft + (index * monthWidth) + (monthWidth / 2);
+    const yForValue = (value) => trendTop + ((maxValue - value) / (maxValue - minValue)) * trendHeight;
+    const yForPlan = (value) => {
+      const safeValue = Number.isFinite(value) ? Math.max(0, value) : 0;
+      return planTop + planHeight - ((safeValue / maxPlan) * planHeight);
+    };
+    const tickCount = 4;
+    const yTicks = Array.from({ length: tickCount + 1 }, (_, idx) => {
+      const ratio = idx / tickCount;
+      const value = maxValue - ((maxValue - minValue) * ratio);
+      return { value, y: yForValue(value) };
+    });
+
+    const stockSegments = [];
+    let currentSegment = [];
+    stockValues.forEach((value, index) => {
+      if (!Number.isFinite(value)) {
+        if (currentSegment.length) stockSegments.push(currentSegment);
+        currentSegment = [];
+        return;
+      }
+      currentSegment.push({ x: xForIndex(index), y: yForValue(value), index });
+    });
+    if (currentSegment.length) stockSegments.push(currentSegment);
+
+    const barWidth = Math.max(12, Math.round(monthWidth * 0.42));
+
+    const riskBandsSvg = rows.map((entry, index) => {
+      if (!view.showSafety || !entry.riskClass) return "";
+      const cls = entry.riskClass === "safety-negative"
+        ? "inventory-drilldown-band-negative"
+        : "inventory-drilldown-band-low";
+      const x = marginLeft + (index * monthWidth);
+      return `<rect class="${cls}" x="${x}" y="${trendTop}" width="${monthWidth}" height="${axisBottom - trendTop + 1}"></rect>`;
+    }).join("");
+
+    const gridSvg = yTicks.map(tick => `
+      <line class="inventory-drilldown-grid" x1="${marginLeft}" y1="${tick.y.toFixed(2)}" x2="${chartWidth - marginRight}" y2="${tick.y.toFixed(2)}"></line>
+      <text class="inventory-drilldown-axis-label" x="${marginLeft - 8}" y="${(tick.y + 3).toFixed(2)}" text-anchor="end">${escapeHtml(formatInt(tick.value))}</text>
+    `).join("");
+
+    const stockLineSvg = stockSegments.map(segment => {
+      const points = segment.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+      return `<polyline class="inventory-drilldown-stock-line" points="${points}"></polyline>`;
+    }).join("");
+    const stockDotsSvg = stockSegments
+      .reduce((all, segment) => all.concat(segment), [])
+      .map(point => `<circle class="inventory-drilldown-stock-dot" cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="3.4"></circle>`)
+      .join("");
+    const planBarsSvg = rows.map((entry, index) => {
+      if (!Number.isFinite(entry.forecastUnits) || entry.forecastUnits <= 0) return "";
+      const x = xForIndex(index) - (barWidth / 2);
+      const y = yForPlan(entry.forecastUnits);
+      const height = Math.max(1, (planTop + planHeight) - y);
+      return `<rect class="inventory-drilldown-plan-bar" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth}" height="${height.toFixed(2)}" rx="3"></rect>`;
+    }).join("");
+    const arrivalSvg = rows.map((entry, index) => {
+      if (!entry.events.length) return "";
+      const hasPo = entry.events.some(event => event.type === "PO");
+      const hasFo = entry.events.some(event => event.type === "FO");
+      const label = hasPo && hasFo ? "PO+FO" : (hasPo ? "PO" : "FO");
+      const value = stockValues[index];
+      const referenceY = Number.isFinite(value) ? yForValue(value) : trendTop + 14;
+      const y = clamp(referenceY - 22, trendTop + 2, trendTop + trendHeight - 18);
+      const width = label.length > 2 ? 36 : 24;
+      const x = xForIndex(index) - (width / 2);
+      return `
+        <rect class="inventory-drilldown-arrival-pill" x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${width}" height="14" rx="7"></rect>
+        <text class="inventory-drilldown-arrival-pill-text" x="${(x + (width / 2)).toFixed(2)}" y="${(y + 10.2).toFixed(2)}" text-anchor="middle">${label}</text>
+      `;
+    }).join("");
+    const monthLabelsSvg = rows.map((entry, index) => `
+      <text class="inventory-drilldown-axis-label" x="${xForIndex(index).toFixed(2)}" y="${(axisBottom + 16).toFixed(2)}" text-anchor="middle">${escapeHtml(formatMonthLabel(entry.month))}</text>
+    `).join("");
+    const hitAreasSvg = rows.map((_, index) => {
+      const x = marginLeft + (index * monthWidth);
+      return `<rect class="inventory-drilldown-hit" data-index="${index}" x="${x}" y="${trendTop}" width="${monthWidth}" height="${axisBottom - trendTop + 18}"></rect>`;
+    }).join("");
+
+    let safetyLineSvg = "";
+    if (view.showSafety && drilldownMode === "doh") {
+      const safetyDays = rows.find(entry => Number.isFinite(entry.safetyDays))?.safetyDays;
+      if (Number.isFinite(safetyDays)) {
+        const y = yForValue(safetyDays);
+        safetyLineSvg = `
+          <line class="inventory-drilldown-safety-line" x1="${marginLeft}" y1="${y.toFixed(2)}" x2="${chartWidth - marginRight}" y2="${y.toFixed(2)}"></line>
+          <text class="inventory-drilldown-axis-label" x="${chartWidth - marginRight}" y="${(y - 6).toFixed(2)}" text-anchor="end">Safety ${escapeHtml(formatInt(safetyDays))}</text>
+        `;
+      }
+    } else if (view.showSafety) {
+      const safetySegments = [];
+      let currentSafety = [];
+      rows.forEach((entry, index) => {
+        if (!Number.isFinite(entry.safetyUnits)) {
+          if (currentSafety.length) safetySegments.push(currentSafety);
+          currentSafety = [];
+          return;
+        }
+        currentSafety.push(`${xForIndex(index).toFixed(2)},${yForValue(entry.safetyUnits).toFixed(2)}`);
+      });
+      if (currentSafety.length) safetySegments.push(currentSafety);
+      safetyLineSvg = safetySegments
+        .map(segment => `<polyline class="inventory-drilldown-safety-line" points="${segment.join(" ")}"></polyline>`)
+        .join("");
+    }
+
+    chartHost.innerHTML = `
+      <svg class="inventory-drilldown-svg" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="SKU Verlauf ${escapeHtml(alias || sku)} (${escapeHtml(sku)})">
+        ${riskBandsSvg}
+        ${gridSvg}
+        <line class="inventory-drilldown-axis" x1="${marginLeft}" y1="${(trendTop + trendHeight).toFixed(2)}" x2="${chartWidth - marginRight}" y2="${(trendTop + trendHeight).toFixed(2)}"></line>
+        <line class="inventory-drilldown-axis" x1="${marginLeft}" y1="${(planTop + planHeight).toFixed(2)}" x2="${chartWidth - marginRight}" y2="${(planTop + planHeight).toFixed(2)}"></line>
+        <text class="inventory-drilldown-axis-label" x="${marginLeft}" y="${(trendTop - 6).toFixed(2)}">${drilldownMode === "doh" ? "DOH" : "Units"}</text>
+        <text class="inventory-drilldown-axis-label" x="${marginLeft}" y="${(planTop - 8).toFixed(2)}">Plan-Absatz (Units)</text>
+        ${safetyLineSvg}
+        ${planBarsSvg}
+        ${stockLineSvg}
+        ${stockDotsSvg}
+        ${arrivalSvg}
+        ${monthLabelsSvg}
+        ${hitAreasSvg}
+      </svg>
+    `;
+
+    const scheduleHideTooltip = () => {
+      if (drilldownHideTimer) clearTimeout(drilldownHideTimer);
+      drilldownHideTimer = setTimeout(() => {
+        if (tooltip.matches(":hover")) return;
+        hideDrilldownTooltip(tooltip);
+      }, 120);
+    };
+
+    const showTooltipForIndex = (event, index) => {
+      if (drilldownHideTimer) {
+        clearTimeout(drilldownHideTimer);
+        drilldownHideTimer = null;
+      }
+      const monthData = rows[index];
+      if (!monthData) return;
+      tooltip.innerHTML = buildDrilldownTooltipHtml({ alias, monthData });
+      tooltip.hidden = false;
+      positionDrilldownTooltip(tooltip, event);
+    };
+
+    chartHost.querySelectorAll(".inventory-drilldown-hit").forEach(hit => {
+      const index = Number(hit.getAttribute("data-index"));
+      hit.onmouseenter = (event) => showTooltipForIndex(event, index);
+      hit.onmousemove = (event) => showTooltipForIndex(event, index);
+      hit.onmouseleave = () => scheduleHideTooltip();
+    });
+    chartHost.onmouseleave = () => scheduleHideTooltip();
+    tooltip.onmouseenter = () => {
+      if (drilldownHideTimer) {
+        clearTimeout(drilldownHideTimer);
+        drilldownHideTimer = null;
+      }
+    };
+    tooltip.onmouseleave = () => hideDrilldownTooltip(tooltip);
+  }
+
+  function openInventoryDrilldown({ sku, alias }) {
+    if (!sku) return;
+    closeInventoryDrilldown();
+    drilldownMode = "units";
+    const safeAlias = alias || sku;
+    const overlay = document.createElement("div");
+    overlay.className = "po-modal-backdrop inventory-drilldown-backdrop";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.innerHTML = `
+      <div class="po-modal inventory-drilldown-modal">
+        <header class="po-modal-header">
+          <div>
+            <strong>SKU Verlauf – ${escapeHtml(safeAlias)} (${escapeHtml(sku)})</strong>
+            <div class="muted small">Zeitraum: ${escapeHtml(months[0] || "—")} bis ${escapeHtml(months[months.length - 1] || "—")}</div>
+          </div>
+          <button class="btn ghost" type="button" data-drilldown-close aria-label="Schließen">✕</button>
+        </header>
+        <div class="po-modal-body">
+          <div class="inventory-drilldown-toolbar">
+            <span class="muted">Anzeige</span>
+            <div class="segment-control">
+              <input type="radio" id="inventory-drilldown-units" name="inventory-drilldown-mode" value="units" checked />
+              <label for="inventory-drilldown-units">Units</label>
+              <input type="radio" id="inventory-drilldown-doh" name="inventory-drilldown-mode" value="doh" />
+              <label for="inventory-drilldown-doh">Days on Hand</label>
+            </div>
+          </div>
+          <div class="inventory-drilldown-chart-wrap">
+            <div class="inventory-drilldown-chart" data-drilldown-chart></div>
+          </div>
+          <div class="inventory-drilldown-note muted small">Linie: Bestand Monatsende · Balken: Plan-Absatz · Marker: PO/FO-Ankünfte</div>
+        </div>
+        <footer class="po-modal-actions">
+          <button class="btn secondary" type="button" data-drilldown-close>Schließen</button>
+        </footer>
+      </div>
+      <div class="inventory-drilldown-tooltip" hidden></div>
+    `;
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay || event.target.closest("[data-drilldown-close]")) {
+        closeInventoryDrilldown();
+        return;
+      }
+      const link = event.target.closest(".inventory-link");
+      if (!link) return;
+      const route = link.getAttribute("data-route");
+      const open = link.getAttribute("data-open");
+      if (!route || !open) return;
+      const params = new URLSearchParams();
+      params.set("open", open);
+      location.hash = `${route}?${params.toString()}`;
+      closeInventoryDrilldown();
+    });
+
+    overlay.addEventListener("change", (event) => {
+      const input = event.target.closest("input[name='inventory-drilldown-mode']");
+      if (!input) return;
+      drilldownMode = input.value === "doh" ? "doh" : "units";
+      renderInventoryDrilldownChart(overlay, { sku, alias: safeAlias });
+    });
+
+    document.body.appendChild(overlay);
+    drilldownOverlay = overlay;
+    renderInventoryDrilldownChart(overlay, { sku, alias: safeAlias });
+  }
+
   root.addEventListener("mouseover", (event) => {
     const target = event.target.closest("[data-tooltip-html]");
     if (!target || target === activeTooltipTarget) return;
@@ -1653,6 +2080,7 @@ export function render(root) {
   const handleKeydown = (event) => {
     if (event.key === "Escape") {
       closeProjectionPopover();
+      closeInventoryDrilldown();
     }
   };
   document.addEventListener("click", handleDocClick);
@@ -1732,6 +2160,7 @@ export function render(root) {
       tableScroll.removeEventListener("scroll", handleScroll);
     }
     closeProjectionPopover();
+    closeInventoryDrilldown();
   };
 }
 
