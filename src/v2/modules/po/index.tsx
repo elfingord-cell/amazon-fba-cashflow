@@ -254,13 +254,24 @@ function statusTag(status: string): JSX.Element {
 }
 
 function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "label">): string {
-  if (row.eventType === "duty") return "Zoll";
-  if (row.eventType === "eust") return "Einfuhrumsatzsteuer";
+  if (row.eventType === "duty") return "Forwarder-Rechnung (Zoll)";
+  if (row.eventType === "eust") return "Forwarder-Rechnung (EUSt)";
   if (row.eventType === "vat_refund") return "EUSt-Erstattung";
-  if (row.eventType === "freight") return "Shipping China -> 3PL";
+  if (row.eventType === "freight") return "Shipping";
   if (row.eventType === "fx_fee") return "FX Gebuehr";
   const base = String(row.typeLabel || row.label || "").trim();
   return base || "Payment";
+}
+
+function timelineMarkerSortRank(marker: Pick<PoTimelineMarkerRow, "eventType" | "label" | "typeLabel">): number {
+  const eventType = String(marker.eventType || "").toLowerCase();
+  const text = `${String(marker.typeLabel || "")} ${String(marker.label || "")}`.toLowerCase();
+  if (text.includes("deposit")) return 1;
+  if (text.includes("balance")) return 2;
+  if (eventType === "freight" || text.includes("shipping") || text.includes("fracht")) return 3;
+  if (eventType === "duty" || text.includes("zoll")) return 4;
+  if (eventType === "eust") return 5;
+  return 6;
 }
 
 function paymentMethodOptions(): Array<{ value: string; label: string }> {
@@ -654,7 +665,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               PO_CONFIG,
               poSettings,
               paymentRecords as Record<string, unknown>[],
-              { includeIncoming: true },
             ) as PoPaymentRow[])
               .map((row): PoTimelineMarkerRow => ({
                 id: String(row.id || ""),
@@ -667,10 +677,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                 eventType: row.eventType ? String(row.eventType) : null,
                 direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
               }))
+              .filter((row) => row.eventType !== "vat_refund")
               .filter((row) => row.id && row.plannedEur > 0)
               .sort((left, right) => {
                 const dateCompare = String(left.dueDate || "").localeCompare(String(right.dueDate || ""));
                 if (dateCompare !== 0) return dateCompare;
+                const rankCompare = timelineMarkerSortRank(left) - timelineMarkerSortRank(right);
+                if (rankCompare !== 0) return rankCompare;
                 return String(left.label || "").localeCompare(String(right.label || ""));
               });
           } catch {
@@ -1048,23 +1061,25 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         poSettings,
         (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
       );
-      return rows.map((row) => ({
-        id: String(row.id || ""),
-        typeLabel: String(row.typeLabel || ""),
-        label: String(row.label || ""),
-        dueDate: row.dueDate ? String(row.dueDate) : null,
-        plannedEur: Number(row.plannedEur || 0),
-        status: row.status === "paid" ? "paid" : "open",
-        paidDate: row.paidDate ? String(row.paidDate) : null,
-        paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
-        paymentId: row.paymentId ? String(row.paymentId) : null,
-        method: row.method ? String(row.method) : null,
-        paidBy: row.paidBy ? String(row.paidBy) : null,
-        note: String(row.note || ""),
-        invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
-        invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
-        eventType: row.eventType ? String(row.eventType) : null,
-      }));
+      return rows
+        .filter((row) => String(row.eventType || "") !== "vat_refund")
+        .map((row) => ({
+          id: String(row.id || ""),
+          typeLabel: String(row.typeLabel || ""),
+          label: String(row.label || ""),
+          dueDate: row.dueDate ? String(row.dueDate) : null,
+          plannedEur: Number(row.plannedEur || 0),
+          status: row.status === "paid" ? "paid" : "open",
+          paidDate: row.paidDate ? String(row.paidDate) : null,
+          paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
+          paymentId: row.paymentId ? String(row.paymentId) : null,
+          method: row.method ? String(row.method) : null,
+          paidBy: row.paidBy ? String(row.paidBy) : null,
+          note: String(row.note || ""),
+          invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
+          invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
+          eventType: row.eventType ? String(row.eventType) : null,
+        }));
     } catch {
       return [];
     }

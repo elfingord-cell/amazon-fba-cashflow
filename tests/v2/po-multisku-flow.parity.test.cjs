@@ -140,7 +140,7 @@ test("po multi-sku flow: supplier milestones are goods-based and freight stays s
   assert.equal(Number(freight.plannedEur || 0), 90);
 });
 
-test("po timeline event coverage: timeline view can include refund and all payment milestones", () => {
+test("po payment event coverage: default rows exclude refund, optional incoming rows include it", () => {
   const record = {
     id: "po-timeline-1",
     poNo: "PO-TL-1",
@@ -276,6 +276,8 @@ test("po timeline integration: table and timeline reuse shared filtered rows", (
   assert.match(source, /filteredRows\.map\(\(row\) =>/);
   assert.match(source, /paymentStatusFilter/);
   assert.match(source, /onlyOpenPayments/);
+  assert.match(source, /\.filter\(\(row\) => row\.eventType !== "vat_refund"\)/);
+  assert.match(source, /\.filter\(\(row\) => String\(row\.eventType \|\| ""\) !== "vat_refund"\)/);
 });
 
 test("po timeline marker click opens payment flow with modal fallback", () => {
