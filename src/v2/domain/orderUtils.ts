@@ -182,6 +182,12 @@ function asPositive(value: unknown, fallback = 0): number {
   return Math.max(0, asNumber(value, fallback));
 }
 
+function asNullableString(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
 function parseIsoDate(value: unknown): Date | null {
   if (!value) return null;
   const [year, month, day] = String(value).split("-").map(Number);
@@ -718,6 +724,12 @@ export function normalizeFoRecord(input: {
     status: normalizeFoStatus(values.status, "DRAFT"),
     convertedPoId: values.convertedPoId || existing?.convertedPoId || null,
     convertedPoNo: values.convertedPoNo || existing?.convertedPoNo || null,
+    forecastBasisVersionId: asNullableString(values.forecastBasisVersionId ?? existing?.forecastBasisVersionId),
+    forecastBasisVersionName: asNullableString(values.forecastBasisVersionName ?? existing?.forecastBasisVersionName),
+    forecastBasisSetAt: asNullableString(values.forecastBasisSetAt ?? existing?.forecastBasisSetAt),
+    forecastConflictState: asNullableString(values.forecastConflictState ?? existing?.forecastConflictState),
+    supersedesFoId: asNullableString(values.supersedesFoId ?? existing?.supersedesFoId),
+    supersededByFoId: asNullableString(values.supersededByFoId ?? existing?.supersededByFoId),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   };

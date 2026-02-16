@@ -32,11 +32,52 @@ export interface ForecastDriftSummary {
   topItems: ForecastDriftTopItem[];
 }
 
+export interface ForecastVersionStats {
+  rowCount: number;
+  skuCount: number;
+  monthCount: number;
+}
+
+export interface ForecastVersion {
+  id: string;
+  name: string;
+  note?: string | null;
+  createdAt: string;
+  sourceLabel?: string | null;
+  importMode?: "merge" | "overwrite" | string | null;
+  onlyActiveSkus?: boolean;
+  forecastImport: Record<string, unknown>;
+  stats: ForecastVersionStats;
+}
+
+export interface ForecastFoConflictDecision {
+  ignored?: boolean;
+  ignoredAt?: string | null;
+  ignoredBy?: string | null;
+  reason?: string | null;
+}
+
+export interface ForecastImpactSummary {
+  comparedAt: string;
+  fromVersionId: string | null;
+  fromVersionName: string | null;
+  toVersionId: string | null;
+  toVersionName: string | null;
+  flaggedSkus: number;
+  flaggedAB: number;
+  foConflictsTotal: number;
+  foConflictsOpen: number;
+}
+
 export interface ForecastState extends UnknownRecord {
   items?: UnknownRecord[];
   settings?: UnknownRecord;
   forecastImport?: Record<string, unknown>;
   forecastManual?: Record<string, unknown>;
+  versions?: ForecastVersion[];
+  activeVersionId?: string | null;
+  lastImpactSummary?: ForecastImpactSummary | null;
+  foConflictDecisionsByVersion?: Record<string, Record<string, ForecastFoConflictDecision>>;
   lastImportAt?: string | null;
   importSource?: string | null;
   importCadence?: "monthly";

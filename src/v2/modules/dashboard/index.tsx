@@ -28,6 +28,7 @@ import {
   type DashboardRobustMonth,
   type RobustnessCheckResult,
 } from "../../domain/dashboardRobustness";
+import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
 import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
@@ -428,6 +429,23 @@ function normalizeForecastDriftSummary(value: unknown): {
   };
 }
 
+function normalizeForecastImpactSummary(value: unknown): {
+  toVersionId: string | null;
+  foConflictsOpen: number;
+} {
+  if (!value || typeof value !== "object") {
+    return {
+      toVersionId: null,
+      foConflictsOpen: 0,
+    };
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    toVersionId: raw.toVersionId == null ? null : String(raw.toVersionId || "").trim() || null,
+    foConflictsOpen: Math.max(0, Math.round(Number(raw.foConflictsOpen || 0))),
+  };
+}
+
 function readRuntimeRouteErrorMeta(): RuntimeRouteErrorMeta {
   if (typeof window === "undefined" || !window.sessionStorage) {
     return {
@@ -631,6 +649,20 @@ export default function DashboardModule(): JSX.Element {
   const forecast = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
     : {};
+  const forecastVersioningSnapshot = useMemo(() => {
+    const clone = structuredClone(forecast || {});
+    ensureForecastVersioningContainers(clone as Record<string, unknown>);
+    return clone as Record<string, unknown>;
+  }, [forecast]);
+  const activeForecastLabel = useMemo(
+    () => getActiveForecastLabel(forecastVersioningSnapshot as Record<string, unknown>),
+    [forecastVersioningSnapshot],
+  );
+  const impactSummary = normalizeForecastImpactSummary(forecastVersioningSnapshot.lastImpactSummary);
+  const activeVersionId = String(forecastVersioningSnapshot.activeVersionId || "").trim() || null;
+  const openForecastFoConflicts = impactSummary.toVersionId && activeVersionId && impactSummary.toVersionId === activeVersionId
+    ? impactSummary.foConflictsOpen
+    : 0;
   const lastImportAt = typeof forecast.lastImportAt === "string" ? forecast.lastImportAt : null;
   const driftSummary = normalizeForecastDriftSummary(forecast.lastDriftSummary);
   const driftReviewedComparedAt = typeof forecast.lastDriftReviewedComparedAt === "string"
@@ -1202,6 +1234,18 @@ export default function DashboardModule(): JSX.Element {
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
+      {openForecastFoConflicts > 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={`Forecast-Änderung: ${openForecastFoConflicts} FOs prüfen`}
+          description={(
+            <Button size="small" onClick={() => navigate("/v2/forecast?panel=conflicts")}>
+              Zur Konfliktliste
+            </Button>
+          )}
+        />
+      ) : null}
 
       <Collapse
         className="v2-dashboard-module-collapse"
@@ -1302,9 +1346,17 @@ export default function DashboardModule(): JSX.Element {
                   </Tag>
                 </div>
                 <div className="v2-dashboard-forecast-status-meta">
+                  <div>Baseline Forecast: {activeForecastLabel}</div>
                   <div>{forecastFreshnessLabel}</div>
                   <div>Letzter Import: {formatIsoDate(lastImportAt)}</div>
                   <div>Nächster Import empfohlen: {nextRecommendedImport ? nextRecommendedImport.toLocaleDateString("de-DE") : "—"}</div>
+                  {openForecastFoConflicts > 0 ? (
+                    <div>
+                      <Button size="small" onClick={() => navigate("/v2/forecast?panel=conflicts")}>
+                        Forecast-Änderung: {openForecastFoConflicts} FOs prüfen
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </Card>
             </div>

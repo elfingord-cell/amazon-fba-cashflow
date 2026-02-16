@@ -34,6 +34,7 @@ import {
   normalizeMonthKey,
 } from "../../domain/months";
 import { buildCategoryOrderMap, compareCategoryLabels, sortCategoryGroups } from "../../domain/categoryOrder";
+import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
 import {
   buildFoRecommendationContext,
   computeFoRecommendationForSku,
@@ -159,6 +160,23 @@ interface FoWorklistEntry {
   recommendedOrderDate: string | null;
   priority: number;
   intent: ProjectionActionIntent;
+}
+
+function normalizeForecastImpactSummary(value: unknown): {
+  toVersionId: string | null;
+  foConflictsOpen: number;
+} {
+  if (!value || typeof value !== "object") {
+    return {
+      toVersionId: null,
+      foConflictsOpen: 0,
+    };
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    toVersionId: raw.toVersionId == null ? null : String(raw.toVersionId || "").trim() || null,
+    foConflictsOpen: Math.max(0, Math.round(Number(raw.foConflictsOpen || 0))),
+  };
 }
 
 function ensureInventoryContainers(state: Record<string, unknown>): void {
@@ -451,6 +469,25 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const inventory = ((state.inventory || {}) as Record<string, unknown>);
   const inventorySettings = ((inventory.settings || {}) as Record<string, unknown>);
   const settings = (state.settings || {}) as Record<string, unknown>;
+  const forecast = (state.forecast && typeof state.forecast === "object")
+    ? state.forecast as Record<string, unknown>
+    : {};
+  const forecastVersioningSnapshot = useMemo(() => {
+    const clone = structuredClone(forecast || {});
+    ensureForecastVersioningContainers(clone as Record<string, unknown>);
+    return clone as Record<string, unknown>;
+  }, [forecast]);
+  const activeForecastLabel = useMemo(
+    () => getActiveForecastLabel(forecastVersioningSnapshot as Record<string, unknown>),
+    [forecastVersioningSnapshot],
+  );
+  const forecastImpactSummary = normalizeForecastImpactSummary(forecastVersioningSnapshot.lastImpactSummary);
+  const activeForecastVersionId = String(forecastVersioningSnapshot.activeVersionId || "").trim() || null;
+  const openForecastFoConflicts = forecastImpactSummary.toVersionId
+    && activeForecastVersionId
+    && forecastImpactSummary.toVersionId === activeForecastVersionId
+    ? forecastImpactSummary.foConflictsOpen
+    : 0;
 
   useEffect(() => {
     if (appliedDashboardQueryRef.current) return;
@@ -1440,6 +1477,12 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                 />
               </>
             ) : null}
+            <Tag color="blue">Baseline Forecast: {activeForecastLabel}</Tag>
+            {openForecastFoConflicts > 0 ? (
+              <Button size="small" onClick={() => navigate("/v2/forecast?panel=conflicts")}>
+                Forecast-Änderung: {openForecastFoConflicts} FOs prüfen
+              </Button>
+            ) : null}
           </div>
 
           {showSnapshot ? (
@@ -1463,6 +1506,18 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
+      {openForecastFoConflicts > 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={`Forecast-Änderung: ${openForecastFoConflicts} FOs prüfen`}
+          description={(
+            <Button size="small" onClick={() => navigate("/v2/forecast?panel=conflicts")}>
+              Zur Konfliktliste
+            </Button>
+          )}
+        />
+      ) : null}
 
       {showSnapshot ? (
         <Card>

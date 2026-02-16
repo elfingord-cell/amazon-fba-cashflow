@@ -18,6 +18,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
+import { getActiveForecastVersion } from "../../domain/forecastVersioning";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
 import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
 import { ensureAppStateV2 } from "../../state/appState";
@@ -88,6 +89,8 @@ interface FoRow {
   landedCostEur: number;
   status: string;
   convertedPoNo: string | null;
+  forecastBasisLabel: string;
+  forecastConflictState: string | null;
   recommendationText: string;
   recommendationUnits: number | null;
   raw: Record<string, unknown>;
@@ -169,6 +172,16 @@ function statusTag(status: string): JSX.Element {
   if (normalized === "CONVERTED") return <Tag color="blue">Converted</Tag>;
   if (normalized === "ARCHIVED") return <Tag color="default">Archived</Tag>;
   return <Tag color="gold">Draft</Tag>;
+}
+
+function formatForecastConflictState(value: unknown): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "—";
+  if (normalized === "review_needed") return "Review nötig";
+  if (normalized === "reviewed_updated") return "Aktualisiert";
+  if (normalized === "superseded") return "Superseded";
+  if (normalized === "ignored") return "Ignoriert";
+  return String(value || "—");
 }
 
 function nextPlanningStatus(status: FoStatus): FoStatus {
@@ -414,6 +427,10 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   }, [state.products]);
 
   const productBySku = useMemo(() => new Map(productRows.map((entry) => [entry.sku, entry])), [productRows]);
+  const activeForecastVersion = useMemo(
+    () => getActiveForecastVersion((state.forecast || {}) as Record<string, unknown>),
+    [state.forecast],
+  );
 
   const recommendationContext = useMemo(
     () => buildFoRecommendationContext(stateObj),
@@ -489,6 +506,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         landedCostEur: round2(costs.landedCostEur),
         status: normalizeFoStatus(fo.status),
         convertedPoNo: fo.convertedPoNo ? String(fo.convertedPoNo) : null,
+        forecastBasisLabel: String(fo.forecastBasisVersionName || fo.forecastBasisVersionId || "—"),
+        forecastConflictState: String(fo.forecastConflictState || "").trim() || null,
         recommendationText,
         recommendationUnits,
         raw: fo,
@@ -651,6 +670,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     {
       header: "Empfehlung",
       cell: ({ row }) => row.original.recommendationText,
+    },
+    {
+      header: "Forecast-Basis",
+      meta: { width: 210, minWidth: 210 },
+      cell: ({ row }) => (
+        <Space direction="vertical" size={0}>
+          <Text>{row.original.forecastBasisLabel || "—"}</Text>
+          <Text type="secondary">{formatForecastConflictState(row.original.forecastConflictState)}</Text>
+        </Space>
+      ),
     },
     {
       header: "Status",
@@ -1167,7 +1196,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     const normalized = normalizeFoRecord({
       existing,
       supplierTerms: terms,
-      values: sanitizedValues as unknown as Record<string, unknown>,
+      values: {
+        ...(sanitizedValues as unknown as Record<string, unknown>),
+        forecastBasisVersionId: activeForecastVersion?.id || null,
+        forecastBasisVersionName: activeForecastVersion?.name || null,
+        forecastBasisSetAt: nowIso(),
+      },
       schedule,
       vatRefundLagMonths: settings.vatRefundLagMonths,
     });
