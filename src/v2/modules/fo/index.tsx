@@ -1033,6 +1033,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       fxRate: draftValues.fxRate,
       incoterm: draftValues.incoterm,
       vatRefundLagMonths: settings.vatRefundLagMonths,
+      paymentDueDefaults: settings.paymentDueDefaults,
     });
     return paymentRows.map((row) => {
       const plannedEur = row.currency === "EUR"
@@ -1051,7 +1052,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         offsetMonths: Number(row.offsetMonths || 0),
       };
     });
-  }, [draftValues, liveSchedule, liveShippingTotalEur, settings.vatRefundLagMonths]);
+  }, [draftValues, liveSchedule, liveShippingTotalEur, settings.paymentDueDefaults, settings.vatRefundLagMonths]);
 
   const supplierPercentSum = useMemo(
     () => sumSupplierPercent(draftValues?.paymentTerms || []),
@@ -1294,6 +1295,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       },
       schedule,
       vatRefundLagMonths: settings.vatRefundLagMonths,
+      paymentDueDefaults: settings.paymentDueDefaults,
     });
 
     await saveWith((current) => {
@@ -1368,6 +1370,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         fxRate: fo.fxRate,
         incoterm: fo.incoterm,
         vatRefundLagMonths: (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths,
+        paymentDueDefaults: (next.settings as Record<string, unknown> | undefined)?.paymentDueDefaults,
       });
 
       fos[foIndex] = {
@@ -1467,6 +1470,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           fxRate: fo.fxRate,
           incoterm: fo.incoterm,
           vatRefundLagMonths,
+          paymentDueDefaults: (next.settings as Record<string, unknown> | undefined)?.paymentDueDefaults,
         });
         return {
           ...fo,
@@ -1743,10 +1747,10 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           </Space>
 
           <Space style={{ width: "100%" }} align="start" wrap>
-            <Form.Item name="unitPrice" label="Unit Price (USD/Stueck)" style={{ width: 190 }}>
+            <Form.Item name="unitPrice" label="Unit Price (USD/Stück)" style={{ width: 190 }}>
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
-            <Form.Item name="freight" label="Shipping costs (EUR/Stueck)" style={{ width: 210 }}>
+            <Form.Item name="freight" label="Shipping costs (EUR/Stück)" style={{ width: 210 }}>
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
             <Form.Item name="freightCurrency" label="Shipping Currency" style={{ width: 160 }}>
@@ -1764,7 +1768,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           </Space>
           <div style={{ marginTop: -6, marginBottom: 10 }}>
             <Text type="secondary">
-              Shipping total: {formatCurrency(liveShippingTotalEur)} ({formatNumber(draftValues?.units || 0, 0)} x {formatNumber(draftValues?.freight || 0, 2)} EUR/Stueck)
+              Shipping total: {formatCurrency(liveShippingTotalEur)} ({formatNumber(draftValues?.units || 0, 0)} x {formatNumber(draftValues?.freight || 0, 2)} EUR/Stück)
             </Text>
           </div>
 

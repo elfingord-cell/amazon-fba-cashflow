@@ -768,6 +768,32 @@ function normaliseGoodsFields(record, settings = getSettings()) {
 function getSettings() {
   const state = loadAppState();
   const raw = (state && state.settings) || {};
+  const paymentDueDefaults = (raw.paymentDueDefaults && typeof raw.paymentDueDefaults === "object")
+    ? raw.paymentDueDefaults
+    : {};
+  const poDueDefaults = (paymentDueDefaults.po && typeof paymentDueDefaults.po === "object")
+    ? paymentDueDefaults.po
+    : {};
+  const fallbackLag = Number(raw.freightLagDays ?? 0) || 0;
+  const normalizeAnchor = (value, fallback) => {
+    const upper = String(value || "").trim().toUpperCase();
+    if (["ORDER_DATE", "PROD_DONE", "ETD", "ETA"].includes(upper)) return upper;
+    return fallback;
+  };
+  const normalizeLag = (value, fallback = 0) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.round(parsed);
+  };
+  const readPoDue = (key, fallbackAnchor, fallbackDays) => {
+    const row = poDueDefaults[key] && typeof poDueDefaults[key] === "object"
+      ? poDueDefaults[key]
+      : {};
+    return {
+      anchor: normalizeAnchor(row.anchor, fallbackAnchor),
+      lagDays: normalizeLag(row.lagDays, fallbackDays),
+    };
+  };
   return {
     fxRate: parseDE(raw.fxRate ?? 0) || 0,
     fxFeePct: parseDE(raw.fxFeePct ?? 0) || 0,
@@ -777,7 +803,15 @@ function getSettings() {
     eustRatePct: parseDE(raw.eustRatePct ?? 0) || 0,
     vatRefundEnabled: raw.vatRefundEnabled !== false,
     vatRefundLagMonths: Number(raw.vatRefundLagMonths ?? 0) || 0,
-    freightLagDays: Number(raw.freightLagDays ?? 0) || 0,
+    freightLagDays: fallbackLag,
+    paymentDueDefaults: {
+      po: {
+        freight: readPoDue("freight", "ETA", fallbackLag),
+        duty: readPoDue("duty", "ETA", fallbackLag),
+        eust: readPoDue("eust", "ETA", fallbackLag),
+        vatRefund: readPoDue("vatRefund", "ETA", 0),
+      },
+    },
     cny: raw.cny ? { start: raw.cny.start || "", end: raw.cny.end || "" } : { start: "", end: "" },
     cnyBlackoutByYear: raw.cnyBlackoutByYear && typeof raw.cnyBlackoutByYear === "object"
       ? structuredClone(raw.cnyBlackoutByYear)
@@ -801,6 +835,30 @@ function monthEnd(date) {
 function ensureAutoEvents(record, settings, manualMilestones = []) {
   if (!record.autoEvents) record.autoEvents = [];
   const map = new Map(record.autoEvents.map(evt => [evt.type, evt]));
+  const poDueDefaults = settings?.paymentDueDefaults?.po || {};
+  const resolveAnchor = (value, fallback) => {
+    const upper = String(value || "").trim().toUpperCase();
+    if (["ORDER_DATE", "PROD_DONE", "ETD", "ETA"].includes(upper)) return upper;
+    return fallback;
+  };
+  const resolveLagDays = (value, fallback = 0) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.round(parsed);
+  };
+  const defaultDue = (key, fallbackAnchor, fallbackLagDays) => {
+    const row = poDueDefaults[key] && typeof poDueDefaults[key] === "object"
+      ? poDueDefaults[key]
+      : {};
+    return {
+      anchor: resolveAnchor(row.anchor, fallbackAnchor),
+      lagDays: resolveLagDays(row.lagDays, fallbackLagDays),
+    };
+  };
+  const freightDue = defaultDue("freight", "ETA", settings.freightLagDays || 0);
+  const dutyDue = defaultDue("duty", "ETA", settings.freightLagDays || 0);
+  const eustDue = defaultDue("eust", "ETA", settings.freightLagDays || 0);
+  const vatRefundDue = defaultDue("vatRefund", "ETA", 0);
   const ensure = (type, defaults) => {
     if (!map.has(type)) {
       const created = { id: `auto-${type}`, type, ...defaults };
@@ -815,31 +873,32 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
 
   ensure("freight", {
     label: "Fracht",
-    anchor: "ETA",
-    lagDays: settings.freightLagDays || 0,
+    anchor: freightDue.anchor,
+    lagDays: freightDue.lagDays,
     enabled: true,
   });
 
   ensure("duty", {
     label: "Zoll",
     percent: settings.dutyRatePct || 0,
-    anchor: "ETA",
-    lagDays: settings.freightLagDays || 0,
+    anchor: dutyDue.anchor,
+    lagDays: dutyDue.lagDays,
     enabled: true,
   });
 
   ensure("eust", {
     label: "EUSt",
     percent: settings.eustRatePct || 0,
-    anchor: "ETA",
-    lagDays: settings.freightLagDays || 0,
+    anchor: eustDue.anchor,
+    lagDays: eustDue.lagDays,
     enabled: true,
   });
 
   ensure("vat_refund", {
     label: "EUSt-Erstattung",
     percent: 100,
-    anchor: "ETA",
+    anchor: vatRefundDue.anchor,
+    lagDays: vatRefundDue.lagDays,
     lagMonths: settings.vatRefundLagMonths || 0,
     enabled: settings.vatRefundEnabled !== false,
   });

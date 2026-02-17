@@ -31,6 +31,19 @@ const MONTH_ANCHOR_OPTIONS = [
   { value: "MID", label: "Mitte (15. Tag)" },
   { value: "END", label: "Ende (letzter Tag)" },
 ];
+const FO_PAYMENT_TRIGGER_OPTIONS = [
+  { value: "ORDER_DATE", label: "ORDER_DATE" },
+  { value: "PRODUCTION_END", label: "PRODUCTION_END" },
+  { value: "ETD", label: "ETD" },
+  { value: "ETA", label: "ETA" },
+  { value: "DELIVERY", label: "DELIVERY" },
+];
+const PO_PAYMENT_ANCHOR_OPTIONS = [
+  { value: "ORDER_DATE", label: "ORDER_DATE" },
+  { value: "PROD_DONE", label: "PROD_DONE" },
+  { value: "ETD", label: "ETD" },
+  { value: "ETA", label: "ETA" },
+];
 
 interface SettingsDraft {
   air: number;
@@ -50,6 +63,22 @@ interface SettingsDraft {
   monthAnchorDay: string;
   cnyStart: string;
   cnyEnd: string;
+  foFreightDueTrigger: string;
+  foFreightDueOffsetDays: number;
+  foDutyDueTrigger: string;
+  foDutyDueOffsetDays: number;
+  foEustDueTrigger: string;
+  foEustDueOffsetDays: number;
+  foEustRefundDueTrigger: string;
+  foEustRefundDueOffsetDays: number;
+  poFreightDueAnchor: string;
+  poFreightDueLagDays: number;
+  poDutyDueAnchor: string;
+  poDutyDueLagDays: number;
+  poEustDueAnchor: string;
+  poEustDueLagDays: number;
+  poVatRefundDueAnchor: string;
+  poVatRefundDueLagDays: number;
 }
 
 interface CategoryRow {
@@ -69,6 +98,22 @@ function toNumber(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toRoundedNumber(value: unknown, fallback: number): number {
+  return Math.round(toNumber(value, fallback));
+}
+
+function normalizeFoTrigger(value: unknown, fallback: string): string {
+  const trigger = String(value || "").trim().toUpperCase();
+  if (FO_PAYMENT_TRIGGER_OPTIONS.some((entry) => entry.value === trigger)) return trigger;
+  return fallback;
+}
+
+function normalizePoAnchor(value: unknown, fallback: string): string {
+  const anchor = String(value || "").trim().toUpperCase();
+  if (PO_PAYMENT_ANCHOR_OPTIONS.some((entry) => entry.value === anchor)) return anchor;
+  return fallback;
+}
+
 function toOptionalNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
@@ -85,8 +130,34 @@ function deriveEurUsdRate(fxRate: number | null): number | null {
 function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
   const transport = (state.transportLeadTimesDays || {}) as Record<string, unknown>;
   const cny = (state.cny || {}) as Record<string, unknown>;
+  const paymentDueDefaults = (state.paymentDueDefaults || {}) as Record<string, unknown>;
+  const foDefaults = (paymentDueDefaults.fo || {}) as Record<string, unknown>;
+  const poDefaults = (paymentDueDefaults.po || {}) as Record<string, unknown>;
   const fxRate = toOptionalNumber(state.fxRate);
   const eurUsdRate = toOptionalNumber(state.eurUsdRate) ?? deriveEurUsdRate(fxRate);
+  const fallbackPoLagDays = Math.max(0, toRoundedNumber(state.freightLagDays, 0));
+  const readFo = (key: string, fallbackTrigger: string, fallbackOffset: number): { trigger: string; offsetDays: number } => {
+    const row = (foDefaults[key] || {}) as Record<string, unknown>;
+    return {
+      trigger: normalizeFoTrigger(row.triggerEvent, fallbackTrigger),
+      offsetDays: toRoundedNumber(row.offsetDays, fallbackOffset),
+    };
+  };
+  const readPo = (key: string, fallbackAnchor: string, fallbackLagDays: number): { anchor: string; lagDays: number } => {
+    const row = (poDefaults[key] || {}) as Record<string, unknown>;
+    return {
+      anchor: normalizePoAnchor(row.anchor, fallbackAnchor),
+      lagDays: toRoundedNumber(row.lagDays, fallbackLagDays),
+    };
+  };
+  const foFreightDue = readFo("freight", "ETD", 0);
+  const foDutyDue = readFo("duty", "ETA", 0);
+  const foEustDue = readFo("eust", "ETA", 0);
+  const foEustRefundDue = readFo("eustRefund", "ETA", 0);
+  const poFreightDue = readPo("freight", "ETA", fallbackPoLagDays);
+  const poDutyDue = readPo("duty", "ETA", fallbackPoLagDays);
+  const poEustDue = readPo("eust", "ETA", fallbackPoLagDays);
+  const poVatRefundDue = readPo("vatRefund", "ETA", 0);
   return {
     air: Math.max(0, toNumber(transport.air, 10)),
     rail: Math.max(0, toNumber(transport.rail, 25)),
@@ -105,6 +176,22 @@ function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
     monthAnchorDay: String(state.monthAnchorDay || "START"),
     cnyStart: String(cny.start || ""),
     cnyEnd: String(cny.end || ""),
+    foFreightDueTrigger: foFreightDue.trigger,
+    foFreightDueOffsetDays: foFreightDue.offsetDays,
+    foDutyDueTrigger: foDutyDue.trigger,
+    foDutyDueOffsetDays: foDutyDue.offsetDays,
+    foEustDueTrigger: foEustDue.trigger,
+    foEustDueOffsetDays: foEustDue.offsetDays,
+    foEustRefundDueTrigger: foEustRefundDue.trigger,
+    foEustRefundDueOffsetDays: foEustRefundDue.offsetDays,
+    poFreightDueAnchor: poFreightDue.anchor,
+    poFreightDueLagDays: poFreightDue.lagDays,
+    poDutyDueAnchor: poDutyDue.anchor,
+    poDutyDueLagDays: poDutyDue.lagDays,
+    poEustDueAnchor: poEustDue.anchor,
+    poEustDueLagDays: poEustDue.lagDays,
+    poVatRefundDueAnchor: poVatRefundDue.anchor,
+    poVatRefundDueLagDays: poVatRefundDue.lagDays,
   };
 }
 
@@ -135,6 +222,22 @@ function normalizeDraft(values: SettingsDraft): string {
     monthAnchorDay: String(values.monthAnchorDay || ""),
     cnyStart: String(values.cnyStart || ""),
     cnyEnd: String(values.cnyEnd || ""),
+    foFreightDueTrigger: String(values.foFreightDueTrigger || ""),
+    foFreightDueOffsetDays: Number(values.foFreightDueOffsetDays || 0),
+    foDutyDueTrigger: String(values.foDutyDueTrigger || ""),
+    foDutyDueOffsetDays: Number(values.foDutyDueOffsetDays || 0),
+    foEustDueTrigger: String(values.foEustDueTrigger || ""),
+    foEustDueOffsetDays: Number(values.foEustDueOffsetDays || 0),
+    foEustRefundDueTrigger: String(values.foEustRefundDueTrigger || ""),
+    foEustRefundDueOffsetDays: Number(values.foEustRefundDueOffsetDays || 0),
+    poFreightDueAnchor: String(values.poFreightDueAnchor || ""),
+    poFreightDueLagDays: Number(values.poFreightDueLagDays || 0),
+    poDutyDueAnchor: String(values.poDutyDueAnchor || ""),
+    poDutyDueLagDays: Number(values.poDutyDueLagDays || 0),
+    poEustDueAnchor: String(values.poEustDueAnchor || ""),
+    poEustDueLagDays: Number(values.poEustDueLagDays || 0),
+    poVatRefundDueAnchor: String(values.poVatRefundDueAnchor || ""),
+    poVatRefundDueLagDays: Number(values.poVatRefundDueLagDays || 0),
   });
 }
 
@@ -311,6 +414,45 @@ export default function SettingsModule(): JSX.Element {
           start: values.cnyStart || "",
           end: values.cnyEnd || "",
         },
+        paymentDueDefaults: {
+          fo: {
+            freight: {
+              triggerEvent: normalizeFoTrigger(values.foFreightDueTrigger, "ETD"),
+              offsetDays: toRoundedNumber(values.foFreightDueOffsetDays, 0),
+            },
+            duty: {
+              triggerEvent: normalizeFoTrigger(values.foDutyDueTrigger, "ETA"),
+              offsetDays: toRoundedNumber(values.foDutyDueOffsetDays, 0),
+            },
+            eust: {
+              triggerEvent: normalizeFoTrigger(values.foEustDueTrigger, "ETA"),
+              offsetDays: toRoundedNumber(values.foEustDueOffsetDays, 0),
+            },
+            eustRefund: {
+              triggerEvent: normalizeFoTrigger(values.foEustRefundDueTrigger, "ETA"),
+              offsetDays: toRoundedNumber(values.foEustRefundDueOffsetDays, 0),
+            },
+          },
+          po: {
+            freight: {
+              anchor: normalizePoAnchor(values.poFreightDueAnchor, "ETA"),
+              lagDays: toRoundedNumber(values.poFreightDueLagDays, 0),
+            },
+            duty: {
+              anchor: normalizePoAnchor(values.poDutyDueAnchor, "ETA"),
+              lagDays: toRoundedNumber(values.poDutyDueLagDays, 0),
+            },
+            eust: {
+              anchor: normalizePoAnchor(values.poEustDueAnchor, "ETA"),
+              lagDays: toRoundedNumber(values.poEustDueLagDays, 0),
+            },
+            vatRefund: {
+              anchor: normalizePoAnchor(values.poVatRefundDueAnchor, "ETA"),
+              lagDays: toRoundedNumber(values.poVatRefundDueLagDays, 0),
+            },
+          },
+        },
+        freightLagDays: toRoundedNumber(values.poFreightDueLagDays, 0),
         lastUpdatedAt: nowIso(),
       };
       return next;
@@ -600,6 +742,106 @@ export default function SettingsModule(): JSX.Element {
             <Col xs={24} md={8}>
               <Form.Item name="defaultDdp" valuePropName="checked" style={{ marginTop: 30 }}>
                 <Checkbox>Default DDP aktiv</Checkbox>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Title level={5} style={{ marginTop: 4 }}>Fälligkeit Defaults FO (Auto-Zahlungen)</Title>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO Freight Trigger" name="foFreightDueTrigger" rules={[{ required: true }]}>
+                <Select options={FO_PAYMENT_TRIGGER_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO Freight Offset (Tage)" name="foFreightDueOffsetDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO Duty Trigger" name="foDutyDueTrigger" rules={[{ required: true }]}>
+                <Select options={FO_PAYMENT_TRIGGER_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO Duty Offset (Tage)" name="foDutyDueOffsetDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO EUSt Trigger" name="foEustDueTrigger" rules={[{ required: true }]}>
+                <Select options={FO_PAYMENT_TRIGGER_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO EUSt Offset (Tage)" name="foEustDueOffsetDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO EUSt Refund Trigger" name="foEustRefundDueTrigger" rules={[{ required: true }]}>
+                <Select options={FO_PAYMENT_TRIGGER_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="FO EUSt Refund Offset (Tage)" name="foEustRefundDueOffsetDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Title level={5} style={{ marginTop: 4 }}>Fälligkeit Defaults PO (Auto-Zahlungen)</Title>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO Freight Anchor" name="poFreightDueAnchor" rules={[{ required: true }]}>
+                <Select options={PO_PAYMENT_ANCHOR_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO Freight Offset (Tage)" name="poFreightDueLagDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO Duty Anchor" name="poDutyDueAnchor" rules={[{ required: true }]}>
+                <Select options={PO_PAYMENT_ANCHOR_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO Duty Offset (Tage)" name="poDutyDueLagDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO EUSt Anchor" name="poEustDueAnchor" rules={[{ required: true }]}>
+                <Select options={PO_PAYMENT_ANCHOR_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO EUSt Offset (Tage)" name="poEustDueLagDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO VAT Refund Anchor" name="poVatRefundDueAnchor" rules={[{ required: true }]}>
+                <Select options={PO_PAYMENT_ANCHOR_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item label="PO VAT Refund Offset (Tage)" name="poVatRefundDueLagDays" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" />
               </Form.Item>
             </Col>
           </Row>

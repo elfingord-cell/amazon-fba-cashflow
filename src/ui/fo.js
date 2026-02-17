@@ -961,7 +961,7 @@ export default function render(root) {
       { key: "order", label: "Order Date" },
       { key: "timeline", label: "ETD / ETA" },
       { key: "total", label: "Total Value (EUR)", className: "num" },
-      { key: "freight", label: "Geschätzte Fracht (EUR)", className: "num" },
+      { key: "freight", label: "Shipping total (EUR)", className: "num" },
       { key: "payments", label: "Payments" },
       { key: "status", label: "Status" },
       { key: "actions", label: "Actions" },
@@ -1648,9 +1648,7 @@ export default function render(root) {
       });
       $("#fo-supplier-cost", content).textContent = formatCurrency(values.supplierCost, baseForm.currency || "USD");
       $("#fo-landed-cost", content).textContent = formatCurrency(values.landedCostEur, "EUR");
-      $("#fo-shipping-estimate", content).textContent = freightEstimate.total == null
-        ? "—"
-        : formatCurrency(freightEstimate.total, "EUR");
+      $("#fo-shipping-estimate", content).textContent = formatCurrency(values.freightTotal, "EUR");
       const shippingNote = $("#fo-shipping-note", content);
       if (shippingNote) {
         if (freightEstimate.missing) {
@@ -1919,7 +1917,7 @@ export default function render(root) {
               ]),
             ]),
             el("label", {}, [
-              "Unit Price",
+              "Unit Price (USD/Stück)",
               el("input", { type: "text", inputmode: "decimal", id: "fo-unitPrice", value: baseForm.unitPrice ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-unitPrice" }, []),
@@ -1942,7 +1940,7 @@ export default function render(root) {
               el("small", { class: "form-error", id: "fo-currency-error" }, []),
             ]),
             el("label", {}, [
-              "Logistik / Stk. (EUR)",
+              "Shipping costs (EUR/Stück)",
               el("input", { type: "text", inputmode: "decimal", id: "fo-freight", value: baseForm.freight ?? "" }),
               el("div", { class: "suggested-row" }, [
                 el("span", { class: "muted", id: "suggested-freight" }, []),
@@ -2030,7 +2028,7 @@ export default function render(root) {
               el("strong", { id: "fo-landed-cost" }, ["—"]),
             ]),
             el("div", { class: "fo-cost-row" }, [
-              el("span", { class: "muted" }, ["Geschätzte Fracht (EUR)"]),
+              el("span", { class: "muted" }, ["Shipping total (EUR)"]),
               el("strong", { id: "fo-shipping-estimate" }, ["—"]),
             ]),
             el("small", { class: "muted", id: "fo-shipping-note" }, []),

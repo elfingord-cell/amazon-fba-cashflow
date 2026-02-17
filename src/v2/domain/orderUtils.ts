@@ -106,6 +106,13 @@ export interface FoCostValues {
   landedCostEur: number;
 }
 
+interface FoAutoPaymentTimingDefaults {
+  freight: { triggerEvent: PaymentTrigger; offsetDays: number };
+  duty: { triggerEvent: PaymentTrigger; offsetDays: number };
+  eust: { triggerEvent: PaymentTrigger; offsetDays: number };
+  eustRefund: { triggerEvent: PaymentTrigger; offsetDays: number };
+}
+
 interface EntityWithDates {
   arrivalDateDe?: unknown;
   arrivalDate?: unknown;
@@ -255,6 +262,42 @@ function defaultTerms(): SupplierPaymentTermDraft[] {
       offsetMonths: 0,
     },
   ];
+}
+
+function asRoundedNumber(value: unknown, fallback = 0): number {
+  const parsed = parseDeNumber(value);
+  if (!Number.isFinite(parsed as number)) return fallback;
+  return Math.round(Number(parsed));
+}
+
+function resolveFoAutoPaymentTimingDefaults(input: unknown): FoAutoPaymentTimingDefaults {
+  const defaults: FoAutoPaymentTimingDefaults = {
+    freight: { triggerEvent: "ETD", offsetDays: 0 },
+    duty: { triggerEvent: "ETA", offsetDays: 0 },
+    eust: { triggerEvent: "ETA", offsetDays: 0 },
+    eustRefund: { triggerEvent: "ETA", offsetDays: 0 },
+  };
+  const root = (input && typeof input === "object")
+    ? input as Record<string, unknown>
+    : {};
+  const fo = (root.fo && typeof root.fo === "object")
+    ? root.fo as Record<string, unknown>
+    : {};
+  const getTiming = (key: "freight" | "duty" | "eust" | "eustRefund", fallback: { triggerEvent: PaymentTrigger; offsetDays: number }) => {
+    const row = (fo[key] && typeof fo[key] === "object")
+      ? fo[key] as Record<string, unknown>
+      : {};
+    return {
+      triggerEvent: normaliseTrigger(row.triggerEvent ?? fallback.triggerEvent),
+      offsetDays: asRoundedNumber(row.offsetDays, fallback.offsetDays),
+    };
+  };
+  return {
+    freight: getTiming("freight", defaults.freight),
+    duty: getTiming("duty", defaults.duty),
+    eust: getTiming("eust", defaults.eust),
+    eustRefund: getTiming("eustRefund", defaults.eustRefund),
+  };
 }
 
 function buildScheduleDates(schedule: FoSchedule): Record<PaymentTrigger, Date | null> {
@@ -563,6 +606,7 @@ export function buildFoPayments(input: {
   fxRate: unknown;
   incoterm: unknown;
   vatRefundLagMonths?: unknown;
+  paymentDueDefaults?: unknown;
   existingPayments?: unknown;
 }): FoPaymentRow[] {
   const costValues = computeFoCostValues(input);
@@ -591,6 +635,7 @@ export function buildFoPayments(input: {
 
   const incoterm = String(input.incoterm || "EXW").toUpperCase();
   const vatRefundLagMonths = Math.max(0, Math.round(asPositive(input.vatRefundLagMonths, 2)));
+  const autoDueDefaults = resolveFoAutoPaymentTimingDefaults(input.paymentDueDefaults);
   const rows: FoPaymentRow[] = [...supplierRows];
   if (incoterm !== "DDP" && costValues.freightAmount > 0) {
     rows.push({
@@ -599,10 +644,10 @@ export function buildFoPayments(input: {
       percent: 0,
       amount: costValues.freightAmount,
       currency: normaliseCurrency(input.freightCurrency, "EUR"),
-      triggerEvent: "ETD",
-      offsetDays: 0,
+      triggerEvent: autoDueDefaults.freight.triggerEvent,
+      offsetDays: autoDueDefaults.freight.offsetDays,
       offsetMonths: 0,
-      dueDate: resolveDueDate("ETD", 0, 0, scheduleDates),
+      dueDate: resolveDueDate(autoDueDefaults.freight.triggerEvent, autoDueDefaults.freight.offsetDays, 0, scheduleDates),
       category: "freight",
       isOverridden: false,
       dueDateManuallySet: false,
@@ -617,10 +662,10 @@ export function buildFoPayments(input: {
       percent: dutyRatePct,
       amount: costValues.dutyAmountEur,
       currency: "EUR",
-      triggerEvent: "ETA",
-      offsetDays: 0,
+      triggerEvent: autoDueDefaults.duty.triggerEvent,
+      offsetDays: autoDueDefaults.duty.offsetDays,
       offsetMonths: 0,
-      dueDate: resolveDueDate("ETA", 0, 0, scheduleDates),
+      dueDate: resolveDueDate(autoDueDefaults.duty.triggerEvent, autoDueDefaults.duty.offsetDays, 0, scheduleDates),
       category: "duty",
       isOverridden: false,
       dueDateManuallySet: false,
@@ -635,10 +680,10 @@ export function buildFoPayments(input: {
       percent: eustRatePct,
       amount: costValues.eustAmountEur,
       currency: "EUR",
-      triggerEvent: "ETA",
-      offsetDays: 0,
+      triggerEvent: autoDueDefaults.eust.triggerEvent,
+      offsetDays: autoDueDefaults.eust.offsetDays,
       offsetMonths: 0,
-      dueDate: resolveDueDate("ETA", 0, 0, scheduleDates),
+      dueDate: resolveDueDate(autoDueDefaults.eust.triggerEvent, autoDueDefaults.eust.offsetDays, 0, scheduleDates),
       category: "eust",
       isOverridden: false,
       dueDateManuallySet: false,
@@ -649,10 +694,15 @@ export function buildFoPayments(input: {
       percent: eustRatePct,
       amount: -costValues.eustAmountEur,
       currency: "EUR",
-      triggerEvent: "ETA",
-      offsetDays: 0,
+      triggerEvent: autoDueDefaults.eustRefund.triggerEvent,
+      offsetDays: autoDueDefaults.eustRefund.offsetDays,
       offsetMonths: vatRefundLagMonths,
-      dueDate: resolveDueDate("ETA", 0, vatRefundLagMonths, scheduleDates),
+      dueDate: resolveDueDate(
+        autoDueDefaults.eustRefund.triggerEvent,
+        autoDueDefaults.eustRefund.offsetDays,
+        vatRefundLagMonths,
+        scheduleDates,
+      ),
       category: "eust_refund",
       isOverridden: false,
       dueDateManuallySet: false,
@@ -672,6 +722,7 @@ export function normalizeFoRecord(input: {
   values: Record<string, unknown>;
   schedule: FoSchedule;
   vatRefundLagMonths?: unknown;
+  paymentDueDefaults?: unknown;
 }): Record<string, unknown> {
   const now = nowIso();
   const values = input.values || {};
@@ -691,6 +742,7 @@ export function normalizeFoRecord(input: {
     fxRate: values.fxRate,
     incoterm: values.incoterm,
     vatRefundLagMonths: input.vatRefundLagMonths,
+    paymentDueDefaults: input.paymentDueDefaults,
     existingPayments: existing?.payments,
   });
   return {

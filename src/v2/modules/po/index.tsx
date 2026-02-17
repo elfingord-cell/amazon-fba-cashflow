@@ -425,6 +425,7 @@ function poSettingsFromState(state: Record<string, unknown>): Record<string, unk
     vatRefundEnabled: settings.vatRefundEnabled !== false,
     vatRefundLagMonths: Number(settings.vatRefundLagMonths || 0),
     freightLagDays: Number(settings.freightLagDays || 0),
+    paymentDueDefaults: settings.paymentDueDefaults || {},
     cny: settings.cny || { start: "", end: "" },
     cnyBlackoutByYear: settings.cnyBlackoutByYear || {},
   };
