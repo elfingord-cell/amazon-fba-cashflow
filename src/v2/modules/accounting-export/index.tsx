@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Alert, Button, Card, Checkbox, Input, Space, Tag, Typography, message } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { currentMonthKey } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSyncSession } from "../../sync/session";
@@ -142,8 +143,12 @@ export default function AccountingExportModule(): JSX.Element {
   }, [includeJournal, inventoryOverrideRaw, month, stateObject, workspaceName]);
 
   const inventoryColumns = useMemo<ColumnDef<InventoryRow>[]>(() => [
-    { header: "SKU", accessorKey: "sku" },
-    { header: "Alias", accessorKey: "alias" },
+    {
+      header: "Alias",
+      accessorKey: "alias",
+      meta: { width: 260, minWidth: 240 },
+      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
+    },
     { header: "Kategorie", accessorKey: "category" },
     { header: "Amazon", cell: ({ row }) => formatInt(row.original.amazonUnits) },
     { header: "3PL", cell: ({ row }) => formatInt(row.original.threePLUnits) },

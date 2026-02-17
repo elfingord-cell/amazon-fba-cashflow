@@ -21,6 +21,7 @@ import { parseDeNumber } from "../../../lib/dataHealth.js";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { parseVentoryCsv } from "../../../ui/forecastCsv.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { computeForecastDriftSummary } from "../../domain/forecastDrift";
 import { computeForecastImpact, type FoImpactConflictRow, type ForecastImpactResult, type ForecastSkuImpactRow } from "../../domain/forecastImpact";
@@ -512,7 +513,17 @@ export default function ForecastModule(): JSX.Element {
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
     const base: ColumnDef<ProductRow>[] = [
-      { header: "Alias", accessorKey: "alias", meta: { width: 300, minWidth: 300 } },
+      {
+        header: "Alias",
+        accessorKey: "alias",
+        meta: { width: 300, minWidth: 300 },
+        cell: ({ row }) => (
+          <SkuAliasCell
+            alias={row.original.alias || (row.original.isPlan ? row.original.plannedSku : row.original.sku)}
+            sku={row.original.sku}
+          />
+        ),
+      },
       {
         header: "Status",
         meta: { width: 86, minWidth: 86 },
@@ -607,6 +618,7 @@ export default function ForecastModule(): JSX.Element {
       header: "Alias",
       accessorKey: "alias",
       meta: { width: 260, minWidth: 260 },
+      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
     },
     {
       header: "ABC",
@@ -1183,14 +1195,9 @@ export default function ForecastModule(): JSX.Element {
       ),
     },
     {
-      header: "SKU / Alias",
-      meta: { width: 190, minWidth: 190 },
-      cell: ({ row }) => (
-        <Space direction="vertical" size={0}>
-          <Text>{row.original.sku}</Text>
-          <Text type="secondary">{row.original.alias}</Text>
-        </Space>
-      ),
+      header: "Produkt",
+      meta: { width: 220, minWidth: 220 },
+      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
     },
     {
       header: "Supplier",

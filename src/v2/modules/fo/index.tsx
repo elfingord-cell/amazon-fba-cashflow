@@ -17,6 +17,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { getActiveForecastVersion } from "../../domain/forecastVersioning";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
@@ -634,12 +635,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     },
     {
       header: "Produkt",
-      cell: ({ row }) => (
-        <Space direction="vertical" size={0}>
-          <Text>{row.original.alias}</Text>
-          <Text type="secondary">{row.original.sku}</Text>
-        </Space>
-      ),
+      meta: { width: 220, minWidth: 220 },
+      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
     },
     { header: "Supplier", accessorKey: "supplierName" },
     {

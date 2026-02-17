@@ -25,6 +25,7 @@ import {
   resolveSafetyStockDays,
 } from "../../../domain/inventoryProjection.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { SkuAliasCell } from "../../components/SkuAliasCell";
 import {
   addMonths,
   currentMonthKey,
@@ -1073,8 +1074,12 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   }
 
   const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
-    { header: "SKU", accessorKey: "sku", meta: { width: 158, minWidth: 158 } },
-    { header: "Alias", accessorKey: "alias", meta: { width: 230, minWidth: 220 } },
+    {
+      header: "Alias",
+      accessorKey: "alias",
+      meta: { width: 270, minWidth: 250 },
+      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
+    },
     {
       header: "ABC",
       meta: { width: 72, align: "center" },
@@ -1562,7 +1567,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                   <TanStackGrid
                     data={group.rows}
                     columns={snapshotColumns}
-                    minTableWidth={1120}
+                    minTableWidth={1000}
                     tableLayout="fixed"
                   />
                 ),

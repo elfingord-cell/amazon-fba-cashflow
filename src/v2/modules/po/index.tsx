@@ -21,6 +21,7 @@ import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
 import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
 import {
@@ -885,17 +886,19 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       header: "Produkt",
       meta: { width: 260 },
       cell: ({ row }) => (
-        <Space direction="vertical" size={0}>
-          <Space size={6}>
-            <Text>{row.original.skuCount > 1 ? `${row.original.skuCount} SKUs` : row.original.alias}</Text>
-            {row.original.skuCount > 1 ? <Tag className="v2-po-sku-count-tag">Multi-SKU</Tag> : null}
-          </Space>
-          <Text type="secondary">
-            {row.original.skuCount > 1
-              ? `Start-SKU: ${row.original.sku}`
-              : row.original.sku}
-          </Text>
-        </Space>
+        row.original.skuCount > 1
+          ? (
+            <div className="v2-proj-alias">
+              <div className="v2-proj-alias-main" title={`${row.original.skuCount} SKUs`}>
+                <span>{row.original.skuCount} SKUs</span>
+                <Tag className="v2-po-sku-count-tag" style={{ marginInlineStart: 6 }}>Multi-SKU</Tag>
+              </div>
+              <Text className="v2-proj-sku-secondary" type="secondary" title={row.original.sku}>
+                Start-SKU: {row.original.sku}
+              </Text>
+            </div>
+          )
+          : <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />
       ),
     },
     { header: "Supplier", accessorKey: "supplierName", meta: { width: 150 } },
