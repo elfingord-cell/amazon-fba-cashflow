@@ -345,6 +345,7 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
   border: 1px solid var(--v2-table-border);
   border-radius: var(--v2-table-radius);
   background: #fff;
@@ -352,10 +353,11 @@
 
 .v2-scroll-host,
 .v2-stats-table-wrap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   max-width: 100%;
   min-width: 0;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
 }
 
 .v2-scroll-host::-webkit-scrollbar,
