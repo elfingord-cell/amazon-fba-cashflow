@@ -604,14 +604,9 @@ export default function ForecastModule(): JSX.Element {
 
   const impactSkuColumns = useMemo<ColumnDef<ForecastImpactSkuRow>[]>(() => [
     {
-      header: "SKU",
-      accessorKey: "sku",
-      meta: { width: 120, minWidth: 120 },
-    },
-    {
       header: "Alias",
       accessorKey: "alias",
-      meta: { width: 180, minWidth: 180 },
+      meta: { width: 260, minWidth: 260 },
     },
     {
       header: "ABC",
@@ -1615,7 +1610,7 @@ export default function ForecastModule(): JSX.Element {
                             className="v2-products-grid-wrap"
                             data={group.rows}
                             columns={impactSkuColumns}
-                            minTableWidth={1580}
+                            minTableWidth={1460}
                             tableLayout="fixed"
                           />
                         </div>
