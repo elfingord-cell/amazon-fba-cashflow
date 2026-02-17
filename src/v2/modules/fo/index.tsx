@@ -267,6 +267,16 @@ function templateFields(product: Record<string, unknown> | null | undefined): Re
   return fields || {};
 }
 
+function resolveSkuMasterUnitPrice(product: Record<string, unknown> | null | undefined): number {
+  const template = templateFields(product);
+  return Number(
+    toPositiveNumberOrNull(template.unitPriceUsd)
+    ?? toPositiveNumberOrNull(product?.unitPriceUsd)
+    ?? toPositiveNumberOrNull(product?.unitPrice)
+    ?? 0,
+  );
+}
+
 function resolveFoProductPrefill(input: {
   state: Record<string, unknown>;
   product: Record<string, unknown> | null;
@@ -286,7 +296,7 @@ function resolveFoProductPrefill(input: {
     orderContext: "fo",
   });
 
-  const unitPrice = Number(hierarchy.fields.unitPriceUsd.value || 0);
+  const unitPrice = resolveSkuMasterUnitPrice(product);
   const fxRate = Number(hierarchy.fields.fxRate.value || settings.fxRate || 0);
   const logisticsPerUnit = Number(hierarchy.fields.logisticsPerUnitEur.value || 0);
   const freight = Math.max(0, round2(logisticsPerUnit * Math.max(0, Number(input.units || 0))));
@@ -837,7 +847,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
   function resetFoFieldFromHierarchy(field: "unitPrice" | "productionLeadTimeDays" | "logisticsLeadTimeDays" | "dutyRatePct" | "eustRatePct" | "incoterm" | "currency" | "fxRate"): void {
     if (field === "unitPrice") {
-      form.setFieldValue("unitPrice", Number(foHierarchyBase.fields.unitPriceUsd.value || 0));
+      form.setFieldValue("unitPrice", resolveSkuMasterUnitPrice(selectedDraftProduct));
       return;
     }
     if (field === "productionLeadTimeDays") {
@@ -1080,7 +1090,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       supplierId: supplierId || current.supplierId,
       transportMode: defaults.transportMode,
       incoterm: defaults.incoterm,
-      unitPrice: defaults.unitPrice,
+      unitPrice: resolveSkuMasterUnitPrice(product.raw),
       currency: defaults.currency,
       freight: defaults.freight,
       freightCurrency: defaults.freightCurrency,
@@ -1091,6 +1101,29 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       logisticsLeadTimeDays: defaults.logisticsLeadTimeDays,
       bufferDays: defaults.bufferDays,
       paymentTerms: extractSupplierTerms([], supplier || undefined),
+    });
+  }
+
+  function applySupplierDefaults(supplierIdValue: string): void {
+    const supplierId = String(supplierIdValue || "").trim();
+    const values = form.getFieldsValue();
+    const sku = String(values.sku || "").trim();
+    const product = sku ? (productBySku.get(sku)?.raw || null) : null;
+    const supplier = supplierById.get(supplierId) || null;
+    const defaults = resolveFoProductPrefill({
+      state: stateObj,
+      product,
+      supplier: supplier || null,
+      settings,
+      supplierId,
+      units: Number(values.units || 0),
+    });
+    form.setFieldsValue({
+      supplierId,
+      incoterm: String(defaults.incoterm || values.incoterm || "EXW").toUpperCase(),
+      productionLeadTimeDays: Number(defaults.productionLeadTimeDays ?? values.productionLeadTimeDays ?? 0),
+      paymentTerms: extractSupplierTerms([], supplier || undefined),
+      unitPrice: resolveSkuMasterUnitPrice(product),
     });
   }
 
@@ -1132,7 +1165,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     const sku = String(values.sku || "").trim();
     const product = sku ? resolveProductBySku(productRows.map((entry) => entry.raw), sku) : null;
     const derivedSupplierId = String(product?.supplierId || "").trim();
-    const supplierId = String(derivedSupplierId || values.supplierId || "").trim();
+    const supplierId = String(values.supplierId || derivedSupplierId || "").trim();
     if (!supplierId) {
       throw new Error("Supplier ist erforderlich.");
     }
@@ -1596,13 +1629,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               rules={[{ required: true, message: "Supplier ist erforderlich." }]}
             >
               <Select
-                disabled
                 showSearch
                 optionFilterProp="label"
                 options={supplierRows.map((supplier) => ({
                   value: supplier.id,
                   label: supplier.name,
                 }))}
+                onChange={(nextSupplierId) => {
+                  applySupplierDefaults(String(nextSupplierId || ""));
+                }}
               />
             </Form.Item>
           </Space>
