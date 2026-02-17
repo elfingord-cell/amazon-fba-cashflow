@@ -1159,14 +1159,14 @@
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  overflow-x: hidden;
-  overflow-y: hidden;
+  overflow: visible;
 }
 
 .v2-category-collapse .ant-collapse-content {
   max-width: 100%;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: visible;
+  overflow-y: hidden;
 }
 
 .v2-category-collapse .ant-collapse-content-box > * {
