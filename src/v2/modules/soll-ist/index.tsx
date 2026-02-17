@@ -667,12 +667,18 @@ export default function SollIstModule(): JSX.Element {
           rowKey="key"
           dataSource={selectedPlanGroupRows}
           columns={[
-            { title: "Gruppe", dataIndex: "label", key: "label" },
+            {
+              title: "Gruppe",
+              dataIndex: "label",
+              key: "label",
+              sorter: (a, b) => String(a.label || "").localeCompare(String(b.label || ""), "de-DE"),
+            },
             {
               title: "Planbetrag",
               dataIndex: "amount",
               key: "amount",
               align: "right" as const,
+              sorter: (a, b) => Number(a.amount || 0) - Number(b.amount || 0),
               render: (value: number) => (
                 <span className={value < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(value)}</span>
               ),
@@ -684,4 +690,3 @@ export default function SollIstModule(): JSX.Element {
     </div>
   );
 }
-

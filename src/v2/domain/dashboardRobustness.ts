@@ -1,6 +1,7 @@
 import { computeAbcClassification } from "../../domain/abcClassification.js";
 import { computeInventoryProjection } from "../../domain/inventoryProjection.js";
 import { parseDeNumber } from "../../lib/dataHealth.js";
+import { addMonths, currentMonthKey } from "./months";
 import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 
 export type RobustnessSeverity = "error" | "warning";
@@ -79,6 +80,13 @@ interface VatConfigInfo {
   active: boolean;
   defaults: Record<string, unknown>;
   monthOverrides: Record<string, unknown>;
+}
+
+interface ProjectionCoverageLookup {
+  perSkuMonth: Map<string, Map<string, {
+    hasForecast?: boolean;
+    isCovered?: boolean;
+  }>>;
 }
 
 function normalizeSku(value: unknown): string {
@@ -316,19 +324,30 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
   const vatInfo = resolveVatConfig(state);
   const revenueIssues = buildRevenueInputIssues(state, activeProducts);
   const missingPriceSkuSet = new Set(revenueIssues.missingPrice.map((entry) => normalizeSkuKey(entry.sku)));
-  const projection = computeInventoryProjection({
-    state,
-    months,
-    products: activeProducts,
-    snapshot: null,
-    snapshotMonth: months[0] || undefined,
-    projectionMode: "units",
-  }) as {
-    perSkuMonth: Map<string, Map<string, {
-      hasForecast?: boolean;
-      isCovered?: boolean;
-    }>>;
-  };
+  const nowMonth = currentMonthKey();
+  const pastMonths = months.filter((month) => month < nowMonth);
+  const futureMonths = months.filter((month) => month >= nowMonth);
+  const emptyProjection: ProjectionCoverageLookup = { perSkuMonth: new Map() };
+  const pastProjection = pastMonths.length
+    ? computeInventoryProjection({
+      state,
+      months: pastMonths,
+      products: activeProducts,
+      snapshot: null,
+      snapshotMonth: pastMonths[0] || undefined,
+      projectionMode: "units",
+    }) as ProjectionCoverageLookup
+    : emptyProjection;
+  const futureProjection = futureMonths.length
+    ? computeInventoryProjection({
+      state,
+      months: futureMonths,
+      products: activeProducts,
+      snapshot: null,
+      snapshotMonth: addMonths(nowMonth, -1),
+      projectionMode: "units",
+    }) as ProjectionCoverageLookup
+    : emptyProjection;
   const abcBySku = computeAbcClassification(state).bySku;
 
   const monthResults: DashboardRobustMonth[] = months.map((month) => {
@@ -341,7 +360,8 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       if (!sku) return;
       const alias = String(product.alias || sku);
       const abcClass = resolveAbcClass(abcBySku, sku);
-      const skuProjection = projection.perSkuMonth.get(sku) || projection.perSkuMonth.get(normalizeSkuKey(sku));
+      const monthProjection = month < nowMonth ? pastProjection : futureProjection;
+      const skuProjection = monthProjection.perSkuMonth.get(sku) || monthProjection.perSkuMonth.get(normalizeSkuKey(sku));
       const monthData = skuProjection?.get(month);
       const hasForecast = Boolean(monthData?.hasForecast);
       const isCovered = hasForecast && Boolean(monthData?.isCovered);

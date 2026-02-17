@@ -897,14 +897,17 @@ export default function DashboardModule(): JSX.Element {
     { header: "Monat", accessorKey: "month" },
     {
       header: "Plan Umsatz",
+      accessorKey: "plannedRevenue",
       cell: ({ row }) => formatCurrency(row.original.plannedRevenue),
     },
     {
       header: "Ist Umsatz",
+      accessorKey: "actualRevenue",
       cell: ({ row }) => formatCurrency(row.original.actualRevenue),
     },
     {
       header: "Delta Umsatz",
+      accessorKey: "revenueDelta",
       cell: ({ row }) => (
         <span className={Number(row.original.revenueDelta || 0) < 0 ? "v2-negative" : undefined}>
           {formatCurrency(row.original.revenueDelta)}
@@ -913,18 +916,22 @@ export default function DashboardModule(): JSX.Element {
     },
     {
       header: "Delta Umsatz %",
+      accessorKey: "revenueDeltaPct",
       cell: ({ row }) => formatPercent(row.original.revenueDeltaPct),
     },
     {
       header: "Plan Kontostand",
+      accessorKey: "plannedClosing",
       cell: ({ row }) => formatCurrency(row.original.plannedClosing),
     },
     {
       header: "Ist Kontostand",
+      accessorKey: "actualClosing",
       cell: ({ row }) => formatCurrency(row.original.actualClosing),
     },
     {
       header: "Delta Kontostand",
+      accessorKey: "closingDelta",
       cell: ({ row }) => (
         <span className={Number(row.original.closingDelta || 0) < 0 ? "v2-negative" : undefined}>
           {formatCurrency(row.original.closingDelta)}
@@ -938,12 +945,14 @@ export default function DashboardModule(): JSX.Element {
       title: "Check",
       dataIndex: "label",
       key: "label",
+      sorter: (a: RobustnessCheckResult, b: RobustnessCheckResult) => String(a.label || "").localeCompare(String(b.label || ""), "de-DE"),
     },
     {
       title: "Status",
       dataIndex: "status",
       key: "status",
       width: 130,
+      sorter: (a: RobustnessCheckResult, b: RobustnessCheckResult) => String(a.status || "").localeCompare(String(b.status || ""), "de-DE"),
       render: (status: RobustnessCheckResult["status"]) => statusTag(status),
     },
     {
@@ -951,6 +960,7 @@ export default function DashboardModule(): JSX.Element {
       dataIndex: "detail",
       key: "detail",
       width: 320,
+      sorter: (a: RobustnessCheckResult, b: RobustnessCheckResult) => String(a.detail || "").localeCompare(String(b.detail || ""), "de-DE"),
       render: (value: string) => <Text type="secondary">{value}</Text>,
     },
     {

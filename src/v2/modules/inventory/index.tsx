@@ -1082,6 +1082,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
     {
       header: "ABC",
+      accessorKey: "abcClass",
       meta: { width: 72, align: "center" },
       cell: ({ row }) => (
         <Tooltip title={abcBasisHint(row.original.abcBasis)}>
@@ -1091,6 +1092,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
     {
       header: "Amazon",
+      accessorKey: "amazonUnits",
       meta: { width: 116, align: "right" },
       cell: ({ row }) => (
         <InputNumber
@@ -1115,6 +1117,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
     {
       header: "3PL",
+      accessorKey: "threePLUnits",
       meta: { width: 116, align: "right" },
       cell: ({ row }) => (
         <InputNumber
@@ -1139,11 +1142,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
     {
       header: "Total",
+      accessorKey: "totalUnits",
       meta: { width: 92, align: "right" },
       cell: ({ row }) => formatInt(row.original.totalUnits),
     },
     {
       header: "Delta",
+      accessorKey: "delta",
       meta: { width: 92, align: "right" },
       cell: ({ row }) => (
         <span className={row.original.delta < 0 ? "v2-negative" : ""}>
@@ -1153,11 +1158,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
     {
       header: "Safety DOH",
+      accessorKey: "safetyDays",
       meta: { width: 96, align: "right" },
       cell: ({ row }) => formatInt(row.original.safetyDays),
     },
     {
       header: "Coverage DOH",
+      accessorKey: "coverageDays",
       meta: { width: 108, align: "right" },
       cell: ({ row }) => formatInt(row.original.coverageDays),
     },
@@ -1198,6 +1205,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       },
       {
         header: "ABC",
+        accessorKey: "abcClass",
         meta: { width: 68, align: "center" },
         cell: ({ row }) => (
           <Tooltip title={abcBasisHint(row.original.abcBasis)}>
@@ -1207,17 +1215,27 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       },
       {
         header: "Safety DOH",
+        accessorKey: "safetyDays",
         meta: { width: 96, align: "right" },
         cell: ({ row }) => formatInt(row.original.safetyDays),
       },
       {
         header: "Coverage DOH",
+        accessorKey: "coverageDays",
         meta: { width: 110, align: "right" },
         cell: ({ row }) => formatInt(row.original.coverageDays),
       },
       {
         header: "Ankerbestand",
-        meta: { width: 118, align: "right" },
+        meta: {
+          width: 118,
+          align: "right",
+          sortAccessor: (row: InventoryProductRow) => {
+            const sku = String(row.sku || "").trim();
+            const anchor = projection.startAvailableBySku.get(sku);
+            return Number.isFinite(anchor as number) ? Number(anchor) : 0;
+          },
+        },
         cell: ({ row }) => {
           const sku = String(row.original.sku || "").trim();
           const anchor = projection.startAvailableBySku.get(sku);
@@ -1242,7 +1260,22 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     const monthColumns = projectionMonthList.map((month) => ({
       id: month,
       header: formatMonthLabel(month),
-      meta: { minWidth: 106, width: 106, align: "right" },
+      meta: {
+        minWidth: 106,
+        width: 106,
+        align: "right",
+        sortAccessor: (row: InventoryProductRow) => {
+          const data = projection.perSkuMonth.get(row.sku)?.get(month) as ProjectionCellData | undefined;
+          if (!data) return null;
+          if (projectionMode === "plan") {
+            return Number.isFinite(data.forecastUnits as number) ? Number(data.forecastUnits) : null;
+          }
+          if (projectionMode === "doh") {
+            return Number.isFinite(data.doh as number) ? Number(data.doh) : null;
+          }
+          return Number.isFinite(data.endAvailable as number) ? Number(data.endAvailable) : null;
+        },
+      },
       cell: ({ row }: { row: { original: InventoryProductRow } }) => {
         const data = projection.perSkuMonth.get(row.original.sku)?.get(month) as ProjectionCellData | undefined;
         if (!data) return "—";

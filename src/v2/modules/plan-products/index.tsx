@@ -445,6 +445,7 @@ export default function PlanProductsModule(): JSX.Element {
               title: "Alias",
               dataIndex: "alias",
               key: "alias",
+              sorter: (a, b) => String(a.alias || "").localeCompare(String(b.alias || ""), "de-DE"),
               render: (value: string) => (
                 <Space size={6}>
                   <Tag color="blue">Plan</Tag>
@@ -456,17 +457,20 @@ export default function PlanProductsModule(): JSX.Element {
               title: "Pre-SKU",
               dataIndex: "plannedSku",
               key: "plannedSku",
+              sorter: (a, b) => String(a.plannedSku || "").localeCompare(String(b.plannedSku || ""), "de-DE"),
               render: (value: string) => value || <Text type="secondary">ohne SKU</Text>,
             },
             {
               title: "Relation",
               dataIndex: "relationType",
               key: "relationType",
+              sorter: (a, b) => String(a.relationType || "").localeCompare(String(b.relationType || ""), "de-DE"),
               render: (value: string) => RELATION_LABELS[value] || value || "—",
             },
             {
               title: "Baseline",
               key: "baseline",
+              sorter: (a, b) => Number(asNumber(a.baselineUnitsInReferenceMonth) || 0) - Number(asNumber(b.baselineUnitsInReferenceMonth) || 0),
               render: (_, row: Record<string, unknown>) => (
                 <span>
                   {monthNumberToLabel(row.baselineReferenceMonth)} · {formatNumber(row.baselineUnitsInReferenceMonth, 0)} Units
@@ -477,6 +481,7 @@ export default function PlanProductsModule(): JSX.Element {
               title: "Saisonalität von",
               dataIndex: "seasonalityReferenceSku",
               key: "seasonalityReferenceSku",
+              sorter: (a, b) => String(a.seasonalityReferenceSku || "").localeCompare(String(b.seasonalityReferenceSku || ""), "de-DE"),
               render: (value: string) => value || "—",
             },
             {
@@ -484,6 +489,7 @@ export default function PlanProductsModule(): JSX.Element {
               dataIndex: "avgSellingPriceGrossEUR",
               key: "avgSellingPriceGrossEUR",
               align: "right" as const,
+              sorter: (a, b) => Number(asNumber(a.avgSellingPriceGrossEUR) || 0) - Number(asNumber(b.avgSellingPriceGrossEUR) || 0),
               render: (value: unknown) => formatNumber(value, 2),
             },
             {
@@ -491,11 +497,13 @@ export default function PlanProductsModule(): JSX.Element {
               dataIndex: "sellerboardMarginPct",
               key: "sellerboardMarginPct",
               align: "right" as const,
+              sorter: (a, b) => Number(asNumber(a.sellerboardMarginPct) || 0) - Number(asNumber(b.sellerboardMarginPct) || 0),
               render: (value: unknown) => formatNumber(value, 2),
             },
             {
               title: "Launch & Ramp",
               key: "launchRamp",
+              sorter: (a, b) => String(a.launchDate || "").localeCompare(String(b.launchDate || "")),
               render: (_, row: Record<string, unknown>) => (
                 <span>
                   {String(row.launchDate || "—")} · {formatNumber(asNumber(row.rampUpWeeks), 0)}W · Start {formatNumber(asNumber(row.softLaunchStartSharePct), 0)}%
@@ -506,11 +514,13 @@ export default function PlanProductsModule(): JSX.Element {
               title: "Vorschau (Next 3)",
               dataIndex: "monthPreview",
               key: "monthPreview",
+              sorter: (a, b) => String(a.monthPreview || "").localeCompare(String(b.monthPreview || ""), "de-DE"),
             },
             {
               title: "Status",
               dataIndex: "status",
               key: "status",
+              sorter: (a, b) => String(a.status || "").localeCompare(String(b.status || ""), "de-DE"),
               render: (value: string, row: Record<string, unknown>) => {
                 if (value === "archived") {
                   const mappedSku = String(row.mappedSku || row.plannedSku || "");
@@ -752,6 +762,7 @@ export default function PlanProductsModule(): JSX.Element {
                     title: "Monat",
                     dataIndex: "month",
                     key: "month",
+                    sorter: (a, b) => String(a.month || "").localeCompare(String(b.month || "")),
                     render: (value: string) => formatMonthLabel(value),
                   },
                   {
@@ -759,6 +770,7 @@ export default function PlanProductsModule(): JSX.Element {
                     dataIndex: "baseUnits",
                     key: "baseUnits",
                     align: "right" as const,
+                    sorter: (a, b) => Number(asNumber(a.baseUnits) || 0) - Number(asNumber(b.baseUnits) || 0),
                     render: (value: unknown) => formatNumber(asNumber(value), 2),
                   },
                   {
@@ -766,6 +778,7 @@ export default function PlanProductsModule(): JSX.Element {
                     dataIndex: "rampFactor",
                     key: "rampFactor",
                     align: "right" as const,
+                    sorter: (a, b) => Number(asNumber(a.rampFactor) || 0) - Number(asNumber(b.rampFactor) || 0),
                     render: (value: unknown) => formatNumber(asNumber(value), 2),
                   },
                   {
@@ -773,6 +786,7 @@ export default function PlanProductsModule(): JSX.Element {
                     dataIndex: "units",
                     key: "units",
                     align: "right" as const,
+                    sorter: (a, b) => Number(asNumber(a.units) || 0) - Number(asNumber(b.units) || 0),
                     render: (value: unknown) => formatNumber(value, 0),
                   },
                   {
@@ -780,6 +794,7 @@ export default function PlanProductsModule(): JSX.Element {
                     dataIndex: "revenue",
                     key: "revenue",
                     align: "right" as const,
+                    sorter: (a, b) => Number(asNumber(a.revenue) || 0) - Number(asNumber(b.revenue) || 0),
                     render: (value: unknown) => formatNumber(value, 2),
                   },
                 ]}

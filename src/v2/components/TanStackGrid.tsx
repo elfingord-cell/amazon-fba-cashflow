@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
 import {
   type ColumnDef,
+  type SortingState,
   flexRender,
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 
@@ -13,6 +15,8 @@ interface V2ColumnMeta {
   width?: number | string;
   minWidth?: number | string;
   align?: "left" | "right" | "center";
+  sortable?: boolean;
+  sortAccessor?: (row: unknown) => unknown;
 }
 
 interface TanStackGridProps<T extends object> {
@@ -48,16 +52,33 @@ export function TanStackGrid<T extends object>({
   crosshair = "none",
   onCellHover,
 }: TanStackGridProps<T>): JSX.Element {
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [hovered, setHovered] = useState<{ rowIndex: number | null; colIndex: number | null }>({
     rowIndex: null,
     colIndex: null,
   });
-  const stableColumns = useMemo(() => columns, [columns]);
+  const stableColumns = useMemo(() => {
+    return columns.map((column) => {
+      const next = { ...column } as ColumnDef<T>;
+      const meta = columnMeta(next.meta);
+      const hasAccessor = "accessorKey" in next || "accessorFn" in next;
+      if (!hasAccessor && typeof meta.sortAccessor === "function") {
+        (next as { accessorFn?: (row: T) => unknown }).accessorFn = (row: T) => meta.sortAccessor?.(row);
+      }
+      if (meta.sortable === false) {
+        (next as { enableSorting?: boolean }).enableSorting = false;
+      }
+      return next;
+    });
+  }, [columns]);
   const crosshairEnabled = crosshair === "matrix";
   const table = useReactTable({
     data,
     columns: stableColumns,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
   });
 
   const baseClassName = className || "v2-stats-table-wrap";
@@ -105,7 +126,26 @@ export function TanStackGrid<T extends object>({
                     data-col-index={colIndex}
                     onMouseEnter={() => handleCellHover(null, colIndex)}
                   >
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    {header.isPlaceholder ? null : (
+                      header.column.getCanSort() ? (
+                        <button
+                          type="button"
+                          className="v2-sort-header-btn"
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
+                          <span className="v2-sort-header-indicator" aria-hidden="true">
+                            {header.column.getIsSorted() === "asc"
+                              ? "▲"
+                              : header.column.getIsSorted() === "desc"
+                                ? "▼"
+                                : "↕"}
+                          </span>
+                        </button>
+                      ) : (
+                        flexRender(header.column.columnDef.header, header.getContext())
+                      )
+                    )}
                   </th>
                 );
               })}

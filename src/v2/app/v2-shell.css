@@ -407,6 +407,33 @@
   font-weight: 600;
 }
 
+.v2-sort-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  padding: 0;
+  margin: 0;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.v2-sort-header-btn:hover {
+  color: #0f766e;
+}
+
+.v2-sort-header-indicator {
+  margin-left: auto;
+  min-width: 12px;
+  color: #64748b;
+  font-size: 10px;
+}
+
 .v2-stats-table tr:last-child td {
   border-bottom: 0;
 }

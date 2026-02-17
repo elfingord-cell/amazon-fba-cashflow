@@ -333,20 +333,28 @@ export default function VatModule(): JSX.Element {
           pagination={false}
           dataSource={tableData}
           columns={[
-            { title: "Monat", dataIndex: "monthLabel", key: "monthLabel" },
+            {
+              title: "Monat",
+              dataIndex: "monthLabel",
+              key: "monthLabel",
+              sorter: (a, b) => String(a.month || "").localeCompare(String(b.month || "")),
+            },
             {
               title: "DE Anteil",
               key: "deShare",
+              sorter: (a, b) => Number(a.deShare || 0) - Number(b.deShare || 0),
               render: (_, row) => formatPercent(row.deShare),
             },
             {
               title: "Gebuehrensatz",
               key: "feeRate",
+              sorter: (a, b) => Number(a.feeRate || 0) - Number(b.feeRate || 0),
               render: (_, row) => formatPercent(row.feeRate),
             },
             {
               title: "DE-Brutto",
               key: "grossDe",
+              sorter: (a, b) => Number(a.grossDe || 0) - Number(b.grossDe || 0),
               render: (_, row) => (
                 <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "deBrutto" })}>
                   {formatCurrency(row.grossDe)}
@@ -356,6 +364,7 @@ export default function VatModule(): JSX.Element {
             {
               title: "Output-USt",
               key: "outVat",
+              sorter: (a, b) => Number(a.outVat || 0) - Number(b.outVat || 0),
               render: (_, row) => (
                 <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "outputUst" })}>
                   {formatCurrency(row.outVat)}
@@ -365,6 +374,7 @@ export default function VatModule(): JSX.Element {
             {
               title: "VSt Fees",
               key: "feeInputVat",
+              sorter: (a, b) => Number(a.feeInputVat || 0) - Number(b.feeInputVat || 0),
               render: (_, row) => (
                 <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "vstFees" })}>
                   {formatCurrency(row.feeInputVat)}
@@ -374,6 +384,7 @@ export default function VatModule(): JSX.Element {
             {
               title: "Fixkosten-VSt",
               key: "fixInputVat",
+              sorter: (a, b) => Number(a.fixInputVat || 0) - Number(b.fixInputVat || 0),
               render: (_, row) => (
                 <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "fixkostenVst" })}>
                   {formatCurrency(row.fixInputVat)}
@@ -383,6 +394,7 @@ export default function VatModule(): JSX.Element {
             {
               title: "EUSt-Erstattung",
               key: "eustRefund",
+              sorter: (a, b) => Number(a.eustRefund || 0) - Number(b.eustRefund || 0),
               render: (_, row) => (
                 <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "eustErstattung" })}>
                   {formatCurrency(row.eustRefund)}
@@ -392,6 +404,7 @@ export default function VatModule(): JSX.Element {
             {
               title: "Zahllast",
               key: "payable",
+              sorter: (a, b) => Number(a.payable || 0) - Number(b.payable || 0),
               render: (_, row) => (
                 <Button size="small" type="text" danger={row.payable < 0} onClick={() => setDetailModal({ month: row.month, key: "zahllast" })}>
                   {formatCurrency(row.payable)}

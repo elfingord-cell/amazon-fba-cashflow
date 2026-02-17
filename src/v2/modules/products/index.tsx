@@ -539,6 +539,7 @@ export default function ProductsModule(): JSX.Element {
       },
       {
         header: "Supplier",
+        accessorFn: (row) => (row.supplierId ? supplierLabelById.get(row.supplierId) || row.supplierId : ""),
         meta: { width: 190 },
         cell: ({ row }) => (row.original.supplierId ? supplierLabelById.get(row.original.supplierId) || row.original.supplierId : "—"),
       },
@@ -546,7 +547,7 @@ export default function ProductsModule(): JSX.Element {
 
     const actionColumn: ColumnDef<ProductRow> = {
       header: "Aktionen",
-      meta: { width: productsGridMode === "logistics" ? 274 : 230, minWidth: productsGridMode === "logistics" ? 274 : 230 },
+      meta: { width: productsGridMode === "logistics" ? 274 : 230, minWidth: productsGridMode === "logistics" ? 274 : 230, sortable: false },
       cell: ({ row }) => (
         <div className="v2-actions-nowrap">
           {productsGridMode === "logistics" ? (
@@ -603,6 +604,7 @@ export default function ProductsModule(): JSX.Element {
       ...sharedColumns,
       {
         header: "Status",
+        accessorKey: "status",
         meta: { width: 96 },
         cell: ({ row }) => (
           row.original.status === "inactive"
@@ -614,26 +616,31 @@ export default function ProductsModule(): JSX.Element {
       },
       {
         header: "Completeness",
+        accessorKey: "completeness",
         meta: { width: 122 },
         cell: ({ row }) => completenessTag(row.original.completeness),
       },
       {
         header: "Ø VK (EUR)",
+        accessorKey: "avgSellingPriceGrossEUR",
         meta: { width: 120, align: "right" },
         cell: ({ row }) => formatMoney(row.original.avgSellingPriceGrossEUR),
       },
       {
         header: "Ø EK (USD)",
+        accessorKey: "templateUnitPriceUsd",
         meta: { width: 120, align: "right" },
         cell: ({ row }) => formatMoney(row.original.templateUnitPriceUsd),
       },
       {
         header: "Ø Einstand (EUR)",
+        accessorKey: "landedUnitCostEur",
         meta: { width: 140, align: "right" },
         cell: ({ row }) => formatMoney(row.original.landedUnitCostEur),
       },
       {
         header: "Ø Shipping China->Lager/3PL (EUR/Stk)",
+        accessorKey: "shippingPerUnitEur",
         meta: { width: 220, align: "right" },
         cell: ({ row }) => formatMoney(row.original.shippingPerUnitEur),
       },
@@ -2019,6 +2026,7 @@ export default function ProductsModule(): JSX.Element {
                               title: "Monat",
                               dataIndex: "month",
                               key: "month",
+                              sorter: (a, b) => String(a.month || "").localeCompare(String(b.month || "")),
                               render: (value: string) => formatMonthLabel(value),
                             },
                             {
@@ -2026,6 +2034,7 @@ export default function ProductsModule(): JSX.Element {
                               dataIndex: "planUnits",
                               key: "planUnits",
                               align: "right" as const,
+                              sorter: (a, b) => Number(asNumber(a.planUnits) || 0) - Number(asNumber(b.planUnits) || 0),
                               render: (value: unknown) => formatNumber(asNumber(value), 0),
                             },
                             {
@@ -2033,6 +2042,7 @@ export default function ProductsModule(): JSX.Element {
                               dataIndex: "liveUnits",
                               key: "liveUnits",
                               align: "right" as const,
+                              sorter: (a, b) => Number(asNumber(a.liveUnits) || 0) - Number(asNumber(b.liveUnits) || 0),
                               render: (value: unknown) => formatNumber(asNumber(value), 0),
                             },
                             {
@@ -2040,6 +2050,7 @@ export default function ProductsModule(): JSX.Element {
                               dataIndex: "deltaUnits",
                               key: "deltaUnits",
                               align: "right" as const,
+                              sorter: (a, b) => Number(asNumber(a.deltaUnits) || 0) - Number(asNumber(b.deltaUnits) || 0),
                               render: (value: unknown) => formatNumber(asNumber(value), 0),
                             },
                             {
@@ -2047,6 +2058,7 @@ export default function ProductsModule(): JSX.Element {
                               dataIndex: "deltaPct",
                               key: "deltaPct",
                               align: "right" as const,
+                              sorter: (a, b) => Number(asNumber(a.deltaPct) || 0) - Number(asNumber(b.deltaPct) || 0),
                               render: (value: unknown) => {
                                 const parsed = asNumber(value);
                                 if (!Number.isFinite(parsed as number)) return "—";
