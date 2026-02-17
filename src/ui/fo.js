@@ -45,7 +45,7 @@ function el(tag, attrs = {}, children = []) {
 }
 
 const TRANSPORT_MODES = ["SEA", "RAIL", "AIR"];
-const INCOTERMS = ["EXW", "DDP"];
+const INCOTERMS = ["EXW", "DDP", "FCA"];
 const PAYMENT_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA", "DELIVERY"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
 const STATUS_LABELS = {

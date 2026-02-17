@@ -30,7 +30,7 @@ function el(tag, attrs = {}, children = []) {
 
 const TRIGGER_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
-const INCOTERMS = ["EXW", "FOB", "DDP"];
+const INCOTERMS = ["EXW", "FOB", "DDP", "FCA"];
 
 function defaultPaymentTerms() {
   return [

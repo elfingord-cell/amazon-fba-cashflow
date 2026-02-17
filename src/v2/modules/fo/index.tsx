@@ -257,6 +257,32 @@ function toPositiveNumberOrNull(value: unknown): number | null {
   return parsed;
 }
 
+function normalizeTransportMode(value: unknown): string {
+  const upper = String(value || "").trim().toUpperCase();
+  if (upper === "AIR" || upper === "SEA" || upper === "RAIL") return upper;
+  return "RAIL";
+}
+
+function resolveSettingsFxRate(settings: Record<string, unknown>): number {
+  return Number(toPositiveNumberOrNull(settings.fxRate) ?? 0);
+}
+
+function resolveSettingsTransportLeadTime(settings: Record<string, unknown>, transportMode: unknown): { days: number; sourceMode: string | null } {
+  const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
+  const preferred = normalizeTransportMode(transportMode);
+  const fallbackModes = [preferred, "RAIL", "SEA", "AIR"];
+  const seen = new Set<string>();
+  for (let index = 0; index < fallbackModes.length; index += 1) {
+    const mode = fallbackModes[index];
+    if (seen.has(mode)) continue;
+    seen.add(mode);
+    const parsed = Number(transportLeadMap[mode.toLowerCase()]);
+    if (!Number.isFinite(parsed) || parsed < 0) continue;
+    return { days: Math.max(0, Math.round(parsed)), sourceMode: mode };
+  }
+  return { days: 0, sourceMode: null };
+}
+
 function templateFields(product: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const template = (product?.template && typeof product.template === "object")
     ? product.template as Record<string, unknown>
@@ -277,17 +303,29 @@ function resolveSkuMasterUnitPrice(product: Record<string, unknown> | null | und
   );
 }
 
+function resolveSkuMasterShippingPerUnit(product: Record<string, unknown> | null | undefined): number {
+  const template = templateFields(product);
+  return Number(
+    toPositiveNumberOrNull(product?.logisticsPerUnitEur)
+    ?? toPositiveNumberOrNull(product?.freightPerUnitEur)
+    ?? toPositiveNumberOrNull(template.logisticsPerUnitEur)
+    ?? toPositiveNumberOrNull(template.freightEur)
+    ?? 0,
+  );
+}
+
 function resolveFoProductPrefill(input: {
   state: Record<string, unknown>;
   product: Record<string, unknown> | null;
   supplier: Record<string, unknown> | null;
   settings: Record<string, unknown>;
   supplierId?: string;
+  transportMode?: string;
   units: number;
 }): Partial<FoFormValues> {
   const product = input.product || {};
+  const supplier = input.supplier || {};
   const settings = input.settings || {};
-  const template = templateFields(product);
   const hierarchy = resolveMasterDataHierarchy({
     state: input.state || {},
     product,
@@ -297,21 +335,20 @@ function resolveFoProductPrefill(input: {
   });
 
   const unitPrice = resolveSkuMasterUnitPrice(product);
-  const fxRate = Number(hierarchy.fields.fxRate.value || settings.fxRate || 0);
-  const logisticsPerUnit = Number(hierarchy.fields.logisticsPerUnitEur.value || 0);
+  const fxRate = resolveSettingsFxRate(settings);
+  const logisticsPerUnit = resolveSkuMasterShippingPerUnit(product);
   const freight = Math.max(0, round2(logisticsPerUnit * Math.max(0, Number(input.units || 0))));
-  const transportMode = String(template.transportMode || "SEA").toUpperCase();
-  const logisticsLead = Number(hierarchy.fields.transitDays.value || 45);
+  const transportMode = normalizeTransportMode(input.transportMode || "RAIL");
+  const logisticsLead = resolveSettingsTransportLeadTime(settings, transportMode).days;
   const productionLead = Number(hierarchy.fields.productionLeadTimeDays.value || 45);
   const ddp = hierarchy.fields.ddp.value === true;
-  const incoterm = hierarchy.fields.incoterm.value || (ddp ? "DDP" : "EXW");
-  const currency = hierarchy.fields.currency.value || String(settings.defaultCurrency || "EUR").toUpperCase();
+  const incoterm = String(supplier.incotermDefault || hierarchy.fields.incoterm.value || (ddp ? "DDP" : "EXW")).toUpperCase();
 
   return {
     transportMode,
-    incoterm: String(incoterm).toUpperCase(),
+    incoterm,
     unitPrice,
-    currency: String(currency).toUpperCase(),
+    currency: "USD",
     freight,
     freightCurrency: "EUR",
     dutyRatePct: Number(hierarchy.fields.dutyRatePct.value || 0),
@@ -334,8 +371,8 @@ function resolveLeadTimeSourceInfo(input: {
   const product = input.product || {};
   const settings = input.settings || {};
   const template = templateFields(product);
-  const effectiveTransport = String(input.transportMode || template.transportMode || "SEA").toUpperCase();
-  const transportLeadMap = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
+  const effectiveTransport = normalizeTransportMode(input.transportMode || "RAIL");
+  const transportLead = resolveSettingsTransportLeadTime(settings, effectiveTransport);
 
   let production = "Fallback";
   if (toPositiveNumberOrNull(product.productionLeadTimeDaysDefault) != null) {
@@ -347,12 +384,8 @@ function resolveLeadTimeSourceInfo(input: {
   }
 
   let logistics = "Fallback";
-  if (toPositiveNumberOrNull(template.transitDays) != null) {
-    logistics = "Beschaffungs-Template";
-  } else if (toPositiveNumberOrNull(transportLeadMap[effectiveTransport.toLowerCase()]) != null) {
-    logistics = `Settings-Default (${effectiveTransport})`;
-  } else if (toPositiveNumberOrNull(transportLeadMap.sea) != null) {
-    logistics = "Settings-Default (SEA)";
+  if (transportLead.sourceMode) {
+    logistics = `Settings-Default (${transportLead.sourceMode})`;
   }
 
   return { production, logistics };
@@ -855,7 +888,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       return;
     }
     if (field === "logisticsLeadTimeDays") {
-      form.setFieldValue("logisticsLeadTimeDays", Number(foHierarchyBase.fields.transitDays.value || 0));
+      const transportMode = normalizeTransportMode(form.getFieldValue("transportMode"));
+      form.setFieldValue("logisticsLeadTimeDays", resolveSettingsTransportLeadTime(settings, transportMode).days);
       return;
     }
     if (field === "dutyRatePct") {
@@ -867,14 +901,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       return;
     }
     if (field === "incoterm") {
-      form.setFieldValue("incoterm", String(foHierarchyBase.fields.incoterm.value || "EXW"));
+      const supplier = supplierById.get(String(form.getFieldValue("supplierId") || ""));
+      form.setFieldValue("incoterm", String(supplier?.incotermDefault || foHierarchyBase.fields.incoterm.value || "EXW").toUpperCase());
       return;
     }
     if (field === "currency") {
-      form.setFieldValue("currency", String(foHierarchyBase.fields.currency.value || settings.defaultCurrency || "EUR"));
+      form.setFieldValue("currency", "USD");
       return;
     }
-    form.setFieldValue("fxRate", Number(foHierarchyBase.fields.fxRate.value || settings.fxRate || 0));
+    form.setFieldValue("fxRate", resolveSettingsFxRate(settings));
   }
 
   function adoptFoFieldToProduct(field: "unitPriceUsd" | "productionLeadTimeDays" | "transitDays" | "dutyRatePct" | "eustRatePct" | "ddp", value: unknown): void {
@@ -1054,15 +1089,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       status: normalizeFoStatus(existing?.status || prefill?.status || "DRAFT"),
       targetDeliveryDate: String(prefill?.targetDeliveryDate || existing?.targetDeliveryDate || new Date().toISOString().slice(0, 10)),
       units,
-      transportMode: String(existing?.transportMode || productDefaults.transportMode || "SEA").toUpperCase(),
+      transportMode: normalizeTransportMode(existing?.transportMode || productDefaults.transportMode || "RAIL"),
       incoterm: String(existing?.incoterm || productDefaults.incoterm || "EXW").toUpperCase(),
       unitPrice: Number(existing?.unitPrice ?? productDefaults.unitPrice ?? 0),
-      currency: String(existing?.currency || productDefaults.currency || settings.defaultCurrency || "EUR").toUpperCase(),
+      currency: String(existing?.currency || productDefaults.currency || "USD").toUpperCase(),
       freight: Number(existing?.freight ?? productDefaults.freight ?? 0),
       freightCurrency: String(existing?.freightCurrency || productDefaults.freightCurrency || "EUR").toUpperCase(),
       dutyRatePct: Number(existing?.dutyRatePct ?? productDefaults.dutyRatePct ?? 0),
       eustRatePct: Number(existing?.eustRatePct ?? productDefaults.eustRatePct ?? 0),
-      fxRate: Number(existing?.fxRate ?? productDefaults.fxRate ?? settings.fxRate ?? 0),
+      fxRate: Number(existing?.fxRate ?? productDefaults.fxRate ?? resolveSettingsFxRate(settings)),
       productionLeadTimeDays: Number(existing?.productionLeadTimeDays ?? productDefaults.productionLeadTimeDays ?? 45),
       logisticsLeadTimeDays: Number(existing?.logisticsLeadTimeDays ?? productDefaults.logisticsLeadTimeDays ?? 45),
       bufferDays: Number(existing?.bufferDays ?? productDefaults.bufferDays ?? settings.defaultBufferDays ?? 0),
@@ -1084,6 +1119,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       supplier: supplier || null,
       settings,
       supplierId,
+      transportMode: "RAIL",
       units: Number(unitsOverride ?? current.units ?? 0),
     });
     form.setFieldsValue({
@@ -1096,7 +1132,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       freightCurrency: defaults.freightCurrency,
       dutyRatePct: defaults.dutyRatePct,
       eustRatePct: defaults.eustRatePct,
-      fxRate: defaults.fxRate,
+      fxRate: resolveSettingsFxRate(settings),
       productionLeadTimeDays: defaults.productionLeadTimeDays,
       logisticsLeadTimeDays: defaults.logisticsLeadTimeDays,
       bufferDays: defaults.bufferDays,
@@ -1110,20 +1146,28 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     const sku = String(values.sku || "").trim();
     const product = sku ? (productBySku.get(sku)?.raw || null) : null;
     const supplier = supplierById.get(supplierId) || null;
+    const transportMode = normalizeTransportMode(values.transportMode || "RAIL");
     const defaults = resolveFoProductPrefill({
       state: stateObj,
       product,
       supplier: supplier || null,
       settings,
       supplierId,
+      transportMode,
       units: Number(values.units || 0),
     });
+    const supplierProductionLead = toPositiveNumberOrNull(supplier?.productionLeadTimeDaysDefault);
     form.setFieldsValue({
       supplierId,
-      incoterm: String(defaults.incoterm || values.incoterm || "EXW").toUpperCase(),
-      productionLeadTimeDays: Number(defaults.productionLeadTimeDays ?? values.productionLeadTimeDays ?? 0),
+      incoterm: String(supplier?.incotermDefault || defaults.incoterm || values.incoterm || "EXW").toUpperCase(),
+      productionLeadTimeDays: Number(supplierProductionLead ?? defaults.productionLeadTimeDays ?? values.productionLeadTimeDays ?? 0),
+      logisticsLeadTimeDays: resolveSettingsTransportLeadTime(settings, transportMode).days,
       paymentTerms: extractSupplierTerms([], supplier || undefined),
       unitPrice: resolveSkuMasterUnitPrice(product),
+      currency: "USD",
+      fxRate: resolveSettingsFxRate(settings),
+      freight: defaults.freight,
+      freightCurrency: "EUR",
     });
   }
 
@@ -1660,7 +1704,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               <Input type="date" />
             </Form.Item>
             <Form.Item name="transportMode" label="Transport" style={{ width: 140 }}>
-              <Select options={TRANSPORT_MODES.map((mode) => ({ value: mode, label: mode }))} />
+              <Select
+                options={TRANSPORT_MODES.map((mode) => ({ value: mode, label: mode }))}
+                onChange={(nextMode) => {
+                  const transportMode = normalizeTransportMode(nextMode);
+                  form.setFieldsValue({
+                    transportMode,
+                    logisticsLeadTimeDays: resolveSettingsTransportLeadTime(settings, transportMode).days,
+                  });
+                }}
+              />
             </Form.Item>
             <Form.Item name="incoterm" label="Incoterm" style={{ width: 130 }}>
               <Select options={INCOTERMS.map((term) => ({ value: term, label: term }))} />
@@ -1677,7 +1730,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             <Form.Item name="unitPrice" label="Unit Price" style={{ width: 160 }}>
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
-            <Form.Item name="freight" label="Freight" style={{ width: 160 }}>
+            <Form.Item name="freight" label="Shipping costs" style={{ width: 160 }}>
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
             <Form.Item name="freightCurrency" label="Freight Currency" style={{ width: 170 }}>
@@ -1709,7 +1762,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 const terms = extractSupplierTerms([], supplier || undefined);
                 form.setFieldsValue({
                   incoterm: String(supplier?.incotermDefault || values.incoterm || "EXW").toUpperCase(),
-                  currency: String(supplier?.currencyDefault || values.currency || settings.defaultCurrency || "EUR").toUpperCase(),
+                  currency: "USD",
+                  fxRate: resolveSettingsFxRate(settings),
                   paymentTerms: terms,
                 });
               }}

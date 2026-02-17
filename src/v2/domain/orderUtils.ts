@@ -12,7 +12,7 @@ const FO_LEGACY_STATUS_MAP: Record<string, FoStatus> = {
   CANCELLED: "ARCHIVED",
 };
 export const TRANSPORT_MODES = ["SEA", "RAIL", "AIR"] as const;
-export const INCOTERMS = ["EXW", "DDP"] as const;
+export const INCOTERMS = ["EXW", "DDP", "FCA"] as const;
 export const PAYMENT_TRIGGERS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA", "DELIVERY"] as const;
 export const PAYMENT_CURRENCIES = ["EUR", "USD", "CNY"] as const;
 export const PO_ANCHORS = ["ORDER_DATE", "PROD_DONE", "ETD", "ETA"] as const;

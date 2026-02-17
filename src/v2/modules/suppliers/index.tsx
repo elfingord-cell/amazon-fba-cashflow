@@ -22,7 +22,7 @@ import { useModalCollaboration } from "../../sync/modalCollaboration";
 
 const { Paragraph, Text, Title } = Typography;
 
-const INCOTERMS = ["EXW", "FOB", "DDP"];
+const INCOTERMS = ["EXW", "FOB", "DDP", "FCA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
 const TRIGGER_EVENTS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA"];
 
