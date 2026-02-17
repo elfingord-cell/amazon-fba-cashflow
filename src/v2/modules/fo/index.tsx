@@ -337,7 +337,7 @@ function resolveFoProductPrefill(input: {
   const unitPrice = resolveSkuMasterUnitPrice(product);
   const fxRate = resolveSettingsFxRate(settings);
   const logisticsPerUnit = resolveSkuMasterShippingPerUnit(product);
-  const freight = Math.max(0, round2(logisticsPerUnit * Math.max(0, Number(input.units || 0))));
+  const freight = Math.max(0, round2(logisticsPerUnit));
   const transportMode = normalizeTransportMode(input.transportMode || "RAIL");
   const logisticsLead = resolveSettingsTransportLeadTime(settings, transportMode).days;
   const productionLead = Number(hierarchy.fields.productionLeadTimeDays.value || 45);
@@ -968,16 +968,22 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     bufferDays: draftValues?.bufferDays,
   }), [draftValues]);
 
+  const liveShippingTotalEur = useMemo(() => {
+    const units = Math.max(0, Number(draftValues?.units || 0));
+    const shippingPerUnit = Math.max(0, Number(draftValues?.freight || 0));
+    return round2(units * shippingPerUnit);
+  }, [draftValues?.freight, draftValues?.units]);
+
   const liveCosts = useMemo(() => computeFoCostValues({
     units: draftValues?.units,
     unitPrice: draftValues?.unitPrice,
     currency: draftValues?.currency,
-    freight: draftValues?.freight,
+    freight: liveShippingTotalEur,
     freightCurrency: draftValues?.freightCurrency,
     dutyRatePct: draftValues?.dutyRatePct,
     eustRatePct: draftValues?.eustRatePct,
     fxRate: draftValues?.fxRate,
-  }), [draftValues]);
+  }), [draftValues, liveShippingTotalEur]);
 
   const liveRecommendation = useMemo(() => {
     const sku = draftValues?.sku || "";
@@ -1020,7 +1026,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       unitPrice: draftValues.unitPrice,
       units: draftValues.units,
       currency: draftValues.currency,
-      freight: draftValues.freight,
+      freight: liveShippingTotalEur,
       freightCurrency: draftValues.freightCurrency,
       dutyRatePct: draftValues.dutyRatePct,
       eustRatePct: draftValues.eustRatePct,
@@ -1045,7 +1051,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         offsetMonths: Number(row.offsetMonths || 0),
       };
     });
-  }, [draftValues, liveSchedule, settings.vatRefundLagMonths]);
+  }, [draftValues, liveSchedule, liveShippingTotalEur, settings.vatRefundLagMonths]);
 
   const supplierPercentSum = useMemo(
     () => sumSupplierPercent(draftValues?.paymentTerms || []),
@@ -1082,6 +1088,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       units,
     });
     const supplierTerms = extractSupplierTerms(existing?.payments, supplier || undefined);
+    const existingUnits = toPositiveNumberOrNull(existing?.units);
+    const existingFreightTotal = toPositiveNumberOrNull(existing?.freight);
+    const existingFreightPerUnit =
+      existingUnits != null && existingFreightTotal != null
+        ? round2(existingFreightTotal / existingUnits)
+        : null;
     return {
       id: existing?.id ? String(existing.id) : undefined,
       sku: seedSku,
@@ -1093,8 +1105,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       incoterm: String(existing?.incoterm || productDefaults.incoterm || "EXW").toUpperCase(),
       unitPrice: Number(existing?.unitPrice ?? productDefaults.unitPrice ?? 0),
       currency: String(existing?.currency || productDefaults.currency || "USD").toUpperCase(),
-      freight: Number(existing?.freight ?? productDefaults.freight ?? 0),
-      freightCurrency: String(existing?.freightCurrency || productDefaults.freightCurrency || "EUR").toUpperCase(),
+      freight: Number(existingFreightPerUnit ?? prefill?.freight ?? productDefaults.freight ?? 0),
+      freightCurrency: "EUR",
       dutyRatePct: Number(existing?.dutyRatePct ?? productDefaults.dutyRatePct ?? 0),
       eustRatePct: Number(existing?.eustRatePct ?? productDefaults.eustRatePct ?? 0),
       fxRate: Number(existing?.fxRate ?? productDefaults.fxRate ?? resolveSettingsFxRate(settings)),
@@ -1129,7 +1141,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       unitPrice: resolveSkuMasterUnitPrice(product.raw),
       currency: defaults.currency,
       freight: defaults.freight,
-      freightCurrency: defaults.freightCurrency,
+      freightCurrency: "EUR",
       dutyRatePct: defaults.dutyRatePct,
       eustRatePct: defaults.eustRatePct,
       fxRate: resolveSettingsFxRate(settings),
@@ -1267,11 +1279,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       logisticsLeadTimeDays: sanitizedValues.logisticsLeadTimeDays,
       bufferDays: sanitizedValues.bufferDays,
     });
+    const shippingPerUnit = Math.max(0, Number(sanitizedValues.freight || 0));
+    const shippingTotal = round2(shippingPerUnit * Math.max(0, Number(sanitizedValues.units || 0)));
     const normalized = normalizeFoRecord({
       existing,
       supplierTerms: terms,
       values: {
         ...(sanitizedValues as unknown as Record<string, unknown>),
+        freight: shippingTotal,
+        freightCurrency: "EUR",
         forecastBasisVersionId: activeForecastVersion?.id || null,
         forecastBasisVersionName: activeForecastVersion?.name || null,
         forecastBasisSetAt: nowIso(),
@@ -1727,14 +1743,17 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           </Space>
 
           <Space style={{ width: "100%" }} align="start" wrap>
-            <Form.Item name="unitPrice" label="Unit Price" style={{ width: 160 }}>
+            <Form.Item name="unitPrice" label="Unit Price (USD/Stueck)" style={{ width: 190 }}>
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
-            <Form.Item name="freight" label="Shipping costs" style={{ width: 160 }}>
+            <Form.Item name="freight" label="Shipping costs (EUR/Stueck)" style={{ width: 210 }}>
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
-            <Form.Item name="freightCurrency" label="Freight Currency" style={{ width: 170 }}>
-              <Select options={PAYMENT_CURRENCIES.map((currency) => ({ value: currency, label: currency }))} />
+            <Form.Item name="freightCurrency" label="Shipping Currency" style={{ width: 160 }}>
+              <Select
+                disabled
+                options={[{ value: "EUR", label: "EUR" }]}
+              />
             </Form.Item>
             <Form.Item name="dutyRatePct" label="Duty %" style={{ width: 140 }}>
               <DeNumberInput mode="percent" min={0} max={100} />
@@ -1743,6 +1762,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               <DeNumberInput mode="percent" min={0} max={100} />
             </Form.Item>
           </Space>
+          <div style={{ marginTop: -6, marginBottom: 10 }}>
+            <Text type="secondary">
+              Shipping total: {formatCurrency(liveShippingTotalEur)} ({formatNumber(draftValues?.units || 0, 0)} x {formatNumber(draftValues?.freight || 0, 2)} EUR/Stueck)
+            </Text>
+          </div>
 
           <Space style={{ width: "100%" }} align="start" wrap>
             <Form.Item name="productionLeadTimeDays" label="Production Lead Days" style={{ width: 220 }}>
