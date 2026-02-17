@@ -186,6 +186,18 @@ function parseIsoDate(value: unknown): Date | null {
   return date;
 }
 
+function normalizeIsoDate(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return raw;
+}
+
+function etaSortValue(row: unknown): string {
+  const eta = normalizeIsoDate((row as { etaDate?: unknown })?.etaDate);
+  return eta || "9999-12-31";
+}
+
 function toTimelinePercent(date: Date | null, range: TimelineRange): number {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return 0;
   const clamped = Math.min(Math.max(date.getTime(), range.startMs), range.endMs);
@@ -906,7 +918,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     { header: "Order", meta: { width: 112 }, cell: ({ row }) => formatDate(row.original.orderDate) },
     {
       header: "ETD / ETA",
-      meta: { width: 162 },
+      meta: { width: 162, sortAccessor: etaSortValue },
       cell: ({ row }) => (
         <Space direction="vertical" size={0}>
           <Text>ETD {formatDate(row.original.etdDate)}</Text>

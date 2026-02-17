@@ -234,6 +234,10 @@ function compareIsoDate(a: string | null, b: string | null): number {
   return a.localeCompare(b);
 }
 
+function etaSortValue(row: unknown): string {
+  return normalizeIsoDate((row as { etaDate?: unknown })?.etaDate) || "9999-12-31";
+}
+
 function resolveFoTargetDeliveryDate(fo: Record<string, unknown>): string | null {
   return (
     normalizeIsoDate(fo.targetDeliveryDate)
@@ -696,6 +700,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     },
     {
       header: "ETD / ETA",
+      meta: { sortAccessor: etaSortValue },
       cell: ({ row }) => (
         <Space direction="vertical" size={0}>
           <Text>ETD {formatDate(row.original.etdDate)}</Text>
