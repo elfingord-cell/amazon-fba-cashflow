@@ -512,22 +512,7 @@ export default function ForecastModule(): JSX.Element {
 
   const columns = useMemo<ColumnDef<ProductRow>[]>(() => {
     const base: ColumnDef<ProductRow>[] = [
-      {
-        header: "SKU",
-        accessorKey: "sku",
-        meta: { width: 190, minWidth: 190 },
-        cell: ({ row }) => (
-          row.original.isPlan
-            ? (
-              <Space size={6}>
-                <Tag color="blue">Plan</Tag>
-                <span>{row.original.plannedSku || "Pre-SKU"}</span>
-              </Space>
-            )
-            : row.original.sku
-        ),
-      },
-      { header: "Alias", accessorKey: "alias", meta: { width: 220, minWidth: 220 } },
+      { header: "Alias", accessorKey: "alias", meta: { width: 300, minWidth: 300 } },
       {
         header: "Status",
         meta: { width: 86, minWidth: 86 },
@@ -1476,12 +1461,15 @@ export default function ForecastModule(): JSX.Element {
                   </Space>
                 ),
                 children: (
-                  <TanStackGrid
-                    data={group.rows}
-                    columns={columns}
-                    minTableWidth={Math.max(980, 520 + (visibleMonths.length * 118))}
-                    tableLayout="fixed"
-                  />
+                  <div className="v2-products-grid-host">
+                    <TanStackGrid
+                      className="v2-products-grid-wrap"
+                      data={group.rows}
+                      columns={columns}
+                      minTableWidth={Math.max(920, 400 + (visibleMonths.length * 118))}
+                      tableLayout="fixed"
+                    />
+                  </div>
                 ),
               }))}
             />
@@ -1622,12 +1610,15 @@ export default function ForecastModule(): JSX.Element {
                         </Space>
                       ),
                       children: (
-                        <TanStackGrid
-                          data={group.rows}
-                          columns={impactSkuColumns}
-                          minTableWidth={1580}
-                          tableLayout="fixed"
-                        />
+                        <div className="v2-products-grid-host">
+                          <TanStackGrid
+                            className="v2-products-grid-wrap"
+                            data={group.rows}
+                            columns={impactSkuColumns}
+                            minTableWidth={1580}
+                            tableLayout="fixed"
+                          />
+                        </div>
                       ),
                     }))}
                   />
