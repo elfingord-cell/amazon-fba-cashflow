@@ -1617,15 +1617,6 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                   message={`Anker-Rollforward mit Forecast-Lücken bei ${anchorForecastGapSkus.length} SKU(s) – diese Monate wurden mit 0 Units gerechnet.`}
                 />
               ) : null}
-              {anchorSkuMissingHistory.length > 0 ? (
-                <Alert
-                  className="v2-proj-anchor-warning"
-                  type="error"
-                  showIcon
-                  message={`Keine Snapshot-Historie für ${anchorSkuMissingHistory.length} SKU(s) – Anker startet dort mit 0.`}
-                  description={anchorSkuMissingHistory.slice(0, 8).join(", ")}
-                />
-              ) : null}
             </div>
 
             <div className="v2-proj-filter-cluster">

@@ -82,6 +82,8 @@
   width: 100%;
   max-width: var(--app-max-width, 1560px);
   margin: 0 auto;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .v2-access-gate {
@@ -116,6 +118,8 @@
 .v2-page {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .v2-intro-card {
