@@ -28,6 +28,7 @@ export interface OrdersGanttItem {
   title?: ReactNode;
   startMs: number;
   endMs: number;
+  minDurationMs?: number;
   className?: string;
   style?: CSSProperties;
   tooltip?: string;
@@ -43,6 +44,7 @@ export interface OrdersGanttTimelineProps {
   visibleEndMs: number;
   sidebarWidth?: number;
   lineHeight?: number;
+  itemHeightRatio?: number;
   stackItems?: boolean;
   sidebarHeaderLabel?: ReactNode;
   emptyMessage?: string;
@@ -67,6 +69,7 @@ export function OrdersGanttTimeline({
   visibleEndMs,
   sidebarWidth = 290,
   lineHeight = 56,
+  itemHeightRatio = 0.7,
   stackItems = true,
   sidebarHeaderLabel = "SKU / Orders",
   emptyMessage = "Keine Einträge für den aktuellen Filter.",
@@ -104,8 +107,12 @@ export function OrdersGanttTimeline({
   }, [groups]);
 
   const normalizedItems = useMemo(() => {
-    const minimumDurationMs = Math.max(60 * 1000, Math.floor(MS_PER_DAY / 2));
+    const defaultMinimumDurationMs = Math.max(60 * 1000, Math.floor(MS_PER_DAY / 2));
     return items.map((item) => {
+      const minimumDurationMs = Math.max(
+        60 * 1000,
+        Number.isFinite(Number(item.minDurationMs)) ? Number(item.minDurationMs) : defaultMinimumDurationMs,
+      );
       const span = safeTimelineSpanMs({
         startMs: Number(item.startMs || 0),
         endMs: Number(item.endMs || 0),
@@ -124,6 +131,7 @@ export function OrdersGanttTimeline({
         className: item.className,
         style: item.style,
         itemProps,
+        canSelect: item.canSelect !== false,
         canMove: false,
         canResize: false,
         canChangeGroup: false,
@@ -175,7 +183,7 @@ export function OrdersGanttTimeline({
         canSelect
         stackItems={stackItems}
         lineHeight={lineHeight}
-        itemHeightRatio={0.7}
+        itemHeightRatio={itemHeightRatio}
         sidebarWidth={sidebarWidth}
         rightSidebarWidth={0}
         minZoom={7 * MS_PER_DAY}

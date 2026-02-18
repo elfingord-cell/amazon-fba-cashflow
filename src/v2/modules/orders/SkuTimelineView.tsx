@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { type CSSProperties, type HTMLProps, useMemo, useState } from "react";
 import { Button, Card, Input, Select, Space, Tag, Typography } from "antd";
 import { useNavigate } from "react-router-dom";
+import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { OrdersGanttTimeline, type OrdersGanttGroup, type OrdersGanttItem } from "../../components/OrdersGanttTimeline";
 import { safeTimelineSpanMs, timelineRangeFromIsoDates, toTimelineMs } from "../../components/ordersTimelineUtils";
 import { buildCategoryOrderMap, compareCategoryLabels } from "../../domain/categoryOrder";
@@ -17,13 +18,22 @@ const { Text } = Typography;
 type SkuTypeFilter = "all" | "po" | "fo";
 type SkuStatusFilter = "planning" | "all" | "closed";
 
+const PO_CONFIG = {
+  slug: "po",
+  entityLabel: "PO",
+  numberField: "poNo",
+};
+
 interface LaneItemTemplate {
   id: string;
   title: string;
   startMs: number;
   endMs: number;
+  minDurationMs?: number;
   className: string;
   tooltip: string;
+  style?: CSSProperties;
+  itemProps?: HTMLProps<HTMLDivElement>;
   openTarget: {
     entity: "po" | "fo";
     poNo?: string;
@@ -41,6 +51,34 @@ interface SkuBucket {
   poItems: LaneItemTemplate[];
   foItems: LaneItemTemplate[];
   references: string[];
+}
+
+interface SkuPoPaymentRow {
+  id: string;
+  typeLabel: string;
+  label: string;
+  dueDate: string | null;
+  plannedEur: number;
+  status: "open" | "paid";
+  paidDate: string | null;
+  eventType: string | null;
+}
+
+function poSettingsFromState(state: Record<string, unknown>): Record<string, unknown> {
+  const settings = (state.settings || {}) as Record<string, unknown>;
+  return {
+    fxRate: Number(settings.fxRate || 0),
+    fxFeePct: Number(settings.fxFeePct || 0),
+    dutyRatePct: Number(settings.dutyRatePct || 0),
+    dutyIncludeFreight: settings.dutyIncludeFreight !== false,
+    eustRatePct: Number(settings.eustRatePct || 0),
+    vatRefundEnabled: settings.vatRefundEnabled !== false,
+    vatRefundLagMonths: Number(settings.vatRefundLagMonths || 0),
+    freightLagDays: Number(settings.freightLagDays || 0),
+    paymentDueDefaults: settings.paymentDueDefaults || {},
+    cny: settings.cny || { start: "", end: "" },
+    cnyBlackoutByYear: settings.cnyBlackoutByYear || {},
+  };
 }
 
 function normalizeSku(value: unknown): string {
@@ -138,6 +176,9 @@ export default function SkuTimelineView(): JSX.Element {
   const timelineData = useMemo(() => {
     const buckets = new Map<string, SkuBucket>();
     const timelineDates: string[] = [];
+    const poSettings = poSettingsFromState(stateObject);
+    const paymentRecords = (Array.isArray(state.payments) ? state.payments : [])
+      .map((entry) => entry as Record<string, unknown>);
 
     const ensureBucket = (sku: string, supplierIdFallback = ""): SkuBucket => {
       if (buckets.has(sku)) return buckets.get(sku) as SkuBucket;
@@ -187,9 +228,25 @@ export default function SkuTimelineView(): JSX.Element {
         const orderMs = toTimelineMs(orderIso);
         const etdMs = toTimelineMs(etdIso);
         const etaMs = toTimelineMs(etaIso);
+        const paymentRows = buildPaymentRows(po, PO_CONFIG, poSettings, paymentRecords) as SkuPoPaymentRow[];
+        const paymentMarkers = paymentRows
+          .map((row) => ({
+            id: String(row.id || ""),
+            dueDate: String(row.dueDate || ""),
+            dueMs: toTimelineMs(row.dueDate),
+            status: row.status === "paid" ? "paid" : "open",
+            typeLabel: String(row.typeLabel || row.label || "Payment"),
+            plannedEur: Number(row.plannedEur || 0),
+            paidDate: String(row.paidDate || ""),
+          }))
+          .filter((entry) => entry.id && entry.dueMs != null)
+          .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
         if (orderIso) timelineDates.push(orderIso);
         if (etdIso) timelineDates.push(etdIso);
         if (etaIso) timelineDates.push(etaIso);
+        paymentMarkers.forEach((marker) => {
+          if (marker.dueDate) timelineDates.push(marker.dueDate);
+        });
         const poNo = String(po.poNo || String(po.id || "").slice(-6).toUpperCase() || "PO");
         const supplierId = String(po.supplierId || "");
         const items = Array.isArray(po.items) && po.items.length
@@ -227,6 +284,37 @@ export default function SkuTimelineView(): JSX.Element {
               openTarget: { entity: "po", poNo },
             });
           }
+          paymentMarkers.forEach((marker, markerIndex) => {
+            if (marker.dueMs == null) return;
+            bucket.poItems.push({
+              id: `po:${String(po.id || poNo)}:${sku}:${itemIndex}:payment:${markerIndex}`,
+              title: "",
+              startMs: marker.dueMs,
+              endMs: marker.dueMs,
+              minDurationMs: 45 * 60 * 1000,
+              className: marker.status === "paid"
+                ? "v2-orders-gantt-item v2-orders-gantt-item--payment-paid"
+                : "v2-orders-gantt-item v2-orders-gantt-item--payment-open",
+              style: {
+                height: 12,
+                borderRadius: 999,
+                boxShadow: "none",
+              },
+              tooltip: [
+                `${poNo} · Zahlungsmeilenstein`,
+                marker.typeLabel,
+                `Fällig: ${marker.dueDate || "—"}`,
+                `Soll: ${Number(marker.plannedEur || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`,
+                marker.status === "paid"
+                  ? `Bezahlt am: ${marker.paidDate || "—"}`
+                  : "Status: Offen",
+              ].join("\n"),
+              itemProps: {
+                "aria-label": `${poNo} Zahlungsmeilenstein ${marker.typeLabel}`,
+              },
+              openTarget: { entity: "po", poNo },
+            });
+          });
           bucket.references.push(poNo);
         });
       });
@@ -322,21 +410,27 @@ export default function SkuTimelineView(): JSX.Element {
       lanes.forEach((lane, laneIndex) => {
         const groupId = `${bucket.sku}::${lane}`;
         const isPrimaryLane = laneIndex === 0;
+        const laneLabel = lane === "po" ? "PO Spur" : "FO Spur";
         groups.push({
           id: groupId,
           title: (
-            <div className="v2-orders-gantt-meta">
+            <div className="v2-orders-gantt-meta v2-orders-gantt-meta--sku">
               <div className="v2-orders-gantt-topline">
-                <Text strong>{bucket.alias} ({bucket.sku})</Text>
-                <Tag className="v2-orders-gantt-lane-tag">{lane.toUpperCase()}</Tag>
+                <Text strong className="v2-orders-gantt-sku-title">{isPrimaryLane ? bucket.alias : laneLabel}</Text>
+                <Tag className={`v2-orders-gantt-lane-tag ${lane === "po" ? "v2-orders-gantt-lane-tag--po" : "v2-orders-gantt-lane-tag--fo"}`}>
+                  {lane.toUpperCase()}
+                </Tag>
               </div>
               {isPrimaryLane ? (
-                <div className="v2-orders-gantt-subline">
-                  {bucket.supplierName} · {bucket.categoryLabel}
-                </div>
+                <>
+                  <div className="v2-orders-gantt-subline v2-orders-gantt-sku-code">{bucket.sku}</div>
+                  <div className="v2-orders-gantt-subline">
+                    {bucket.supplierName} · {bucket.categoryLabel}
+                  </div>
+                </>
               ) : (
                 <div className="v2-orders-gantt-subline">
-                  Unterspur {lane.toUpperCase()}
+                  {lane === "po" ? "POs inkl. Zahlungsmeilensteine" : "Forecast Orders"}
                 </div>
               )}
             </div>
@@ -351,8 +445,11 @@ export default function SkuTimelineView(): JSX.Element {
             title: entry.title,
             startMs: entry.startMs,
             endMs: entry.endMs,
+            minDurationMs: entry.minDurationMs,
             className: entry.className,
+            style: entry.style,
             tooltip: entry.tooltip,
+            itemProps: entry.itemProps,
           });
           targetByItemId.set(entry.id, entry.openTarget);
         });
@@ -377,6 +474,7 @@ export default function SkuTimelineView(): JSX.Element {
     search,
     state.fos,
     state.pos,
+    state.payments,
     state.settings,
     stateObject,
     statusFilter,
@@ -430,7 +528,15 @@ export default function SkuTimelineView(): JSX.Element {
       <div className="v2-toolbar-row" style={{ marginBottom: 10 }}>
         <Tag>{timelineData.groups.length} Spuren</Tag>
         <Tag>{timelineData.items.length} Segmente</Tag>
-        <Tag color="blue">SKU Sicht</Tag>
+        <Tag color="green">SKU Sicht</Tag>
+      </div>
+      <div className="v2-orders-gantt-legend" style={{ marginBottom: 10 }}>
+        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--po-production" /> PO Produktion</span>
+        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--po-transit" /> PO Transit</span>
+        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-production" /> FO Produktion</span>
+        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-transit" /> FO Transit</span>
+        <span><span className="v2-orders-gantt-legend-dot v2-orders-gantt-legend-dot--open" /> Zahlung offen</span>
+        <span><span className="v2-orders-gantt-legend-dot v2-orders-gantt-legend-dot--paid" /> Zahlung bezahlt</span>
       </div>
       <OrdersGanttTimeline
         className="v2-orders-gantt--sku"
@@ -439,8 +545,9 @@ export default function SkuTimelineView(): JSX.Element {
         visibleStartMs={timelineData.timelineWindow.visibleStartMs}
         visibleEndMs={timelineData.timelineWindow.visibleEndMs}
         sidebarHeaderLabel="SKU / Spur"
-        sidebarWidth={340}
-        lineHeight={66}
+        sidebarWidth={500}
+        lineHeight={86}
+        itemHeightRatio={0.62}
         emptyMessage="Keine SKU-Einträge für die aktuelle Suche/Filter."
         onItemSelect={(itemId) => {
           const target = timelineData.targetByItemId.get(itemId);

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 import "../styles.css";
 import "./react/app-shell.css";
-import "react-calendar-timeline/style.css";
+import "react-calendar-timeline/dist/style.css";
 import { AppShell } from "./react/AppShell.jsx";
 import { StandaloneV2App } from "./v2/app/StandaloneV2App";
 import { loadRuntimeConfig, getRuntimeLoadError } from "./storage/runtimeConfig.js";
