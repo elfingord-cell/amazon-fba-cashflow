@@ -3,11 +3,13 @@ import { Card, Tabs, Typography } from "antd";
 import { useLocation, useNavigate } from "react-router-dom";
 import FoModule from "../fo";
 import PoModule from "../po";
+import SkuTimelineView from "./SkuTimelineView";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Title } = Typography;
 
-function resolveOrdersTab(pathname: string): "po" | "fo" {
+function resolveOrdersTab(pathname: string): "po" | "fo" | "sku" {
+  if (pathname.includes("/orders/sku")) return "sku";
   if (pathname.includes("/orders/fo")) return "fo";
   return "po";
 }
@@ -112,6 +114,11 @@ export default function OrdersModule(): JSX.Element {
             key: "fo",
             label: "Forecast Orders (FO)",
             children: <FoModule embedded />,
+          },
+          {
+            key: "sku",
+            label: "SKU Sicht",
+            children: <SkuTimelineView />,
           },
         ]}
       />

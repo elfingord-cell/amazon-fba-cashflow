@@ -53,6 +53,13 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
       "orders/po?view=timeline",
       "Plan-Redirect muss auf PO-Timeline zeigen.",
     );
+    const skuRedirect = redirects.find((entry) => String(entry?.from || "") === "sku");
+    assert.ok(skuRedirect, "Redirect fuer /v2/sku fehlt.");
+    assert.equal(
+      String(skuRedirect.to || ""),
+      "orders/sku",
+      "SKU-Redirect muss auf SKU Sicht zeigen.",
+    );
 
     const failures = [];
     for (const route of routes) {

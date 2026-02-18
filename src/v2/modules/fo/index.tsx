@@ -8,6 +8,7 @@ import {
   Input,
   message,
   Modal,
+  Segmented,
   Select,
   Space,
   Tag,
@@ -18,6 +19,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
+import { OrdersGanttTimeline, type OrdersGanttGroup, type OrdersGanttItem } from "../../components/OrdersGanttTimeline";
+import { safeTimelineSpanMs, timelineRangeFromIsoDates, toTimelineMs } from "../../components/ordersTimelineUtils";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { getActiveForecastVersion } from "../../domain/forecastVersioning";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
@@ -234,6 +237,11 @@ function compareIsoDate(a: string | null, b: string | null): number {
   return a.localeCompare(b);
 }
 
+function resolveFoViewMode(search: string): "table" | "timeline" {
+  const params = new URLSearchParams(search);
+  return params.get("view") === "timeline" ? "timeline" : "table";
+}
+
 function etaSortValue(row: unknown): string {
   return normalizeIsoDate((row as { etaDate?: unknown })?.etaDate) || "9999-12-31";
 }
@@ -420,6 +428,10 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [mergeManualTargetDate, setMergeManualTargetDate] = useState("");
   const [mergeAllowMixedTerms, setMergeAllowMixedTerms] = useState(false);
   const [form] = Form.useForm<FoFormValues>();
+  const foViewMode = useMemo<"table" | "timeline">(
+    () => resolveFoViewMode(location.search),
+    [location.search],
+  );
 
   const stateObj = state as unknown as Record<string, unknown>;
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -443,6 +455,20 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     userDisplayName: ownDisplayName,
     displayNames: displayNameMap,
   });
+
+  function updateFoViewMode(next: "table" | "timeline"): void {
+    const params = new URLSearchParams(location.search);
+    if (next === "timeline") params.set("view", "timeline");
+    else params.delete("view");
+    const query = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: query ? `?${query}` : "",
+      },
+      { replace: true },
+    );
+  }
 
   const supplierRows = useMemo(() => {
     return (Array.isArray(state.suppliers) ? state.suppliers : [])
@@ -646,6 +672,131 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     });
   }, [mergeResolvedTargetDate, mergeSelectedFos]);
 
+  function toggleMergeSelectionForRow(rowId: string, checked: boolean): void {
+    setMergeSelection((current) => {
+      if (checked) return Array.from(new Set([...current, rowId]));
+      return current.filter((entry) => entry !== rowId);
+    });
+  }
+
+  function openConvertModalForRow(row: FoRow): void {
+    setConvertTargetId(row.id);
+    setConvertPoNo(suggestNextPoNo(Array.isArray(state.pos) ? state.pos : []));
+    setConvertOrderDate(row.orderDate || "");
+    setConvertOpen(true);
+  }
+
+  const foTimelineWindow = useMemo(
+    () => timelineRangeFromIsoDates({
+      state: stateObj,
+      dates: rows.flatMap((row) => [row.orderDate, row.etdDate, row.etaDate, row.targetDeliveryDate]),
+      fallbackHorizon: 12,
+    }),
+    [rows, stateObj],
+  );
+
+  const foTimelinePayload = useMemo(() => {
+    const groups: OrdersGanttGroup[] = [];
+    const items: OrdersGanttItem[] = [];
+    const itemRowMap = new Map<string, FoRow>();
+
+    rows.forEach((row) => {
+      const canSelectForMerge = isFoConvertibleStatus(row.status);
+      groups.push({
+        id: row.id,
+        title: (
+          <div className="v2-orders-gantt-meta">
+            <div className="v2-orders-gantt-topline">
+              <Checkbox
+                checked={mergeSelection.includes(row.id)}
+                disabled={!canSelectForMerge}
+                onChange={(event) => toggleMergeSelectionForRow(row.id, event.target.checked)}
+              />
+              <Text strong>FO {String(row.id || "").slice(-6).toUpperCase()}</Text>
+              {statusTag(row.status)}
+            </div>
+            <div className="v2-orders-gantt-subline">
+              {row.alias} ({row.sku}) · {row.supplierName}
+            </div>
+            <div className="v2-orders-gantt-subline">
+              Target {formatDate(row.targetDeliveryDate)} · ETA {formatDate(row.etaDate)}
+            </div>
+            <div className="v2-orders-gantt-actionline">
+              <Button size="small" onClick={() => openEditModal(row.raw)}>
+                {canSelectForMerge ? "Bearbeiten" : "Details"}
+              </Button>
+              <Button
+                size="small"
+                disabled={!canSelectForMerge}
+                onClick={() => openConvertModalForRow(row)}
+              >
+                Convert
+              </Button>
+              {row.convertedPoNo ? (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    const params = new URLSearchParams();
+                    params.set("source", "fo_convert");
+                    params.set("poNo", String(row.convertedPoNo || ""));
+                    navigate(`/v2/orders/po?${params.toString()}`);
+                  }}
+                >
+                  PO öffnen
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ),
+      });
+
+      const orderMs = toTimelineMs(row.orderDate);
+      const etdMs = toTimelineMs(row.etdDate);
+      const etaMs = toTimelineMs(row.etaDate || row.targetDeliveryDate);
+      const productionStart = orderMs ?? etdMs;
+      const productionEnd = etdMs;
+      if (productionStart != null && productionEnd != null) {
+        const span = safeTimelineSpanMs({ startMs: productionStart, endMs: productionEnd });
+        const itemId = `${row.id}:production`;
+        items.push({
+          id: itemId,
+          group: row.id,
+          title: `FO ${String(row.id || "").slice(-6).toUpperCase()} · Produktion`,
+          startMs: span.startMs,
+          endMs: span.endMs,
+          className: "v2-orders-gantt-item v2-orders-gantt-item--fo-production",
+          tooltip: [
+            `FO: ${String(row.id || "").slice(-6).toUpperCase()}`,
+            `Produkt: ${row.alias} (${row.sku})`,
+            `Produktion: ${formatDate(row.orderDate)} bis ${formatDate(row.etdDate)}`,
+          ].join("\n"),
+        });
+        itemRowMap.set(itemId, row);
+      }
+      if (etaMs != null) {
+        const transitStart = etdMs ?? orderMs ?? etaMs;
+        const span = safeTimelineSpanMs({ startMs: transitStart, endMs: etaMs });
+        const itemId = `${row.id}:transit`;
+        items.push({
+          id: itemId,
+          group: row.id,
+          title: `FO ${String(row.id || "").slice(-6).toUpperCase()} · Transit`,
+          startMs: span.startMs,
+          endMs: span.endMs,
+          className: "v2-orders-gantt-item v2-orders-gantt-item--fo-transit",
+          tooltip: [
+            `FO: ${String(row.id || "").slice(-6).toUpperCase()}`,
+            `Produkt: ${row.alias} (${row.sku})`,
+            `Transit: ${formatDate(row.etdDate || row.orderDate)} bis ${formatDate(row.etaDate || row.targetDeliveryDate)}`,
+          ].join("\n"),
+        });
+        itemRowMap.set(itemId, row);
+      }
+    });
+
+    return { groups, items, itemRowMap };
+  }, [mergeSelection, navigate, rows, state.pos]);
+
   useEffect(() => {
     setMergeSelection((current) =>
       current.filter((id) => {
@@ -666,11 +817,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             checked={mergeSelection.includes(row.original.id)}
             disabled={!canSelect}
             onChange={(event) => {
-              const checked = event.target.checked;
-              setMergeSelection((current) => {
-                if (checked) return Array.from(new Set([...current, row.original.id]));
-                return current.filter((entry) => entry !== row.original.id);
-              });
+              toggleMergeSelectionForRow(row.original.id, event.target.checked);
             }}
           />
         );
@@ -747,10 +894,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             size="small"
             disabled={!isFoConvertibleStatus(row.original.status)}
             onClick={() => {
-              setConvertTargetId(row.original.id);
-              setConvertPoNo(suggestNextPoNo(Array.isArray(state.pos) ? state.pos : []));
-              setConvertOrderDate(row.original.orderDate || "");
-              setConvertOpen(true);
+              openConvertModalForRow(row.original);
             }}
           >
             Convert
@@ -1505,9 +1649,38 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("source") !== "inventory_projection") return;
+    const source = params.get("source");
+    const clearHandledParams = (keys: string[]): void => {
+      const next = new URLSearchParams(location.search);
+      keys.forEach((key) => next.delete(key));
+      const query = next.toString();
+      navigate(
+        {
+          pathname: location.pathname,
+          search: query ? `?${query}` : "",
+        },
+        { replace: true },
+      );
+    };
+
+    if (source === "orders_sku") {
+      const foId = String(params.get("foId") || "").trim();
+      if (foId) {
+        const target = (Array.isArray(state.fos) ? state.fos : [])
+          .map((entry) => entry as Record<string, unknown>)
+          .find((entry) => String(entry.id || "") === foId);
+        if (target) openEditModal(target);
+      }
+      clearHandledParams(["source", "foId"]);
+      return;
+    }
+
+    if (source !== "inventory_projection") return;
     const sku = String(params.get("sku") || "").trim();
-    if (!sku) return;
+    if (!sku) {
+      clearHandledParams(["source"]);
+      return;
+    }
     const product = productBySku.get(sku) || null;
     const suggestedUnits = Math.max(0, Math.round(Number(params.get("suggestedUnits") || 0)));
     const requiredArrivalDate = String(params.get("requiredArrivalDate") || "");
@@ -1521,8 +1694,23 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
 
     openCreateModal(prefill);
-    navigate(location.pathname, { replace: true });
-  }, [location.pathname, location.search, navigate, productBySku]);
+    clearHandledParams([
+      "source",
+      "sku",
+      "month",
+      "suggestedUnits",
+      "projectedEnd",
+      "mode",
+      "requiredArrivalDate",
+      "recommendedOrderDate",
+      "returnTo",
+      "nextSku",
+      "nextMonth",
+      "nextSuggestedUnits",
+      "nextRequiredArrivalDate",
+      "nextRecommendedOrderDate",
+    ]);
+  }, [location.pathname, location.search, navigate, productBySku, state.fos]);
 
   return (
     <div className="v2-page">
@@ -1540,6 +1728,14 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
             <Button type="primary" onClick={() => openCreateModal()}>Create FO</Button>
+            <Segmented
+              value={foViewMode}
+              options={[
+                { label: "Tabelle", value: "table" },
+                { label: "Timeline", value: "timeline" },
+              ]}
+              onChange={(value) => updateFoViewMode(String(value) === "timeline" ? "timeline" : "table")}
+            />
             {saving ? <Tag color="processing">Speichern...</Tag> : null}
             {lastSavedAt ? (
               <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag>
@@ -1576,12 +1772,31 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           </Button>
           <Tag>{mergeSelectedFos.length} ausgewählt</Tag>
         </div>
-        <TanStackGrid
-          data={rows}
-          columns={columns}
-          minTableWidth={1400}
-          tableLayout="auto"
-        />
+        {foViewMode === "table" ? (
+          <TanStackGrid
+            data={rows}
+            columns={columns}
+            minTableWidth={1400}
+            tableLayout="auto"
+          />
+        ) : (
+          <OrdersGanttTimeline
+            className="v2-orders-gantt--fo"
+            groups={foTimelinePayload.groups}
+            items={foTimelinePayload.items}
+            visibleStartMs={foTimelineWindow.visibleStartMs}
+            visibleEndMs={foTimelineWindow.visibleEndMs}
+            sidebarWidth={340}
+            lineHeight={72}
+            sidebarHeaderLabel="FO / Produkt"
+            emptyMessage="Keine Forecast Orders für die aktuelle Suche/Filter."
+            onItemSelect={(itemId) => {
+              const row = foTimelinePayload.itemRowMap.get(itemId);
+              if (!row) return;
+              openEditModal(row.raw);
+            }}
+          />
+        )}
       </Card>
 
       <Modal

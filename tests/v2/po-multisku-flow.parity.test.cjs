@@ -21,6 +21,16 @@ function readPoModuleSource() {
   return fs.readFileSync(filePath, "utf8");
 }
 
+function readFoModuleSource() {
+  const filePath = path.resolve(__dirname, "../../src/v2/modules/fo/index.tsx");
+  return fs.readFileSync(filePath, "utf8");
+}
+
+function readOrdersModuleSource() {
+  const filePath = path.resolve(__dirname, "../../src/v2/modules/orders/index.tsx");
+  return fs.readFileSync(filePath, "utf8");
+}
+
 test("po multi-sku flow: critical path aggregation uses max lead times", () => {
   const metrics = computePoAggregateMetrics({
     items: [
@@ -290,4 +300,25 @@ test("po timeline marker click opens payment flow with modal fallback", () => {
   assert.match(source, /openTimelinePayment/);
   assert.match(source, /openPaymentBookingModal\(markerRow\)/);
   assert.match(source, /setModalFocusTarget\("payments"\)/);
+});
+
+test("fo timeline integration: table and timeline share filtered rows and query view mode", () => {
+  const source = readFoModuleSource();
+
+  assert.match(source, /resolveFoViewMode/);
+  assert.match(source, /foViewMode/);
+  assert.match(source, /Segmented/);
+  assert.match(source, /OrdersGanttTimeline/);
+  assert.match(source, /rows\.flatMap/);
+  assert.match(source, /toggleMergeSelectionForRow/);
+  assert.match(source, /openConvertModalForRow/);
+});
+
+test("orders tabs include dedicated sku timeline view", () => {
+  const source = readOrdersModuleSource();
+
+  assert.match(source, /resolveOrdersTab\(pathname: string\): "po" \| "fo" \| "sku"/);
+  assert.match(source, /if \(pathname\.includes\("\/orders\/sku"\)\) return "sku"/);
+  assert.match(source, /label: "SKU Sicht"/);
+  assert.match(source, /children: <SkuTimelineView \/>/);
 });

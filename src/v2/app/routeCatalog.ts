@@ -163,6 +163,7 @@ export const V2_ROUTE_REDIRECTS: V2RouteRedirect[] = [
   { from: "plan", to: "orders/po?view=timeline" },
   { from: "fo", to: "orders/fo" },
   { from: "po", to: "orders/po" },
+  { from: "sku", to: "orders/sku" },
   { from: "payments-export", to: "abschluss/buchhalter" },
   { from: "abschluss/payments", to: "abschluss/buchhalter" },
 ].filter((entry, index, list) => list.findIndex((match) => match.from === entry.from && match.to === entry.to) === index);
