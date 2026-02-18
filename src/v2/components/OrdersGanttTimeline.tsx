@@ -49,6 +49,7 @@ export interface OrdersGanttTimelineProps {
   sidebarHeaderLabel?: ReactNode;
   emptyMessage?: string;
   showTodayMarker?: boolean;
+  itemRenderer?: (input: any) => ReactNode;
   onItemSelect?: (itemId: string) => void;
 }
 
@@ -74,6 +75,7 @@ export function OrdersGanttTimeline({
   sidebarHeaderLabel = "SKU / Orders",
   emptyMessage = "Keine Einträge für den aktuellen Filter.",
   showTodayMarker = true,
+  itemRenderer,
   onItemSelect,
 }: OrdersGanttTimelineProps): JSX.Element {
   const [timelineLibrary, setTimelineLibrary] = useState<OrdersTimelineLibrary | null>(null);
@@ -190,6 +192,7 @@ export function OrdersGanttTimeline({
         maxZoom={Math.max(visibleSpan.endMs - visibleSpan.startMs, 7 * MS_PER_DAY)}
         dragSnap={MS_PER_DAY}
         buffer={1}
+        itemRenderer={itemRenderer}
         onItemSelect={(itemId) => {
           if (!onItemSelect) return;
           onItemSelect(String(itemId || ""));
