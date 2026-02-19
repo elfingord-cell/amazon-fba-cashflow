@@ -184,8 +184,14 @@ function buildOrderTooltipMetaIndex(state: Record<string, unknown>): Map<string,
   const index = new Map<string, OrderTooltipMeta>();
 
   const collect = (prefix: "po" | "fo", order: Record<string, unknown>) => {
-    const ref = String(order[prefix === "po" ? "poNo" : "foNo"] || order.id || "").trim();
-    if (!ref) return;
+    const refs = (
+      prefix === "po"
+        ? [order.poNo, order.id]
+        : [order.foNo, order.foNumber, order.id]
+    )
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean);
+    if (!refs.length) return;
     const items = Array.isArray(order.items) && order.items.length
       ? (order.items as Record<string, unknown>[])
       : [{ sku: order.sku, units: order.units } as Record<string, unknown>];
@@ -198,9 +204,12 @@ function buildOrderTooltipMetaIndex(state: Record<string, unknown>): Map<string,
       const units = asNumber(item.units ?? item.qty ?? item.quantity);
       totalUnits += units;
     });
-    index.set(`${prefix}:${ref}`, {
+    const meta = {
       aliases: Array.from(aliasSet),
       units: Number.isFinite(totalUnits) ? totalUnits : null,
+    };
+    Array.from(new Set(refs)).forEach((ref) => {
+      index.set(`${prefix}:${ref}`, meta);
     });
   };
 

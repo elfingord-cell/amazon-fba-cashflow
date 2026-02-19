@@ -778,6 +778,34 @@ function normaliseGoodsFields(record, settings = getSettings()) {
 function getSettings() {
     const state = (0, store_js_1.loadAppState)();
     const raw = (state && state.settings) || {};
+    const paymentDueDefaults = (raw.paymentDueDefaults && typeof raw.paymentDueDefaults === "object")
+        ? raw.paymentDueDefaults
+        : {};
+    const poDueDefaults = (paymentDueDefaults.po && typeof paymentDueDefaults.po === "object")
+        ? paymentDueDefaults.po
+        : {};
+    const fallbackLag = Number(raw.freightLagDays ?? 0) || 0;
+    const normalizeAnchor = (value, fallback) => {
+        const upper = String(value || "").trim().toUpperCase();
+        if (["ORDER_DATE", "PROD_DONE", "ETD", "ETA"].includes(upper))
+            return upper;
+        return fallback;
+    };
+    const normalizeLag = (value, fallback = 0) => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed))
+            return fallback;
+        return Math.round(parsed);
+    };
+    const readPoDue = (key, fallbackAnchor, fallbackDays) => {
+        const row = poDueDefaults[key] && typeof poDueDefaults[key] === "object"
+            ? poDueDefaults[key]
+            : {};
+        return {
+            anchor: normalizeAnchor(row.anchor, fallbackAnchor),
+            lagDays: normalizeLag(row.lagDays, fallbackDays),
+        };
+    };
     return {
         fxRate: parseDE(raw.fxRate ?? 0) || 0,
         fxFeePct: parseDE(raw.fxFeePct ?? 0) || 0,
@@ -787,7 +815,15 @@ function getSettings() {
         eustRatePct: parseDE(raw.eustRatePct ?? 0) || 0,
         vatRefundEnabled: raw.vatRefundEnabled !== false,
         vatRefundLagMonths: Number(raw.vatRefundLagMonths ?? 0) || 0,
-        freightLagDays: Number(raw.freightLagDays ?? 0) || 0,
+        freightLagDays: fallbackLag,
+        paymentDueDefaults: {
+            po: {
+                freight: readPoDue("freight", "ETA", fallbackLag),
+                duty: readPoDue("duty", "ETA", fallbackLag),
+                eust: readPoDue("eust", "ETA", fallbackLag),
+                vatRefund: readPoDue("vatRefund", "ETA", 0),
+            },
+        },
         cny: raw.cny ? { start: raw.cny.start || "", end: raw.cny.end || "" } : { start: "", end: "" },
         cnyBlackoutByYear: raw.cnyBlackoutByYear && typeof raw.cnyBlackoutByYear === "object"
             ? structuredClone(raw.cnyBlackoutByYear)
@@ -809,6 +845,32 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
     if (!record.autoEvents)
         record.autoEvents = [];
     const map = new Map(record.autoEvents.map(evt => [evt.type, evt]));
+    const poDueDefaults = settings?.paymentDueDefaults?.po || {};
+    const resolveAnchor = (value, fallback) => {
+        const upper = String(value || "").trim().toUpperCase();
+        if (["ORDER_DATE", "PROD_DONE", "ETD", "ETA"].includes(upper))
+            return upper;
+        return fallback;
+    };
+    const resolveLagDays = (value, fallback = 0) => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed))
+            return fallback;
+        return Math.round(parsed);
+    };
+    const defaultDue = (key, fallbackAnchor, fallbackLagDays) => {
+        const row = poDueDefaults[key] && typeof poDueDefaults[key] === "object"
+            ? poDueDefaults[key]
+            : {};
+        return {
+            anchor: resolveAnchor(row.anchor, fallbackAnchor),
+            lagDays: resolveLagDays(row.lagDays, fallbackLagDays),
+        };
+    };
+    const freightDue = defaultDue("freight", "ETA", settings.freightLagDays || 0);
+    const dutyDue = defaultDue("duty", "ETA", settings.freightLagDays || 0);
+    const eustDue = defaultDue("eust", "ETA", settings.freightLagDays || 0);
+    const vatRefundDue = defaultDue("vatRefund", "ETA", 0);
     const ensure = (type, defaults) => {
         if (!map.has(type)) {
             const created = { id: `auto-${type}`, type, ...defaults };
@@ -823,28 +885,29 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
     };
     ensure("freight", {
         label: "Fracht",
-        anchor: "ETA",
-        lagDays: settings.freightLagDays || 0,
+        anchor: freightDue.anchor,
+        lagDays: freightDue.lagDays,
         enabled: true,
     });
     ensure("duty", {
         label: "Zoll",
         percent: settings.dutyRatePct || 0,
-        anchor: "ETA",
-        lagDays: settings.freightLagDays || 0,
+        anchor: dutyDue.anchor,
+        lagDays: dutyDue.lagDays,
         enabled: true,
     });
     ensure("eust", {
         label: "EUSt",
         percent: settings.eustRatePct || 0,
-        anchor: "ETA",
-        lagDays: settings.freightLagDays || 0,
+        anchor: eustDue.anchor,
+        lagDays: eustDue.lagDays,
         enabled: true,
     });
     ensure("vat_refund", {
         label: "EUSt-Erstattung",
         percent: 100,
-        anchor: "ETA",
+        anchor: vatRefundDue.anchor,
+        lagDays: vatRefundDue.lagDays,
         lagMonths: settings.vatRefundLagMonths || 0,
         enabled: settings.vatRefundEnabled !== false,
     });
@@ -954,6 +1017,8 @@ function mapPaymentType(evt, milestone) {
         return "Fracht";
     if (evt.type === "eust")
         return "EUSt";
+    if (evt.type === "vat_refund")
+        return "EUSt-Erstattung";
     if (evt.type === "duty")
         return "Other";
     if (evt.type === "fx_fee")
@@ -998,18 +1063,32 @@ function buildInvoiceKeyEvents(selectedEvents) {
         return unique.join("+");
     return `${unique.slice(0, 2).join("+")}+more`;
 }
-function buildPaymentRows(record, config, settings, paymentRecords = []) {
+function buildPaymentRows(record, config, settings, paymentRecords = [], options = {}) {
+    const includeIncoming = options?.includeIncoming === true;
+    const includeZeroAmount = options?.includeZeroAmount === true;
     ensurePaymentLog(record);
     const milestones = Array.isArray(record.milestones) ? record.milestones : [];
     const msMap = new Map(milestones.map(item => [item.id, item]));
     const paymentMap = buildPaymentMap(paymentRecords);
     const events = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
     return events
-        .filter(evt => evt && Number(evt.amount || 0) < 0)
+        .filter((evt) => {
+        if (!evt)
+            return false;
+        const amount = Number(evt.amount || 0);
+        if (!Number.isFinite(amount))
+            return false;
+        if (amount < 0)
+            return true;
+        if (amount > 0)
+            return includeIncoming;
+        return includeZeroAmount;
+    })
         .map(evt => {
         const log = record.paymentLog?.[evt.id] || {};
         const paymentInternalId = ensurePaymentInternalId(record, evt.id);
-        const planned = Math.abs(Number(evt.amount || 0));
+        const amount = Number(evt.amount || 0);
+        const planned = Math.abs(amount);
         const payment = log.paymentId ? paymentMap.get(log.paymentId) : null;
         const status = log.status === "paid" || payment ? "paid" : "open";
         const paidDate = log.paidDate || payment?.paidDate || null;
@@ -1030,6 +1109,7 @@ function buildPaymentRows(record, config, settings, paymentRecords = []) {
             invoiceDriveUrl: payment?.invoiceDriveUrl || "",
             invoiceFolderDriveUrl: payment?.invoiceFolderDriveUrl || "",
             eventType: evt.type || null,
+            direction: amount < 0 ? "out" : (amount > 0 ? "in" : "neutral"),
         };
     });
 }

@@ -1044,6 +1044,12 @@ export default function DashboardModule(): JSX.Element {
                 const orderItems = Array.from(orderMap.entries()).map(([orderKey, order]) => {
                   const total = sumRows(order.rows);
                   const tooltipMeta = order.rows.find((row) => row.tooltipMeta)?.tooltipMeta;
+                  const aliases = Array.from(new Set(
+                    order.rows.flatMap((row) => row.tooltipMeta?.aliases || []).filter(Boolean),
+                  ));
+                  const aliasSummary = aliases.length > 3
+                    ? `${aliases.slice(0, 3).join(", ")} +${aliases.length - 3}`
+                    : aliases.join(", ");
                   const timeline = buildDashboardOrderTimeline({
                     state: stateObject,
                     source: order.source,
@@ -1055,7 +1061,18 @@ export default function DashboardModule(): JSX.Element {
                     key: orderKey,
                     label: (
                       <div className="v2-dashboard-pnl-order-row">
-                        <Text strong>{String(order.source).toUpperCase()} {order.sourceNumber || order.sourceId || "—"}</Text>
+                        <div className="v2-dashboard-pnl-order-row-main">
+                          <Text strong>{String(order.source).toUpperCase()} {order.sourceNumber || order.sourceId || "—"}</Text>
+                          {aliasSummary ? (
+                            aliases.length > 3 ? (
+                              <Tooltip title={aliases.join(", ")}>
+                                <Text type="secondary">· {aliasSummary}</Text>
+                              </Tooltip>
+                            ) : (
+                              <Text type="secondary">· {aliasSummary}</Text>
+                            )
+                          ) : null}
+                        </div>
                         <Space size={6}>
                           <Tag color={total < 0 ? "red" : "green"}>{formatSignedCurrency(total)}</Tag>
                           {tooltipMeta?.units != null ? <Tag>Stück: {formatNumber(tooltipMeta.units, 0)}</Tag> : null}

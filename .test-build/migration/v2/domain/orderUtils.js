@@ -33,7 +33,7 @@ const FO_LEGACY_STATUS_MAP = {
     CANCELLED: "ARCHIVED",
 };
 exports.TRANSPORT_MODES = ["SEA", "RAIL", "AIR"];
-exports.INCOTERMS = ["EXW", "DDP"];
+exports.INCOTERMS = ["EXW", "DDP", "FCA"];
 exports.PAYMENT_TRIGGERS = ["ORDER_DATE", "PRODUCTION_END", "ETD", "ETA", "DELIVERY"];
 exports.PAYMENT_CURRENCIES = ["EUR", "USD", "CNY"];
 exports.PO_ANCHORS = ["ORDER_DATE", "PROD_DONE", "ETD", "ETA"];
@@ -89,6 +89,12 @@ function asPositiveNumber(value) {
 }
 function asPositive(value, fallback = 0) {
     return Math.max(0, asNumber(value, fallback));
+}
+function asNullableString(value) {
+    if (value == null)
+        return null;
+    const text = String(value).trim();
+    return text || null;
 }
 function parseIsoDate(value) {
     if (!value)
@@ -156,6 +162,41 @@ function defaultTerms() {
             offsetMonths: 0,
         },
     ];
+}
+function asRoundedNumber(value, fallback = 0) {
+    const parsed = (0, dataHealth_js_1.parseDeNumber)(value);
+    if (!Number.isFinite(parsed))
+        return fallback;
+    return Math.round(Number(parsed));
+}
+function resolveFoAutoPaymentTimingDefaults(input) {
+    const defaults = {
+        freight: { triggerEvent: "ETD", offsetDays: 0 },
+        duty: { triggerEvent: "ETA", offsetDays: 0 },
+        eust: { triggerEvent: "ETA", offsetDays: 0 },
+        eustRefund: { triggerEvent: "ETA", offsetDays: 0 },
+    };
+    const root = (input && typeof input === "object")
+        ? input
+        : {};
+    const fo = (root.fo && typeof root.fo === "object")
+        ? root.fo
+        : {};
+    const getTiming = (key, fallback) => {
+        const row = (fo[key] && typeof fo[key] === "object")
+            ? fo[key]
+            : {};
+        return {
+            triggerEvent: normaliseTrigger(row.triggerEvent ?? fallback.triggerEvent),
+            offsetDays: asRoundedNumber(row.offsetDays, fallback.offsetDays),
+        };
+    };
+    return {
+        freight: getTiming("freight", defaults.freight),
+        duty: getTiming("duty", defaults.duty),
+        eust: getTiming("eust", defaults.eust),
+        eustRefund: getTiming("eustRefund", defaults.eustRefund),
+    };
 }
 function buildScheduleDates(schedule) {
     const dates = {
@@ -426,6 +467,7 @@ function buildFoPayments(input) {
     });
     const incoterm = String(input.incoterm || "EXW").toUpperCase();
     const vatRefundLagMonths = Math.max(0, Math.round(asPositive(input.vatRefundLagMonths, 2)));
+    const autoDueDefaults = resolveFoAutoPaymentTimingDefaults(input.paymentDueDefaults);
     const rows = [...supplierRows];
     if (incoterm !== "DDP" && costValues.freightAmount > 0) {
         rows.push({
@@ -434,10 +476,10 @@ function buildFoPayments(input) {
             percent: 0,
             amount: costValues.freightAmount,
             currency: normaliseCurrency(input.freightCurrency, "EUR"),
-            triggerEvent: "ETD",
-            offsetDays: 0,
+            triggerEvent: autoDueDefaults.freight.triggerEvent,
+            offsetDays: autoDueDefaults.freight.offsetDays,
             offsetMonths: 0,
-            dueDate: resolveDueDate("ETD", 0, 0, scheduleDates),
+            dueDate: resolveDueDate(autoDueDefaults.freight.triggerEvent, autoDueDefaults.freight.offsetDays, 0, scheduleDates),
             category: "freight",
             isOverridden: false,
             dueDateManuallySet: false,
@@ -451,10 +493,10 @@ function buildFoPayments(input) {
             percent: dutyRatePct,
             amount: costValues.dutyAmountEur,
             currency: "EUR",
-            triggerEvent: "ETA",
-            offsetDays: 0,
+            triggerEvent: autoDueDefaults.duty.triggerEvent,
+            offsetDays: autoDueDefaults.duty.offsetDays,
             offsetMonths: 0,
-            dueDate: resolveDueDate("ETA", 0, 0, scheduleDates),
+            dueDate: resolveDueDate(autoDueDefaults.duty.triggerEvent, autoDueDefaults.duty.offsetDays, 0, scheduleDates),
             category: "duty",
             isOverridden: false,
             dueDateManuallySet: false,
@@ -468,10 +510,10 @@ function buildFoPayments(input) {
             percent: eustRatePct,
             amount: costValues.eustAmountEur,
             currency: "EUR",
-            triggerEvent: "ETA",
-            offsetDays: 0,
+            triggerEvent: autoDueDefaults.eust.triggerEvent,
+            offsetDays: autoDueDefaults.eust.offsetDays,
             offsetMonths: 0,
-            dueDate: resolveDueDate("ETA", 0, 0, scheduleDates),
+            dueDate: resolveDueDate(autoDueDefaults.eust.triggerEvent, autoDueDefaults.eust.offsetDays, 0, scheduleDates),
             category: "eust",
             isOverridden: false,
             dueDateManuallySet: false,
@@ -482,10 +524,10 @@ function buildFoPayments(input) {
             percent: eustRatePct,
             amount: -costValues.eustAmountEur,
             currency: "EUR",
-            triggerEvent: "ETA",
-            offsetDays: 0,
+            triggerEvent: autoDueDefaults.eustRefund.triggerEvent,
+            offsetDays: autoDueDefaults.eustRefund.offsetDays,
             offsetMonths: vatRefundLagMonths,
-            dueDate: resolveDueDate("ETA", 0, vatRefundLagMonths, scheduleDates),
+            dueDate: resolveDueDate(autoDueDefaults.eustRefund.triggerEvent, autoDueDefaults.eustRefund.offsetDays, vatRefundLagMonths, scheduleDates),
             category: "eust_refund",
             isOverridden: false,
             dueDateManuallySet: false,
@@ -515,6 +557,7 @@ function normalizeFoRecord(input) {
         fxRate: values.fxRate,
         incoterm: values.incoterm,
         vatRefundLagMonths: input.vatRefundLagMonths,
+        paymentDueDefaults: input.paymentDueDefaults,
         existingPayments: existing?.payments,
     });
     return {
@@ -548,6 +591,12 @@ function normalizeFoRecord(input) {
         status: normalizeFoStatus(values.status, "DRAFT"),
         convertedPoId: values.convertedPoId || existing?.convertedPoId || null,
         convertedPoNo: values.convertedPoNo || existing?.convertedPoNo || null,
+        forecastBasisVersionId: asNullableString(values.forecastBasisVersionId ?? existing?.forecastBasisVersionId),
+        forecastBasisVersionName: asNullableString(values.forecastBasisVersionName ?? existing?.forecastBasisVersionName),
+        forecastBasisSetAt: asNullableString(values.forecastBasisSetAt ?? existing?.forecastBasisSetAt),
+        forecastConflictState: asNullableString(values.forecastConflictState ?? existing?.forecastConflictState),
+        supersedesFoId: asNullableString(values.supersedesFoId ?? existing?.supersedesFoId),
+        supersededByFoId: asNullableString(values.supersededByFoId ?? existing?.supersededByFoId),
         createdAt: existing?.createdAt || now,
         updatedAt: now,
     };

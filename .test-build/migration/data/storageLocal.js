@@ -120,6 +120,10 @@ const defaults = {
         },
         forecastImport: {},
         forecastManual: {},
+        versions: [],
+        activeVersionId: null,
+        lastImpactSummary: null,
+        foConflictDecisionsByVersion: {},
         lastImportAt: null,
         importSource: null,
     },
@@ -378,6 +382,90 @@ function ensureFos(state) {
         };
     });
 }
+function normalizeForecastImportMap(input) {
+    if (!input || typeof input !== "object")
+        return {};
+    const out = {};
+    Object.entries(input).forEach(([skuRaw, monthMapRaw]) => {
+        const sku = String(skuRaw || "").trim();
+        if (!sku || !monthMapRaw || typeof monthMapRaw !== "object")
+            return;
+        const monthMapOut = {};
+        Object.entries(monthMapRaw).forEach(([monthRaw, entryRaw]) => {
+            const month = String(monthRaw || "").trim();
+            if (!/^\d{4}-\d{2}$/.test(month))
+                return;
+            const source = entryRaw && typeof entryRaw === "object"
+                ? entryRaw
+                : { units: entryRaw };
+            const units = (0, dataHealth_js_1.parseDeNumber)(source.units ?? source.qty ?? source.quantity);
+            const revenueEur = (0, dataHealth_js_1.parseDeNumber)(source.revenueEur);
+            const profitEur = (0, dataHealth_js_1.parseDeNumber)(source.profitEur);
+            monthMapOut[month] = {
+                units: Number.isFinite(units) ? units : null,
+                revenueEur: Number.isFinite(revenueEur) ? revenueEur : null,
+                profitEur: Number.isFinite(profitEur) ? profitEur : null,
+            };
+        });
+        if (Object.keys(monthMapOut).length)
+            out[sku] = monthMapOut;
+    });
+    return out;
+}
+function computeForecastVersionStats(forecastImport) {
+    const skuKeys = Object.keys(forecastImport || {});
+    const monthSet = new Set();
+    let rowCount = 0;
+    skuKeys.forEach((sku) => {
+        const monthMap = forecastImport?.[sku];
+        if (!monthMap || typeof monthMap !== "object")
+            return;
+        Object.keys(monthMap).forEach((month) => {
+            if (!/^\d{4}-\d{2}$/.test(month))
+                return;
+            monthSet.add(month);
+            rowCount += 1;
+        });
+    });
+    return {
+        rowCount,
+        skuCount: skuKeys.length,
+        monthCount: monthSet.size,
+    };
+}
+function formatForecastVersionTimestamp(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+function buildForecastVersionName(date) {
+    return `VentoryOne Forecast – ${formatForecastVersionTimestamp(date)}`;
+}
+function randomForecastVersionId() {
+    return `fv-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+}
+function normaliseForecastVersion(entry) {
+    if (!entry || typeof entry !== "object")
+        return null;
+    const createdAtRaw = String(entry.createdAt || "").trim();
+    const createdDate = createdAtRaw ? new Date(createdAtRaw) : new Date();
+    const createdAt = Number.isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString();
+    const normalizedImport = normalizeForecastImportMap(entry.forecastImport || {});
+    return {
+        id: String(entry.id || randomForecastVersionId()),
+        name: String(entry.name || buildForecastVersionName(new Date(createdAt))).trim() || buildForecastVersionName(new Date(createdAt)),
+        note: entry.note == null ? null : String(entry.note),
+        createdAt,
+        sourceLabel: entry.sourceLabel == null ? null : String(entry.sourceLabel),
+        importMode: String(entry.importMode || "").toLowerCase() === "merge" ? "merge" : "overwrite",
+        onlyActiveSkus: entry.onlyActiveSkus === true,
+        forecastImport: normalizedImport,
+        stats: computeForecastVersionStats(normalizedImport),
+    };
+}
 function ensureForecast(state) {
     if (!state)
         return;
@@ -398,6 +486,15 @@ function ensureForecast(state) {
     if (!state.forecast.forecastManual || typeof state.forecast.forecastManual !== "object") {
         state.forecast.forecastManual = {};
     }
+    if (!Array.isArray(state.forecast.versions))
+        state.forecast.versions = [];
+    if (!state.forecast.foConflictDecisionsByVersion || typeof state.forecast.foConflictDecisionsByVersion !== "object") {
+        state.forecast.foConflictDecisionsByVersion = {};
+    }
+    if (state.forecast.activeVersionId === undefined)
+        state.forecast.activeVersionId = null;
+    if (state.forecast.lastImpactSummary === undefined)
+        state.forecast.lastImpactSummary = null;
     if (!state.forecast.lastImportAt)
         state.forecast.lastImportAt = null;
     if (!state.forecast.importSource)
@@ -429,6 +526,42 @@ function ensureForecast(state) {
                 };
             }
         });
+    }
+    const normalizedImport = normalizeForecastImportMap(state.forecast.forecastImport || {});
+    const normalizedVersions = (Array.isArray(state.forecast.versions) ? state.forecast.versions : [])
+        .map(normaliseForecastVersion)
+        .filter(Boolean)
+        .sort((left, right) => String(left.createdAt || "").localeCompare(String(right.createdAt || "")));
+    if (!normalizedVersions.length && Object.keys(normalizedImport).length) {
+        const createdAt = state.forecast.lastImportAt || new Date().toISOString();
+        const sourceLabel = state.forecast.importSource ? String(state.forecast.importSource) : "legacy";
+        const initialVersion = {
+            id: String(state.forecast.activeVersionId || randomForecastVersionId()),
+            name: buildForecastVersionName(new Date(createdAt)),
+            note: null,
+            createdAt,
+            sourceLabel,
+            importMode: "overwrite",
+            onlyActiveSkus: false,
+            forecastImport: normalizedImport,
+            stats: computeForecastVersionStats(normalizedImport),
+        };
+        state.forecast.versions = [initialVersion];
+        state.forecast.activeVersionId = initialVersion.id;
+        state.forecast.forecastImport = structuredClone(initialVersion.forecastImport);
+        return;
+    }
+    state.forecast.versions = normalizedVersions;
+    if (normalizedVersions.length) {
+        const activeVersionId = String(state.forecast.activeVersionId || "").trim();
+        const activeVersion = normalizedVersions.find((entry) => entry.id === activeVersionId)
+            || normalizedVersions[normalizedVersions.length - 1];
+        state.forecast.activeVersionId = activeVersion.id;
+        state.forecast.forecastImport = structuredClone(activeVersion.forecastImport || {});
+    }
+    else {
+        state.forecast.activeVersionId = null;
+        state.forecast.forecastImport = normalizedImport;
     }
 }
 function ensureInventory(state) {

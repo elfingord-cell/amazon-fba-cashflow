@@ -132,7 +132,15 @@ function mergeUpsert(currentState, incomingState) {
     next.inventory = mergeObjectExistingWins(currentState.inventory, incomingState.inventory);
     next.fixcostOverrides = mergeObjectExistingWins(currentState.fixcostOverrides, incomingState.fixcostOverrides);
     next.monthlyActuals = mergeObjectExistingWins(currentState.monthlyActuals, incomingState.monthlyActuals);
-    next.legacyMeta = (0, appState_1.ensureAppStateV2)(currentState).legacyMeta;
+    const legacyMetaCurrent = (0, appState_1.ensureAppStateV2)(currentState).legacyMeta;
+    const legacyMetaIncoming = (0, appState_1.ensureAppStateV2)(incomingState).legacyMeta;
+    next.legacyMeta = {
+        importHistory: legacyMetaCurrent.importHistory || [],
+        unmapped: {
+            ...asObject(legacyMetaIncoming.unmapped),
+            ...asObject(legacyMetaCurrent.unmapped),
+        },
+    };
     next.schemaVersion = 2;
     return { next, issues };
 }

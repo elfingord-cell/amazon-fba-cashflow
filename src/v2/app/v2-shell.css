@@ -2175,6 +2175,13 @@
   flex-wrap: wrap;
 }
 
+.v2-dashboard-pnl-order-row-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .v2-dashboard-pnl-order-detail {
   display: grid;
   gap: 10px;
