@@ -27,7 +27,10 @@ import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type Dashboar
 import { buildDashboardOrderTimeline } from "../../domain/dashboardOrderTimeline";
 import {
   buildDashboardRobustness,
+  type CoverageStatusKey,
   type DashboardRobustMonth,
+  type RobustnessCoverageOrderDutyIssue,
+  type RobustnessCoverageStockIssue,
   type RobustnessCheckResult,
 } from "../../domain/dashboardRobustness";
 import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
@@ -151,6 +154,17 @@ const DASHBOARD_SECTION_KEYS = new Set([
 
 const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["signals", "cashflow"];
 
+const COVERAGE_STATUS_UI_META: Record<CoverageStatusKey, {
+  label: string;
+  color: string;
+  className: string;
+}> = {
+  full: { label: "Vollständig", color: "green", className: "is-full" },
+  wide: { label: "Weitgehend", color: "lime", className: "is-wide" },
+  partial: { label: "Teilweise", color: "orange", className: "is-partial" },
+  insufficient: { label: "Unzureichend", color: "red", className: "is-insufficient" },
+};
+
 function normalizeDashboardSectionKeys(value: readonly string[]): string[] {
   const next = new Set<string>();
   value.forEach((entry) => {
@@ -209,6 +223,25 @@ function statusTag(status: RobustnessCheckResult["status"]): JSX.Element {
   return status === "ok" ? <Tag color="green">OK</Tag> : <Tag color="red">Offen</Tag>;
 }
 
+function coverageStatusMeta(statusKey: CoverageStatusKey): {
+  label: string;
+  color: string;
+  className: string;
+} {
+  return COVERAGE_STATUS_UI_META[statusKey] || COVERAGE_STATUS_UI_META.insufficient;
+}
+
+function coverageStatusTag(statusKey: CoverageStatusKey): JSX.Element {
+  const meta = coverageStatusMeta(statusKey);
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
+function stockIssueLabel(issue: RobustnessCoverageStockIssue): string {
+  if (issue.issueType === "forecast_missing") return "Forecast fehlt";
+  if (issue.issueType === "stock_oos") return "Out-of-Stock";
+  return "Unter Safety";
+}
+
 function sumRows(rows: DashboardPnlRow[]): number {
   return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
 }
@@ -253,6 +286,7 @@ function buildInventoryDashboardRoute(input: {
   abc?: InventoryAbcFilterParam;
   month?: string | null;
   sku?: string | null;
+  mode?: "units" | "doh" | null;
 }): string {
   return appendRouteQuery("/v2/inventory/projektion", {
     source: "dashboard",
@@ -260,6 +294,7 @@ function buildInventoryDashboardRoute(input: {
     abc: input.abc || "ab",
     month: input.month || null,
     sku: input.sku || null,
+    mode: input.mode || null,
     expand: "all",
   });
 }
@@ -276,26 +311,84 @@ function buildProductsDashboardRoute(input: {
   });
 }
 
+function buildForecastDashboardRoute(input: {
+  sku?: string | null;
+  month?: string | null;
+}): string {
+  return appendRouteQuery("/v2/forecast", {
+    source: "dashboard",
+    sku: input.sku || null,
+    month: input.month || null,
+  });
+}
+
+function buildFoDashboardRoute(input: {
+  sku: string;
+  month?: string | null;
+  suggestedUnits?: number | null;
+  requiredArrivalDate?: string | null;
+  recommendedOrderDate?: string | null;
+}): string {
+  return appendRouteQuery("/v2/orders/fo", {
+    source: "inventory_projection",
+    sku: input.sku || null,
+    month: input.month || null,
+    suggestedUnits: Number.isFinite(Number(input.suggestedUnits))
+      ? String(Math.max(0, Math.round(Number(input.suggestedUnits))))
+      : "0",
+    requiredArrivalDate: input.requiredArrivalDate || null,
+    recommendedOrderDate: input.recommendedOrderDate || null,
+    returnTo: "/v2/dashboard",
+  });
+}
+
+function buildPoDashboardRoute(input: {
+  sku: string;
+  suggestedUnits?: number | null;
+  requiredArrivalDate?: string | null;
+  recommendedOrderDate?: string | null;
+}): string {
+  return appendRouteQuery("/v2/orders/po", {
+    source: "inventory_projection",
+    sku: input.sku || null,
+    suggestedUnits: Number.isFinite(Number(input.suggestedUnits))
+      ? String(Math.max(0, Math.round(Number(input.suggestedUnits))))
+      : "0",
+    requiredArrivalDate: input.requiredArrivalDate || null,
+    recommendedOrderDate: input.recommendedOrderDate || null,
+  });
+}
+
 function resolveDashboardRoute(input: {
   route: string;
   actionId?: string;
   checkKey?: RobustnessCheckResult["key"];
   month?: string | null;
   sku?: string | null;
+  mode?: "units" | "doh" | null;
 }): string {
   const route = String(input.route || "");
+  if (route.startsWith("/v2/forecast")) {
+    return buildForecastDashboardRoute({
+      sku: input.sku || null,
+      month: input.month || null,
+    });
+  }
   if (route.startsWith("/v2/inventory/projektion")) {
     const risk = input.actionId === "inventory_safety" || input.checkKey === "sku_coverage"
       ? "under_safety"
       : "all";
-    const abc = input.actionId === "inventory_safety" || input.checkKey === "sku_coverage"
-      ? "ab"
-      : "all";
+    const abc = input.sku
+      ? "all"
+      : (input.actionId === "inventory_safety" || input.checkKey === "sku_coverage"
+        ? "ab"
+        : "all");
     return buildInventoryDashboardRoute({
       risk,
       abc,
       month: input.month || null,
       sku: input.sku || null,
+      mode: input.mode || null,
     });
   }
   if (route.startsWith("/v2/products")) {
@@ -700,6 +793,45 @@ export default function DashboardModule(): JSX.Element {
     : null;
 
   const selectedMonthData = selectedMonth ? robustness.monthMap.get(selectedMonth) || null : null;
+  const selectedStockIssues = selectedMonthData?.coverage.stockIssues || [];
+  const selectedOrderDutyIssues = selectedMonthData?.coverage.orderDutyIssues || [];
+  const selectedOptionalChecks = selectedMonthData
+    ? selectedMonthData.checks.filter((entry) => entry.key !== "sku_coverage")
+    : [];
+  const selectedAdditionalBlockers = selectedMonthData
+    ? selectedMonthData.blockers.filter((entry) => entry.checkKey !== "sku_coverage")
+    : [];
+  const selectedChecklist = useMemo(() => {
+    if (!selectedMonthData) return [] as Array<{ key: string; label: string; passed: boolean; description: string }>;
+    const coverageMode = selectedMonthData.coverage.projectionMode === "doh" ? "DOH" : "Units";
+    const stockIssueCount = selectedMonthData.coverage.stockIssueCount;
+    const orderDutyIssueCount = selectedMonthData.coverage.orderDutyIssueCount;
+    const base = [
+      {
+        key: "stock",
+        label: "Bestands-Check ok?",
+        passed: stockIssueCount === 0,
+        description: stockIssueCount === 0
+          ? `Alle aktiven SKUs im Monat ${formatMonthLabel(selectedMonthData.month)} über Safety (${coverageMode}).`
+          : `${stockIssueCount} SKU(s) mit OOS/unter Safety oder fehlendem Forecast.`,
+      },
+      {
+        key: "order_duty",
+        label: "Bestellpflicht/Look-Ahead ok?",
+        passed: orderDutyIssueCount === 0,
+        description: orderDutyIssueCount === 0
+          ? "Keine SKU benötigt spätestens in diesem Monat eine neue FO/PO."
+          : `${orderDutyIssueCount} SKU(s) mit fälliger Bestellpflicht (inkl. Look-Ahead).`,
+      },
+    ];
+    const optional = selectedOptionalChecks.map((check) => ({
+      key: check.key,
+      label: `${check.label} ok?`,
+      passed: check.passed,
+      description: check.detail,
+    }));
+    return [...base, ...optional];
+  }, [selectedMonthData, selectedOptionalChecks]);
   const currentMonth = currentMonthKey();
   const todayIso = todayIsoDate();
   const currentMonthIdx = monthIndex(currentMonth);
@@ -976,13 +1108,14 @@ export default function DashboardModule(): JSX.Element {
             route: row.route,
             checkKey: row.key,
             month: selectedMonthData?.month || null,
+            mode: selectedMonthData?.coverage.projectionMode || null,
           }))}
         >
           Öffnen
         </Button>
       ),
     },
-  ], [navigate, selectedMonthData?.month]);
+  ], [navigate, selectedMonthData?.coverage.projectionMode, selectedMonthData?.month]);
 
   const pnlItems = useMemo(() => {
     return visibleBreakdown.map((monthRow) => {
@@ -1502,6 +1635,7 @@ export default function DashboardModule(): JSX.Element {
                                 route: action.route,
                                 actionId: action.id,
                                 month: actionFocusMonth,
+                                mode: actionFocusMonth ? (robustness.monthMap.get(actionFocusMonth)?.coverage.projectionMode || null) : null,
                               }))}
                             >
                               Öffnen
@@ -1672,13 +1806,27 @@ export default function DashboardModule(): JSX.Element {
             <Card>
               <Title level={4}>Robustheits-Matrix</Title>
               <Paragraph type="secondary">
-                Ein Monat ist nur robust, wenn alle Hard-Checks erfüllt sind (Coverage 100 %, Cash-In, Fixkosten, VAT und Revenue-Basis).
+                Ein Monat wird nur dann grün, wenn Bestands-Check und Look-Ahead-Bestellpflicht passen. Die Stufen folgen den Schwellen:
+                Vollständig 100 %, Weitgehend ≥95 % ohne A/B-Blocker, Teilweise ≥80 %, sonst Unzureichend.
               </Paragraph>
+
+              <div className="v2-dashboard-robust-legend">
+                {(["full", "wide", "partial", "insufficient"] as CoverageStatusKey[]).map((statusKey) => {
+                  const meta = coverageStatusMeta(statusKey);
+                  return (
+                    <div key={statusKey} className="v2-dashboard-robust-legend-item">
+                      <span className={`v2-dashboard-robust-dot ${meta.className}`} />
+                      <Text>{meta.label}</Text>
+                    </div>
+                  );
+                })}
+              </div>
 
               <div className="v2-dashboard-robust-grid">
                 {robustness.months.map((month) => {
                   const monthIdx = monthIndex(month.month);
                   const isPast = monthIdx != null && currentMonthIdx != null && monthIdx < currentMonthIdx;
+                  const statusMeta = coverageStatusMeta(month.coverage.statusKey);
                   return (
                     <button
                       key={month.month}
@@ -1686,22 +1834,23 @@ export default function DashboardModule(): JSX.Element {
                       className={[
                         "v2-dashboard-robust-item",
                         selectedMonth === month.month ? "is-selected" : "",
-                        month.robust ? "is-robust" : "is-open",
+                        statusMeta.className,
                         isPast ? "is-past" : "",
                       ].filter(Boolean).join(" ")}
                       onClick={() => setSelectedMonth(month.month)}
                     >
                       <div className="v2-dashboard-robust-item-head">
                         <span>{formatMonthLabel(month.month)}</span>
-                        <Tag color={isPast ? "default" : (month.robust ? "green" : "red")}>
-                          {isPast ? "Vergangen (Info)" : (month.robust ? "Robust" : "Offen")}
-                        </Tag>
+                        <Space size={6}>
+                          <Tag color={statusMeta.color}>{statusMeta.label}</Tag>
+                          {isPast ? <Tag>Vergangen</Tag> : null}
+                        </Space>
                       </div>
                       <div className="v2-dashboard-robust-item-meta">
                         Coverage: {formatPercent(month.coverage.ratio * 100)} ({month.coverage.coveredSkus}/{month.coverage.activeSkus})
                       </div>
                       <div className="v2-dashboard-robust-item-meta">
-                        Blocker: {month.blockerCount}
+                        Blocker SKUs: {month.coverage.blockerCount} (A/B {month.coverage.blockerAbCount} · C {month.coverage.blockerCCount})
                       </div>
                     </button>
                   );
@@ -1712,10 +1861,27 @@ export default function DashboardModule(): JSX.Element {
                 <div className="v2-dashboard-robust-detail">
                   <div className="v2-dashboard-robust-detail-head">
                     <Text strong>{formatMonthLabel(selectedMonthData.month)}</Text>
-                    <Space>
-                      <Tag color={selectedMonthData.robust ? "green" : "red"}>{selectedMonthData.robust ? "Robust" : "Nicht robust"}</Tag>
-                      <Tag>A/B Risiko: {selectedMonthData.coverage.abRiskSkuCount}</Tag>
+                    <Space wrap>
+                      {coverageStatusTag(selectedMonthData.coverage.statusKey)}
+                      <Tag>Coverage: {formatPercent(selectedMonthData.coverage.ratio * 100)}</Tag>
+                      <Tag>Blocker: {selectedMonthData.coverage.blockerCount}</Tag>
+                      <Tag>A/B: {selectedMonthData.coverage.blockerAbCount} · C: {selectedMonthData.coverage.blockerCCount}</Tag>
+                      {selectedMonthData.coverage.overdueOrderDutySkuCount > 0 ? (
+                        <Tag color="red">Überfällig: {selectedMonthData.coverage.overdueOrderDutySkuCount}</Tag>
+                      ) : null}
                     </Space>
+                  </div>
+
+                  <div className="v2-dashboard-robust-checklist">
+                    {selectedChecklist.map((entry) => (
+                      <div key={entry.key} className={`v2-dashboard-robust-checklist-item ${entry.passed ? "is-pass" : "is-fail"}`}>
+                        <span className="v2-dashboard-robust-check-icon">{entry.passed ? "✅" : "❌"}</span>
+                        <div>
+                          <Text strong>{entry.label}</Text>
+                          <div><Text type="secondary">{entry.description}</Text></div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
 
                   <Table
@@ -1727,12 +1893,166 @@ export default function DashboardModule(): JSX.Element {
                   />
 
                   <div className="v2-dashboard-blockers">
-                    <Text strong>Blocker</Text>
-                    {!selectedMonthData.blockers.length ? (
-                      <Text type="secondary">Keine Blocker in diesem Monat.</Text>
+                    <Text strong>Bestands-Probleme in {formatMonthLabel(selectedMonthData.month)}</Text>
+                    {!selectedStockIssues.length ? (
+                      <Text type="secondary">Keine Bestandsprobleme in diesem Monat.</Text>
+                    ) : (
+                      <div className="v2-table-shell v2-scroll-host">
+                        <table className="v2-stats-table" data-layout="auto">
+                          <thead>
+                            <tr>
+                              <th>SKU</th>
+                              <th>Alias</th>
+                              <th>ABC</th>
+                              <th>Problem</th>
+                              <th>Aktionen</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedStockIssues.map((issue) => (
+                              <tr key={`${issue.sku}:${issue.issueType}`}>
+                                <td>{issue.sku}</td>
+                                <td>{issue.alias}</td>
+                                <td>{issue.abcClass}</td>
+                                <td>{stockIssueLabel(issue)}</td>
+                                <td>
+                                  <Space wrap>
+                                    <Button
+                                      size="small"
+                                      onClick={() => navigate(resolveDashboardRoute({
+                                        route: "/v2/inventory/projektion",
+                                        checkKey: "sku_coverage",
+                                        month: selectedMonthData.month,
+                                        sku: issue.sku,
+                                        mode: selectedMonthData.coverage.projectionMode,
+                                      }))}
+                                    >
+                                      Zur Bestandsprojektion
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      onClick={() => navigate(buildProductsDashboardRoute({
+                                        issues: "all",
+                                        sku: issue.sku,
+                                      }))}
+                                    >
+                                      Produkt öffnen
+                                    </Button>
+                                    {issue.issueType === "forecast_missing" ? (
+                                      <Button
+                                        size="small"
+                                        onClick={() => navigate(buildForecastDashboardRoute({
+                                          sku: issue.sku,
+                                          month: selectedMonthData.month,
+                                        }))}
+                                      >
+                                        Absatzprognose öffnen
+                                      </Button>
+                                    ) : null}
+                                  </Space>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="v2-dashboard-blockers">
+                    <Text strong>Bestellpflicht in {formatMonthLabel(selectedMonthData.month)}</Text>
+                    {!selectedOrderDutyIssues.length ? (
+                      <Text type="secondary">Keine fällige Bestellpflicht in diesem Monat.</Text>
+                    ) : (
+                      <div className="v2-table-shell v2-scroll-host">
+                        <table className="v2-stats-table" data-layout="auto">
+                          <thead>
+                            <tr>
+                              <th>SKU</th>
+                              <th>Alias</th>
+                              <th>ABC</th>
+                              <th>Erster Risikomonat</th>
+                              <th>Spätester Bestellzeitpunkt</th>
+                              <th>Warum Blocker</th>
+                              <th>Aktionen</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedOrderDutyIssues.map((issue: RobustnessCoverageOrderDutyIssue) => (
+                              <tr key={`${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`}>
+                                <td>{issue.sku}</td>
+                                <td>{issue.alias}</td>
+                                <td>{issue.abcClass}</td>
+                                <td>{formatMonthLabel(issue.firstRiskMonth)}</td>
+                                <td>
+                                  {formatIsoDate(issue.latestOrderDate)} ({formatMonthLabel(issue.orderMonth)})
+                                  {issue.overdue ? <Tag color="red" style={{ marginInlineStart: 8 }}>Überfällig</Tag> : null}
+                                </td>
+                                <td>{issue.reason}</td>
+                                <td>
+                                  <Space wrap>
+                                    <Button
+                                      size="small"
+                                      onClick={() => navigate(resolveDashboardRoute({
+                                        route: "/v2/inventory/projektion",
+                                        checkKey: "sku_coverage",
+                                        month: selectedMonthData.month,
+                                        sku: issue.sku,
+                                        mode: selectedMonthData.coverage.projectionMode,
+                                      }))}
+                                    >
+                                      Zur Bestandsprojektion
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      type="primary"
+                                      onClick={() => navigate(buildFoDashboardRoute({
+                                        sku: issue.sku,
+                                        month: selectedMonthData.month,
+                                        suggestedUnits: issue.shortageUnits,
+                                        requiredArrivalDate: issue.requiredArrivalDate,
+                                        recommendedOrderDate: issue.recommendedOrderDate,
+                                      }))}
+                                    >
+                                      FO anlegen
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      onClick={() => navigate(buildPoDashboardRoute({
+                                        sku: issue.sku,
+                                        suggestedUnits: issue.shortageUnits,
+                                        requiredArrivalDate: issue.requiredArrivalDate,
+                                        recommendedOrderDate: issue.recommendedOrderDate,
+                                      }))}
+                                    >
+                                      PO öffnen
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      onClick={() => navigate(buildProductsDashboardRoute({
+                                        issues: "all",
+                                        sku: issue.sku,
+                                      }))}
+                                    >
+                                      Produkt öffnen
+                                    </Button>
+                                  </Space>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="v2-dashboard-blockers">
+                    <Text strong>Weitere Hard-Checks</Text>
+                    {!selectedAdditionalBlockers.length ? (
+                      <Text type="secondary">Keine weiteren Hard-Check-Blocker.</Text>
                     ) : (
                       <div className="v2-dashboard-blocker-list">
-                        {selectedMonthData.blockers.map((blocker) => (
+                        {selectedAdditionalBlockers.map((blocker) => (
                           <div key={blocker.id} className="v2-dashboard-blocker-item">
                             <div>
                               <Text>{blocker.message}</Text>
@@ -1745,6 +2065,7 @@ export default function DashboardModule(): JSX.Element {
                                 checkKey: blocker.checkKey,
                                 month: blocker.month,
                                 sku: blocker.sku || null,
+                                mode: selectedMonthData.coverage.projectionMode,
                               }))}
                             >
                               Öffnen

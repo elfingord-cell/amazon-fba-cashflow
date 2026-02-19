@@ -377,6 +377,13 @@ function normalizeProjectionHorizon(value: unknown): number {
   return 18;
 }
 
+function normalizeProjectionMode(value: unknown): ProjectionMode {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "doh") return "doh";
+  if (raw === "plan") return "plan";
+  return "units";
+}
+
 function normalizeAbcClass(value: string | null | undefined): "A" | "B" | "C" | null {
   const raw = String(value || "").trim().toUpperCase();
   if (raw === "A" || raw === "B" || raw === "C") return raw;
@@ -504,6 +511,9 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
     setRiskFilter(normalizeProjectionRiskFilter(params.get("risk")));
     setAbcFilter(normalizeProjectionAbcFilter(params.get("abc")));
+    if (params.has("mode")) {
+      setProjectionMode(normalizeProjectionMode(params.get("mode")));
+    }
     if (params.get("expand") === "all") setExpandProjectionFromQuery(true);
   }, [location.search]);
 

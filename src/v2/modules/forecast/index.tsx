@@ -268,14 +268,16 @@ export default function ForecastModule(): JSX.Element {
   const stateObject = state as unknown as Record<string, unknown>;
 
   useEffect(() => {
-    const panelParam = new URLSearchParams(location.search).get("panel");
+    const params = new URLSearchParams(location.search);
+    const panelParam = params.get("panel");
     if (panelParam === "versions") {
       setPanel("versions");
-      return;
-    }
-    if (panelParam === "impact" || panelParam === "conflicts") {
+    } else if (panelParam === "impact" || panelParam === "conflicts") {
       setPanel("impact");
-      return;
+    }
+    if (params.get("source") === "dashboard") {
+      const sku = String(params.get("sku") || "").trim();
+      if (sku) setSearch(sku);
     }
   }, [location.search]);
 

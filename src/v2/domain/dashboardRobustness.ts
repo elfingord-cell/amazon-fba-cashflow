@@ -1,12 +1,46 @@
 import { computeAbcClassification } from "../../domain/abcClassification.js";
-import { computeInventoryProjection } from "../../domain/inventoryProjection.js";
+import {
+  computeInventoryProjection,
+  getProjectionSafetyClass,
+} from "../../domain/inventoryProjection.js";
 import { parseDeNumber } from "../../lib/dataHealth.js";
+import { resolveMasterDataHierarchy } from "./masterDataHierarchy";
 import { addMonths, currentMonthKey } from "./months";
 import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 
 export type RobustnessSeverity = "error" | "warning";
 export type RobustnessCheckStatus = "ok" | "error";
 export type RobustnessCheckKey = "sku_coverage" | "cash_in" | "fixcost" | "vat" | "revenue_inputs";
+export type CoverageStatusKey = "full" | "wide" | "partial" | "insufficient";
+export type ProjectionSafetyIssueType = "forecast_missing" | "stock_oos" | "stock_under_safety";
+export type ProjectionModeForCoverage = "units" | "doh";
+
+const COVERAGE_THRESHOLDS = {
+  wide: 0.95,
+  partial: 0.8,
+} as const;
+
+const COVERAGE_STATUS_META: Record<CoverageStatusKey, {
+  label: string;
+  detail: string;
+}> = {
+  full: {
+    label: "Vollständig",
+    detail: "Coverage 100% und keine Blocker.",
+  },
+  wide: {
+    label: "Weitgehend",
+    detail: "Coverage ≥95% und keine A/B-Blocker.",
+  },
+  partial: {
+    label: "Teilweise",
+    detail: "Coverage ≥80%.",
+  },
+  insufficient: {
+    label: "Unzureichend",
+    detail: "Coverage <80% oder A/B-Blocker.",
+  },
+};
 
 export interface RobustnessCheckResult {
   key: RobustnessCheckKey;
@@ -18,6 +52,32 @@ export interface RobustnessCheckResult {
   route: string;
 }
 
+export interface RobustnessCoverageStockIssue {
+  sku: string;
+  alias: string;
+  abcClass: "A" | "B" | "C";
+  issueType: ProjectionSafetyIssueType;
+  issueLabel: string;
+  value: number | null;
+  safetyValue: number | null;
+  projectionMode: ProjectionModeForCoverage;
+}
+
+export interface RobustnessCoverageOrderDutyIssue {
+  sku: string;
+  alias: string;
+  abcClass: "A" | "B" | "C";
+  firstRiskMonth: string;
+  latestOrderDate: string;
+  orderMonth: string;
+  leadTimeDays: number;
+  overdue: boolean;
+  requiredArrivalDate: string;
+  recommendedOrderDate: string;
+  shortageUnits: number | null;
+  reason: string;
+}
+
 export interface RobustnessBlocker {
   id: string;
   month: string;
@@ -26,6 +86,16 @@ export interface RobustnessBlocker {
   message: string;
   sku?: string;
   alias?: string;
+  abcClass?: "A" | "B" | "C";
+  issueType?: ProjectionSafetyIssueType | "order_duty";
+  firstRiskMonth?: string;
+  latestOrderDate?: string;
+  orderMonth?: string;
+  leadTimeDays?: number;
+  overdue?: boolean;
+  requiredArrivalDate?: string;
+  recommendedOrderDate?: string;
+  suggestedUnits?: number | null;
   route: string;
 }
 
@@ -36,11 +106,24 @@ export interface DashboardRobustMonth {
   blockers: RobustnessBlocker[];
   blockerCount: number;
   coverage: {
+    statusKey: CoverageStatusKey;
+    statusLabel: string;
+    statusDetail: string;
+    projectionMode: ProjectionModeForCoverage;
     activeSkus: number;
     coveredSkus: number;
     ratio: number;
+    blockerCount: number;
+    blockerAbCount: number;
+    blockerCCount: number;
+    stockIssueCount: number;
+    orderDutyIssueCount: number;
+    overdueOrderDutySkuCount: number;
     missingForecastSkus: string[];
     safetyRiskSkus: string[];
+    orderDutyRiskSkus: string[];
+    stockIssues: RobustnessCoverageStockIssue[];
+    orderDutyIssues: RobustnessCoverageOrderDutyIssue[];
     abRiskSkuCount: number;
   };
 }
@@ -82,12 +165,40 @@ interface VatConfigInfo {
   monthOverrides: Record<string, unknown>;
 }
 
-interface ProjectionCoverageLookup {
-  perSkuMonth: Map<string, Map<string, {
-    hasForecast?: boolean;
-    isCovered?: boolean;
-  }>>;
+interface ProjectionMonthData {
+  hasForecast?: boolean;
+  isCovered?: boolean;
+  endAvailable?: number | null;
+  safetyUnits?: number | null;
+  doh?: number | null;
+  safetyDays?: number | null;
 }
+
+interface ProjectionCoverageLookup {
+  perSkuMonth: Map<string, Map<string, ProjectionMonthData>>;
+}
+
+interface LeadTimeResolution {
+  productionDays: number;
+  transitDays: number;
+  totalDays: number;
+  transportMode: string;
+  ddp: boolean;
+}
+
+interface OrderDutyProfile {
+  sku: string;
+  firstRiskMonth: string;
+  latestOrderDate: string;
+  orderMonth: string;
+  leadTimeDays: number;
+  overdue: boolean;
+  requiredArrivalDate: string;
+  recommendedOrderDate: string;
+  shortageUnits: number | null;
+}
+
+type ProjectionRiskClass = "" | "safety-negative" | "safety-low";
 
 function normalizeSku(value: unknown): string {
   return String(value || "").trim();
@@ -117,6 +228,34 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? Number(parsed) : null;
 }
 
+function toPositiveInteger(value: unknown): number | null {
+  const parsed = toNumber(value);
+  if (!Number.isFinite(parsed as number)) return null;
+  if (Number(parsed) <= 0) return null;
+  return Math.round(Number(parsed));
+}
+
+function toMonthStartDate(month: string): Date | null {
+  if (!isMonth(month)) return null;
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) return null;
+  return new Date(Date.UTC(year, monthNumber - 1, 1));
+}
+
+function toIsoDate(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function toMonthKey(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
 function resolveAbcClass(
   abcBySku: Map<string, { abcClass?: string }>,
   sku: string,
@@ -126,6 +265,112 @@ function resolveAbcClass(
   const candidate = String(direct?.abcClass || normalized?.abcClass || "C").toUpperCase();
   if (candidate === "A" || candidate === "B" || candidate === "C") return candidate;
   return "C";
+}
+
+function resolveProjectionModeForCoverage(state: Record<string, unknown>): ProjectionModeForCoverage {
+  const inventory = (state.inventory && typeof state.inventory === "object")
+    ? state.inventory as Record<string, unknown>
+    : {};
+  const inventorySettings = (inventory.settings && typeof inventory.settings === "object")
+    ? inventory.settings as Record<string, unknown>
+    : {};
+  return String(inventorySettings.projectionMode || "").toLowerCase() === "doh" ? "doh" : "units";
+}
+
+function coveragePercentLabel(ratio: number): string {
+  if (!Number.isFinite(ratio)) return "0.0%";
+  const value = Math.max(0, Math.min(100, ratio * 100));
+  return `${value.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
+function projectionRiskClass(
+  monthData: ProjectionMonthData | undefined,
+  projectionMode: ProjectionModeForCoverage,
+): ProjectionRiskClass {
+  if (!monthData || !monthData.hasForecast) return "";
+  return getProjectionSafetyClass({
+    projectionMode,
+    endAvailable: monthData.endAvailable,
+    safetyUnits: monthData.safetyUnits,
+    doh: monthData.doh,
+    safetyDays: monthData.safetyDays,
+  }) as ProjectionRiskClass;
+}
+
+function stockIssueType(
+  monthData: ProjectionMonthData | undefined,
+  riskClass: ProjectionRiskClass,
+): ProjectionSafetyIssueType {
+  if (!monthData?.hasForecast) return "forecast_missing";
+  if (riskClass === "safety-negative") return "stock_oos";
+  return "stock_under_safety";
+}
+
+function stockIssueLabel(issueType: ProjectionSafetyIssueType): string {
+  if (issueType === "forecast_missing") return "Forecast fehlt";
+  if (issueType === "stock_oos") return "Out-of-Stock";
+  return "Unter Safety";
+}
+
+function isAbcCritical(abcClass: "A" | "B" | "C"): boolean {
+  return abcClass === "A" || abcClass === "B";
+}
+
+function abcSortWeight(abcClass: "A" | "B" | "C"): number {
+  if (abcClass === "A") return 0;
+  if (abcClass === "B") return 1;
+  return 2;
+}
+
+function stockIssueSortWeight(issueType: ProjectionSafetyIssueType): number {
+  if (issueType === "stock_oos") return 0;
+  if (issueType === "stock_under_safety") return 1;
+  return 2;
+}
+
+function sortStockIssues(entries: RobustnessCoverageStockIssue[]): RobustnessCoverageStockIssue[] {
+  return entries.slice().sort((left, right) => {
+    const byAbc = abcSortWeight(left.abcClass) - abcSortWeight(right.abcClass);
+    if (byAbc !== 0) return byAbc;
+    const byIssue = stockIssueSortWeight(left.issueType) - stockIssueSortWeight(right.issueType);
+    if (byIssue !== 0) return byIssue;
+    return left.sku.localeCompare(right.sku, "de-DE");
+  });
+}
+
+function sortOrderDutyIssues(entries: RobustnessCoverageOrderDutyIssue[]): RobustnessCoverageOrderDutyIssue[] {
+  return entries.slice().sort((left, right) => {
+    const overdueWeight = Number(right.overdue) - Number(left.overdue);
+    if (overdueWeight !== 0) return overdueWeight;
+    const byAbc = abcSortWeight(left.abcClass) - abcSortWeight(right.abcClass);
+    if (byAbc !== 0) return byAbc;
+    const byOrderMonth = left.orderMonth.localeCompare(right.orderMonth);
+    if (byOrderMonth !== 0) return byOrderMonth;
+    return left.sku.localeCompare(right.sku, "de-DE");
+  });
+}
+
+function resolveCoverageStatus(input: {
+  coverageRatio: number;
+  blockerCount: number;
+  blockerAbCount: number;
+  hasOrderDutyBlocker: boolean;
+  hasOverdueOrderDutyBlocker: boolean;
+}): CoverageStatusKey {
+  const {
+    coverageRatio,
+    blockerCount,
+    blockerAbCount,
+    hasOrderDutyBlocker,
+    hasOverdueOrderDutyBlocker,
+  } = input;
+  if (coverageRatio >= 0.999999 && blockerCount === 0) return "full";
+  if (blockerAbCount > 0) return "insufficient";
+  if (coverageRatio >= COVERAGE_THRESHOLDS.wide) {
+    return hasOrderDutyBlocker || hasOverdueOrderDutyBlocker ? "partial" : "wide";
+  }
+  if (coverageRatio >= COVERAGE_THRESHOLDS.partial) return "partial";
+  return "insufficient";
 }
 
 function monthHasCashIn(state: Record<string, unknown>, month: string): boolean {
@@ -216,14 +461,128 @@ function buildRevenueInputIssues(state: Record<string, unknown>, products: Recor
   };
 }
 
+function resolveLeadTimeForProduct(input: {
+  state: Record<string, unknown>;
+  product: Record<string, unknown>;
+}): LeadTimeResolution {
+  const { state, product } = input;
+  const hierarchy = resolveMasterDataHierarchy({
+    state,
+    product,
+    sku: String(product.sku || ""),
+    supplierId: String(product.supplierId || ""),
+    orderContext: "product",
+  });
+  const resolvedTransport = String(hierarchy.fields.transportMode.value || "").toUpperCase();
+  const fallbackTransport = String((product.template && typeof product.template === "object"
+    ? (product.template as Record<string, unknown>).transportMode
+    : null) || "SEA").toUpperCase();
+  const transportMode = resolvedTransport || fallbackTransport || "SEA";
+  const ddp = hierarchy.fields.ddp.value === true
+    || String(product.incoterm || "").toUpperCase() === "DDP"
+    || Boolean((product.template && typeof product.template === "object")
+      ? (product.template as Record<string, unknown>).ddp === true
+      : false);
+  const fastMode = ddp || transportMode === "AIR";
+  const defaultProduction = fastMode ? 14 : 45;
+  const defaultTransit = fastMode ? 21 : 45;
+  const productionDays = toPositiveInteger(hierarchy.fields.productionLeadTimeDays.value)
+    ?? toPositiveInteger(product.productionLeadTimeDaysDefault)
+    ?? toPositiveInteger((product.template && typeof product.template === "object")
+      ? (product.template as Record<string, unknown>).productionDays
+      : null)
+    ?? defaultProduction;
+  const transitDays = toPositiveInteger(hierarchy.fields.transitDays.value)
+    ?? toPositiveInteger((product.template && typeof product.template === "object")
+      ? (product.template as Record<string, unknown>).transitDays
+      : null)
+    ?? toPositiveInteger(product.transitDays)
+    ?? defaultTransit;
+  return {
+    productionDays,
+    transitDays,
+    totalDays: Math.max(1, productionDays + transitDays),
+    transportMode,
+    ddp,
+  };
+}
+
+function buildOrderDutyProfiles(input: {
+  state: Record<string, unknown>;
+  products: Record<string, unknown>[];
+  months: string[];
+  projection: ProjectionCoverageLookup;
+  projectionMode: ProjectionModeForCoverage;
+  nowMonth: string;
+}): Map<string, OrderDutyProfile> {
+  const profiles = new Map<string, OrderDutyProfile>();
+  const futureMonths = input.months
+    .filter((month) => month >= input.nowMonth)
+    .sort((a, b) => a.localeCompare(b));
+  if (!futureMonths.length) return profiles;
+
+  input.products.forEach((product) => {
+    const sku = normalizeSku(product.sku);
+    if (!sku) return;
+    const skuKey = normalizeSkuKey(sku);
+    const skuProjection = input.projection.perSkuMonth.get(sku) || input.projection.perSkuMonth.get(skuKey);
+    if (!skuProjection) return;
+    let firstRiskMonth: string | null = null;
+    let firstRiskData: ProjectionMonthData | null = null;
+
+    for (let i = 0; i < futureMonths.length; i += 1) {
+      const month = futureMonths[i];
+      const monthData = skuProjection.get(month);
+      const riskClass = projectionRiskClass(monthData, input.projectionMode);
+      if (riskClass === "safety-negative" || riskClass === "safety-low") {
+        firstRiskMonth = month;
+        firstRiskData = monthData || null;
+        break;
+      }
+    }
+    if (!firstRiskMonth) return;
+
+    const riskMonthStart = toMonthStartDate(firstRiskMonth);
+    if (!(riskMonthStart instanceof Date) || Number.isNaN(riskMonthStart.getTime())) return;
+    const leadTime = resolveLeadTimeForProduct({ state: input.state, product });
+    const latestOrderDateRaw = addUtcDays(riskMonthStart, -leadTime.totalDays);
+    const latestOrderDate = toIsoDate(latestOrderDateRaw);
+    const orderMonth = toMonthKey(latestOrderDateRaw);
+    const overdue = orderMonth < input.nowMonth;
+    const safetyUnits = Number(firstRiskData?.safetyUnits);
+    const endAvailable = Number(firstRiskData?.endAvailable);
+    const shortageUnits = Number.isFinite(safetyUnits) && Number.isFinite(endAvailable)
+      ? Math.max(0, Math.ceil(safetyUnits - endAvailable))
+      : null;
+    profiles.set(skuKey, {
+      sku,
+      firstRiskMonth,
+      latestOrderDate,
+      orderMonth,
+      leadTimeDays: leadTime.totalDays,
+      overdue,
+      requiredArrivalDate: `${firstRiskMonth}-01`,
+      recommendedOrderDate: latestOrderDate,
+      shortageUnits,
+    });
+  });
+
+  return profiles;
+}
+
 function buildActions(input: {
   months: DashboardRobustMonth[];
   hasFixcostBasis: boolean;
   vatActive: boolean;
   revenueIssueSkus: number;
 }): DashboardActionItem[] {
-  const missingForecastCount = input.months.reduce((sum, month) => sum + month.coverage.missingForecastSkus.length, 0);
+  const missingForecastCount = input.months.reduce((sum, month) => {
+    const count = month.coverage.stockIssues.filter((entry) => entry.issueType === "forecast_missing").length;
+    return sum + count;
+  }, 0);
   const safetyRiskCount = input.months.reduce((sum, month) => sum + month.coverage.safetyRiskSkus.length, 0);
+  const orderDutyRiskCount = input.months.reduce((sum, month) => sum + month.coverage.orderDutyRiskSkus.length, 0);
+  const overdueOrderDutyCount = input.months.reduce((sum, month) => sum + month.coverage.overdueOrderDutySkuCount, 0);
   const missingCashMonths = input.months.filter((month) => {
     const check = month.checks.find((entry) => entry.key === "cash_in");
     return check && !check.passed;
@@ -245,14 +604,16 @@ function buildActions(input: {
       impact: "Kontostand nicht belastbar",
     });
   }
-  if (safetyRiskCount > 0) {
+  if (safetyRiskCount > 0 || orderDutyRiskCount > 0) {
+    const total = safetyRiskCount + orderDutyRiskCount;
+    const overdueText = overdueOrderDutyCount > 0 ? ` · Überfällig ${overdueOrderDutyCount}` : "";
     actions.push({
       id: "inventory_safety",
       title: "Bestandsrisiken sichern (PO/FO)",
-      detail: `${safetyRiskCount} SKU-Monat(e) unter Safety.`,
+      detail: `${total} SKU-Monat(e) mit Safety-/Bestellpflicht-Risiko${overdueText}.`,
       severity: "error",
       route: "/v2/inventory/projektion",
-      count: safetyRiskCount,
+      count: total,
       impact: "Stockout-Risiko in A/B möglich",
     });
   }
@@ -325,6 +686,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
   const revenueIssues = buildRevenueInputIssues(state, activeProducts);
   const missingPriceSkuSet = new Set(revenueIssues.missingPrice.map((entry) => normalizeSkuKey(entry.sku)));
   const nowMonth = currentMonthKey();
+  const projectionMode = resolveProjectionModeForCoverage(state);
   const pastMonths = months.filter((month) => month < nowMonth);
   const futureMonths = months.filter((month) => month >= nowMonth);
   const emptyProjection: ProjectionCoverageLookup = { perSkuMonth: new Map() };
@@ -335,7 +697,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       products: activeProducts,
       snapshot: null,
       snapshotMonth: pastMonths[0] || undefined,
-      projectionMode: "units",
+      projectionMode,
     }) as ProjectionCoverageLookup
     : emptyProjection;
   const futureProjection = futureMonths.length
@@ -345,42 +707,116 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       products: activeProducts,
       snapshot: null,
       snapshotMonth: addMonths(nowMonth, -1),
-      projectionMode: "units",
+      projectionMode,
     }) as ProjectionCoverageLookup
     : emptyProjection;
   const abcBySku = computeAbcClassification(state).bySku;
+  const orderDutyBySku = buildOrderDutyProfiles({
+    state,
+    products: activeProducts,
+    months,
+    projection: futureProjection,
+    projectionMode,
+    nowMonth,
+  });
 
   const monthResults: DashboardRobustMonth[] = months.map((month) => {
-    const missingForecast: ProductRef[] = [];
-    const safetyRisk: ProductRef[] = [];
+    const missingForecastSkuSet = new Set<string>();
+    const safetyRiskSkuSet = new Set<string>();
+    const orderDutyRiskSkuSet = new Set<string>();
+    const blockerSkuSet = new Set<string>();
+    const blockerAbSkuSet = new Set<string>();
+    const blockerCSkuSet = new Set<string>();
+    const overdueOrderDutySkuSet = new Set<string>();
     let coveredSkus = 0;
+
+    const stockIssues: RobustnessCoverageStockIssue[] = [];
+    const orderDutyIssues: RobustnessCoverageOrderDutyIssue[] = [];
 
     activeProducts.forEach((product) => {
       const sku = normalizeSku(product.sku);
       if (!sku) return;
+      const skuKey = normalizeSkuKey(sku);
       const alias = String(product.alias || sku);
       const abcClass = resolveAbcClass(abcBySku, sku);
       const monthProjection = month < nowMonth ? pastProjection : futureProjection;
-      const skuProjection = monthProjection.perSkuMonth.get(sku) || monthProjection.perSkuMonth.get(normalizeSkuKey(sku));
+      const skuProjection = monthProjection.perSkuMonth.get(sku) || monthProjection.perSkuMonth.get(skuKey);
       const monthData = skuProjection?.get(month);
-      const hasForecast = Boolean(monthData?.hasForecast);
-      const isCovered = hasForecast && Boolean(monthData?.isCovered);
-      if (isCovered) {
-        coveredSkus += 1;
-        return;
+      const riskClass = projectionRiskClass(monthData, projectionMode);
+      const stockOk = Boolean(monthData?.hasForecast) && !riskClass;
+
+      if (!stockOk) {
+        const issueType = stockIssueType(monthData, riskClass);
+        const value = projectionMode === "doh"
+          ? (Number.isFinite(Number(monthData?.doh)) ? Number(monthData?.doh) : null)
+          : (Number.isFinite(Number(monthData?.endAvailable)) ? Number(monthData?.endAvailable) : null);
+        const safetyValue = projectionMode === "doh"
+          ? (Number.isFinite(Number(monthData?.safetyDays)) ? Number(monthData?.safetyDays) : null)
+          : (Number.isFinite(Number(monthData?.safetyUnits)) ? Number(monthData?.safetyUnits) : null);
+        stockIssues.push({
+          sku,
+          alias,
+          abcClass,
+          issueType,
+          issueLabel: stockIssueLabel(issueType),
+          value,
+          safetyValue,
+          projectionMode,
+        });
+        blockerSkuSet.add(skuKey);
+        if (isAbcCritical(abcClass)) blockerAbSkuSet.add(skuKey);
+        else blockerCSkuSet.add(skuKey);
+        if (!monthData?.hasForecast) {
+          missingForecastSkuSet.add(sku);
+        } else {
+          safetyRiskSkuSet.add(sku);
+        }
       }
-      const ref = { sku, alias, abcClass } satisfies ProductRef;
-      if (!hasForecast) {
-        missingForecast.push(ref);
-        return;
+
+      const orderDuty = orderDutyBySku.get(skuKey) || null;
+      const orderDutyTriggered = Boolean(orderDuty && orderDuty.orderMonth <= month);
+      if (orderDuty && orderDutyTriggered) {
+        orderDutyIssues.push({
+          sku,
+          alias,
+          abcClass,
+          firstRiskMonth: orderDuty.firstRiskMonth,
+          latestOrderDate: orderDuty.latestOrderDate,
+          orderMonth: orderDuty.orderMonth,
+          leadTimeDays: orderDuty.leadTimeDays,
+          overdue: orderDuty.overdue,
+          requiredArrivalDate: orderDuty.requiredArrivalDate,
+          recommendedOrderDate: orderDuty.recommendedOrderDate,
+          shortageUnits: orderDuty.shortageUnits,
+          reason: "Keine FO/PO vorhanden, die die Lücke schließt.",
+        });
+        orderDutyRiskSkuSet.add(sku);
+        blockerSkuSet.add(skuKey);
+        if (isAbcCritical(abcClass)) blockerAbSkuSet.add(skuKey);
+        else blockerCSkuSet.add(skuKey);
+        if (orderDuty.overdue) overdueOrderDutySkuSet.add(skuKey);
       }
-      safetyRisk.push(ref);
+
+      const orderDutyOk = !orderDutyTriggered;
+      const covered = stockOk && orderDutyOk;
+      if (covered) coveredSkus += 1;
     });
 
-    const coveragePassed = activeSkuCount > 0
-      && missingForecast.length === 0
-      && safetyRisk.length === 0
-      && coveredSkus === activeSkuCount;
+    const coverageRatio = activeSkuCount ? coveredSkus / activeSkuCount : 0;
+    const blockerCount = blockerSkuSet.size;
+    const blockerAbCount = blockerAbSkuSet.size;
+    const blockerCCount = blockerCSkuSet.size;
+    const hasOrderDutyBlocker = orderDutyIssues.length > 0;
+    const hasOverdueOrderDutyBlocker = overdueOrderDutySkuSet.size > 0;
+    const coverageStatusKey = resolveCoverageStatus({
+      coverageRatio,
+      blockerCount,
+      blockerAbCount,
+      hasOrderDutyBlocker,
+      hasOverdueOrderDutyBlocker,
+    });
+    const coverageStatus = COVERAGE_STATUS_META[coverageStatusKey];
+    const coveragePassed = coverageStatusKey === "full" || coverageStatusKey === "wide";
     const cashInPassed = monthHasCashIn(state, month);
     const fixcostPassed = hasFixcostBasis;
     const vatPassed = isVatConfiguredForMonth(vatInfo, month);
@@ -404,44 +840,64 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
           route: "/v2/products",
         });
       }
-      missingForecast.slice(0, 20).forEach((entry) => {
+      const sortedStockIssues = sortStockIssues(stockIssues);
+      sortedStockIssues.slice(0, 20).forEach((entry) => {
+        const route = entry.issueType === "forecast_missing" ? "/v2/forecast" : "/v2/inventory/projektion";
+        const issueText = entry.issueType === "forecast_missing"
+          ? "Forecast fehlt"
+          : (entry.issueType === "stock_oos" ? "Out-of-Stock" : "unter Safety");
         addBlocker({
           month,
           checkKey: "sku_coverage",
           severity: "error",
-          message: `${entry.sku} (${entry.alias}): Forecast fehlt.`,
+          message: `${entry.sku} (${entry.alias}): ${issueText} (${entry.abcClass}).`,
           sku: entry.sku,
           alias: entry.alias,
-          route: "/v2/forecast",
+          abcClass: entry.abcClass,
+          issueType: entry.issueType,
+          route,
         });
       });
-      if (missingForecast.length > 20) {
+      if (sortedStockIssues.length > 20) {
         addBlocker({
           month,
           checkKey: "sku_coverage",
           severity: "error",
-          message: `+ ${missingForecast.length - 20} weitere SKU(s) ohne Forecast.`,
-          route: "/v2/forecast",
+          message: `+ ${sortedStockIssues.length - 20} weitere SKU(s) mit Bestandsproblemen.`,
+          route: "/v2/inventory/projektion",
         });
       }
-      safetyRisk.slice(0, 20).forEach((entry) => {
+
+      const sortedOrderDutyIssues = sortOrderDutyIssues(orderDutyIssues);
+      sortedOrderDutyIssues.slice(0, 20).forEach((entry) => {
+        const overduePrefix = entry.overdue ? "überfällig" : "fällig";
         addBlocker({
           month,
           checkKey: "sku_coverage",
           severity: "error",
-          message: `${entry.sku} (${entry.alias}): unter Safety (${entry.abcClass}).`,
+          message: `${entry.sku} (${entry.alias}): Bestellpflicht ${overduePrefix} bis ${entry.latestOrderDate} (Risikomonat ${entry.firstRiskMonth}).`,
           sku: entry.sku,
           alias: entry.alias,
-          route: "/v2/inventory/projektion",
+          abcClass: entry.abcClass,
+          issueType: "order_duty",
+          firstRiskMonth: entry.firstRiskMonth,
+          latestOrderDate: entry.latestOrderDate,
+          orderMonth: entry.orderMonth,
+          leadTimeDays: entry.leadTimeDays,
+          overdue: entry.overdue,
+          requiredArrivalDate: entry.requiredArrivalDate,
+          recommendedOrderDate: entry.recommendedOrderDate,
+          suggestedUnits: entry.shortageUnits,
+          route: "/v2/orders/fo",
         });
       });
-      if (safetyRisk.length > 20) {
+      if (sortedOrderDutyIssues.length > 20) {
         addBlocker({
           month,
           checkKey: "sku_coverage",
           severity: "error",
-          message: `+ ${safetyRisk.length - 20} weitere SKU(s) unter Safety.`,
-          route: "/v2/inventory/projektion",
+          message: `+ ${sortedOrderDutyIssues.length - 20} weitere SKU(s) mit Bestellpflicht.`,
+          route: "/v2/orders/fo",
         });
       }
     }
@@ -482,6 +938,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
           message: `${entry.sku} (${entry.alias}): Ø VK-Preis fehlt.`,
           sku: entry.sku,
           alias: entry.alias,
+          abcClass: entry.abcClass,
           route: "/v2/products",
         });
       });
@@ -496,6 +953,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
           message: `${entry.sku} (${entry.alias}): Stammdaten unvollständig.`,
           sku: entry.sku,
           alias: entry.alias,
+          abcClass: entry.abcClass,
           route: "/v2/products",
         });
       });
@@ -504,12 +962,12 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
     const checks: RobustnessCheckResult[] = [
       {
         key: "sku_coverage",
-        label: "SKU-Coverage 100%",
+        label: "Bestands- & Bestellpflicht-Coverage",
         status: coveragePassed ? "ok" : "error",
         passed: coveragePassed,
-        detail: `${coveredSkus}/${activeSkuCount} abgedeckt · Forecast fehlt ${missingForecast.length} · Safety ${safetyRisk.length}`,
-        blockerCount: missingForecast.length + safetyRisk.length + (activeSkuCount === 0 ? 1 : 0),
-        route: missingForecast.length > 0 ? "/v2/forecast" : "/v2/inventory/projektion",
+        detail: `${coverageStatus.label}: ${coveragePercentLabel(coverageRatio)} (${coveredSkus}/${activeSkuCount}) · Blocker ${blockerCount} (A/B ${blockerAbCount}, C ${blockerCCount}) · Bestand ${stockIssues.length} · Bestellpflicht ${orderDutyIssues.length}`,
+        blockerCount: blockerCount + (activeSkuCount === 0 ? 1 : 0),
+        route: missingForecastSkuSet.size > 0 ? "/v2/forecast" : "/v2/inventory/projektion",
       },
       {
         key: "cash_in",
@@ -552,11 +1010,8 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
     ];
 
     const robust = checks.every((entry) => entry.passed);
-    const abRiskSkuSet = new Set(
-      safetyRisk
-        .filter((entry) => entry.abcClass === "A" || entry.abcClass === "B")
-        .map((entry) => normalizeSkuKey(entry.sku)),
-    );
+    const sortedStockIssues = sortStockIssues(stockIssues);
+    const sortedOrderDutyIssues = sortOrderDutyIssues(orderDutyIssues);
 
     return {
       month,
@@ -565,12 +1020,25 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       blockers,
       blockerCount: blockers.length,
       coverage: {
+        statusKey: coverageStatusKey,
+        statusLabel: coverageStatus.label,
+        statusDetail: coverageStatus.detail,
+        projectionMode,
         activeSkus: activeSkuCount,
         coveredSkus,
-        ratio: activeSkuCount ? coveredSkus / activeSkuCount : 0,
-        missingForecastSkus: missingForecast.map((entry) => entry.sku),
-        safetyRiskSkus: safetyRisk.map((entry) => entry.sku),
-        abRiskSkuCount: abRiskSkuSet.size,
+        ratio: coverageRatio,
+        blockerCount,
+        blockerAbCount,
+        blockerCCount,
+        stockIssueCount: sortedStockIssues.length,
+        orderDutyIssueCount: sortedOrderDutyIssues.length,
+        overdueOrderDutySkuCount: overdueOrderDutySkuSet.size,
+        missingForecastSkus: Array.from(missingForecastSkuSet).sort((a, b) => a.localeCompare(b, "de-DE")),
+        safetyRiskSkus: Array.from(safetyRiskSkuSet).sort((a, b) => a.localeCompare(b, "de-DE")),
+        orderDutyRiskSkus: Array.from(orderDutyRiskSkuSet).sort((a, b) => a.localeCompare(b, "de-DE")),
+        stockIssues: sortedStockIssues,
+        orderDutyIssues: sortedOrderDutyIssues,
+        abRiskSkuCount: blockerAbCount,
       },
     };
   });

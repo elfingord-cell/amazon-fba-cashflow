@@ -2013,6 +2013,43 @@
   margin-bottom: 12px;
 }
 
+.v2-dashboard-robust-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.v2-dashboard-robust-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.v2-dashboard-robust-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 27, 45, 0.16);
+}
+
+.v2-dashboard-robust-dot.is-full {
+  background: #22c55e;
+}
+
+.v2-dashboard-robust-dot.is-wide {
+  background: #84cc16;
+}
+
+.v2-dashboard-robust-dot.is-partial {
+  background: #f59e0b;
+}
+
+.v2-dashboard-robust-dot.is-insufficient {
+  background: #ef4444;
+}
+
 .v2-dashboard-robust-item {
   border: 1px solid rgba(15, 27, 45, 0.1);
   border-radius: 12px;
@@ -2030,6 +2067,22 @@
 
 .v2-dashboard-robust-item.is-open {
   border-color: rgba(180, 35, 24, 0.3);
+}
+
+.v2-dashboard-robust-item.is-full {
+  border-color: rgba(22, 163, 74, 0.35);
+}
+
+.v2-dashboard-robust-item.is-wide {
+  border-color: rgba(132, 204, 22, 0.35);
+}
+
+.v2-dashboard-robust-item.is-partial {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.v2-dashboard-robust-item.is-insufficient {
+  border-color: rgba(239, 68, 68, 0.36);
 }
 
 .v2-dashboard-robust-item.is-past {
@@ -2060,6 +2113,38 @@
 .v2-dashboard-robust-detail {
   display: grid;
   gap: 10px;
+}
+
+.v2-dashboard-robust-checklist {
+  display: grid;
+  gap: 8px;
+}
+
+.v2-dashboard-robust-checklist-item {
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.7);
+  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.v2-dashboard-robust-checklist-item.is-pass {
+  border-color: rgba(22, 163, 74, 0.28);
+}
+
+.v2-dashboard-robust-checklist-item.is-fail {
+  border-color: rgba(220, 38, 38, 0.28);
+}
+
+.v2-dashboard-robust-check-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  line-height: 1;
+  margin-top: 2px;
 }
 
 .v2-dashboard-robust-detail-head {
