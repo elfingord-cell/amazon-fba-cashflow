@@ -188,8 +188,16 @@ function resolveLeadTime(input: {
     supplierId: input.supplierId || String(product.supplierId || ""),
     orderContext: "fo",
   });
+  const hierarchyFields = (hierarchy.fields && typeof hierarchy.fields === "object")
+    ? hierarchy.fields as Record<string, unknown>
+    : {};
+  const hierarchyFieldValue = (fieldKey: string): unknown => {
+    const field = hierarchyFields[fieldKey];
+    if (!field || typeof field !== "object") return null;
+    return (field as { value?: unknown }).value ?? null;
+  };
   const transportModeRaw = String(
-    hierarchy.fields.transportMode.value
+    hierarchyFieldValue("transportMode")
     || templateFields.transportMode
     || product.transportMode
     || "SEA",
@@ -199,24 +207,24 @@ function resolveLeadTime(input: {
   const transportMode = transportModeRaw === "AIR" || transportModeRaw === "SEA" || transportModeRaw === "RAIL"
     ? transportModeRaw
     : "SEA";
-  const ddp = hierarchy.fields.ddp.value === true || String(product.incoterm || "").toUpperCase() === "DDP";
+  const ddp = hierarchyFieldValue("ddp") === true || String(product.incoterm || "").toUpperCase() === "DDP";
   const fastMode = ddp || transportMode === "AIR";
 
-  const productionDays = asPositiveInt(hierarchy.fields.productionLeadTimeDays.value)
+  const productionDays = asPositiveInt(hierarchyFieldValue("productionLeadTimeDays"))
     ?? asPositiveInt(product.productionLeadTimeDaysDefault)
     ?? asPositiveInt(templateFields.productionDays)
     ?? asPositiveInt(settings.defaultProductionLeadTimeDays)
     ?? (fastMode ? 14 : 45);
 
-  const transitDays = asPositiveInt(hierarchy.fields.transitDays.value)
+  const transitDays = asPositiveInt(hierarchyFieldValue("transitDays"))
     ?? asPositiveInt(templateFields.transitDays)
     ?? asPositiveInt(product.transitDays)
     ?? (fastMode ? 21 : 45);
 
-  const dutyRatePct = asNumber(hierarchy.fields.dutyRatePct.value, asNumber(settings.dutyRatePct, 0));
-  const eustRatePct = asNumber(hierarchy.fields.eustRatePct.value, asNumber(settings.eustRatePct, 0));
+  const dutyRatePct = asNumber(hierarchyFieldValue("dutyRatePct"), asNumber(settings.dutyRatePct, 0));
+  const eustRatePct = asNumber(hierarchyFieldValue("eustRatePct"), asNumber(settings.eustRatePct, 0));
   const incoterm = String(
-    hierarchy.fields.incoterm.value
+    hierarchyFieldValue("incoterm")
     || product.incoterm
     || (ddp ? "DDP" : "EXW"),
   )

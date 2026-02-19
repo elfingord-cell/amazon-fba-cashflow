@@ -473,12 +473,20 @@ function resolveLeadTimeForProduct(input: {
     supplierId: String(product.supplierId || ""),
     orderContext: "product",
   });
-  const resolvedTransport = String(hierarchy.fields.transportMode.value || "").toUpperCase();
+  const hierarchyFields = (hierarchy.fields && typeof hierarchy.fields === "object")
+    ? hierarchy.fields as Record<string, unknown>
+    : {};
+  const hierarchyFieldValue = (fieldKey: string): unknown => {
+    const field = hierarchyFields[fieldKey];
+    if (!field || typeof field !== "object") return null;
+    return (field as { value?: unknown }).value ?? null;
+  };
+  const resolvedTransport = String(hierarchyFieldValue("transportMode") || "").toUpperCase();
   const fallbackTransport = String((product.template && typeof product.template === "object"
     ? (product.template as Record<string, unknown>).transportMode
     : null) || "SEA").toUpperCase();
   const transportMode = resolvedTransport || fallbackTransport || "SEA";
-  const ddp = hierarchy.fields.ddp.value === true
+  const ddp = hierarchyFieldValue("ddp") === true
     || String(product.incoterm || "").toUpperCase() === "DDP"
     || Boolean((product.template && typeof product.template === "object")
       ? (product.template as Record<string, unknown>).ddp === true
@@ -486,13 +494,13 @@ function resolveLeadTimeForProduct(input: {
   const fastMode = ddp || transportMode === "AIR";
   const defaultProduction = fastMode ? 14 : 45;
   const defaultTransit = fastMode ? 21 : 45;
-  const productionDays = toPositiveInteger(hierarchy.fields.productionLeadTimeDays.value)
+  const productionDays = toPositiveInteger(hierarchyFieldValue("productionLeadTimeDays"))
     ?? toPositiveInteger(product.productionLeadTimeDaysDefault)
     ?? toPositiveInteger((product.template && typeof product.template === "object")
       ? (product.template as Record<string, unknown>).productionDays
       : null)
     ?? defaultProduction;
-  const transitDays = toPositiveInteger(hierarchy.fields.transitDays.value)
+  const transitDays = toPositiveInteger(hierarchyFieldValue("transitDays"))
     ?? toPositiveInteger((product.template && typeof product.template === "object")
       ? (product.template as Record<string, unknown>).transitDays
       : null)

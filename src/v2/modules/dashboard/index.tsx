@@ -23,7 +23,12 @@ import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { VisTimeline } from "../../components/VisTimeline";
-import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
+import {
+  buildDashboardPnlRowsByMonth,
+  type DashboardBreakdownRow,
+  type DashboardEntry,
+  type DashboardPnlRow,
+} from "../../domain/dashboardMaturity";
 import { buildDashboardOrderTimeline } from "../../domain/dashboardOrderTimeline";
 import {
   buildDashboardRobustness,
@@ -433,6 +438,56 @@ function getFixcostAverageFromBreakdown(rows: DashboardBreakdownRow[]): number {
     .filter((value) => value > 0);
   if (!monthlyFixcosts.length) return 0;
   return monthlyFixcosts.reduce((sum, value) => sum + value, 0) / monthlyFixcosts.length;
+}
+
+function splitOutflowEntriesByType(
+  entries: DashboardEntry[],
+  provisionalFoIds?: Set<string>,
+): {
+  fixcost: number;
+  po: number;
+  fo: number;
+  phantomFo: number;
+} {
+  const totals = {
+    fixcost: 0,
+    po: 0,
+    fo: 0,
+    phantomFo: 0,
+  };
+
+  entries.forEach((entryRaw) => {
+    if (!entryRaw || typeof entryRaw !== "object") return;
+    const entry = entryRaw as DashboardEntry;
+    if (String(entry.direction || "").toLowerCase() !== "out") return;
+    const amount = Math.abs(Number(entry.amount || 0));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    const source = String(entry.source || "").toLowerCase();
+    if (source === "po") {
+      totals.po += amount;
+      return;
+    }
+    if (source === "fo") {
+      const sourceId = String(entry.sourceId || "").trim();
+      const meta = (entry.meta && typeof entry.meta === "object")
+        ? entry.meta as Record<string, unknown>
+        : {};
+      const isPhantom = entry.provisional === true
+        || meta.phantom === true
+        || (sourceId ? provisionalFoIds?.has(sourceId) === true : false);
+      if (isPhantom) totals.phantomFo += amount;
+      else totals.fo += amount;
+      return;
+    }
+
+    const group = String(entry.group || "").toLowerCase();
+    if (source === "fixcosts" || group === "fixkosten") {
+      totals.fixcost += amount;
+    }
+  });
+
+  return totals;
 }
 
 function applySimulationToBreakdown(
@@ -945,6 +1000,14 @@ export default function DashboardModule(): JSX.Element {
     const simulationSeries = simulationDraft
       ? visibleBreakdown.map((row) => Number(simulatedBreakdownMap.get(row.month)?.closing || 0))
       : [];
+    const outflowSplitSeries = simulatedBreakdown.map((row) => splitOutflowEntriesByType(
+      Array.isArray(row.entries) ? row.entries : [],
+      phantomFoIdSet,
+    ));
+    const fixcostOutflowSeries = outflowSplitSeries.map((row) => -row.fixcost);
+    const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
+    const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
+    const phantomFoOutflowSeries = outflowSplitSeries.map((row) => -row.phantomFo);
 
     return {
       tooltip: {
@@ -1001,11 +1064,32 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#27ae60" },
         },
         {
-          name: "Auszahlungen",
+          name: "Fixkosten",
           type: "bar",
           stack: "cash",
-          data: simulatedBreakdown.map((row) => -Number(row.outflow || 0)),
+          data: fixcostOutflowSeries,
+          itemStyle: { color: "#7f1d1d" },
+        },
+        {
+          name: "PO",
+          type: "bar",
+          stack: "cash",
+          data: poOutflowSeries,
           itemStyle: { color: "#e74c3c" },
+        },
+        {
+          name: "FO",
+          type: "bar",
+          stack: "cash",
+          data: foOutflowSeries,
+          itemStyle: { color: "#f97316" },
+        },
+        {
+          name: "Phantom FO",
+          type: "bar",
+          stack: "cash",
+          data: phantomFoOutflowSeries,
+          itemStyle: { color: "#fbbf24" },
         },
         {
           name: "Netto",
@@ -1070,6 +1154,7 @@ export default function DashboardModule(): JSX.Element {
       ],
     };
   }, [
+    phantomFoIdSet,
     robustness.monthMap,
     simulatedBreakdown,
     simulatedBreakdownMap,
