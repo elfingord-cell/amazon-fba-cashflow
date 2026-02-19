@@ -612,6 +612,18 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .forecast-transfer-row input{width:16px; height:16px;}
 .forecast-transfer-row.is-disabled{opacity:.55;}
 .forecast-table-wrap{overflow-x:auto;}
+.forecast-month-totals-table{margin-bottom:6px;}
+.forecast-month-totals-table td{
+  background:rgba(47,143,107,0.08);
+  border-bottom:1px solid rgba(47,143,107,0.2);
+}
+.forecast-month-totals-table td.forecast-month-totals-label{
+  background:rgba(47,143,107,0.12);
+}
+.forecast-month-totals-table .forecast-month-totals-placeholder{
+  color:transparent;
+}
+.forecast-month-totals-table tbody tr:hover td{background:rgba(47,143,107,0.08);}
 .forecast-tree-table{
   min-width:max-content;
   width:max-content;

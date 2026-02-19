@@ -513,9 +513,12 @@ function resolvePoProductPrefill(input: {
     ?? 60;
   const unitCostUsd = toNumberOrNull(hierarchy.fields.unitPriceUsd.value) ?? toNumberOrNull(template.unitPriceUsd) ?? 0;
   const fxOverride = toNumberOrNull(template.fxRate ?? settings.fxRate) ?? 0;
-  const logisticsPerUnit = toNumberOrNull(hierarchy.fields.logisticsPerUnitEur.value)
-    ?? toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur)
-    ?? 0;
+  const logisticsPerUnit = Math.max(
+    0,
+    toNumberOrNull(hierarchy.fields.logisticsPerUnitEur.value)
+      ?? toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur)
+      ?? 0,
+  );
   const freightEur = Math.max(0, Math.round(logisticsPerUnit * Math.max(0, Number(input.units || 0)) * 100) / 100);
 
   return {
@@ -531,6 +534,30 @@ function resolvePoProductPrefill(input: {
     fxOverride,
     ddp: hierarchy.fields.ddp.value === true || template.ddp === true,
   };
+}
+
+function estimatePoItemFreightEur(input: {
+  state: Record<string, unknown>;
+  product: Record<string, unknown> | null;
+  supplierId?: string;
+  units: number;
+}): number {
+  const product = input.product || {};
+  const template = templateFields(product);
+  const hierarchy = resolveMasterDataHierarchy({
+    state: input.state || {},
+    product,
+    sku: String(product.sku || ""),
+    supplierId: input.supplierId || String(product.supplierId || ""),
+    orderContext: "po",
+  });
+  const logisticsPerUnit = Math.max(
+    0,
+    toNumberOrNull(hierarchy.fields.logisticsPerUnitEur.value)
+      ?? toNumberOrNull(product.logisticsPerUnitEur ?? product.freightPerUnitEur ?? template.freightEur)
+      ?? 0,
+  );
+  return Math.max(0, Math.round(logisticsPerUnit * Math.max(0, Number(input.units || 0)) * 100) / 100);
 }
 
 function normalizeDraftItem(input: Partial<PoItemDraft>, fallbackSku = ""): PoItemDraft {
@@ -994,7 +1021,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       items: draftItems,
       orderDate: draftValues?.orderDate,
       fxRate: draftValues?.fxOverride ?? poSettings.fxRate,
-      fallback: draftPoRecord,
+      fallback: draftItems.length ? draftPoRecord : null,
     });
   }, [draftItems, draftPoRecord, draftValues?.fxOverride, draftValues?.orderDate, poSettings.fxRate]);
 
@@ -1362,7 +1389,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     }
     const supplierScopedItems = seedItems.filter((item) => {
       if (!supplierId) return true;
-      return String(productBySku.get(item.sku)?.supplierId || "") === supplierId;
+      const productSupplierId = String(productBySku.get(item.sku)?.supplierId || "");
+      if (!productSupplierId) return true;
+      return productSupplierId === supplierId;
     });
     const firstProduct = productBySku.get(String(supplierScopedItems[0]?.sku || prefillSku || existing?.sku || "")) || null;
     const defaults = resolvePoProductPrefill({
@@ -1498,7 +1527,11 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     const supplierId = String(nextSupplierId || "");
     const current = form.getFieldsValue();
     const currentItems = normalizePoItems(current.items, null).map((entry) => normalizeDraftItem(entry));
-    const filteredItems = currentItems.filter((item) => String(productBySku.get(item.sku)?.supplierId || "") === supplierId);
+    const filteredItems = currentItems.filter((item) => {
+      const productSupplierId = String(productBySku.get(item.sku)?.supplierId || "");
+      if (!productSupplierId) return true;
+      return productSupplierId === supplierId;
+    });
     if (currentItems.length !== filteredItems.length) {
       message.info(`${currentItems.length - filteredItems.length} SKU(s) wurden entfernt, da sie nicht zum Lieferanten passen.`);
     }
@@ -1525,6 +1558,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setEditingId(null);
     setModalFocusTarget(null);
     const draft = buildDefaultDraft(null, prefill);
+    form.resetFields();
     form.setFieldsValue({
       ...draft,
       ...(prefill || {}),
@@ -1536,9 +1570,48 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   function openEditModal(existing: Record<string, unknown>, focusTarget: "payments" | "shipping" | "arrival" | null = null): void {
     setEditingId(String(existing.id || ""));
     setModalFocusTarget(focusTarget);
+    form.resetFields();
     form.setFieldsValue(buildDefaultDraft(existing));
     setSkuPickerValues([]);
     setModalOpen(true);
+  }
+
+  function hydrateFreightFromMasterData(changedValues: Partial<PoFormValues>): void {
+    const changedItems = Array.isArray(changedValues.items)
+      ? changedValues.items as Array<Record<string, unknown> | undefined>
+      : null;
+    if (!changedItems?.length) return;
+    const hasUnitsUpdate = changedItems.some((row) => row && Object.prototype.hasOwnProperty.call(row, "units"));
+    if (!hasUnitsUpdate) return;
+
+    const current = form.getFieldsValue();
+    const supplierId = String(current.supplierId || "");
+    const currentItems = normalizePoItems(current.items, null).map((entry) => normalizeDraftItem(entry));
+    let patched = false;
+    const nextItems = currentItems.map((item, index) => {
+      const changedRow = changedItems[index];
+      const touchedUnits = Boolean(changedRow && Object.prototype.hasOwnProperty.call(changedRow, "units"));
+      if (!touchedUnits) return item;
+      if (!item.sku) return item;
+      if (Number(item.freightEur || 0) > 0) return item;
+      const product = productBySku.get(item.sku) || null;
+      if (!product) return item;
+      const estimated = estimatePoItemFreightEur({
+        state: stateObj,
+        product: product.raw,
+        supplierId: supplierId || product.supplierId,
+        units: item.units,
+      });
+      if (estimated <= 0) return item;
+      patched = true;
+      return {
+        ...item,
+        freightEur: estimated,
+      };
+    });
+    if (patched) {
+      form.setFieldValue("items", nextItems);
+    }
   }
 
   function openTimelinePayment(row: PoViewRow, marker: PoTimelineMarkerRow): void {
@@ -2112,7 +2185,15 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             });
             return;
           }
-          void form.validateFields().then((values) => savePo(values)).catch(() => {});
+          void form.validateFields().then((values) => savePo(values)).catch((error: unknown) => {
+            if (error && typeof error === "object" && "errorFields" in error) return;
+            const text = error instanceof Error
+              ? error.message
+              : (error && typeof error === "object" && "message" in error
+                ? String((error as { message?: unknown }).message || "")
+                : "");
+            if (text) message.error(text);
+          });
         }}
       >
         {modalCollab.banner ? (
@@ -2140,6 +2221,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           disabled={modalCollab.readOnly}
           onValuesChange={(changedValues) => {
             if (modalCollab.readOnly) return;
+            hydrateFreightFromMasterData(changedValues as Partial<PoFormValues>);
             modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
           }}
         >
@@ -2446,7 +2528,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             </Space>
           </Card>
 
-          {poBlockingPrimary.blocked ? (
+          {primaryDraftItem?.sku && poBlockingPrimary.blocked ? (
             <Alert
               className="v2-po-warning"
               type="error"

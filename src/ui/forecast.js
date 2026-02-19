@@ -139,6 +139,37 @@ function formatEur0(value) {
   return `${rounded.toLocaleString("de-DE", { maximumFractionDigits: 0 })} €`;
 }
 
+function monthColumnClass(index) {
+  return `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
+}
+
+function getViewLabel(view) {
+  if (view === "revenue") return "Umsatz";
+  if (view === "profit") return "Gewinn";
+  return "Absatz";
+}
+
+function formatDisplayValue(view, value) {
+  return view === "units" ? formatUnits(value) : formatEur0(value);
+}
+
+function sumNumeric(values) {
+  const nums = values.filter(value => Number.isFinite(value));
+  return nums.length ? nums.reduce((acc, val) => acc + val, 0) : null;
+}
+
+function getMonthlyTotals(state, products, months, view) {
+  return months.map(month => {
+    const values = products.map(product => {
+      const sku = String(product?.sku || "").trim();
+      if (!sku) return null;
+      const units = getEffectiveValue(state, sku, month);
+      return getDerivedValue(view, units, product);
+    });
+    return sumNumeric(values);
+  });
+}
+
 function isProductActive(product) {
   if (!product) return false;
   if (typeof product.active === "boolean") return product.active;
@@ -386,6 +417,31 @@ function escapeSelector(value) {
   return String(value).replace(/["\\]/g, "\\$&");
 }
 
+function renderMonthlyTotalsTable(months, monthlyTotals, view) {
+  const table = document.createElement("table");
+  table.className = "table-compact ui-table-standard forecast-tree-table forecast-month-totals-table";
+  table.dataset.uiTable = "true";
+  table.dataset.stickyCols = "1";
+  table.dataset.stickyOwner = "manual";
+
+  const tbody = document.createElement("tbody");
+  const row = document.createElement("tr");
+  row.className = "forecast-month-totals-row row-summary";
+  row.innerHTML = `
+    <td class="tree-cell tree-summary tree-level-0 forecast-month-totals-label">
+      <span class="tree-spacer" aria-hidden="true"></span>
+      <span class="tree-label">Monatssumme (${getViewLabel(view)})</span>
+    </td>
+    ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}" data-month="${month}">${formatDisplayValue(view, monthlyTotals[idx])}</td>`).join("")}
+    <td class="forecast-cell forecast-total num forecast-month-totals-placeholder" aria-hidden="true"></td>
+    <td class="forecast-cell forecast-total num forecast-month-totals-placeholder" aria-hidden="true"></td>
+    <td class="forecast-cell forecast-total num forecast-month-totals-placeholder" aria-hidden="true"></td>
+  `;
+  tbody.appendChild(row);
+  table.appendChild(tbody);
+  return table;
+}
+
 function renderTable(el, state, months, monthsAll, groups, view) {
   const currentMonth = currentMonthKey();
   const currentYear = Number(currentMonth.split("-")[0]);
@@ -394,17 +450,6 @@ function renderTable(el, state, months, monthsAll, groups, view) {
   table.dataset.uiTable = "true";
   table.dataset.stickyCols = "1";
   table.dataset.stickyOwner = "manual";
-
-  const monthColumnClass = (index) => `month-col ${index % 2 === 1 ? "month-col-alt" : ""}`.trim();
-
-  const sumNumeric = (values) => {
-    const nums = values.filter(value => Number.isFinite(value));
-    return nums.length ? nums.reduce((acc, val) => acc + val, 0) : null;
-  };
-
-  const formatValue = (value) => {
-    return view === "units" ? formatUnits(value) : formatEur0(value);
-  };
 
   const totalsHeaders = `
     <th class="forecast-total">Summe (Auswahl)</th>
@@ -424,22 +469,9 @@ function renderTable(el, state, months, monthsAll, groups, view) {
 
   const tbody = document.createElement("tbody");
 
-  const overallTotals = months.map(month => {
-    const values = groups.flatMap(group => group.items.map(product => {
-      const sku = String(product.sku || "").trim();
-      const units = getEffectiveValue(state, sku, month);
-      return getDerivedValue(view, units, product);
-    }));
-    return sumNumeric(values);
-  });
-  const overallTotalsAll = monthsAll.map(month => {
-    const values = groups.flatMap(group => group.items.map(product => {
-      const sku = String(product.sku || "").trim();
-      const units = getEffectiveValue(state, sku, month);
-      return getDerivedValue(view, units, product);
-    }));
-    return sumNumeric(values);
-  });
+  const groupedProducts = groups.flatMap(group => group.items);
+  const overallTotals = getMonthlyTotals(state, groupedProducts, months, view);
+  const overallTotalsAll = getMonthlyTotals(state, groupedProducts, monthsAll, view);
 
   const overallRow = document.createElement("tr");
   overallRow.className = "forecast-category-row forecast-overall-row row-summary";
@@ -448,7 +480,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
       <span class="tree-spacer" aria-hidden="true"></span>
       <span class="tree-label">Gesamt</span>
     </td>
-    ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}">${formatValue(overallTotals[idx])}</td>`).join("")}
+    ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}">${formatDisplayValue(view, overallTotals[idx])}</td>`).join("")}
     ${(() => {
       const sumRange = sumNumeric(overallTotals.filter(Number.isFinite));
       const sumAll = sumNumeric(overallTotalsAll.filter(Number.isFinite));
@@ -458,9 +490,9 @@ function renderTable(el, state, months, monthsAll, groups, view) {
         .map(entry => entry.value);
       const sumYear = sumNumeric(yearValues);
       return `
-        <td class="forecast-cell forecast-total num">${formatValue(sumRange)}</td>
-        <td class="forecast-cell forecast-total num">${formatValue(sumYear)}</td>
-        <td class="forecast-cell forecast-total num">${formatValue(sumAll)}</td>
+        <td class="forecast-cell forecast-total num">${formatDisplayValue(view, sumRange)}</td>
+        <td class="forecast-cell forecast-total num">${formatDisplayValue(view, sumYear)}</td>
+        <td class="forecast-cell forecast-total num">${formatDisplayValue(view, sumAll)}</td>
       `;
     })()}
   `;
@@ -501,10 +533,10 @@ function renderTable(el, state, months, monthsAll, groups, view) {
         <span class="tree-label">${group.name}</span>
         <span class="forecast-count muted">${group.items.length}</span>
       </td>
-      ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}">${formatValue(categoryTotals[idx])}</td>`).join("")}
-      <td class="forecast-cell forecast-total num">${formatValue(categorySumRange)}</td>
-      <td class="forecast-cell forecast-total num">${formatValue(categoryYearSum)}</td>
-      <td class="forecast-cell forecast-total num">${formatValue(categorySumAll)}</td>
+      ${months.map((month, idx) => `<td class="forecast-cell forecast-total num ${monthColumnClass(idx)}">${formatDisplayValue(view, categoryTotals[idx])}</td>`).join("")}
+      <td class="forecast-cell forecast-total num">${formatDisplayValue(view, categorySumRange)}</td>
+      <td class="forecast-cell forecast-total num">${formatDisplayValue(view, categoryYearSum)}</td>
+      <td class="forecast-cell forecast-total num">${formatDisplayValue(view, categorySumAll)}</td>
     `;
     tbody.appendChild(categoryRow);
 
@@ -543,7 +575,7 @@ function renderTable(el, state, months, monthsAll, groups, view) {
             const imported = getImportValue(state, sku, month);
             const units = getEffectiveValue(state, sku, month);
             const derived = productValues[idx];
-            const value = formatValue(derived);
+            const value = formatDisplayValue(view, derived);
             const manualFlag = manual != null ? "forecast-manual" : "";
             const hint = manual != null ? "Manuell" : (imported ? "Import" : "");
             const missingInput = derived == null && units != null && view !== "units";
@@ -555,9 +587,9 @@ function renderTable(el, state, months, monthsAll, groups, view) {
               </td>
             `;
           }).join("")}
-          <td class="forecast-cell forecast-total num">${formatValue(sumRange)}</td>
-          <td class="forecast-cell forecast-total num">${formatValue(sumYear)}</td>
-          <td class="forecast-cell forecast-total num">${formatValue(sumAll)}</td>
+          <td class="forecast-cell forecast-total num">${formatDisplayValue(view, sumRange)}</td>
+          <td class="forecast-cell forecast-total num">${formatDisplayValue(view, sumYear)}</td>
+          <td class="forecast-cell forecast-total num">${formatDisplayValue(view, sumAll)}</td>
         `;
         tbody.appendChild(row);
       });
@@ -781,6 +813,9 @@ function render(el) {
     empty.textContent = "Keine Produkte gefunden.";
     tableHost.appendChild(empty);
   } else {
+    const monthTotals = getMonthlyTotals(state, filteredProducts, months, forecastView.view);
+    const monthTotalsTable = renderMonthlyTotalsTable(months, monthTotals, forecastView.view);
+    tableHost.appendChild(monthTotalsTable);
     const table = renderTable(el, state, months, monthsAll, groups, forecastView.view);
     tableHost.appendChild(table);
     tableHost.scrollLeft = forecastView.scrollLeft || 0;
