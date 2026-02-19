@@ -20,6 +20,11 @@ import {
   computeScheduleFromOrderDate,
   normalizeFoStatus,
 } from "../../domain/orderUtils";
+import {
+  buildPhantomFoSuggestions,
+  resolvePlanningMonthsFromState,
+  type PhantomFoSuggestion,
+} from "../../domain/phantomFo";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Text } = Typography;
@@ -52,6 +57,20 @@ interface SkuTooltipData {
   destination: string | null;
   referenceLabel: string;
   showReferenceLabel: boolean;
+  isPhantom?: boolean;
+  phantomReason?: string | null;
+}
+
+interface PhantomOpenTargetMeta {
+  id: string;
+  sku: string;
+  month: string;
+  suggestedUnits: number;
+  requiredArrivalDate: string | null;
+  recommendedOrderDate: string | null;
+  firstRiskMonth: string | null;
+  orderMonth: string | null;
+  leadTimeDays: number | null;
 }
 
 interface SkuTimelineItem {
@@ -64,6 +83,7 @@ interface SkuTimelineItem {
     entity: "po" | "fo";
     poNo?: string;
     foId?: string;
+    phantomMeta?: PhantomOpenTargetMeta | null;
   };
 }
 
@@ -219,6 +239,9 @@ function tooltipContent(meta: Partial<SkuTooltipData>): JSX.Element {
   if (meta.destination) {
     rows.push({ key: "Ziel", value: tooltipValue(meta.destination) });
   }
+  if (meta.isPhantom) {
+    rows.push({ key: "Hinweis", value: tooltipValue(meta.phantomReason || "Phantom FO (vorbehaltlich)") });
+  }
   return (
     <div className="v2-orders-gantt-tooltip">
       {rows.map((row) => (
@@ -283,6 +306,19 @@ export default function SkuTimelineView(): JSX.Element {
       });
     return map;
   }, [state.products]);
+
+  const planningMonths = useMemo(
+    () => resolvePlanningMonthsFromState(stateObject, 18),
+    [state.settings],
+  );
+  const phantomFoSuggestions = useMemo<PhantomFoSuggestion[]>(
+    () => buildPhantomFoSuggestions({ state: stateObject, months: planningMonths }),
+    [planningMonths, stateObject],
+  );
+  const phantomFoById = useMemo(
+    () => new Map(phantomFoSuggestions.map((entry) => [entry.id, entry])),
+    [phantomFoSuggestions],
+  );
 
   const categoryOptions = useMemo(() => {
     const options = (Array.isArray(state.productCategories) ? state.productCategories : [])
@@ -471,8 +507,12 @@ export default function SkuTimelineView(): JSX.Element {
         });
       });
 
-    (Array.isArray(state.fos) ? state.fos : [])
-      .map((entry) => entry as Record<string, unknown>)
+    const foTimelineRows = [
+      ...(Array.isArray(state.fos) ? state.fos : []).map((entry) => entry as Record<string, unknown>),
+      ...phantomFoSuggestions.map((entry) => entry.foRecord),
+    ];
+
+    foTimelineRows
       .forEach((fo) => {
         const foStatus = normalizeStatusForFo(fo);
         if (statusFilter === "planning" && foStatus !== "planning") return;
@@ -502,7 +542,33 @@ export default function SkuTimelineView(): JSX.Element {
 
         const bucket = ensureBucket(sku, String(fo.supplierId || ""));
         const foId = String(fo.id || "");
-        const foRef = formatReference("FO", foId.slice(-6).toUpperCase() || UNKNOWN_LABEL);
+        const foDisplayRaw = String(fo.foNo || fo.foNumber || foId.slice(-6).toUpperCase() || UNKNOWN_LABEL);
+        const foRef = formatReference("FO", foDisplayRaw);
+        const phantomSuggestion = foId ? (phantomFoById.get(foId) || null) : null;
+        const isPhantom = Boolean(fo.phantom === true || phantomSuggestion);
+        const phantomMeta: PhantomOpenTargetMeta | null = isPhantom ? {
+          id: String(phantomSuggestion?.id || foId),
+          sku,
+          month: String(phantomSuggestion?.firstRiskMonth || ""),
+          suggestedUnits: Math.max(0, Math.round(Number(phantomSuggestion?.suggestedUnits || fo.units || 0))),
+          requiredArrivalDate: String(
+            phantomSuggestion?.requiredArrivalDate
+            || fo.targetDeliveryDate
+            || fo.etaDate
+            || "",
+          ) || null,
+          recommendedOrderDate: String(
+            phantomSuggestion?.recommendedOrderDate
+            || phantomSuggestion?.latestOrderDate
+            || fo.orderDate
+            || "",
+          ) || null,
+          firstRiskMonth: String(phantomSuggestion?.firstRiskMonth || "") || null,
+          orderMonth: String(phantomSuggestion?.orderMonth || "") || null,
+          leadTimeDays: Number.isFinite(Number(phantomSuggestion?.leadTimeDays))
+            ? Math.max(0, Math.round(Number(phantomSuggestion?.leadTimeDays)))
+            : null,
+        } : null;
         const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
         const foSegments: SkuTimelineItem[] = [];
         const productionStart = orderMs ?? etdMs;
@@ -513,7 +579,11 @@ export default function SkuTimelineView(): JSX.Element {
             id: `fo:${foId}:${sku}:production`,
             startMs: span.startMs,
             endMs: span.endMs,
-            className: "v2-orders-gantt-item v2-orders-gantt-item--fo-production",
+            className: [
+              "v2-orders-gantt-item",
+              "v2-orders-gantt-item--fo-production",
+              isPhantom ? "v2-orders-gantt-item--fo-phantom" : "",
+            ].join(" ").trim(),
             tooltipData: {
               type: "FO",
               identifier: foRef,
@@ -525,8 +595,14 @@ export default function SkuTimelineView(): JSX.Element {
               destination,
               referenceLabel: foRef,
               showReferenceLabel: false,
+              isPhantom,
+              phantomReason: String(phantomSuggestion?.foRecord?.phantomMeta && typeof phantomSuggestion.foRecord.phantomMeta === "object"
+                ? (phantomSuggestion.foRecord.phantomMeta as Record<string, unknown>).reason
+                : (fo.phantomMeta && typeof fo.phantomMeta === "object"
+                  ? (fo.phantomMeta as Record<string, unknown>).reason
+                  : "")) || null,
             },
-            openTarget: { entity: "fo", foId },
+            openTarget: { entity: "fo", foId, phantomMeta },
           });
         }
         if (etaMs != null) {
@@ -536,7 +612,11 @@ export default function SkuTimelineView(): JSX.Element {
             id: `fo:${foId}:${sku}:transit`,
             startMs: span.startMs,
             endMs: span.endMs,
-            className: "v2-orders-gantt-item v2-orders-gantt-item--fo-transit",
+            className: [
+              "v2-orders-gantt-item",
+              "v2-orders-gantt-item--fo-transit",
+              isPhantom ? "v2-orders-gantt-item--fo-phantom" : "",
+            ].join(" ").trim(),
             tooltipData: {
               type: "FO",
               identifier: foRef,
@@ -548,8 +628,14 @@ export default function SkuTimelineView(): JSX.Element {
               destination,
               referenceLabel: foRef,
               showReferenceLabel: false,
+              isPhantom,
+              phantomReason: String(phantomSuggestion?.foRecord?.phantomMeta && typeof phantomSuggestion.foRecord.phantomMeta === "object"
+                ? (phantomSuggestion.foRecord.phantomMeta as Record<string, unknown>).reason
+                : (fo.phantomMeta && typeof fo.phantomMeta === "object"
+                  ? (fo.phantomMeta as Record<string, unknown>).reason
+                  : "")) || null,
             },
-            openTarget: { entity: "fo", foId },
+            openTarget: { entity: "fo", foId, phantomMeta },
           });
         }
         applyReferenceLabelToLatestSegment(foSegments).forEach((segment) => {
@@ -627,6 +713,8 @@ export default function SkuTimelineView(): JSX.Element {
     categoryById,
     categoryFilter,
     categoryOrderMap,
+    phantomFoById,
+    phantomFoSuggestions,
     productBySku,
     search,
     state.fos,
@@ -746,6 +834,7 @@ export default function SkuTimelineView(): JSX.Element {
       <div className="v2-toolbar-row" style={{ marginBottom: 10 }}>
         <Tag>{timelineData.groups.length} SKUs</Tag>
         <Tag>{timelineData.items.length} Segmente</Tag>
+        {phantomFoSuggestions.length ? <Tag color="gold">Phantom FO: {phantomFoSuggestions.length}</Tag> : null}
         <Tag color="green">SKU Timeline</Tag>
       </div>
 
@@ -754,6 +843,7 @@ export default function SkuTimelineView(): JSX.Element {
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--po-transit" /> PO Transit</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-production" /> FO Produktion</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-transit" /> FO Transit</span>
+        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-phantom" /> Phantom FO (vorbehaltlich)</span>
       </div>
 
       <OrdersGanttTimeline
@@ -780,6 +870,24 @@ export default function SkuTimelineView(): JSX.Element {
             navigate(`/v2/orders/po?${params.toString()}`);
             return;
           }
+          if (target.entity === "fo" && target.phantomMeta) {
+            const params = new URLSearchParams();
+            params.set("source", "phantom_fo");
+            params.set("phantomId", target.phantomMeta.id);
+            params.set("sku", target.phantomMeta.sku);
+            params.set("month", target.phantomMeta.month);
+            params.set("suggestedUnits", String(Math.max(0, Math.round(Number(target.phantomMeta.suggestedUnits || 0)))));
+            if (target.phantomMeta.requiredArrivalDate) params.set("requiredArrivalDate", target.phantomMeta.requiredArrivalDate);
+            if (target.phantomMeta.recommendedOrderDate) params.set("recommendedOrderDate", target.phantomMeta.recommendedOrderDate);
+            if (target.phantomMeta.firstRiskMonth) params.set("firstRiskMonth", target.phantomMeta.firstRiskMonth);
+            if (target.phantomMeta.orderMonth) params.set("orderMonth", target.phantomMeta.orderMonth);
+            if (Number.isFinite(Number(target.phantomMeta.leadTimeDays))) {
+              params.set("leadTimeDays", String(Math.max(0, Math.round(Number(target.phantomMeta.leadTimeDays || 0)))));
+            }
+            params.set("returnTo", "/v2/orders/sku");
+            navigate(`/v2/orders/fo?${params.toString()}`);
+            return;
+          }
           if (target.entity === "fo" && target.foId) {
             const params = new URLSearchParams();
             params.set("source", "orders_sku");
@@ -790,7 +898,7 @@ export default function SkuTimelineView(): JSX.Element {
       />
 
       <Space style={{ marginTop: 10 }} wrap>
-        <Text type="secondary">Klick auf ein Segment oeffnet den zugehoerigen PO/FO Datensatz.</Text>
+        <Text type="secondary">Klick auf ein Segment oeffnet den Datensatz; Phantom-FOs öffnen den vorausgefüllten FO-Entwurf.</Text>
         <Button size="small" onClick={() => navigate("/v2/orders/po?view=timeline")}>
           PO Timeline oeffnen
         </Button>

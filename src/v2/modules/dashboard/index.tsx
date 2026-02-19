@@ -33,6 +33,12 @@ import {
   type RobustnessCoverageStockIssue,
   type RobustnessCheckResult,
 } from "../../domain/dashboardRobustness";
+import {
+  buildPhantomFoSuggestions,
+  buildStateWithPhantomFos,
+  resolvePlanningMonthsFromState,
+  type PhantomFoSuggestion,
+} from "../../domain/phantomFo";
 import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
 import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
@@ -328,9 +334,15 @@ function buildFoDashboardRoute(input: {
   suggestedUnits?: number | null;
   requiredArrivalDate?: string | null;
   recommendedOrderDate?: string | null;
+  source?: "inventory_projection" | "phantom_fo";
+  phantomId?: string | null;
+  firstRiskMonth?: string | null;
+  orderMonth?: string | null;
+  leadTimeDays?: number | null;
+  returnTo?: string | null;
 }): string {
   return appendRouteQuery("/v2/orders/fo", {
-    source: "inventory_projection",
+    source: input.source || "inventory_projection",
     sku: input.sku || null,
     month: input.month || null,
     suggestedUnits: Number.isFinite(Number(input.suggestedUnits))
@@ -338,7 +350,13 @@ function buildFoDashboardRoute(input: {
       : "0",
     requiredArrivalDate: input.requiredArrivalDate || null,
     recommendedOrderDate: input.recommendedOrderDate || null,
-    returnTo: "/v2/dashboard",
+    phantomId: input.phantomId || null,
+    firstRiskMonth: input.firstRiskMonth || null,
+    orderMonth: input.orderMonth || null,
+    leadTimeDays: Number.isFinite(Number(input.leadTimeDays))
+      ? String(Math.max(0, Math.round(Number(input.leadTimeDays))))
+      : null,
+    returnTo: input.returnTo || "/v2/dashboard",
   });
 }
 
@@ -602,7 +620,36 @@ export default function DashboardModule(): JSX.Element {
   });
 
   const stateObject = state as unknown as Record<string, unknown>;
-  const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [state]);
+  const planningMonths = useMemo(
+    () => resolvePlanningMonthsFromState(stateObject, 18),
+    [state.settings],
+  );
+  const phantomFoSuggestions = useMemo<PhantomFoSuggestion[]>(
+    () => buildPhantomFoSuggestions({ state: stateObject, months: planningMonths }),
+    [planningMonths, stateObject],
+  );
+  const phantomFoById = useMemo(
+    () => new Map(phantomFoSuggestions.map((entry) => [entry.id, entry])),
+    [phantomFoSuggestions],
+  );
+  const phantomFoBySkuKey = useMemo(() => {
+    const map = new Map<string, PhantomFoSuggestion>();
+    phantomFoSuggestions.forEach((entry) => {
+      const key = String(entry.sku || "").trim().toLowerCase();
+      if (!key || map.has(key)) return;
+      map.set(key, entry);
+    });
+    return map;
+  }, [phantomFoSuggestions]);
+  const phantomFoIdSet = useMemo(
+    () => new Set(phantomFoSuggestions.map((entry) => entry.id)),
+    [phantomFoSuggestions],
+  );
+  const planningState = useMemo(
+    () => buildStateWithPhantomFos({ state: stateObject, suggestions: phantomFoSuggestions }),
+    [phantomFoSuggestions, stateObject],
+  );
+  const report = useMemo(() => computeSeries(planningState) as SeriesResult, [planningState]);
   const months = report.months || [];
   const breakdown = report.breakdown || [];
   const actualComparisons = report.actualComparisons || [];
@@ -879,8 +926,12 @@ export default function DashboardModule(): JSX.Element {
   }, [poArrivalTasks, todayIso]);
 
   const pnlRowsByMonth = useMemo(
-    () => buildDashboardPnlRowsByMonth({ breakdown: visibleBreakdown, state: stateObject }),
-    [stateObject, visibleBreakdown],
+    () => buildDashboardPnlRowsByMonth({
+      breakdown: visibleBreakdown,
+      state: planningState,
+      provisionalFoIds: phantomFoIdSet,
+    }),
+    [phantomFoIdSet, planningState, visibleBreakdown],
   );
 
   const chartOption = useMemo(() => {
@@ -1120,6 +1171,7 @@ export default function DashboardModule(): JSX.Element {
   const pnlItems = useMemo(() => {
     return visibleBreakdown.map((monthRow) => {
       const monthRows = pnlRowsByMonth.get(monthRow.month) || [];
+      const provisionalRows = monthRows.filter((row) => row.provisional);
       const groupedRows = PNL_GROUP_ORDER
         .map((group) => ({
           ...group,
@@ -1139,6 +1191,9 @@ export default function DashboardModule(): JSX.Element {
             <Space wrap>
               <Tag color="green">Einzahlungen: {formatCurrency(sumRows(inflowRows))}</Tag>
               <Tag color="red">Auszahlungen: {formatCurrency(Math.abs(sumRows(outflowRows)))}</Tag>
+              {provisionalRows.length ? (
+                <Tag color="gold">Vorbehaltlich: {formatSignedCurrency(sumRows(provisionalRows))}</Tag>
+              ) : null}
               <Tag color={monthRow.net >= 0 ? "green" : "red"}>Netto: {formatCurrency(monthRow.net)}</Tag>
               <Tag color={robust ? "green" : "red"}>Robust: {robust ? "ja" : "nein"}</Tag>
             </Space>
@@ -1176,6 +1231,19 @@ export default function DashboardModule(): JSX.Element {
 
                 const orderItems = Array.from(orderMap.entries()).map(([orderKey, order]) => {
                   const total = sumRows(order.rows);
+                  const provisionalOrderRows = order.rows.filter((row) => row.provisional);
+                  const provisionalOrderSourceId = provisionalOrderRows
+                    .map((row) => String(row.sourceId || "").trim())
+                    .find((id) => id && phantomFoIdSet.has(id))
+                    || null;
+                  const phantomFoId = order.source === "fo"
+                    ? (
+                      order.sourceId && phantomFoIdSet.has(order.sourceId)
+                        ? order.sourceId
+                        : provisionalOrderSourceId
+                    )
+                    : null;
+                  const phantomSuggestion = phantomFoId ? (phantomFoById.get(phantomFoId) || null) : null;
                   const tooltipMeta = order.rows.find((row) => row.tooltipMeta)?.tooltipMeta;
                   const aliases = Array.from(new Set(
                     order.rows.flatMap((row) => row.tooltipMeta?.aliases || []).filter(Boolean),
@@ -1184,7 +1252,7 @@ export default function DashboardModule(): JSX.Element {
                     ? `${aliases.slice(0, 3).join(", ")} +${aliases.length - 3}`
                     : aliases.join(", ");
                   const timeline = buildDashboardOrderTimeline({
-                    state: stateObject,
+                    state: planningState,
                     source: order.source,
                     sourceId: order.sourceId,
                     sourceNumber: order.sourceNumber,
@@ -1208,12 +1276,43 @@ export default function DashboardModule(): JSX.Element {
                         </div>
                         <Space size={6}>
                           <Tag color={total < 0 ? "red" : "green"}>{formatSignedCurrency(total)}</Tag>
+                          {provisionalOrderRows.length ? <Tag color="gold">Vorbehaltlich</Tag> : null}
+                          {phantomSuggestion ? <Tag color="orange">Phantom FO</Tag> : null}
                           {tooltipMeta?.units != null ? <Tag>Stück: {formatNumber(tooltipMeta.units, 0)}</Tag> : null}
                         </Space>
                       </div>
                     ),
                     children: (
                       <div className="v2-dashboard-pnl-order-detail">
+                        {phantomSuggestion ? (
+                          <div className="v2-dashboard-pnl-phantom-hint">
+                            <Space wrap>
+                              <Tag color="gold">Automatisch vorgeschlagen</Tag>
+                              <Text type="secondary">
+                                Risikomonat {formatMonthLabel(phantomSuggestion.firstRiskMonth)} · bestellen bis {formatIsoDate(phantomSuggestion.latestOrderDate)}
+                              </Text>
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={() => navigate(buildFoDashboardRoute({
+                                  sku: phantomSuggestion.sku,
+                                  month: monthRow.month,
+                                  suggestedUnits: phantomSuggestion.suggestedUnits,
+                                  requiredArrivalDate: phantomSuggestion.requiredArrivalDate,
+                                  recommendedOrderDate: phantomSuggestion.recommendedOrderDate,
+                                  source: "phantom_fo",
+                                  phantomId: phantomSuggestion.id,
+                                  firstRiskMonth: phantomSuggestion.firstRiskMonth,
+                                  orderMonth: phantomSuggestion.orderMonth,
+                                  leadTimeDays: phantomSuggestion.leadTimeDays,
+                                  returnTo: "/v2/dashboard",
+                                }))}
+                              >
+                                Prüfen & bestätigen
+                              </Button>
+                            </Space>
+                          </div>
+                        ) : null}
                         {timeline ? (
                           <div className="v2-dashboard-order-timeline-shell">
                             <VisTimeline
@@ -1257,7 +1356,13 @@ export default function DashboardModule(): JSX.Element {
                                     <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
                                     <td>{formatIsoDate(row.tooltipMeta?.dueDate)}</td>
                                     <td>
-                                      {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
+                                      {row.provisional
+                                        ? <Tag color="gold">Vorbehaltlich</Tag>
+                                        : (row.paid == null
+                                          ? <Tag>—</Tag>
+                                          : row.paid
+                                            ? <Tag color="green">Bezahlt</Tag>
+                                            : <Tag color="gold">Offen</Tag>)}
                                     </td>
                                   </tr>
                                 );
@@ -1316,7 +1421,7 @@ export default function DashboardModule(): JSX.Element {
         ),
       };
     });
-  }, [pnlRowsByMonth, robustness.monthMap, stateObject, visibleBreakdown]);
+  }, [navigate, phantomFoById, phantomFoIdSet, planningState, pnlRowsByMonth, robustness.monthMap, visibleBreakdown]);
 
   async function commitSimulation(): Promise<void> {
     if (!simulationDraft) return;
@@ -1582,6 +1687,9 @@ export default function DashboardModule(): JSX.Element {
                 <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
                 <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
                 <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
+                {phantomFoSuggestions.length ? (
+                  <Tag color="gold">Phantom-FOs (vorbehaltlich): {phantomFoSuggestions.length}</Tag>
+                ) : null}
                 <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
               </Space>
               <div className="v2-dashboard-legend-help">
@@ -1978,68 +2086,77 @@ export default function DashboardModule(): JSX.Element {
                             </tr>
                           </thead>
                           <tbody>
-                            {selectedOrderDutyIssues.map((issue: RobustnessCoverageOrderDutyIssue) => (
-                              <tr key={`${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`}>
-                                <td>{issue.sku}</td>
-                                <td>{issue.alias}</td>
-                                <td>{issue.abcClass}</td>
-                                <td>{formatMonthLabel(issue.firstRiskMonth)}</td>
-                                <td>
-                                  {formatIsoDate(issue.latestOrderDate)} ({formatMonthLabel(issue.orderMonth)})
-                                  {issue.overdue ? <Tag color="red" style={{ marginInlineStart: 8 }}>Überfällig</Tag> : null}
-                                </td>
-                                <td>{issue.reason}</td>
-                                <td>
-                                  <Space wrap>
-                                    <Button
-                                      size="small"
-                                      onClick={() => navigate(resolveDashboardRoute({
-                                        route: "/v2/inventory/projektion",
-                                        checkKey: "sku_coverage",
-                                        month: selectedMonthData.month,
-                                        sku: issue.sku,
-                                        mode: selectedMonthData.coverage.projectionMode,
-                                      }))}
-                                    >
-                                      Zur Bestandsprojektion
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      type="primary"
-                                      onClick={() => navigate(buildFoDashboardRoute({
-                                        sku: issue.sku,
-                                        month: selectedMonthData.month,
-                                        suggestedUnits: issue.shortageUnits,
-                                        requiredArrivalDate: issue.requiredArrivalDate,
-                                        recommendedOrderDate: issue.recommendedOrderDate,
-                                      }))}
-                                    >
-                                      FO anlegen
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      onClick={() => navigate(buildPoDashboardRoute({
-                                        sku: issue.sku,
-                                        suggestedUnits: issue.shortageUnits,
-                                        requiredArrivalDate: issue.requiredArrivalDate,
-                                        recommendedOrderDate: issue.recommendedOrderDate,
-                                      }))}
-                                    >
-                                      PO öffnen
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      onClick={() => navigate(buildProductsDashboardRoute({
-                                        issues: "all",
-                                        sku: issue.sku,
-                                      }))}
-                                    >
-                                      Produkt öffnen
-                                    </Button>
-                                  </Space>
-                                </td>
-                              </tr>
-                            ))}
+                            {selectedOrderDutyIssues.map((issue: RobustnessCoverageOrderDutyIssue) => {
+                              const phantomSuggestion = phantomFoBySkuKey.get(String(issue.sku || "").trim().toLowerCase()) || null;
+                              return (
+                                <tr key={`${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`}>
+                                  <td>{issue.sku}</td>
+                                  <td>{issue.alias}</td>
+                                  <td>{issue.abcClass}</td>
+                                  <td>{formatMonthLabel(issue.firstRiskMonth)}</td>
+                                  <td>
+                                    {formatIsoDate(issue.latestOrderDate)} ({formatMonthLabel(issue.orderMonth)})
+                                    {issue.overdue ? <Tag color="red" style={{ marginInlineStart: 8 }}>Überfällig</Tag> : null}
+                                  </td>
+                                  <td>{issue.reason}</td>
+                                  <td>
+                                    <Space wrap>
+                                      <Button
+                                        size="small"
+                                        onClick={() => navigate(resolveDashboardRoute({
+                                          route: "/v2/inventory/projektion",
+                                          checkKey: "sku_coverage",
+                                          month: selectedMonthData.month,
+                                          sku: issue.sku,
+                                          mode: selectedMonthData.coverage.projectionMode,
+                                        }))}
+                                      >
+                                        Zur Bestandsprojektion
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        type="primary"
+                                        onClick={() => navigate(buildFoDashboardRoute({
+                                          sku: issue.sku,
+                                          month: selectedMonthData.month,
+                                          suggestedUnits: phantomSuggestion?.suggestedUnits ?? issue.shortageUnits,
+                                          requiredArrivalDate: phantomSuggestion?.requiredArrivalDate ?? issue.requiredArrivalDate,
+                                          recommendedOrderDate: phantomSuggestion?.recommendedOrderDate ?? issue.recommendedOrderDate,
+                                          source: phantomSuggestion ? "phantom_fo" : "inventory_projection",
+                                          phantomId: phantomSuggestion?.id || null,
+                                          firstRiskMonth: phantomSuggestion?.firstRiskMonth ?? issue.firstRiskMonth,
+                                          orderMonth: phantomSuggestion?.orderMonth ?? issue.orderMonth,
+                                          leadTimeDays: phantomSuggestion?.leadTimeDays ?? issue.leadTimeDays,
+                                          returnTo: "/v2/dashboard",
+                                        }))}
+                                      >
+                                        FO anlegen
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        onClick={() => navigate(buildPoDashboardRoute({
+                                          sku: issue.sku,
+                                          suggestedUnits: issue.shortageUnits,
+                                          requiredArrivalDate: issue.requiredArrivalDate,
+                                          recommendedOrderDate: issue.recommendedOrderDate,
+                                        }))}
+                                      >
+                                        PO öffnen
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        onClick={() => navigate(buildProductsDashboardRoute({
+                                          issues: "all",
+                                          sku: issue.sku,
+                                        }))}
+                                      >
+                                        Produkt öffnen
+                                      </Button>
+                                    </Space>
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>

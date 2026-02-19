@@ -1718,6 +1718,54 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       return;
     }
 
+    if (source === "phantom_fo") {
+      const sku = String(params.get("sku") || "").trim();
+      if (!sku) {
+        clearHandledParams([
+          "source",
+          "phantomId",
+          "sku",
+          "month",
+          "suggestedUnits",
+          "requiredArrivalDate",
+          "recommendedOrderDate",
+          "firstRiskMonth",
+          "orderMonth",
+          "leadTimeDays",
+          "returnTo",
+        ]);
+        return;
+      }
+
+      const product = productBySku.get(sku) || null;
+      const suggestedUnits = Math.max(0, Math.round(Number(params.get("suggestedUnits") || 0)));
+      const requiredArrivalDate = String(params.get("requiredArrivalDate") || "");
+      const prefill: Partial<FoFormValues> = {
+        sku,
+        units: suggestedUnits,
+        status: "ACTIVE",
+      };
+      if (product?.supplierId) prefill.supplierId = String(product.supplierId);
+      if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
+
+      openCreateModal(prefill);
+      message.info("Phantom-FO geladen. Bitte Daten prüfen, bei Bedarf anpassen und speichern.");
+      clearHandledParams([
+        "source",
+        "phantomId",
+        "sku",
+        "month",
+        "suggestedUnits",
+        "requiredArrivalDate",
+        "recommendedOrderDate",
+        "firstRiskMonth",
+        "orderMonth",
+        "leadTimeDays",
+        "returnTo",
+      ]);
+      return;
+    }
+
     if (source !== "inventory_projection") return;
     const sku = String(params.get("sku") || "").trim();
     if (!sku) {

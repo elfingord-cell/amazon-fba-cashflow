@@ -1229,6 +1229,15 @@
   color: #4b2e1f !important;
 }
 
+.v2-orders-gantt .rct-item.v2-orders-gantt-item--fo-phantom {
+  box-shadow: inset 0 0 0 1px rgba(146, 64, 14, 0.62) !important;
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.18) 0 8px,
+    rgba(255, 255, 255, 0.02) 8px 16px
+  ) !important;
+}
+
 .v2-orders-gantt--sku .rct-item {
   border: 0 !important;
   box-shadow: none !important;
@@ -1373,6 +1382,14 @@
 
 .v2-orders-gantt-legend-box--fo-transit {
   background: #caa892;
+}
+
+.v2-orders-gantt-legend-box--fo-phantom {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(202, 168, 146, 0.95) 0 6px,
+    rgba(150, 95, 62, 0.95) 6px 12px
+  );
 }
 
 .v2-orders-gantt-range-row .ant-segmented {
@@ -2270,6 +2287,13 @@
 .v2-dashboard-pnl-order-detail {
   display: grid;
   gap: 10px;
+}
+
+.v2-dashboard-pnl-phantom-hint {
+  border: 1px dashed rgba(217, 119, 6, 0.45);
+  border-radius: 10px;
+  background: rgba(255, 247, 237, 0.9);
+  padding: 8px 10px;
 }
 
 .v2-dashboard-order-timeline-shell {

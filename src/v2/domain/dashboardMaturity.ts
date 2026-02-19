@@ -44,6 +44,8 @@ export interface DashboardEntry {
   sourceNumber?: string;
   sourceId?: string;
   paid?: boolean;
+  provisional?: boolean;
+  meta?: Record<string, unknown>;
 }
 
 export interface DashboardBreakdownRow {
@@ -61,6 +63,7 @@ export interface DashboardPnlRow {
   group: "inflow" | "outflow" | "po_fo" | "fixcost" | "tax" | "other";
   label: string;
   amount: number;
+  provisional: boolean;
   paid: boolean | null;
   source: "po" | "fo" | "sales" | "fixcosts" | "extras" | "dividends" | "vat" | "unknown";
   sourceNumber?: string;
@@ -392,6 +395,7 @@ export function buildDashboardMaturityRows(input: {
 export function buildDashboardPnlRowsByMonth(input: {
   breakdown: DashboardBreakdownRow[];
   state: Record<string, unknown>;
+  provisionalFoIds?: Set<string>;
 }): Map<string, DashboardPnlRow[]> {
   const result = new Map<string, DashboardPnlRow[]>();
   const tooltipMetaIndex = buildOrderTooltipMetaIndex(input.state);
@@ -404,6 +408,14 @@ export function buildDashboardPnlRowsByMonth(input: {
       const source = resolvePnlSource(entry);
       const sourceNumber = entry.sourceNumber ? String(entry.sourceNumber) : undefined;
       const sourceId = entry.sourceId ? String(entry.sourceId) : undefined;
+      const entryMeta = (entry.meta && typeof entry.meta === "object")
+        ? entry.meta as Record<string, unknown>
+        : {};
+      const isProvisionalFo = source === "fo" && (
+        entryMeta.phantom === true
+        || (sourceId ? input.provisionalFoIds?.has(sourceId) === true : false)
+      );
+      const provisional = entry.provisional === true || isProvisionalFo;
       const orderMetaKey = sourceNumber && (source === "po" || source === "fo")
         ? `${source}:${sourceNumber}`
         : null;
@@ -414,6 +426,7 @@ export function buildDashboardPnlRowsByMonth(input: {
         group: resolvePnlGroup(entry),
         label: String(entry.label || "Eintrag"),
         amount: toSignedAmount(entry),
+        provisional,
         paid: typeof entry.paid === "boolean" ? entry.paid : null,
         source,
         sourceNumber,
