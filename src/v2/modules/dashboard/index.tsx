@@ -22,7 +22,9 @@ import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
+import { VisTimeline } from "../../components/VisTimeline";
 import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
+import { buildDashboardOrderTimeline } from "../../domain/dashboardOrderTimeline";
 import {
   buildDashboardRobustness,
   type DashboardRobustMonth,
@@ -1013,24 +1015,47 @@ export default function DashboardModule(): JSX.Element {
           <div className="v2-dashboard-pnl-month">
             {groupedRows.map((group) => {
               if (group.key === "po_fo") {
-                const orderMap = new Map<string, DashboardPnlRow[]>();
+                const orderMap = new Map<string, {
+                  source: "po" | "fo";
+                  sourceId: string | null;
+                  sourceNumber: string | null;
+                  rows: DashboardPnlRow[];
+                }>();
                 group.rows.forEach((row) => {
-                  const key = `${row.source}:${row.sourceNumber || row.label}`;
-                  const bucket = orderMap.get(key) || [];
-                  bucket.push(row);
-                  orderMap.set(key, bucket);
+                  const source = row.source === "fo" ? "fo" : "po";
+                  const sourceId = row.sourceId ? String(row.sourceId) : null;
+                  const sourceNumber = row.sourceNumber ? String(row.sourceNumber) : null;
+                  const key = `${source}:${sourceId || sourceNumber || row.label}`;
+                  const existing = orderMap.get(key);
+                  if (existing) {
+                    existing.rows.push(row);
+                    if (!existing.sourceId && sourceId) existing.sourceId = sourceId;
+                    if (!existing.sourceNumber && sourceNumber) existing.sourceNumber = sourceNumber;
+                    return;
+                  }
+                  orderMap.set(key, {
+                    source,
+                    sourceId,
+                    sourceNumber,
+                    rows: [row],
+                  });
                 });
 
-                const orderItems = Array.from(orderMap.entries()).map(([orderKey, rows]) => {
-                  const [source, sourceNumber] = orderKey.split(":");
-                  const total = sumRows(rows);
-                  const tooltipMeta = rows.find((row) => row.tooltipMeta)?.tooltipMeta;
+                const orderItems = Array.from(orderMap.entries()).map(([orderKey, order]) => {
+                  const total = sumRows(order.rows);
+                  const tooltipMeta = order.rows.find((row) => row.tooltipMeta)?.tooltipMeta;
+                  const timeline = buildDashboardOrderTimeline({
+                    state: stateObject,
+                    source: order.source,
+                    sourceId: order.sourceId,
+                    sourceNumber: order.sourceNumber,
+                  });
 
                   return {
                     key: orderKey,
                     label: (
                       <div className="v2-dashboard-pnl-order-row">
-                        <Text strong>{String(source).toUpperCase()} {sourceNumber || "—"}</Text>
+                        <Text strong>{String(order.source).toUpperCase()} {order.sourceNumber || order.sourceId || "—"}</Text>
                         <Space size={6}>
                           <Tag color={total < 0 ? "red" : "green"}>{formatSignedCurrency(total)}</Tag>
                           {tooltipMeta?.units != null ? <Tag>Stück: {formatNumber(tooltipMeta.units, 0)}</Tag> : null}
@@ -1038,39 +1063,58 @@ export default function DashboardModule(): JSX.Element {
                       </div>
                     ),
                     children: (
-                      <div className="v2-table-shell v2-scroll-host">
-                        <table className="v2-stats-table" data-layout="auto">
-                          <thead>
-                            <tr>
-                              <th>Milestone</th>
-                              <th>Betrag</th>
-                              <th>Fällig</th>
-                              <th>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {rows.map((row, index) => {
-                              const tooltip = row.tooltipMeta ? (
-                                <div>
-                                  <div><strong>{String(row.source).toUpperCase()} {row.sourceNumber || "—"}</strong></div>
-                                  <div>Alias: {row.tooltipMeta.aliases.join(", ") || "-"}</div>
-                                  <div>Stückzahl: {row.tooltipMeta.units != null ? formatNumber(row.tooltipMeta.units, 0) : "-"}</div>
-                                  <div>Fälligkeit: {formatIsoDate(row.tooltipMeta.dueDate)}</div>
-                                </div>
-                              ) : null;
-                              return (
-                                <tr key={`${orderKey}-${index}`}>
-                                  <td>{tooltip ? <Tooltip title={tooltip}>{row.label}</Tooltip> : row.label}</td>
-                                  <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
-                                  <td>{formatIsoDate(row.tooltipMeta?.dueDate)}</td>
-                                  <td>
-                                    {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                      <div className="v2-dashboard-pnl-order-detail">
+                        {timeline ? (
+                          <div className="v2-dashboard-order-timeline-shell">
+                            <VisTimeline
+                              className="v2-dashboard-order-timeline"
+                              items={timeline.items}
+                              visibleStartMs={timeline.visibleStartMs}
+                              visibleEndMs={timeline.visibleEndMs}
+                              height={188}
+                            />
+                          </div>
+                        ) : (
+                          <Alert
+                            type="info"
+                            showIcon
+                            message={`Keine Timeline-Daten für ${String(order.source).toUpperCase()} ${order.sourceNumber || order.sourceId || "—"} verfügbar.`}
+                          />
+                        )}
+                        <div className="v2-table-shell v2-scroll-host">
+                          <table className="v2-stats-table" data-layout="auto">
+                            <thead>
+                              <tr>
+                                <th>Milestone</th>
+                                <th>Betrag</th>
+                                <th>Fällig</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {order.rows.map((row, index) => {
+                                const tooltip = row.tooltipMeta ? (
+                                  <div>
+                                    <div><strong>{String(row.source).toUpperCase()} {row.sourceNumber || row.sourceId || "—"}</strong></div>
+                                    <div>Alias: {row.tooltipMeta.aliases.join(", ") || "-"}</div>
+                                    <div>Stückzahl: {row.tooltipMeta.units != null ? formatNumber(row.tooltipMeta.units, 0) : "-"}</div>
+                                    <div>Fälligkeit: {formatIsoDate(row.tooltipMeta.dueDate)}</div>
+                                  </div>
+                                ) : null;
+                                return (
+                                  <tr key={`${orderKey}-${index}`}>
+                                    <td>{tooltip ? <Tooltip title={tooltip}>{row.label}</Tooltip> : row.label}</td>
+                                    <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
+                                    <td>{formatIsoDate(row.tooltipMeta?.dueDate)}</td>
+                                    <td>
+                                      {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     ),
                   };
@@ -1082,7 +1126,7 @@ export default function DashboardModule(): JSX.Element {
                       <Text strong>{group.label}</Text>
                       <Tag color="blue">{formatSignedCurrency(sumRows(group.rows))}</Tag>
                     </div>
-                    <Collapse size="small" items={orderItems} />
+                    <Collapse size="small" items={orderItems} destroyInactivePanel />
                   </div>
                 );
               }
@@ -1122,7 +1166,7 @@ export default function DashboardModule(): JSX.Element {
         ),
       };
     });
-  }, [pnlRowsByMonth, robustness.monthMap, visibleBreakdown]);
+  }, [pnlRowsByMonth, robustness.monthMap, stateObject, visibleBreakdown]);
 
   async function commitSimulation(): Promise<void> {
     if (!simulationDraft) return;

@@ -2175,6 +2175,116 @@
   flex-wrap: wrap;
 }
 
+.v2-dashboard-pnl-order-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.v2-dashboard-order-timeline-shell {
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.72);
+  padding: 6px 8px;
+}
+
+.v2-vis-timeline-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  border: 1px dashed rgba(15, 27, 45, 0.2);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.v2-vis-timeline .vis-timeline {
+  border: 0;
+  background: transparent;
+}
+
+.v2-vis-timeline .vis-panel.vis-left,
+.v2-vis-timeline .vis-panel.vis-right {
+  border: 0;
+}
+
+.v2-vis-timeline .vis-time-axis .vis-text {
+  color: #334155;
+  font-size: 11px;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--production,
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--transit {
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 11px;
+  border-width: 1px;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--production {
+  background: rgba(157, 180, 168, 0.9);
+  border-color: rgba(111, 142, 125, 0.9);
+  color: #0f1b2d;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--transit {
+  background: rgba(168, 184, 200, 0.9);
+  border-color: rgba(122, 145, 168, 0.92);
+  color: #0f1b2d;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--milestone {
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  border-width: 1px;
+  color: #334155;
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(148, 163, 184, 0.72);
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--milestone-order {
+  border-color: rgba(71, 85, 105, 0.58);
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--milestone-etd {
+  border-color: rgba(37, 99, 235, 0.52);
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--milestone-eta {
+  border-color: rgba(8, 145, 178, 0.52);
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--payment {
+  width: 14px !important;
+  min-width: 14px !important;
+  max-width: 14px !important;
+  height: 14px !important;
+  min-height: 14px !important;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  padding: 0;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.14);
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--payment .vis-item-content {
+  display: none;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--payment-open {
+  background: #c04747;
+  border-color: #fef2f2;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--payment-paid {
+  background: #3f9157;
+  border-color: #ecfdf3;
+}
+
+.v2-vis-timeline .vis-item.v2-dashboard-order-timeline-item--payment-incoming {
+  box-shadow: 0 0 0 1px rgba(2, 132, 199, 0.35);
+}
+
 .v2-svi-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

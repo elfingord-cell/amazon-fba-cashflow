@@ -42,6 +42,7 @@ export interface DashboardEntry {
   group?: string;
   source?: "po" | "fo" | "sales" | "fixcosts" | "extras" | "dividends" | "vat" | string;
   sourceNumber?: string;
+  sourceId?: string;
   paid?: boolean;
 }
 
@@ -63,6 +64,7 @@ export interface DashboardPnlRow {
   paid: boolean | null;
   source: "po" | "fo" | "sales" | "fixcosts" | "extras" | "dividends" | "vat" | "unknown";
   sourceNumber?: string;
+  sourceId?: string;
   tooltipMeta?: {
     aliases: string[];
     units: number | null;
@@ -392,6 +394,7 @@ export function buildDashboardPnlRowsByMonth(input: {
     const rows: DashboardPnlRow[] = entries.map((entry) => {
       const source = resolvePnlSource(entry);
       const sourceNumber = entry.sourceNumber ? String(entry.sourceNumber) : undefined;
+      const sourceId = entry.sourceId ? String(entry.sourceId) : undefined;
       const orderMetaKey = sourceNumber && (source === "po" || source === "fo")
         ? `${source}:${sourceNumber}`
         : null;
@@ -405,6 +408,7 @@ export function buildDashboardPnlRowsByMonth(input: {
         paid: typeof entry.paid === "boolean" ? entry.paid : null,
         source,
         sourceNumber,
+        sourceId,
         tooltipMeta: orderMeta
           ? {
             aliases: orderMeta.aliases,

@@ -14,6 +14,8 @@
     "test:parity:payments": "npm run test:parity:migration:build && npm run test:parity:payments:run",
     "test:parity:pofo:run": "node --test tests/v2/po-fo-payments.parity.test.cjs tests/v2/po-multisku-flow.parity.test.cjs tests/v2/master-data-hierarchy.parity.test.cjs",
     "test:parity:pofo": "npm run test:parity:migration:build && npm run test:parity:pofo:run",
+    "test:parity:dashboard:run": "node --test tests/v2/dashboard-order-timeline.parity.test.cjs",
+    "test:parity:dashboard": "npm run test:parity:migration:build && npm run test:parity:dashboard:run",
     "test:parity:routes:run": "node --test tests/v2/routes-load.parity.test.cjs",
     "test:parity:routes": "npm run test:parity:routes:run",
     "test:parity:performance:run": "node --test tests/v2/performance.parity.test.cjs",
@@ -22,7 +24,7 @@
     "test:parity:responsive": "npm run test:parity:migration:build && npm run test:parity:responsive:run",
     "test:parity:sync:run": "node --test tests/v2/sync.parity.test.cjs tests/v2/auth-session.parity.test.mjs",
     "test:parity:sync": "npm run test:parity:migration:build && npm run test:parity:sync:run",
-    "test:parity:v2": "npm run test:parity:migration:build && npm run test:parity:migration:run && npm run test:parity:sync:run && npm run test:parity:payments:run && npm run test:parity:pofo:run && npm run test:parity:performance:run && npm run test:parity:responsive:run && npm run test:parity:routes:run",
+    "test:parity:v2": "npm run test:parity:migration:build && npm run test:parity:migration:run && npm run test:parity:sync:run && npm run test:parity:payments:run && npm run test:parity:pofo:run && npm run test:parity:dashboard:run && npm run test:parity:performance:run && npm run test:parity:responsive:run && npm run test:parity:routes:run",
     "test:parity:accounting": "node --test src/domain/accountantReport.test.js",
     "test:parity": "node --test src/domain/parity.golden.test.js src/domain/cashflow.fixcost.test.js src/domain/inventoryProjection.test.js src/domain/outflowStack.test.js src/domain/vatPreview.test.js src/domain/foSuggestion.test.js src/domain/accountantReport.test.js && npm run test:parity:v2",
     "test:preflight:quick": "npm run test:parity:routes:run && npm run test:parity:pofo:run",
@@ -42,7 +44,8 @@
     "react-calendar-timeline": "0.30.0-beta.3",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.13.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vis-timeline": "^8.5.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.5.0",

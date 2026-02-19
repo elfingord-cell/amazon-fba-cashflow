@@ -809,6 +809,7 @@ export function computeSeries(state) {
       tooltip: overrides.tooltip,
       sourceTab: overrides.sourceTab,
       sourceNumber: overrides.sourceNumber,
+      sourceId: overrides.sourceId,
       statusId: baseId,
       auto: isAuto,
       autoEligible,
@@ -1031,7 +1032,8 @@ export function computeSeries(state) {
         lagDays: ev.lagDays,
         lagMonths: ev.lagMonths,
         percent: ev.percent,
-        sourceNumber: ev.sourceNumber || po.poNo,
+        sourceNumber: ev.sourceNumber || po.poNo || po.id,
+        sourceId: po.id || po.poNo || null,
         tooltip: ev.tooltip,
       }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
     });
@@ -1064,7 +1066,8 @@ export function computeSeries(state) {
         lagDays: ev.lagDays,
         lagMonths: ev.lagMonths,
         percent: ev.percent,
-        sourceNumber: ev.sourceNumber || fo.foNo,
+        sourceNumber: ev.sourceNumber || fo.foNo || fo.foNumber || fo.id,
+        sourceId: fo.id || fo.foNo || fo.foNumber || null,
         tooltip: ev.tooltip,
       }, { auto: false, autoEligible: false, defaultPaid: false }));
     });
