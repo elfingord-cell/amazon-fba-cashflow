@@ -1,5 +1,7 @@
+import type { CSSProperties } from "react";
 import { useCallback, useMemo, useState } from "react";
-import { Button, Card, Input, Select, Space, Tag, Typography } from "antd";
+import dayjs, { type Dayjs } from "dayjs";
+import { Button, Card, DatePicker, Input, Segmented, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useNavigate } from "react-router-dom";
 import {
   OrdersGanttTimeline,
@@ -21,17 +23,40 @@ import {
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Text } = Typography;
+const { RangePicker } = DatePicker;
 
 type SkuTypeFilter = "all" | "po" | "fo";
 type SkuStatusFilter = "planning" | "all" | "closed";
+type TimeRangePreset = "3m" | "6m" | "12m" | "18m" | "custom";
+type TimelineEntityLabel = "PO" | "FO";
+type TimelinePhaseLabel = "Production" | "Transit";
+
+const TIME_RANGE_PRESET_MONTHS: Record<Exclude<TimeRangePreset, "custom">, number> = {
+  "3m": 3,
+  "6m": 6,
+  "12m": 12,
+  "18m": 18,
+};
+
+const UNKNOWN_LABEL = "-";
+
+interface SkuTooltipData {
+  type: TimelineEntityLabel;
+  identifier: string;
+  phase: TimelinePhaseLabel;
+  units: number | null;
+  startDate: string;
+  endDate: string;
+  supplier: string | null;
+  destination: string | null;
+}
 
 interface SkuTimelineItem {
   id: string;
-  title: string;
   startMs: number;
   endMs: number;
   className: string;
-  tooltip: string;
+  tooltipData: SkuTooltipData;
   openTarget: {
     entity: "po" | "fo";
     poNo?: string;
@@ -80,6 +105,82 @@ function compareBucketOrder(
   return left.sku.localeCompare(right.sku, "de-DE", { sensitivity: "base" });
 }
 
+function parseUnits(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round(parsed));
+}
+
+function formatUnits(units: number | null): string {
+  if (!Number.isFinite(units as number)) return UNKNOWN_LABEL;
+  return `${Number(units).toLocaleString("de-DE", { maximumFractionDigits: 0 })} Stk`;
+}
+
+function formatIsoDate(value: string): string {
+  if (!value) return UNKNOWN_LABEL;
+  const parsed = dayjs(value);
+  if (!parsed.isValid()) return value;
+  return parsed.format("DD.MM.YYYY");
+}
+
+function resolveDestination(entry: Record<string, unknown>): string | null {
+  const candidates = [
+    entry.destination,
+    entry.destinationName,
+    entry.targetWarehouse,
+    entry.warehouse,
+    entry.warehouseName,
+    entry.fulfillmentCenter,
+    entry.portTo,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate || "").trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function computeItemRadius(input: any): number {
+  const dimensions = (input?.itemContext?.dimensions || {}) as { width?: number; height?: number };
+  const width = Number(dimensions.width || 0);
+  const height = Number(dimensions.height || 0);
+  const radius = Math.min(Math.max(0, height / 2), Math.max(0, width / 2 - 1), 10);
+  if (!Number.isFinite(radius)) return 0;
+  return Math.max(0, radius);
+}
+
+function tooltipValue(value: string | null | undefined): string {
+  const text = String(value || "").trim();
+  return text || UNKNOWN_LABEL;
+}
+
+function tooltipContent(meta: Partial<SkuTooltipData>): JSX.Element {
+  const rows = [
+    { key: "Typ", value: tooltipValue(meta.type) },
+    { key: "Nummer", value: tooltipValue(meta.identifier) },
+    { key: "Phase", value: tooltipValue(meta.phase) },
+    { key: "Menge", value: formatUnits(meta.units ?? null) },
+    {
+      key: "Zeitraum",
+      value: `${formatIsoDate(String(meta.startDate || ""))} - ${formatIsoDate(String(meta.endDate || ""))}`,
+    },
+    { key: "Supplier", value: tooltipValue(meta.supplier) },
+  ];
+  if (meta.destination) {
+    rows.push({ key: "Ziel", value: tooltipValue(meta.destination) });
+  }
+  return (
+    <div className="v2-orders-gantt-tooltip">
+      {rows.map((row) => (
+        <div className="v2-orders-gantt-tooltip-row" key={row.key}>
+          <span className="v2-orders-gantt-tooltip-key">{row.key}</span>
+          <span className="v2-orders-gantt-tooltip-value">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SkuTimelineView(): JSX.Element {
   const navigate = useNavigate();
   const { state } = useWorkspaceState();
@@ -88,6 +189,8 @@ export default function SkuTimelineView(): JSX.Element {
   const [supplierFilter, setSupplierFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<SkuTypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<SkuStatusFilter>("planning");
+  const [rangePreset, setRangePreset] = useState<TimeRangePreset>("12m");
+  const [customRange, setCustomRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
 
   const stateObject = state as unknown as Record<string, unknown>;
   const categoryOrderMap = useMemo(
@@ -114,7 +217,7 @@ export default function SkuTimelineView(): JSX.Element {
         const row = entry as Record<string, unknown>;
         const id = String(row.id || "");
         if (!id) return;
-        map.set(id, String(row.name || "-"));
+        map.set(id, String(row.name || UNKNOWN_LABEL));
       });
     return map;
   }, [state.suppliers]);
@@ -155,17 +258,26 @@ export default function SkuTimelineView(): JSX.Element {
   }, [supplierById]);
 
   const skuItemRenderer = useCallback((input: any): JSX.Element => {
-    const item = (input?.item || {}) as { title?: unknown; className?: unknown; tooltip?: unknown };
-    const label = String(item.title || "");
-    const tooltip = String(item.tooltip || label || "");
+    const item = (input?.item || {}) as { className?: unknown; meta?: unknown };
+    const meta = (item.meta && typeof item.meta === "object")
+      ? item.meta as Partial<SkuTooltipData>
+      : {};
+    const dynamicRadius = computeItemRadius(input);
     const rootProps = input.getItemProps({
-      className: `${String(item.className || "")} v2-orders-gantt-pill`.trim(),
-      title: tooltip,
+      className: `${String(item.className || "")} v2-orders-gantt-pill v2-orders-gantt-pill--minimal`.trim(),
+      style: {
+        borderRadius: `${dynamicRadius}px`,
+      } as CSSProperties,
     });
     return (
-      <div {...rootProps}>
-        <div className="v2-orders-gantt-pill-label">{label}</div>
-      </div>
+      <Tooltip
+        title={tooltipContent(meta)}
+        placement="top"
+        mouseEnterDelay={0.12}
+        overlayClassName="v2-orders-gantt-tooltip-overlay"
+      >
+        <div {...rootProps} />
+      </Tooltip>
     );
   }, []);
 
@@ -177,7 +289,7 @@ export default function SkuTimelineView(): JSX.Element {
       if (buckets.has(sku)) return buckets.get(sku) as SkuBucket;
       const product = productBySku.get(sku) || {};
       const supplierId = String(product.supplierId || supplierIdFallback || "");
-      const supplierName = supplierById.get(supplierId) || "-";
+      const supplierName = supplierById.get(supplierId) || UNKNOWN_LABEL;
       const categoryIdRaw = String(product.categoryId || "");
       const categoryId = categoryIdRaw || null;
       const categoryLabel = categoryId
@@ -224,6 +336,7 @@ export default function SkuTimelineView(): JSX.Element {
         const orderMs = toTimelineMs(orderIso);
         const etdMs = toTimelineMs(etdIso);
         const etaMs = toTimelineMs(etaIso);
+        const destination = resolveDestination(po);
 
         if (orderIso) timelineDates.push(orderIso);
         if (etdIso) timelineDates.push(etdIso);
@@ -233,24 +346,34 @@ export default function SkuTimelineView(): JSX.Element {
         const supplierId = String(po.supplierId || "");
         const poItems = Array.isArray(po.items) && po.items.length
           ? (po.items as Record<string, unknown>[])
-          : [{ sku: po.sku }];
+          : [{ sku: po.sku, units: po.units }];
 
         poItems.forEach((item, itemIndex) => {
           const sku = normalizeSku(item?.sku || po.sku);
           if (!sku) return;
 
           const bucket = ensureBucket(sku, supplierId);
+          const units = parseUnits(item?.units ?? item?.qty ?? item?.quantity ?? po.units);
+          const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
           const productionStart = orderMs ?? etdMs;
           const productionEnd = etdMs;
           if (productionStart != null && productionEnd != null) {
             const span = safeTimelineSpanMs({ startMs: productionStart, endMs: productionEnd });
             bucket.items.push({
               id: `po:${String(po.id || poNo)}:${sku}:${itemIndex}:production`,
-              title: `PO ${poNo} Produktion`,
               startMs: span.startMs,
               endMs: span.endMs,
               className: "v2-orders-gantt-item v2-orders-gantt-item--po-production",
-              tooltip: `${poNo}\n${bucket.alias} (${sku})\nProduktion ${orderIso || "-"} bis ${etdIso || "-"}`,
+              tooltipData: {
+                type: "PO",
+                identifier: poNo,
+                phase: "Production",
+                units,
+                startDate: orderIso || etdIso,
+                endDate: etdIso || orderIso,
+                supplier,
+                destination,
+              },
               openTarget: { entity: "po", poNo },
             });
           }
@@ -259,11 +382,19 @@ export default function SkuTimelineView(): JSX.Element {
             const span = safeTimelineSpanMs({ startMs: transitStart, endMs: etaMs });
             bucket.items.push({
               id: `po:${String(po.id || poNo)}:${sku}:${itemIndex}:transit`,
-              title: `PO ${poNo} Transit`,
               startMs: span.startMs,
               endMs: span.endMs,
               className: "v2-orders-gantt-item v2-orders-gantt-item--po-transit",
-              tooltip: `${poNo}\n${bucket.alias} (${sku})\nTransit ${etdIso || orderIso || "-"} bis ${etaIso || "-"}`,
+              tooltipData: {
+                type: "PO",
+                identifier: poNo,
+                phase: "Transit",
+                units,
+                startDate: etdIso || orderIso || etaIso,
+                endDate: etaIso || etdIso || orderIso,
+                supplier,
+                destination,
+              },
               openTarget: { entity: "po", poNo },
             });
           }
@@ -291,6 +422,8 @@ export default function SkuTimelineView(): JSX.Element {
         const orderMs = toTimelineMs(orderIso);
         const etdMs = toTimelineMs(etdIso);
         const etaMs = toTimelineMs(etaIso);
+        const destination = resolveDestination(fo);
+        const units = parseUnits(fo.units ?? fo.qty ?? fo.quantity);
 
         if (orderIso) timelineDates.push(orderIso);
         if (etdIso) timelineDates.push(etdIso);
@@ -301,18 +434,27 @@ export default function SkuTimelineView(): JSX.Element {
 
         const bucket = ensureBucket(sku, String(fo.supplierId || ""));
         const foId = String(fo.id || "");
-        const foRef = `FO ${foId.slice(-6).toUpperCase() || "-"}`;
+        const foRef = `FO ${foId.slice(-6).toUpperCase() || UNKNOWN_LABEL}`;
+        const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
         const productionStart = orderMs ?? etdMs;
         const productionEnd = etdMs;
         if (productionStart != null && productionEnd != null) {
           const span = safeTimelineSpanMs({ startMs: productionStart, endMs: productionEnd });
           bucket.items.push({
             id: `fo:${foId}:${sku}:production`,
-            title: `${foRef} Produktion`,
             startMs: span.startMs,
             endMs: span.endMs,
             className: "v2-orders-gantt-item v2-orders-gantt-item--fo-production",
-            tooltip: `${foRef}\n${bucket.alias} (${sku})\nProduktion ${orderIso || "-"} bis ${etdIso || "-"}`,
+            tooltipData: {
+              type: "FO",
+              identifier: foRef,
+              phase: "Production",
+              units,
+              startDate: orderIso || etdIso,
+              endDate: etdIso || orderIso,
+              supplier,
+              destination,
+            },
             openTarget: { entity: "fo", foId },
           });
         }
@@ -321,11 +463,19 @@ export default function SkuTimelineView(): JSX.Element {
           const span = safeTimelineSpanMs({ startMs: transitStart, endMs: etaMs });
           bucket.items.push({
             id: `fo:${foId}:${sku}:transit`,
-            title: `${foRef} Transit`,
             startMs: span.startMs,
             endMs: span.endMs,
             className: "v2-orders-gantt-item v2-orders-gantt-item--fo-transit",
-            tooltip: `${foRef}\n${bucket.alias} (${sku})\nTransit ${etdIso || orderIso || "-"} bis ${etaIso || "-"}`,
+            tooltipData: {
+              type: "FO",
+              identifier: foRef,
+              phase: "Transit",
+              units,
+              startDate: etdIso || orderIso || etaIso,
+              endDate: etaIso || etdIso || orderIso,
+              supplier,
+              destination,
+            },
             openTarget: { entity: "fo", foId },
           });
         }
@@ -378,11 +528,10 @@ export default function SkuTimelineView(): JSX.Element {
         items.push({
           id: entry.id,
           group: bucket.sku,
-          title: entry.title,
           startMs: entry.startMs,
           endMs: entry.endMs,
           className: entry.className,
-          tooltip: entry.tooltip,
+          meta: entry.tooltipData as Record<string, unknown>,
         });
         targetByItemId.set(entry.id, entry.openTarget);
       });
@@ -413,6 +562,28 @@ export default function SkuTimelineView(): JSX.Element {
     supplierFilter,
     typeFilter,
   ]);
+
+  const resolvedTimelineWindow = useMemo(() => {
+    const baseWindow = timelineData.timelineWindow;
+    if (rangePreset === "custom") {
+      const startMs = customRange?.[0]?.startOf("day").valueOf();
+      const endMs = customRange?.[1]?.endOf("day").valueOf();
+      if (Number.isFinite(startMs) && Number.isFinite(endMs) && Number(endMs) > Number(startMs)) {
+        return {
+          visibleStartMs: Number(startMs),
+          visibleEndMs: Number(endMs),
+        };
+      }
+      return baseWindow;
+    }
+    const startMs = dayjs(baseWindow.visibleStartMs).startOf("month").valueOf();
+    const months = TIME_RANGE_PRESET_MONTHS[rangePreset];
+    const endMs = dayjs(startMs).add(months, "month").endOf("day").valueOf();
+    return {
+      visibleStartMs: startMs,
+      visibleEndMs: endMs,
+    };
+  }, [customRange, rangePreset, timelineData.timelineWindow]);
 
   return (
     <Card>
@@ -456,28 +627,72 @@ export default function SkuTimelineView(): JSX.Element {
           style={{ width: 220 }}
         />
       </div>
+
+      <div className="v2-toolbar-row v2-orders-gantt-range-row" style={{ marginBottom: 10 }}>
+        <Text type="secondary">Zeitraum:</Text>
+        <Segmented
+          value={rangePreset}
+          options={[
+            { value: "3m", label: "3M" },
+            { value: "6m", label: "6M" },
+            { value: "12m", label: "12M" },
+            { value: "18m", label: "18M" },
+            { value: "custom", label: "Custom" },
+          ]}
+          onChange={(value) => {
+            const nextPreset = String(value || "12m") as TimeRangePreset;
+            setRangePreset(nextPreset);
+            if (nextPreset === "custom" && !customRange) {
+              setCustomRange([
+                dayjs(timelineData.timelineWindow.visibleStartMs),
+                dayjs(timelineData.timelineWindow.visibleEndMs),
+              ]);
+            }
+          }}
+        />
+        {rangePreset === "custom" ? (
+          <RangePicker
+            className="v2-orders-gantt-range-picker"
+            value={customRange || undefined}
+            format="DD.MM.YYYY"
+            allowClear
+            onChange={(value) => {
+              if (!value) {
+                setCustomRange(null);
+                return;
+              }
+              setCustomRange(value as [Dayjs | null, Dayjs | null]);
+            }}
+          />
+        ) : null}
+      </div>
+
       <div className="v2-toolbar-row" style={{ marginBottom: 10 }}>
         <Tag>{timelineData.groups.length} SKUs</Tag>
         <Tag>{timelineData.items.length} Segmente</Tag>
         <Tag color="green">SKU Timeline</Tag>
       </div>
+
       <div className="v2-orders-gantt-legend" style={{ marginBottom: 10 }}>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--po-production" /> PO Produktion</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--po-transit" /> PO Transit</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-production" /> FO Produktion</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-transit" /> FO Transit</span>
       </div>
+
       <OrdersGanttTimeline
         className="v2-orders-gantt--sku"
         groups={timelineData.groups}
         items={timelineData.items}
-        visibleStartMs={timelineData.timelineWindow.visibleStartMs}
-        visibleEndMs={timelineData.timelineWindow.visibleEndMs}
+        visibleStartMs={resolvedTimelineWindow.visibleStartMs}
+        visibleEndMs={resolvedTimelineWindow.visibleEndMs}
         sidebarHeaderLabel="SKU"
-        sidebarWidth={420}
-        lineHeight={74}
-        itemHeightRatio={0.66}
-        emptyMessage="Keine SKU-Einträge fuer die aktuelle Suche/Filter."
+        sidebarWidth={500}
+        lineHeight={66}
+        itemHeightRatio={0.58}
+        stackItems
+        showTodayMarker={false}
+        emptyMessage="Keine SKU-Eintraege fuer die aktuelle Suche/Filter."
         itemRenderer={skuItemRenderer}
         onItemSelect={(itemId) => {
           const target = timelineData.targetByItemId.get(itemId);
@@ -497,6 +712,7 @@ export default function SkuTimelineView(): JSX.Element {
           }
         }}
       />
+
       <Space style={{ marginTop: 10 }} wrap>
         <Text type="secondary">Klick auf ein Segment oeffnet den zugehoerigen PO/FO Datensatz.</Text>
         <Button size="small" onClick={() => navigate("/v2/orders/po?view=timeline")}>

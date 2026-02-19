@@ -32,6 +32,7 @@ export interface OrdersGanttItem {
   className?: string;
   style?: CSSProperties;
   tooltip?: string;
+  meta?: Record<string, unknown>;
   itemProps?: HTMLProps<HTMLDivElement>;
   canSelect?: boolean;
 }
@@ -132,6 +133,7 @@ export function OrdersGanttTimeline({
         end_time: span.endMs,
         className: item.className,
         style: item.style,
+        meta: item.meta,
         itemProps,
         canSelect: item.canSelect !== false,
         canMove: false,
