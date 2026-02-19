@@ -1244,6 +1244,7 @@
   padding: 0 !important;
   border: 0 !important;
   box-shadow: none !important;
+  overflow: visible !important;
 }
 
 .v2-orders-gantt--sku .rct-item .rct-item-content {
@@ -1396,12 +1397,12 @@
 }
 
 .v2-orders-gantt-tooltip-key {
-  color: #94a3b8;
+  color: rgba(226, 232, 240, 0.76);
   font-size: 11px;
 }
 
 .v2-orders-gantt-tooltip-value {
-  color: #0f172a;
+  color: #f8fafc;
   font-size: 12px;
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -1410,6 +1411,39 @@
 .v2-orders-gantt-tooltip-overlay .ant-tooltip-inner {
   border-radius: 10px;
   padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.96);
+  color: #f8fafc;
+}
+
+.v2-orders-gantt-ref {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #4b5563;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.v2-orders-gantt-ref--right {
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.v2-orders-gantt-ref--left {
+  right: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.v2-orders-gantt-ref--below {
+  top: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .v2-orders-gantt-legend-dot {

@@ -30,6 +30,7 @@ type SkuStatusFilter = "planning" | "all" | "closed";
 type TimeRangePreset = "3m" | "6m" | "12m" | "18m" | "custom";
 type TimelineEntityLabel = "PO" | "FO";
 type TimelinePhaseLabel = "Production" | "Transit";
+type ReferencePlacement = "left" | "right" | "below";
 
 const TIME_RANGE_PRESET_MONTHS: Record<Exclude<TimeRangePreset, "custom">, number> = {
   "3m": 3,
@@ -49,6 +50,8 @@ interface SkuTooltipData {
   endDate: string;
   supplier: string | null;
   destination: string | null;
+  referenceLabel: string;
+  showReferenceLabel: boolean;
 }
 
 interface SkuTimelineItem {
@@ -140,6 +143,13 @@ function resolveDestination(entry: Record<string, unknown>): string | null {
   return null;
 }
 
+function formatReference(prefix: TimelineEntityLabel, raw: string): string {
+  const compact = String(raw || "").trim().replace(/\s+/g, "");
+  if (!compact) return prefix;
+  const upper = compact.toUpperCase();
+  return upper.startsWith(prefix) ? upper : `${prefix}${compact}`;
+}
+
 function computeItemRadius(input: any): number {
   const dimensions = (input?.itemContext?.dimensions || {}) as { width?: number; height?: number };
   const width = Number(dimensions.width || 0);
@@ -147,6 +157,19 @@ function computeItemRadius(input: any): number {
   const radius = Math.min(Math.max(0, height / 2), Math.max(0, width / 2 - 1), 10);
   if (!Number.isFinite(radius)) return 0;
   return Math.max(0, radius);
+}
+
+function resolveReferencePlacement(input: any): ReferencePlacement {
+  const dimensions = (input?.itemContext?.dimensions || {}) as { width?: number; left?: number };
+  const width = Number(dimensions.width || 0);
+  const left = Number(dimensions.left || 0);
+  if (width > 0 && width < 52) return "below";
+  const timelineState = typeof input?.timelineContext?.getTimelineState === "function"
+    ? input.timelineContext.getTimelineState()
+    : null;
+  const timelineWidth = Number(timelineState?.timelineWidth || 0);
+  if (timelineWidth > 0 && left + width + 78 > timelineWidth) return "left";
+  return "right";
 }
 
 function tooltipValue(value: string | null | undefined): string {
@@ -262,6 +285,9 @@ export default function SkuTimelineView(): JSX.Element {
     const meta = (item.meta && typeof item.meta === "object")
       ? item.meta as Partial<SkuTooltipData>
       : {};
+    const referenceLabel = String(meta.referenceLabel || "");
+    const showReferenceLabel = meta.showReferenceLabel === true && Boolean(referenceLabel);
+    const referencePlacement = showReferenceLabel ? resolveReferencePlacement(input) : "right";
     const dynamicRadius = computeItemRadius(input);
     const rootProps = input.getItemProps({
       className: `${String(item.className || "")} v2-orders-gantt-pill v2-orders-gantt-pill--minimal`.trim(),
@@ -276,7 +302,13 @@ export default function SkuTimelineView(): JSX.Element {
         mouseEnterDelay={0.12}
         overlayClassName="v2-orders-gantt-tooltip-overlay"
       >
-        <div {...rootProps} />
+        <div {...rootProps}>
+          {showReferenceLabel ? (
+            <span className={`v2-orders-gantt-ref v2-orders-gantt-ref--${referencePlacement}`}>
+              {referenceLabel}
+            </span>
+          ) : null}
+        </div>
       </Tooltip>
     );
   }, []);
@@ -343,6 +375,7 @@ export default function SkuTimelineView(): JSX.Element {
         if (etaIso) timelineDates.push(etaIso);
 
         const poNo = String(po.poNo || String(po.id || "").slice(-6).toUpperCase() || "PO");
+        const poRef = formatReference("PO", poNo);
         const supplierId = String(po.supplierId || "");
         const poItems = Array.isArray(po.items) && po.items.length
           ? (po.items as Record<string, unknown>[])
@@ -355,6 +388,7 @@ export default function SkuTimelineView(): JSX.Element {
           const bucket = ensureBucket(sku, supplierId);
           const units = parseUnits(item?.units ?? item?.qty ?? item?.quantity ?? po.units);
           const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
+          let referencePlaced = false;
           const productionStart = orderMs ?? etdMs;
           const productionEnd = etdMs;
           if (productionStart != null && productionEnd != null) {
@@ -366,16 +400,19 @@ export default function SkuTimelineView(): JSX.Element {
               className: "v2-orders-gantt-item v2-orders-gantt-item--po-production",
               tooltipData: {
                 type: "PO",
-                identifier: poNo,
+                identifier: poRef,
                 phase: "Production",
                 units,
                 startDate: orderIso || etdIso,
                 endDate: etdIso || orderIso,
                 supplier,
                 destination,
+                referenceLabel: poRef,
+                showReferenceLabel: !referencePlaced,
               },
               openTarget: { entity: "po", poNo },
             });
+            referencePlaced = true;
           }
           if (etaMs != null) {
             const transitStart = etdMs ?? orderMs ?? etaMs;
@@ -387,19 +424,22 @@ export default function SkuTimelineView(): JSX.Element {
               className: "v2-orders-gantt-item v2-orders-gantt-item--po-transit",
               tooltipData: {
                 type: "PO",
-                identifier: poNo,
+                identifier: poRef,
                 phase: "Transit",
                 units,
                 startDate: etdIso || orderIso || etaIso,
                 endDate: etaIso || etdIso || orderIso,
                 supplier,
                 destination,
+                referenceLabel: poRef,
+                showReferenceLabel: !referencePlaced,
               },
               openTarget: { entity: "po", poNo },
             });
+            referencePlaced = true;
           }
 
-          bucket.references.push(poNo);
+          bucket.references.push(poRef);
         });
       });
 
@@ -434,8 +474,9 @@ export default function SkuTimelineView(): JSX.Element {
 
         const bucket = ensureBucket(sku, String(fo.supplierId || ""));
         const foId = String(fo.id || "");
-        const foRef = `FO ${foId.slice(-6).toUpperCase() || UNKNOWN_LABEL}`;
+        const foRef = formatReference("FO", foId.slice(-6).toUpperCase() || UNKNOWN_LABEL);
         const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
+        let referencePlaced = false;
         const productionStart = orderMs ?? etdMs;
         const productionEnd = etdMs;
         if (productionStart != null && productionEnd != null) {
@@ -454,9 +495,12 @@ export default function SkuTimelineView(): JSX.Element {
               endDate: etdIso || orderIso,
               supplier,
               destination,
+              referenceLabel: foRef,
+              showReferenceLabel: !referencePlaced,
             },
             openTarget: { entity: "fo", foId },
           });
+          referencePlaced = true;
         }
         if (etaMs != null) {
           const transitStart = etdMs ?? orderMs ?? etaMs;
@@ -475,9 +519,12 @@ export default function SkuTimelineView(): JSX.Element {
               endDate: etaIso || etdIso || orderIso,
               supplier,
               destination,
+              referenceLabel: foRef,
+              showReferenceLabel: !referencePlaced,
             },
             openTarget: { entity: "fo", foId },
           });
+          referencePlaced = true;
         }
 
         bucket.references.push(foRef);
