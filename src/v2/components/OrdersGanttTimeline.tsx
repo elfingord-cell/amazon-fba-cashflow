@@ -214,8 +214,8 @@ export function OrdersGanttTimeline({
           <DateHeader unit="primaryHeader" />
           <DateHeader unit="month" labelFormat={formatMonthHeaderLabel} />
         </TimelineHeaders>
-        {showTodayMarker ? (
-          <TimelineMarkers>
+        <TimelineMarkers>
+          {showTodayMarker ? (
             <TodayMarker>
               {({ styles }: { styles: CSSProperties }) => (
                 <div
@@ -228,8 +228,8 @@ export function OrdersGanttTimeline({
                 />
               )}
             </TodayMarker>
-          </TimelineMarkers>
-        ) : null}
+          ) : undefined}
+        </TimelineMarkers>
       </Timeline>
     </div>
   );
