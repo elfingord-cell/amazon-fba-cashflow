@@ -150,6 +150,12 @@ function formatReference(prefix: TimelineEntityLabel, raw: string): string {
   return upper.startsWith(prefix) ? upper : `${prefix}${compact}`;
 }
 
+function estimateReferenceWidth(referenceLabel: string): number {
+  const text = String(referenceLabel || "");
+  if (!text) return 38;
+  return Math.max(38, Math.round(text.length * 6.4 + 12));
+}
+
 function computeItemRadius(input: any): number {
   const dimensions = (input?.itemContext?.dimensions || {}) as { width?: number; height?: number };
   const width = Number(dimensions.width || 0);
@@ -159,17 +165,38 @@ function computeItemRadius(input: any): number {
   return Math.max(0, radius);
 }
 
-function resolveReferencePlacement(input: any): ReferencePlacement {
+function resolveReferencePlacement(input: any, referenceLabel: string): ReferencePlacement {
   const dimensions = (input?.itemContext?.dimensions || {}) as { width?: number; left?: number };
   const width = Number(dimensions.width || 0);
   const left = Number(dimensions.left || 0);
-  if (width > 0 && width < 52) return "below";
+  const labelWidth = estimateReferenceWidth(referenceLabel);
   const timelineState = typeof input?.timelineContext?.getTimelineState === "function"
     ? input.timelineContext.getTimelineState()
     : null;
   const timelineWidth = Number(timelineState?.timelineWidth || 0);
-  if (timelineWidth > 0 && left + width + 78 > timelineWidth) return "left";
+  if (timelineWidth <= 0) return "right";
+  const spaceRight = Math.max(0, timelineWidth - (left + width));
+  const spaceLeft = Math.max(0, left);
+  if (spaceRight >= labelWidth + 6) return "right";
+  if (spaceLeft >= labelWidth + 6) return "left";
   return "right";
+}
+
+function applyReferenceLabelToLatestSegment(segments: SkuTimelineItem[]): SkuTimelineItem[] {
+  if (!segments.length) return segments;
+  let latestIndex = 0;
+  for (let index = 1; index < segments.length; index += 1) {
+    if (segments[index].endMs >= segments[latestIndex].endMs) {
+      latestIndex = index;
+    }
+  }
+  return segments.map((segment, index) => ({
+    ...segment,
+    tooltipData: {
+      ...segment.tooltipData,
+      showReferenceLabel: index === latestIndex,
+    },
+  }));
 }
 
 function tooltipValue(value: string | null | undefined): string {
@@ -287,7 +314,7 @@ export default function SkuTimelineView(): JSX.Element {
       : {};
     const referenceLabel = String(meta.referenceLabel || "");
     const showReferenceLabel = meta.showReferenceLabel === true && Boolean(referenceLabel);
-    const referencePlacement = showReferenceLabel ? resolveReferencePlacement(input) : "right";
+    const referencePlacement = showReferenceLabel ? resolveReferencePlacement(input, referenceLabel) : "right";
     const dynamicRadius = computeItemRadius(input);
     const rootProps = input.getItemProps({
       className: `${String(item.className || "")} v2-orders-gantt-pill v2-orders-gantt-pill--minimal`.trim(),
@@ -388,12 +415,12 @@ export default function SkuTimelineView(): JSX.Element {
           const bucket = ensureBucket(sku, supplierId);
           const units = parseUnits(item?.units ?? item?.qty ?? item?.quantity ?? po.units);
           const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
-          let referencePlaced = false;
+          const orderSegments: SkuTimelineItem[] = [];
           const productionStart = orderMs ?? etdMs;
           const productionEnd = etdMs;
           if (productionStart != null && productionEnd != null) {
             const span = safeTimelineSpanMs({ startMs: productionStart, endMs: productionEnd });
-            bucket.items.push({
+            orderSegments.push({
               id: `po:${String(po.id || poNo)}:${sku}:${itemIndex}:production`,
               startMs: span.startMs,
               endMs: span.endMs,
@@ -408,16 +435,15 @@ export default function SkuTimelineView(): JSX.Element {
                 supplier,
                 destination,
                 referenceLabel: poRef,
-                showReferenceLabel: !referencePlaced,
+                showReferenceLabel: false,
               },
               openTarget: { entity: "po", poNo },
             });
-            referencePlaced = true;
           }
           if (etaMs != null) {
             const transitStart = etdMs ?? orderMs ?? etaMs;
             const span = safeTimelineSpanMs({ startMs: transitStart, endMs: etaMs });
-            bucket.items.push({
+            orderSegments.push({
               id: `po:${String(po.id || poNo)}:${sku}:${itemIndex}:transit`,
               startMs: span.startMs,
               endMs: span.endMs,
@@ -432,12 +458,14 @@ export default function SkuTimelineView(): JSX.Element {
                 supplier,
                 destination,
                 referenceLabel: poRef,
-                showReferenceLabel: !referencePlaced,
+                showReferenceLabel: false,
               },
               openTarget: { entity: "po", poNo },
             });
-            referencePlaced = true;
           }
+          applyReferenceLabelToLatestSegment(orderSegments).forEach((segment) => {
+            bucket.items.push(segment);
+          });
 
           bucket.references.push(poRef);
         });
@@ -476,12 +504,12 @@ export default function SkuTimelineView(): JSX.Element {
         const foId = String(fo.id || "");
         const foRef = formatReference("FO", foId.slice(-6).toUpperCase() || UNKNOWN_LABEL);
         const supplier = bucket.supplierName !== UNKNOWN_LABEL ? bucket.supplierName : null;
-        let referencePlaced = false;
+        const foSegments: SkuTimelineItem[] = [];
         const productionStart = orderMs ?? etdMs;
         const productionEnd = etdMs;
         if (productionStart != null && productionEnd != null) {
           const span = safeTimelineSpanMs({ startMs: productionStart, endMs: productionEnd });
-          bucket.items.push({
+          foSegments.push({
             id: `fo:${foId}:${sku}:production`,
             startMs: span.startMs,
             endMs: span.endMs,
@@ -496,16 +524,15 @@ export default function SkuTimelineView(): JSX.Element {
               supplier,
               destination,
               referenceLabel: foRef,
-              showReferenceLabel: !referencePlaced,
+              showReferenceLabel: false,
             },
             openTarget: { entity: "fo", foId },
           });
-          referencePlaced = true;
         }
         if (etaMs != null) {
           const transitStart = etdMs ?? orderMs ?? etaMs;
           const span = safeTimelineSpanMs({ startMs: transitStart, endMs: etaMs });
-          bucket.items.push({
+          foSegments.push({
             id: `fo:${foId}:${sku}:transit`,
             startMs: span.startMs,
             endMs: span.endMs,
@@ -520,12 +547,14 @@ export default function SkuTimelineView(): JSX.Element {
               supplier,
               destination,
               referenceLabel: foRef,
-              showReferenceLabel: !referencePlaced,
+              showReferenceLabel: false,
             },
             openTarget: { entity: "fo", foId },
           });
-          referencePlaced = true;
         }
+        applyReferenceLabelToLatestSegment(foSegments).forEach((segment) => {
+          bucket.items.push(segment);
+        });
 
         bucket.references.push(foRef);
       });
