@@ -1121,12 +1121,6 @@ export function computeSeries(state) {
 
   // KPIs
   const opening = parseEuro(s.settings && s.settings.openingBalance);
-  const firstNeg = months.find(m => {
-    const idx = months.indexOf(m);
-    let bal = opening;
-    for (let i = 0; i <= idx; i++) bal += series[i].net.total;
-    return bal < 0;
-  }) || null;
 
   const salesIn = series.map(x => x.itemsIn.filter(i => i.kind === 'sales-payout').reduce((a, b) => a + b.amount, 0));
   const avgSalesPayout = salesIn.length ? (salesIn.reduce((a, b) => a + b, 0) / (salesIn.filter(v => v > 0).length || 1)) : 0;
@@ -1145,25 +1139,18 @@ export function computeSeries(state) {
     openingToday: opening,
     salesPayoutAvg: avgSalesPayout,
     avgSalesPayout,
-    firstNegativeMonth: firstNeg,
+    firstNegativeMonth: null,
     actuals: {},
   };
 
-  let running = opening;
-  const breakdown = months.map((m, idx) => {
-    const row = series[idx];
-    const openingBalance = running;
-    running += row.net.total;
-    return {
-      month: m,
-      opening: openingBalance,
-      closing: running,
-      inflow: row.inflow.total,
-      outflow: row.outflow.total,
-      net: row.net.total,
-      entries: row.entries,
-    };
-  });
+  const readOptionalNumber = (value, parser = parseEuro) => {
+    if (value == null) return null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    const parsed = parser(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
 
   const actualMap = new Map();
   const monthlyActuals = s?.monthlyActuals && typeof s.monthlyActuals === "object" ? s.monthlyActuals : {};
@@ -1171,9 +1158,9 @@ export function computeSeries(state) {
   if (monthlyActualsEntries.length) {
     monthlyActualsEntries.forEach(([month, entry]) => {
       if (!month) return;
-      const revenue = Number(entry?.realRevenueEUR);
-      const payoutRate = Number(entry?.realPayoutRatePct);
-      const closing = Number(entry?.realClosingBalanceEUR);
+      const revenue = readOptionalNumber(entry?.realRevenueEUR, parseEuro);
+      const payoutRate = readOptionalNumber(entry?.realPayoutRatePct, parsePct);
+      const closing = readOptionalNumber(entry?.realClosingBalanceEUR, parseEuro);
       const actual = {};
       if (Number.isFinite(revenue)) actual.revenue = revenue;
       if (Number.isFinite(revenue) && Number.isFinite(payoutRate)) {
@@ -1187,20 +1174,65 @@ export function computeSeries(state) {
     actuals.forEach(entry => {
       if (!entry || !entry.month) return;
       const month = entry.month;
-      actualMap.set(month, {
-        revenue: parseEuro(entry.revenueEur),
-        payout: parseEuro(entry.payoutEur),
-        closing: parseEuro(entry.closingBalanceEur),
-      });
+      const revenue = readOptionalNumber(entry.revenueEur, parseEuro);
+      const payout = readOptionalNumber(entry.payoutEur, parseEuro);
+      const closing = readOptionalNumber(entry.closingBalanceEur, parseEuro);
+      const actual = {};
+      if (Number.isFinite(revenue)) actual.revenue = revenue;
+      if (Number.isFinite(payout)) actual.payout = payout;
+      if (Number.isFinite(closing)) actual.closing = closing;
+      if (Object.keys(actual).length) actualMap.set(month, actual);
     });
   }
+
+  let plannedRunning = opening;
+  const plannedBreakdown = months.map((m, idx) => {
+    const row = series[idx];
+    const openingBalance = plannedRunning;
+    plannedRunning += row.net.total;
+    return {
+      month: m,
+      opening: openingBalance,
+      closing: plannedRunning,
+      inflow: row.inflow.total,
+      outflow: row.outflow.total,
+      net: row.net.total,
+      entries: row.entries,
+    };
+  });
+
+  // Sobald ein realer Monatsend-Kontostand gepflegt ist, wird er zur neuen Baseline.
+  let rebasedRunning = opening;
+  const breakdown = months.map((m, idx) => {
+    const row = series[idx];
+    const openingBalance = rebasedRunning;
+    const plannedClosing = openingBalance + row.net.total;
+    const actualClosing = actualMap.get(m)?.closing;
+    const hasActualClosing = Number.isFinite(actualClosing);
+    const closing = hasActualClosing ? Number(actualClosing) : plannedClosing;
+    rebasedRunning = closing;
+    return {
+      month: m,
+      opening: openingBalance,
+      closing,
+      inflow: row.inflow.total,
+      outflow: row.outflow.total,
+      net: row.net.total,
+      entries: row.entries,
+      plannedClosing,
+      actualClosing: hasActualClosing ? Number(actualClosing) : null,
+    };
+  });
+
+  const firstNegEntry = breakdown.find(entry => Number(entry.closing || 0) < 0);
+  kpis.firstNegativeMonth = firstNegEntry ? firstNegEntry.month : null;
 
   const actualComparisons = [];
   actualMap.forEach((values, month) => {
     const idx = months.indexOf(month);
     if (idx === -1) return;
-    const plannedBreakdown = idx >= 0 && idx < breakdown.length ? breakdown[idx] : null;
-    const plannedClosingBalance = plannedBreakdown ? plannedBreakdown.closing : null;
+    const plannedBreakdownRow = idx >= 0 && idx < plannedBreakdown.length ? plannedBreakdown[idx] : null;
+    const plannedClosingBalance = plannedBreakdownRow ? plannedBreakdownRow.closing : null;
     const plannedRevenue = plannedRevenueByMonth[month] ?? null;
     const plannedPayout = plannedPayoutByMonth[month] ?? null;
     actualComparisons.push({

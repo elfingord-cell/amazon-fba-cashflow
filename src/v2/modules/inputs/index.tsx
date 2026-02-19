@@ -892,7 +892,7 @@ export default function InputsModule(): JSX.Element {
 
       <Card>
         <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Title level={5} style={{ margin: 0 }}>Monats-Istwerte</Title>
+          <Title level={5} style={{ margin: 0 }}>Monats-Istwerte (Monatsende)</Title>
           <Button
             onClick={() => {
               setMonthlyActuals((prev) => [
@@ -909,6 +909,9 @@ export default function InputsModule(): JSX.Element {
             Ist-Monat
           </Button>
         </Space>
+        <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 12 }}>
+          Diese Werte gelten je Monat zum Monatsende und setzen den Kontostand ab diesem Monat als neue Baseline.
+        </Paragraph>
         <div className="v2-stats-table-wrap">
           <table className="v2-stats-table">
             <thead>
@@ -916,7 +919,7 @@ export default function InputsModule(): JSX.Element {
                 <th>Monat</th>
                 <th>Realer Umsatz EUR</th>
                 <th>Reale Auszahlungsquote %</th>
-                <th>Realer Kontostand EUR</th>
+                <th>Realer Kontostand Monatsende EUR</th>
                 <th />
               </tr>
             </thead>

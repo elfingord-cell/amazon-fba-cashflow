@@ -927,8 +927,11 @@ function buildDashboardRows(state, months, options = {}) {
     : {};
   Object.entries(monthlyActuals).forEach(([month, entry]) => {
     if (!months.includes(month)) return;
-    const revenue = Number(entry && entry.realRevenueEUR);
-    const payoutRate = Number(entry && entry.realPayoutRatePct);
+    const revenueRaw = entry && entry.realRevenueEUR;
+    const payoutRateRaw = entry && entry.realPayoutRatePct;
+    if (!hasInput(revenueRaw) || !hasInput(payoutRateRaw)) return;
+    const revenue = parseEuro(revenueRaw);
+    const payoutRate = parseEuro(payoutRateRaw);
     if (!Number.isFinite(revenue) || !Number.isFinite(payoutRate)) return;
     actualPayoutMap.set(month, revenue * (payoutRate / 100));
   });
@@ -1268,8 +1271,9 @@ function buildDashboardRows(state, months, options = {}) {
       ? Math.max(-1, ...months.map((m, idx) => (coverage.get(m) === "green" ? idx : -1)))
       : months.length - 1;
     months.forEach((month, idx) => {
-      const actualClosing = Number(monthlyActualsMap[month] && monthlyActualsMap[month].realClosingBalanceEUR);
-      const hasActual = Number.isFinite(actualClosing);
+      const actualClosingRaw = monthlyActualsMap[month] && monthlyActualsMap[month].realClosingBalanceEUR;
+      const hasActual = hasInput(actualClosingRaw);
+      const actualClosing = hasActual ? parseEuro(actualClosingRaw) : null;
       const net = netRow.values[month] ? (netRow.values[month].value || 0) : 0;
       const plannedClosing = (Number.isFinite(baseBalance) ? baseBalance : 0) + net;
       if (options.limitBalanceToGreen && idx > lastGreenIndex) {

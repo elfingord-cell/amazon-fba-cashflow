@@ -21,8 +21,11 @@ test("golden parity: dashboard plan/ist breakdown remains stable", () => {
   assert.deepEqual(result.months, ["2025-01", "2025-02", "2025-03"]);
   near(result.breakdown[0].opening, 10000);
   near(result.breakdown[0].closing, 18900);
-  near(result.breakdown[1].closing, 34100);
-  near(result.breakdown[2].closing, 34000);
+  near(result.breakdown[1].closing, 33000);
+  near(result.breakdown[2].opening, 33000);
+  near(result.breakdown[2].closing, 32900);
+  near(result.breakdown[1].plannedClosing, 34100);
+  near(result.breakdown[1].actualClosing, 33000);
 
   const febActual = result.actualComparisons.find((entry) => entry.month === "2025-02");
   assert.ok(febActual, "missing 2025-02 actual comparison row");
