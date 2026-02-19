@@ -6,6 +6,13 @@ const { pathToFileURL } = require("node:url");
 const {
   buildPaymentJournalRowsFromState: buildV2PaymentJournalRowsFromState,
 } = require("../../.test-build/migration/v2/domain/paymentJournal.js");
+const { buildPaymentRows } = require("../../.test-build/migration/ui/orderEditorFactory.js");
+
+const PO_CONFIG = {
+  slug: "po",
+  entityLabel: "PO",
+  numberField: "poNo",
+};
 
 let legacyPaymentsExportPromise = null;
 
@@ -282,4 +289,46 @@ test("fo payment journal is planning-only (open) and excludes converted/archived
   const aprilRows = buildV2PaymentJournalRowsFromState(state, { scope: "both", month: "2025-04" });
   const aprilFoIds = aprilRows.filter((row) => row.entityType === "FO").map((row) => row.internalId);
   assert.deepEqual(aprilFoIds, ["fo-3"], "legacy PLANNED should be treated as active; converted FO must be excluded");
+});
+
+test("po payment rows keep outgoing totals stable and include EUSt refund only in incoming mode", () => {
+  const state = createParityState();
+  const po = state.pos.find((entry) => String(entry.id || "") === "po-2");
+  assert.ok(po, "po-2 missing");
+  po.dutyRatePct = 6.5;
+  po.eustRatePct = 19;
+  po.dutyIncludeFreight = true;
+  po.vatRefundEnabled = true;
+  po.vatRefundLagMonths = 2;
+  po.freightEur = "120,00";
+  po.autoEvents = [
+    { id: "po2-auto-freight", type: "freight", enabled: true },
+    { id: "po2-auto-duty", type: "duty", enabled: true },
+    { id: "po2-auto-eust", type: "eust", enabled: true },
+    { id: "po2-auto-vat", type: "vat_refund", enabled: true },
+    { id: "po2-auto-fx", type: "fx_fee", enabled: false },
+  ];
+
+  const settings = {
+    ...state.settings,
+    dutyRatePct: 6.5,
+    dutyIncludeFreight: true,
+    eustRatePct: 19,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
+  };
+  const outgoingRows = buildPaymentRows(po, PO_CONFIG, settings, state.payments);
+  const withIncomingRows = buildPaymentRows(po, PO_CONFIG, settings, state.payments, { includeIncoming: true });
+  const outgoingTotal = round2(outgoingRows.reduce((sum, row) => sum + Number(row.plannedEur || 0), 0));
+  const outgoingFromIncomingTotal = round2(withIncomingRows
+    .filter((row) => row.direction !== "in")
+    .reduce((sum, row) => sum + Number(row.plannedEur || 0), 0));
+
+  assert.equal(outgoingRows.some((row) => String(row.eventType || "") === "vat_refund"), false);
+  assert.equal(withIncomingRows.some((row) => String(row.eventType || "") === "vat_refund"), true);
+  assert.equal(
+    withIncomingRows.some((row) => String(row.eventType || "") === "vat_refund" && String(row.direction || "") === "in"),
+    true,
+  );
+  assert.equal(outgoingTotal, outgoingFromIncomingTotal);
 });

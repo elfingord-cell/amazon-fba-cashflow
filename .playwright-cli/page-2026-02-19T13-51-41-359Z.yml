@@ -1,0 +1,262 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img "bank" [ref=e7]:
+            - img [ref=e8]
+          - generic [ref=e10]: FBA Cashflow V2
+        - menu [ref=e11]:
+          - text: Übersicht & Analyse
+          - group [ref=e12]:
+            - menuitem "dashboard Dashboard" [ref=e13] [cursor=pointer]:
+              - img "dashboard" [ref=e14]:
+                - img [ref=e15]
+              - generic [ref=e17]: Dashboard
+            - menuitem "credit-card Soll vs. Ist" [ref=e18] [cursor=pointer]:
+              - img "credit-card" [ref=e19]:
+                - img [ref=e20]
+              - generic [ref=e22]: Soll vs. Ist
+            - menuitem "pie-chart ABC Insights" [ref=e23] [cursor=pointer]:
+              - img "pie-chart" [ref=e24]:
+                - img [ref=e25]
+              - generic [ref=e27]: ABC Insights
+            - menuitem "calculator USt Vorschau" [ref=e28] [cursor=pointer]:
+              - img "calculator" [ref=e29]:
+                - img [ref=e30]
+              - generic [ref=e32]: USt Vorschau
+          - text: Operatives Geschäft
+          - group [ref=e33]:
+            - menuitem "line-chart Absatzprognose" [ref=e34] [cursor=pointer]:
+              - img "line-chart" [ref=e35]:
+                - img [ref=e36]
+              - generic [ref=e38]: Absatzprognose
+            - menuitem "inbox Bestandsaufnahme" [ref=e39] [cursor=pointer]:
+              - img "inbox" [ref=e40]:
+                - img [ref=e41]
+              - generic [ref=e43]: Bestandsaufnahme
+            - menuitem "fund-projection-screen Bestandsprojektion" [ref=e44] [cursor=pointer]:
+              - img "fund-projection-screen" [ref=e45]:
+                - img [ref=e46]
+              - generic [ref=e49]: Bestandsprojektion
+            - menuitem "shopping-cart Bestellungen" [ref=e50] [cursor=pointer]:
+              - img "shopping-cart" [ref=e51]:
+                - img [ref=e52]
+              - generic [ref=e54]: Bestellungen
+            - menuitem "tags Neue Produkte" [ref=e55] [cursor=pointer]:
+              - img "tags" [ref=e56]:
+                - img [ref=e57]
+              - generic [ref=e59]: Neue Produkte
+          - text: Finanzen & Abschluss
+          - group [ref=e60]:
+            - menuitem "form Eingaben" [ref=e61] [cursor=pointer]:
+              - img "form" [ref=e62]:
+                - img [ref=e63]
+              - generic [ref=e66]: Eingaben
+            - menuitem "project Fixkosten" [ref=e67] [cursor=pointer]:
+              - img "project" [ref=e68]:
+                - img [ref=e69]
+              - generic [ref=e71]: Fixkosten
+            - menuitem "pie-chart Dividendenplanung" [ref=e72] [cursor=pointer]:
+              - img "pie-chart" [ref=e73]:
+                - img [ref=e74]
+              - generic [ref=e76]: Dividendenplanung
+            - menuitem "file-text Buchhalter Export" [ref=e77] [cursor=pointer]:
+              - img "file-text" [ref=e78]:
+                - img [ref=e79]
+              - generic [ref=e81]: Buchhalter Export
+          - text: Stammdaten & Tools
+          - group [ref=e82]:
+            - menuitem "tags Produkte" [ref=e83] [cursor=pointer]:
+              - img "tags" [ref=e84]:
+                - img [ref=e85]
+              - generic [ref=e87]: Produkte
+            - menuitem "team Suppliers" [ref=e88] [cursor=pointer]:
+              - img "team" [ref=e89]:
+                - img [ref=e90]
+              - generic [ref=e92]: Suppliers
+            - menuitem "setting Settings" [ref=e93] [cursor=pointer]:
+              - img "setting" [ref=e94]:
+                - img [ref=e95]
+              - generic [ref=e97]: Settings
+            - menuitem "upload Export / Import" [ref=e98] [cursor=pointer]:
+              - img "upload" [ref=e99]:
+                - img [ref=e100]
+              - generic [ref=e102]: Export / Import
+            - menuitem "bug Debug" [ref=e103] [cursor=pointer]:
+              - img "bug" [ref=e104]:
+                - img [ref=e105]
+              - generic [ref=e108]: Debug
+    - generic [ref=e109]:
+      - banner [ref=e110]:
+        - generic [ref=e112]:
+          - button "rollback Legacy App" [ref=e114] [cursor=pointer]:
+            - img "rollback" [ref=e116]:
+              - img [ref=e117]
+            - generic [ref=e119]: Legacy App
+          - button "user Anmelden" [ref=e121] [cursor=pointer]:
+            - img "user" [ref=e123]:
+              - img [ref=e124]
+            - generic [ref=e126]: Anmelden
+        - generic [ref=e127]:
+          - generic [ref=e128]: Online
+          - generic [ref=e129]: nicht verbunden
+          - generic [ref=e130]: Realtime inaktiv
+          - generic [ref=e131]: Nicht angemeldet
+      - main [ref=e132]:
+        - generic [ref=e202]:
+          - generic [ref=e204]:
+            - generic [ref=e205]:
+              - generic [ref=e206]:
+                - heading "Dashboard" [level=3] [ref=e207]
+                - generic [ref=e208]: Executive-Cockpit für Kontostand, Robustheit und Maßnahmenpriorisierung. Nicht robuste Monate sind klar markiert.
+              - generic [ref=e209]:
+                - generic [ref=e210]: Zeitraum
+                - generic [ref=e211] [cursor=pointer]:
+                  - generic [ref=e213]:
+                    - combobox [ref=e215]
+                    - generic "Nächste 12 Monate" [ref=e216]
+                  - generic:
+                    - img:
+                      - img
+            - generic [ref=e217]:
+              - generic [ref=e218]:
+                - button "Zur Absatzprognose" [ref=e219] [cursor=pointer]:
+                  - generic [ref=e220]: Zur Absatzprognose
+                - button "Zur Bestandsprojektion" [ref=e221] [cursor=pointer]:
+                  - generic [ref=e222]: Zur Bestandsprojektion
+                - button "Zu Bestellungen" [ref=e223] [cursor=pointer]:
+                  - generic [ref=e224]: Zu Bestellungen
+                - button "Zum Abschluss" [ref=e225] [cursor=pointer]:
+                  - generic [ref=e226]: Zum Abschluss
+              - generic [ref=e227]: "Aktueller Betrachtungszeitraum: 12 Monat(e)."
+          - generic [ref=e229]:
+            - button "expanded Executive Signals" [expanded] [ref=e230] [cursor=pointer]:
+              - img "expanded" [ref=e232]:
+                - img [ref=e233]
+              - generic [ref=e235]: Executive Signals
+            - generic [ref=e238]:
+              - generic [ref=e240]:
+                - generic [ref=e241]:
+                  - generic [ref=e243]:
+                    - text: Readiness Gate
+                    - img "info-circle" [ref=e244]:
+                      - img [ref=e245]
+                  - generic [ref=e249]: Nicht bereit
+                - generic [ref=e250]:
+                  - generic [ref=e252]: No-Go
+                  - generic [ref=e254]: 0/12 robuste Monate
+                - generic [ref=e255]:
+                  - generic [ref=e256]:
+                    - generic [ref=e257]: "Robustheit 12M: 0/12 Monate robust (erforderlich: 12)."
+                    - button "Öffnen" [ref=e258] [cursor=pointer]:
+                      - generic [ref=e259]: Öffnen
+                  - generic [ref=e260]:
+                    - generic [ref=e261]: "Forecast aktuell: Kein Forecast-Import vorhanden."
+                    - button "Öffnen" [ref=e262] [cursor=pointer]:
+                      - generic [ref=e263]: Öffnen
+              - generic [ref=e265]:
+                - generic [ref=e266]:
+                  - generic [ref=e268]:
+                    - text: Robust bis
+                    - img "info-circle" [ref=e269]:
+                      - img [ref=e270]
+                  - generic [ref=e274]: —
+                - generic [ref=e275]: 0/12 Monate robust
+              - generic [ref=e277]:
+                - generic [ref=e278]:
+                  - generic [ref=e280]:
+                    - text: Erster negativer Monat (robust)
+                    - img "info-circle" [ref=e281]:
+                      - img [ref=e282]
+                  - generic [ref=e286]: Keiner
+                - generic [ref=e287]: Simulation wird berücksichtigt
+              - generic [ref=e289]:
+                - generic [ref=e290]:
+                  - generic [ref=e292]:
+                    - text: Freier Cash nach Buffer
+                    - img "info-circle" [ref=e293]:
+                      - img [ref=e294]
+                  - generic [ref=e298]: —
+                - generic [ref=e299]: "Buffer (2M Fixkosten): 0,00 €"
+              - generic [ref=e301]:
+                - generic [ref=e302]:
+                  - strong [ref=e304]:
+                    - text: Forecast Freshness
+                    - img "info-circle" [ref=e305]:
+                      - img [ref=e306]
+                  - generic [ref=e309]: Keine Daten
+                - generic [ref=e310]:
+                  - generic [ref=e311]: "Baseline Forecast: Keine Baseline"
+                  - generic [ref=e312]: Kein Forecast-Import
+                  - generic [ref=e313]: "Letzter Import: -"
+                  - generic [ref=e314]: "Nächster Import empfohlen: —"
+          - generic [ref=e316]:
+            - button "expanded Kontostand & Cashflow" [expanded] [ref=e317] [cursor=pointer]:
+              - img "expanded" [ref=e319]:
+                - img [ref=e320]
+              - generic [ref=e322]: Kontostand & Cashflow
+            - generic [ref=e326]:
+              - heading "Kontostand & Cashflow" [level=4] [ref=e327]
+              - generic [ref=e328]:
+                - generic [ref=e330]: "Einzahlungen: 20.000,00 €"
+                - generic [ref=e332]: "Auszahlungen: 0,00 €"
+                - generic [ref=e334]: "Netto: 20.000,00 €"
+                - generic [ref=e336]: "Simulation: aus"
+              - generic [ref=e337]:
+                - generic [ref=e338]: Linie solid = belastbar
+                - generic [ref=e339]: Linie gestrichelt = orientierend
+                - generic [ref=e340]: Rot = unter 0
+          - button "collapsed Action Center & Forecast Ops" [ref=e346] [cursor=pointer]:
+            - img "collapsed" [ref=e348]:
+              - img [ref=e349]
+            - generic [ref=e351]: Action Center & Forecast Ops
+          - button "collapsed Robustheits-Matrix" [ref=e354] [cursor=pointer]:
+            - img "collapsed" [ref=e356]:
+              - img [ref=e357]
+            - generic [ref=e359]: Robustheits-Matrix
+          - button "collapsed Payout Planner (Simulation)" [ref=e362] [cursor=pointer]:
+            - img "collapsed" [ref=e364]:
+              - img [ref=e365]
+            - generic [ref=e367]: Payout Planner (Simulation)
+          - button "collapsed Monatliche PnL (Drilldown)" [ref=e370] [cursor=pointer]:
+            - img "collapsed" [ref=e372]:
+              - img [ref=e373]
+            - generic [ref=e375]: Monatliche PnL (Drilldown)
+          - button "collapsed Plan/Ist Drilldown" [ref=e378] [cursor=pointer]:
+            - img "collapsed" [ref=e380]:
+              - img [ref=e381]
+            - generic [ref=e383]: Plan/Ist Drilldown
+          - button "collapsed KPI-Übersicht" [ref=e386] [cursor=pointer]:
+            - img "collapsed" [ref=e388]:
+              - img [ref=e389]
+            - generic [ref=e391]: KPI-Übersicht
+  - generic [ref=e148]:
+    - dialog "Konto & Workspace":
+      - generic [ref=e149]:
+        - button "Close" [ref=e150] [cursor=pointer]:
+          - generic "Close" [ref=e151]:
+            - img "close" [ref=e152]:
+              - img [ref=e153]
+        - generic [ref=e156]: Konto & Workspace
+        - generic [ref=e158]:
+          - generic [ref=e160]:
+            - generic "E-Mail" [ref=e162]: "* E-Mail"
+            - textbox "* E-Mail" [ref=e166]: editor@fba-cashflow.local
+          - generic [ref=e168]:
+            - generic "Passwort" [ref=e170]: "* Passwort"
+            - generic [ref=e174]:
+              - textbox "* Passwort" [ref=e175]: SE30Genoegen.
+              - img "eye-invisible" [ref=e177] [cursor=pointer]:
+                - img [ref=e178]
+          - generic [ref=e181]:
+            - button "login Login" [active] [ref=e183] [cursor=pointer]:
+              - img "login" [ref=e193]:
+                - img [ref=e194]
+              - generic [ref=e188]: Login
+            - button "Registrieren" [ref=e190] [cursor=pointer]:
+              - generic [ref=e191]: Registrieren
+          - alert [ref=e196]:
+            - img "info-circle" [ref=e197]:
+              - img [ref=e198]
+            - generic [ref=e201]: Supabase runtime config is missing (check /api/config).

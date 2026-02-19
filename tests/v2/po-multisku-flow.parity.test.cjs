@@ -215,6 +215,17 @@ test("po payment event coverage: default rows exclude refund, optional incoming 
   assert.equal(timelineLabels.some((label) => label.toLowerCase().includes("balance")), true);
 });
 
+test("po freight hydration logic: units/sku auto-recalc remains active until manual freight override", () => {
+  const source = readPoModuleSource();
+
+  assert.match(source, /trackFreightOverrides/);
+  assert.match(source, /manualFreightOverrideIdsRef/);
+  assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(row, "freightEur"\)/);
+  assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(row, "units"\)/);
+  assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(row, "sku"\)/);
+  assert.equal(source.includes("if (Number(item.freightEur || 0) > 0) return item;"), false);
+});
+
 test("po multi-sku flow: FO merge creates a single multi-item PO with critical path", () => {
   const po = createPoFromFos({
     poNumber: "PO-FO-MERGE-1",
@@ -286,11 +297,12 @@ test("po timeline integration: table and timeline reuse shared filtered rows", (
   assert.match(source, /filteredRows\.map\(\(row\) =>/);
   assert.match(source, /paymentStatusFilter/);
   assert.match(source, /onlyOpenPayments/);
-  assert.match(source, /combineDutyAndEustRows/);
-  assert.match(source, /Umsatzsteuer \+ Zoll/);
-  assert.match(source, /tax_duty_combined/);
+  assert.match(source, /sortPaymentRowsByFlow\(draftPaymentRowsRaw\)/);
+  assert.match(source, /const draftIncomingPaymentRows = useMemo/);
+  assert.match(source, /Automatische Eingaenge \(Info\)/);
+  assert.match(source, /row\.eventType === "vat_refund" \|\| row\.direction === "in"/);
   assert.match(source, /\.filter\(\(row\) => row\.eventType !== "vat_refund"\)/);
-  assert.match(source, /\.filter\(\(row\) => String\(row\.eventType \|\| ""\) !== "vat_refund"\)/);
+  assert.match(source, /EUSt-Erstattung wird automatisch verbucht/);
 });
 
 test("po timeline marker click opens payment flow with modal fallback", () => {

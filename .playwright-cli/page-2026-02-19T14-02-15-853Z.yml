@@ -1,0 +1,658 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img "bank" [ref=e7]:
+            - img [ref=e8]
+          - generic [ref=e10]: FBA Cashflow V2
+        - menu [ref=e11]:
+          - text: Übersicht & Analyse
+          - group [ref=e12]:
+            - menuitem "dashboard Dashboard" [ref=e13] [cursor=pointer]:
+              - img "dashboard" [ref=e14]:
+                - img [ref=e15]
+              - generic [ref=e17]: Dashboard
+            - menuitem "credit-card Soll vs. Ist" [ref=e18] [cursor=pointer]:
+              - img "credit-card" [ref=e19]:
+                - img [ref=e20]
+              - generic [ref=e22]: Soll vs. Ist
+            - menuitem "pie-chart ABC Insights" [ref=e23] [cursor=pointer]:
+              - img "pie-chart" [ref=e24]:
+                - img [ref=e25]
+              - generic [ref=e27]: ABC Insights
+            - menuitem "calculator USt Vorschau" [ref=e28] [cursor=pointer]:
+              - img "calculator" [ref=e29]:
+                - img [ref=e30]
+              - generic [ref=e32]: USt Vorschau
+          - text: Operatives Geschäft
+          - group [ref=e33]:
+            - menuitem "line-chart Absatzprognose" [ref=e34] [cursor=pointer]:
+              - img "line-chart" [ref=e35]:
+                - img [ref=e36]
+              - generic [ref=e38]: Absatzprognose
+            - menuitem "inbox Bestandsaufnahme" [ref=e39] [cursor=pointer]:
+              - img "inbox" [ref=e40]:
+                - img [ref=e41]
+              - generic [ref=e43]: Bestandsaufnahme
+            - menuitem "fund-projection-screen Bestandsprojektion" [ref=e44] [cursor=pointer]:
+              - img "fund-projection-screen" [ref=e45]:
+                - img [ref=e46]
+              - generic [ref=e49]: Bestandsprojektion
+            - menuitem "shopping-cart Bestellungen" [ref=e50] [cursor=pointer]:
+              - img "shopping-cart" [ref=e51]:
+                - img [ref=e52]
+              - generic [ref=e54]: Bestellungen
+            - menuitem "tags Neue Produkte" [ref=e55] [cursor=pointer]:
+              - img "tags" [ref=e56]:
+                - img [ref=e57]
+              - generic [ref=e59]: Neue Produkte
+          - text: Finanzen & Abschluss
+          - group [ref=e60]:
+            - menuitem "form Eingaben" [ref=e61] [cursor=pointer]:
+              - img "form" [ref=e62]:
+                - img [ref=e63]
+              - generic [ref=e66]: Eingaben
+            - menuitem "project Fixkosten" [ref=e67] [cursor=pointer]:
+              - img "project" [ref=e68]:
+                - img [ref=e69]
+              - generic [ref=e71]: Fixkosten
+            - menuitem "pie-chart Dividendenplanung" [ref=e72] [cursor=pointer]:
+              - img "pie-chart" [ref=e73]:
+                - img [ref=e74]
+              - generic [ref=e76]: Dividendenplanung
+            - menuitem "file-text Buchhalter Export" [ref=e77] [cursor=pointer]:
+              - img "file-text" [ref=e78]:
+                - img [ref=e79]
+              - generic [ref=e81]: Buchhalter Export
+          - text: Stammdaten & Tools
+          - group [ref=e82]:
+            - menuitem "tags Produkte" [ref=e83] [cursor=pointer]:
+              - img "tags" [ref=e84]:
+                - img [ref=e85]
+              - generic [ref=e87]: Produkte
+            - menuitem "team Suppliers" [ref=e88] [cursor=pointer]:
+              - img "team" [ref=e89]:
+                - img [ref=e90]
+              - generic [ref=e92]: Suppliers
+            - menuitem "setting Settings" [ref=e93] [cursor=pointer]:
+              - img "setting" [ref=e94]:
+                - img [ref=e95]
+              - generic [ref=e97]: Settings
+            - menuitem "upload Export / Import" [ref=e98] [cursor=pointer]:
+              - img "upload" [ref=e99]:
+                - img [ref=e100]
+              - generic [ref=e102]: Export / Import
+            - menuitem "bug Debug" [ref=e103] [cursor=pointer]:
+              - img "bug" [ref=e104]:
+                - img [ref=e105]
+              - generic [ref=e108]: Debug
+    - generic [ref=e109]:
+      - banner [ref=e110]:
+        - generic [ref=e112]:
+          - button "rollback Legacy App" [ref=e114] [cursor=pointer]:
+            - img "rollback" [ref=e116]:
+              - img [ref=e117]
+            - generic [ref=e119]: Legacy App
+          - button "user Anmelden" [ref=e121] [cursor=pointer]:
+            - img "user" [ref=e123]:
+              - img [ref=e124]
+            - generic [ref=e126]: Anmelden
+        - generic [ref=e127]:
+          - generic [ref=e128]: Online
+          - generic [ref=e129]: nicht verbunden
+          - generic [ref=e130]: Realtime inaktiv
+          - generic [ref=e131]: Nicht angemeldet
+      - main [ref=e132]:
+        - generic [ref=e148]:
+          - generic [ref=e152]:
+            - heading "Bestellungen" [level=3] [ref=e153]
+            - generic [ref=e154]: Gemeinsamer Arbeitsbereich für Forecast Orders und Purchase Orders mit schneller FO-zu-PO Übergabe.
+          - generic [ref=e156]:
+            - generic [ref=e158]:
+              - heading "Zahlungsprotokoll (PO-Ist)" [level=5] [ref=e159]
+              - generic [ref=e160]: Tatsächlich bestätigte Zahlungen werden nur auf POs gebucht. FOs bleiben Planobjekte.
+            - generic [ref=e161]:
+              - generic [ref=e162]: "Eintraege: 0"
+              - generic [ref=e163]: "Summe Ist: 0,00 €"
+            - table [ref=e165]:
+              - rowgroup [ref=e166]:
+                - row "Payment-ID Paid Date Methode Durch Ist EUR Abgedeckte Events" [ref=e167]:
+                  - columnheader "Payment-ID" [ref=e168]
+                  - columnheader "Paid Date" [ref=e169]
+                  - columnheader "Methode" [ref=e170]
+                  - columnheader "Durch" [ref=e171]
+                  - columnheader "Ist EUR" [ref=e172]
+                  - columnheader "Abgedeckte Events" [ref=e173]
+              - rowgroup [ref=e174]:
+                - row "Noch keine Zahlungen verbucht." [ref=e175]:
+                  - cell "Noch keine Zahlungen verbucht." [ref=e176]
+          - generic [ref=e177]:
+            - tablist [ref=e178]:
+              - generic [ref=e180]:
+                - tab "Bestellungen (PO)" [selected] [ref=e182] [cursor=pointer]
+                - tab "Forecast Orders (FO)" [ref=e184] [cursor=pointer]
+                - tab "SKU Sicht" [ref=e186] [cursor=pointer]
+            - tabpanel "Bestellungen (PO)" [ref=e189]:
+              - generic [ref=e190]:
+                - generic [ref=e194]:
+                  - button "Neue PO" [ref=e195] [cursor=pointer]:
+                    - generic [ref=e196]: Neue PO
+                  - radiogroup "segmented control" [ref=e197]:
+                    - generic [ref=e198]:
+                      - generic [ref=e199] [cursor=pointer]:
+                        - radio "Tabelle" [checked]
+                        - generic "Tabelle" [ref=e200]
+                      - generic [ref=e201] [cursor=pointer]:
+                        - radio "Timeline"
+                        - generic "Timeline" [ref=e202]
+                - generic [ref=e204]:
+                  - generic [ref=e205]:
+                    - textbox "PO Nummer, SKU, Alias, Supplier" [ref=e206]
+                    - generic [ref=e207] [cursor=pointer]:
+                      - generic [ref=e209]:
+                        - combobox [ref=e211]
+                        - generic "Aktiv" [ref=e212]
+                      - generic:
+                        - img:
+                          - img
+                    - generic [ref=e213] [cursor=pointer]:
+                      - generic [ref=e215]:
+                        - combobox [ref=e217]
+                        - 'generic "Status: Alle" [ref=e218]'
+                      - generic:
+                        - img:
+                          - img
+                    - generic [ref=e219] [cursor=pointer]:
+                      - checkbox "Nur POs mit offenen Zahlungen" [ref=e221]
+                      - generic [ref=e223]: Nur POs mit offenen Zahlungen
+                  - table [ref=e225]:
+                    - rowgroup [ref=e226]:
+                      - row "PO Produkt Supplier Order ETD / ETA Warenwert Open / Paid Status Aktionen" [ref=e227]:
+                        - columnheader "PO" [ref=e228]:
+                          - button "PO" [ref=e229] [cursor=pointer]:
+                            - generic [ref=e230]: PO
+                            - generic [ref=e231]: ↕
+                        - columnheader "Produkt" [ref=e232]
+                        - columnheader "Supplier" [ref=e233]:
+                          - button "Supplier" [ref=e234] [cursor=pointer]:
+                            - generic [ref=e235]: Supplier
+                            - generic [ref=e236]: ↕
+                        - columnheader "Order" [ref=e237]
+                        - columnheader "ETD / ETA" [ref=e238]:
+                          - button "ETD / ETA" [ref=e239] [cursor=pointer]:
+                            - generic [ref=e240]: ETD / ETA
+                            - generic [ref=e241]: ↕
+                        - columnheader "Warenwert" [ref=e242]
+                        - columnheader "Open / Paid" [ref=e243]
+                        - columnheader "Status" [ref=e244]
+                        - columnheader "Aktionen" [ref=e245]
+                    - rowgroup [ref=e246]:
+                      - 'row "26003 BIKEPACK-Lenkertasche SKU-ALPHA Ningbo Trading 26.01.2026 ETD 12.03.2026 ETA 26.04.2026 5.483,19 € Open: 6.525,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e247]':
+                        - cell "26003" [ref=e248]
+                        - cell "BIKEPACK-Lenkertasche SKU-ALPHA" [ref=e249]:
+                          - generic [ref=e250]:
+                            - generic "BIKEPACK-Lenkertasche" [ref=e251]
+                            - generic "SKU-ALPHA" [ref=e252]
+                        - cell "Ningbo Trading" [ref=e253]
+                        - cell "26.01.2026" [ref=e254]
+                        - cell "ETD 12.03.2026 ETA 26.04.2026" [ref=e255]:
+                          - generic [ref=e256]:
+                            - generic [ref=e258]: ETD 12.03.2026
+                            - generic [ref=e260]: ETA 26.04.2026
+                        - cell "5.483,19 €" [ref=e261]
+                        - 'cell "Open: 6.525,00 € Paid: 0,00 €" [ref=e262]':
+                          - generic [ref=e263]:
+                            - generic [ref=e265]: "Open: 6.525,00 €"
+                            - generic [ref=e267]: "Paid: 0,00 €"
+                        - cell "Offen" [ref=e268]:
+                          - generic [ref=e269]: Offen
+                        - cell "Bearbeiten Loeschen" [ref=e270]:
+                          - generic [ref=e271]:
+                            - button "Bearbeiten" [ref=e272] [cursor=pointer]:
+                              - generic [ref=e273]: Bearbeiten
+                            - button "Loeschen" [ref=e274] [cursor=pointer]:
+                              - generic [ref=e275]: Loeschen
+  - generic [ref=e276]:
+    - dialog "PO bearbeiten":
+      - generic [ref=e277]:
+        - button "Close" [ref=e278] [cursor=pointer]:
+          - generic "Close" [ref=e279]:
+            - img "close" [ref=e280]:
+              - img [ref=e281]
+        - generic [ref=e284]: PO bearbeiten
+        - generic [ref=e286]:
+          - generic [ref=e287]:
+            - generic [ref=e290]:
+              - generic "PO Nummer" [ref=e292]: "* PO Nummer"
+              - textbox "* PO Nummer" [ref=e296]: "26003"
+            - generic [ref=e299]:
+              - generic "Supplier" [ref=e301]: "* Supplier"
+              - generic [ref=e305] [cursor=pointer]:
+                - generic [ref=e307]:
+                  - combobox "* Supplier" [ref=e309]
+                  - generic "Ningbo Trading" [ref=e310]
+                - generic:
+                  - img:
+                    - img
+            - generic [ref=e313]:
+              - generic "Transport" [ref=e315]
+              - generic [ref=e319] [cursor=pointer]:
+                - generic [ref=e321]:
+                  - combobox "Transport" [ref=e323]
+                  - generic "RAIL" [ref=e324]
+                - generic:
+                  - img:
+                    - img
+          - generic [ref=e325]:
+            - generic [ref=e328]:
+              - generic "Order Date" [ref=e330]: "* Order Date"
+              - textbox "* Order Date" [ref=e334]: 2026-01-26
+            - generic [ref=e337]:
+              - generic "ETD Manual" [ref=e339]
+              - textbox [ref=e343]
+            - generic [ref=e346]:
+              - generic "ETA Manual" [ref=e348]
+              - textbox "ETA Manual" [ref=e352]
+            - generic [ref=e355]:
+              - generic "Empfangen am" [ref=e357]
+              - textbox [ref=e361]
+            - generic [ref=e364]:
+              - generic "FX Override" [ref=e366]
+              - generic [ref=e370]:
+                - generic:
+                  - button "Increase Value" [ref=e371] [cursor=pointer]:
+                    - img "up" [ref=e372]:
+                      - img [ref=e373]
+                  - button "Decrease Value" [ref=e375] [cursor=pointer]:
+                    - img "down" [ref=e376]:
+                      - img [ref=e377]
+                - spinbutton "FX Override" [ref=e380]: 1,1900
+            - generic [ref=e383]:
+              - generic "Duty %" [ref=e385]
+              - generic [ref=e389]:
+                - generic:
+                  - button "Increase Value" [ref=e390] [cursor=pointer]:
+                    - img "up" [ref=e391]:
+                      - img [ref=e392]
+                  - button "Decrease Value" [ref=e394] [cursor=pointer]:
+                    - img "down" [ref=e395]:
+                      - img [ref=e396]
+                - spinbutton "Duty %" [ref=e399]: 6,50
+            - generic [ref=e402]:
+              - generic "EUSt %" [ref=e404]
+              - generic [ref=e408]:
+                - generic:
+                  - button "Increase Value" [ref=e409] [cursor=pointer]:
+                    - img "up" [ref=e410]:
+                      - img [ref=e411]
+                  - button "Decrease Value" [ref=e413] [cursor=pointer]:
+                    - img "down" [ref=e414]:
+                      - img [ref=e415]
+                - spinbutton "EUSt %" [ref=e418]: 19,00
+          - generic [ref=e419]:
+            - generic [ref=e426] [cursor=pointer]:
+              - checkbox "Duty inkl. Freight" [checked] [ref=e428]
+              - generic [ref=e430]: Duty inkl. Freight
+            - generic [ref=e437] [cursor=pointer]:
+              - checkbox "DDP" [ref=e439]
+              - generic [ref=e441]: DDP
+            - generic [ref=e448] [cursor=pointer]:
+              - checkbox "Archiviert" [ref=e450]
+              - generic [ref=e452]: Archiviert
+          - generic [ref=e454]:
+            - generic [ref=e455]:
+              - strong [ref=e458]: PO Positionen (Supplier-first)
+              - generic [ref=e460]: 1 SKU(s)
+            - generic [ref=e461]:
+              - generic [ref=e463] [cursor=pointer]:
+                - generic [ref=e465]:
+                  - combobox [ref=e468]
+                  - generic: SKUs auswaehlen
+                - generic:
+                  - img:
+                    - img
+              - button "SKUs hinzufuegen" [disabled] [ref=e470]:
+                - generic: SKUs hinzufuegen
+            - generic [ref=e471]:
+              - generic [ref=e473]:
+                - generic [ref=e474]:
+                  - generic [ref=e476]:
+                    - generic "SKU" [ref=e478]: "* SKU"
+                    - generic [ref=e482] [cursor=pointer]:
+                      - generic [ref=e484]:
+                        - combobox "* SKU" [ref=e486]
+                        - generic "BIKEPACK-Lenkertasche (SKU-ALPHA)" [ref=e487]
+                      - generic:
+                        - img:
+                          - img
+                  - generic [ref=e489]:
+                    - generic "Units" [ref=e491]: "* Units"
+                    - generic [ref=e495]:
+                      - generic:
+                        - button "Increase Value" [ref=e496] [cursor=pointer]:
+                          - img "up" [ref=e497]:
+                            - img [ref=e498]
+                        - button "Decrease Value" [ref=e500] [cursor=pointer]:
+                          - img "down" [ref=e501]:
+                            - img [ref=e502]
+                      - spinbutton "* Units" [ref=e505]: "750"
+                  - generic [ref=e507]:
+                    - generic "Unit Cost USD" [ref=e509]: "* Unit Cost USD"
+                    - generic [ref=e513]:
+                      - generic:
+                        - button "Increase Value" [ref=e514] [cursor=pointer]:
+                          - img "up" [ref=e515]:
+                            - img [ref=e516]
+                        - button "Decrease Value" [ref=e518] [cursor=pointer]:
+                          - img "down" [ref=e519]:
+                            - img [ref=e520]
+                      - spinbutton "* Unit Cost USD" [ref=e523]: 8,70
+                  - generic [ref=e525]:
+                    - generic "Unit Extra USD" [ref=e527]
+                    - generic [ref=e531]:
+                      - generic:
+                        - button "Increase Value" [ref=e532] [cursor=pointer]:
+                          - img "up" [ref=e533]:
+                            - img [ref=e534]
+                        - button "Decrease Value" [disabled] [ref=e536]:
+                          - img "down" [ref=e537]:
+                            - img [ref=e538]
+                      - spinbutton "Unit Extra USD" [ref=e541]: 0,00
+                  - generic [ref=e543]:
+                    - generic "Extra Flat USD" [ref=e545]
+                    - generic [ref=e549]:
+                      - generic:
+                        - button "Increase Value" [ref=e550] [cursor=pointer]:
+                          - img "up" [ref=e551]:
+                            - img [ref=e552]
+                        - button "Decrease Value" [disabled] [ref=e554]:
+                          - img "down" [ref=e555]:
+                            - img [ref=e556]
+                      - spinbutton "Extra Flat USD" [ref=e559]: 0,00
+                  - generic [ref=e561]:
+                    - generic "Shipping EUR" [ref=e563]
+                    - generic [ref=e567]:
+                      - generic:
+                        - button "Increase Value" [ref=e568] [cursor=pointer]:
+                          - img "up" [ref=e569]:
+                            - img [ref=e570]
+                        - button "Decrease Value" [ref=e572] [cursor=pointer]:
+                          - img "down" [ref=e573]:
+                            - img [ref=e574]
+                      - spinbutton "Shipping EUR" [ref=e577]: 1.200,00
+                  - generic [ref=e579]:
+                    - generic "Prod Days" [ref=e581]: "* Prod Days"
+                    - generic [ref=e585]:
+                      - generic:
+                        - button "Increase Value" [ref=e586] [cursor=pointer]:
+                          - img "up" [ref=e587]:
+                            - img [ref=e588]
+                        - button "Decrease Value" [ref=e590] [cursor=pointer]:
+                          - img "down" [ref=e591]:
+                            - img [ref=e592]
+                      - spinbutton "* Prod Days" [ref=e595]: "45"
+                  - generic [ref=e597]:
+                    - generic "Transit Days" [ref=e599]: "* Transit Days"
+                    - generic [ref=e603]:
+                      - generic:
+                        - button "Increase Value" [ref=e604] [cursor=pointer]:
+                          - img "up" [ref=e605]:
+                            - img [ref=e606]
+                        - button "Decrease Value" [ref=e608] [cursor=pointer]:
+                          - img "down" [ref=e609]:
+                            - img [ref=e610]
+                      - spinbutton "* Transit Days" [ref=e613]: "45"
+                - button "Entfernen" [ref=e614] [cursor=pointer]:
+                  - generic [ref=e615]: Entfernen
+              - button "Leere Position" [ref=e617] [cursor=pointer]:
+                - generic [ref=e618]: Leere Position
+          - generic [ref=e620]:
+            - generic [ref=e621]:
+              - strong [ref=e624]: Aggregierte Sicht (kritischer Pfad)
+              - generic [ref=e626]: ETA folgt langsamster SKU
+            - generic [ref=e627]:
+              - generic [ref=e628]:
+                - text: Goods USD
+                - generic [ref=e629]: 6.525,00
+              - generic [ref=e630]:
+                - text: Goods EUR
+                - generic [ref=e631]: 5.483,19 €
+              - generic [ref=e632]:
+                - text: Freight EUR
+                - generic [ref=e633]: 1.200,00 €
+              - generic [ref=e634]:
+                - text: Units gesamt
+                - generic [ref=e635]: "750"
+              - generic [ref=e636]:
+                - text: Prod/Transit (kritisch)
+                - generic [ref=e637]: 45 / 45 Tage
+              - generic [ref=e638]:
+                - text: ETD / ETA
+                - generic [ref=e639]: 12.03.2026 / 26.04.2026
+              - generic [ref=e640]:
+                - text: Ankunftsfenster
+                - generic [ref=e641]: 26.04.2026 - 26.04.2026
+          - generic [ref=e644]:
+            - strong [ref=e647]: Stammdaten-Herkunft (PO)
+            - generic [ref=e649]:
+              - generic [ref=e650]: Primary SKU
+              - generic [ref=e651]: SKU-ALPHA
+            - generic [ref=e653]:
+              - generic [ref=e654]: Unit Cost USD
+              - generic [ref=e655]: Produkt
+              - button "Zuruecksetzen" [ref=e656] [cursor=pointer]:
+                - generic [ref=e657]: Zuruecksetzen
+              - button "Als Produktwert uebernehmen" [ref=e658] [cursor=pointer]:
+                - generic [ref=e659]: Als Produktwert uebernehmen
+            - generic [ref=e661]:
+              - generic [ref=e662]: Prod / Transit
+              - generic [ref=e663]: Produkt
+              - generic [ref=e664]: Produkt
+              - button "Prod reset" [ref=e665] [cursor=pointer]:
+                - generic [ref=e666]: Prod reset
+              - button "Transit reset" [ref=e667] [cursor=pointer]:
+                - generic [ref=e668]: Transit reset
+            - generic [ref=e670]:
+              - generic [ref=e671]: Duty / EUSt
+              - generic [ref=e672]: Produkt
+              - generic [ref=e673]: Produkt
+              - button "Duty reset" [ref=e674] [cursor=pointer]:
+                - generic [ref=e675]: Duty reset
+              - button "EUSt reset" [ref=e676] [cursor=pointer]:
+                - generic [ref=e677]: EUSt reset
+              - button "Duty uebernehmen" [ref=e678] [cursor=pointer]:
+                - generic [ref=e679]: Duty uebernehmen
+              - button "EUSt uebernehmen" [ref=e680] [cursor=pointer]:
+                - generic [ref=e681]: EUSt uebernehmen
+            - generic [ref=e683]:
+              - generic [ref=e684]: DDP
+              - generic [ref=e685]: Produkt
+              - button "Zuruecksetzen" [ref=e686] [cursor=pointer]:
+                - generic [ref=e687]: Zuruecksetzen
+              - button "Als Produktwert uebernehmen" [ref=e688] [cursor=pointer]:
+                - generic [ref=e689]: Als Produktwert uebernehmen
+          - alert [ref=e690]:
+            - img "close-circle" [ref=e691]:
+              - img [ref=e692]
+            - generic [ref=e694]:
+              - generic [ref=e695]: Blockierende Stammdaten fehlen
+              - generic [ref=e696]: VK Preis Brutto, Marge %
+          - generic [ref=e698]:
+            - generic [ref=e699]:
+              - strong [ref=e702]: Milestones
+              - generic [ref=e704]: "Summe: 100,00%"
+            - generic [ref=e705]:
+              - generic [ref=e707]:
+                - textbox "Label" [ref=e714]: Deposit
+                - generic [ref=e721]:
+                  - generic:
+                    - button "Increase Value" [ref=e722] [cursor=pointer]:
+                      - img "up" [ref=e723]:
+                        - img [ref=e724]
+                    - button "Decrease Value" [ref=e726] [cursor=pointer]:
+                      - img "down" [ref=e727]:
+                        - img [ref=e728]
+                  - spinbutton [ref=e731]: 30,00
+                - generic [ref=e738] [cursor=pointer]:
+                  - generic [ref=e740]:
+                    - combobox [ref=e742]
+                    - generic "ORDER_DATE" [ref=e743]
+                  - generic:
+                    - img:
+                      - img
+                - generic [ref=e750]:
+                  - generic:
+                    - button "Increase Value" [ref=e751] [cursor=pointer]:
+                      - img "up" [ref=e752]:
+                        - img [ref=e753]
+                    - button "Decrease Value" [ref=e755] [cursor=pointer]:
+                      - img "down" [ref=e756]:
+                        - img [ref=e757]
+                  - spinbutton [ref=e760]: "0"
+                - button "X" [ref=e762] [cursor=pointer]:
+                  - generic [ref=e763]: X
+              - generic [ref=e765]:
+                - textbox "Label" [ref=e772]: Balance
+                - generic [ref=e779]:
+                  - generic:
+                    - button "Increase Value" [ref=e780] [cursor=pointer]:
+                      - img "up" [ref=e781]:
+                        - img [ref=e782]
+                    - button "Decrease Value" [ref=e784] [cursor=pointer]:
+                      - img "down" [ref=e785]:
+                        - img [ref=e786]
+                  - spinbutton [ref=e789]: 70,00
+                - generic [ref=e796] [cursor=pointer]:
+                  - generic [ref=e798]:
+                    - combobox [ref=e800]
+                    - generic "ETD" [ref=e801]
+                  - generic:
+                    - img:
+                      - img
+                - generic [ref=e808]:
+                  - generic:
+                    - button "Increase Value" [ref=e809] [cursor=pointer]:
+                      - img "up" [ref=e810]:
+                        - img [ref=e811]
+                    - button "Decrease Value" [ref=e813] [cursor=pointer]:
+                      - img "down" [ref=e814]:
+                        - img [ref=e815]
+                  - spinbutton [ref=e818]: "-10"
+                - button "X" [ref=e820] [cursor=pointer]:
+                  - generic [ref=e821]: X
+              - button "Milestone" [ref=e823] [cursor=pointer]:
+                - generic [ref=e824]: Milestone
+          - generic [ref=e827]:
+            - generic [ref=e828]:
+              - strong [ref=e831]: Event / Payment Preview
+              - button "Sammelzahlung buchen" [ref=e833] [cursor=pointer]:
+                - generic [ref=e834]: Sammelzahlung buchen
+            - generic [ref=e835]:
+              - generic [ref=e837]: "Timeline: Order 26.01.2026 · ETD 12.03.2026 · ETA 26.04.2026"
+              - table [ref=e840]:
+                - rowgroup [ref=e841]:
+                  - row "ID Typ Due Planned EUR Ist EUR Status Paid Date Methode / Von Invoice / Folder Aktionen" [ref=e842]:
+                    - columnheader "ID" [ref=e843]
+                    - columnheader "Typ" [ref=e844]
+                    - columnheader "Due" [ref=e845]
+                    - columnheader "Planned EUR" [ref=e846]
+                    - columnheader "Ist EUR" [ref=e847]
+                    - columnheader "Status" [ref=e848]
+                    - columnheader "Paid Date" [ref=e849]
+                    - columnheader "Methode / Von" [ref=e850]
+                    - columnheader "Invoice / Folder" [ref=e851]
+                    - columnheader "Aktionen" [ref=e852]
+                - rowgroup [ref=e853]:
+                  - row "MS-DEP Deposit 26.01.2026 1.644,96 € 0,00 € Offen — — Invoice — Folder — Zahlung buchen" [ref=e854]:
+                    - cell "MS-DEP" [ref=e855]
+                    - cell "Deposit" [ref=e856]
+                    - cell "26.01.2026" [ref=e857]
+                    - cell "1.644,96 €" [ref=e858]
+                    - cell "0,00 €" [ref=e859]
+                    - cell "Offen" [ref=e860]
+                    - cell "—" [ref=e861]
+                    - cell "—" [ref=e862]
+                    - cell "Invoice — Folder —" [ref=e863]:
+                      - generic [ref=e864]:
+                        - generic [ref=e865]: Invoice —
+                        - generic [ref=e866]: Folder —
+                    - cell "Zahlung buchen" [ref=e867]:
+                      - button "Zahlung buchen" [ref=e868] [cursor=pointer]:
+                        - generic [ref=e869]: Zahlung buchen
+                  - row "MS-BAL Balance 02.03.2026 3.838,23 € 0,00 € Offen — — Invoice — Folder — Zahlung buchen" [ref=e870]:
+                    - cell "MS-BAL" [ref=e871]
+                    - cell "Balance" [ref=e872]
+                    - cell "02.03.2026" [ref=e873]
+                    - cell "3.838,23 €" [ref=e874]
+                    - cell "0,00 €" [ref=e875]
+                    - cell "Offen" [ref=e876]
+                    - cell "—" [ref=e877]
+                    - cell "—" [ref=e878]
+                    - cell "Invoice — Folder —" [ref=e879]:
+                      - generic [ref=e880]:
+                        - generic [ref=e881]: Invoice —
+                        - generic [ref=e882]: Folder —
+                    - cell "Zahlung buchen" [ref=e883]:
+                      - button "Zahlung buchen" [ref=e884] [cursor=pointer]:
+                        - generic [ref=e885]: Zahlung buchen
+                  - row "REIGHT Shipping 26.04.2026 1.200,00 € 0,00 € Offen — — Invoice — Folder — Zahlung buchen" [ref=e886]:
+                    - cell "REIGHT" [ref=e887]
+                    - cell "Shipping" [ref=e888]
+                    - cell "26.04.2026" [ref=e889]
+                    - cell "1.200,00 €" [ref=e890]
+                    - cell "0,00 €" [ref=e891]
+                    - cell "Offen" [ref=e892]
+                    - cell "—" [ref=e893]
+                    - cell "—" [ref=e894]
+                    - cell "Invoice — Folder —" [ref=e895]:
+                      - generic [ref=e896]:
+                        - generic [ref=e897]: Invoice —
+                        - generic [ref=e898]: Folder —
+                    - cell "Zahlung buchen" [ref=e899]:
+                      - button "Zahlung buchen" [ref=e900] [cursor=pointer]:
+                        - generic [ref=e901]: Zahlung buchen
+                  - row "O-EUST EUSt 26.04.2026 1.269,81 € 0,00 € Offen — — Invoice — Folder — Zahlung buchen" [ref=e902]:
+                    - cell "O-EUST" [ref=e903]
+                    - cell "EUSt" [ref=e904]
+                    - cell "26.04.2026" [ref=e905]
+                    - cell "1.269,81 €" [ref=e906]
+                    - cell "0,00 €" [ref=e907]
+                    - cell "Offen" [ref=e908]
+                    - cell "—" [ref=e909]
+                    - cell "—" [ref=e910]
+                    - cell "Invoice — Folder —" [ref=e911]:
+                      - generic [ref=e912]:
+                        - generic [ref=e913]: Invoice —
+                        - generic [ref=e914]: Folder —
+                    - cell "Zahlung buchen" [ref=e915]:
+                      - button "Zahlung buchen" [ref=e916] [cursor=pointer]:
+                        - generic [ref=e917]: Zahlung buchen
+              - generic [ref=e919]:
+                - strong [ref=e922]: Automatische Eingaenge (Info)
+                - alert [ref=e924]:
+                  - img "info-circle" [ref=e925]:
+                    - img [ref=e926]
+                  - generic [ref=e929]: EUSt-Erstattung wird automatisch verbucht und muss nicht manuell als Zahlung validiert werden.
+                - table [ref=e932]:
+                  - rowgroup [ref=e933]:
+                    - row "ID Typ Due Planned EUR Status Hinweis" [ref=e934]:
+                      - columnheader "ID" [ref=e935]
+                      - columnheader "Typ" [ref=e936]
+                      - columnheader "Due" [ref=e937]
+                      - columnheader "Planned EUR" [ref=e938]
+                      - columnheader "Status" [ref=e939]
+                      - columnheader "Hinweis" [ref=e940]
+                  - rowgroup [ref=e941]:
+                    - row "TO-VAT EUSt-Erstattung 30.06.2026 1.269,81 € Geplant Automatisch (kein Zahlung buchen)" [ref=e942]:
+                      - cell "TO-VAT" [ref=e943]
+                      - cell "EUSt-Erstattung" [ref=e944]
+                      - cell "30.06.2026" [ref=e945]
+                      - cell "1.269,81 €" [ref=e946]
+                      - cell "Geplant" [ref=e947]
+                      - cell "Automatisch (kein Zahlung buchen)" [ref=e948]
+        - generic [ref=e949]:
+          - button "Cancel" [ref=e950] [cursor=pointer]:
+            - generic [ref=e951]: Cancel
+          - button "OK" [ref=e952] [cursor=pointer]:
+            - generic [ref=e953]: OK

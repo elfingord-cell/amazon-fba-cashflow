@@ -1,0 +1,160 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img "bank" [ref=e7]:
+          - img [ref=e8]
+        - generic [ref=e10]: FBA Cashflow V2
+      - menu [ref=e11]:
+        - text: Übersicht & Analyse
+        - group [ref=e12]:
+          - menuitem "dashboard Dashboard" [ref=e13] [cursor=pointer]:
+            - img "dashboard" [ref=e14]:
+              - img [ref=e15]
+            - generic [ref=e17]: Dashboard
+          - menuitem "credit-card Soll vs. Ist" [ref=e18] [cursor=pointer]:
+            - img "credit-card" [ref=e19]:
+              - img [ref=e20]
+            - generic [ref=e22]: Soll vs. Ist
+          - menuitem "pie-chart ABC Insights" [ref=e23] [cursor=pointer]:
+            - img "pie-chart" [ref=e24]:
+              - img [ref=e25]
+            - generic [ref=e27]: ABC Insights
+          - menuitem "calculator USt Vorschau" [ref=e28] [cursor=pointer]:
+            - img "calculator" [ref=e29]:
+              - img [ref=e30]
+            - generic [ref=e32]: USt Vorschau
+        - text: Operatives Geschäft
+        - group [ref=e33]:
+          - menuitem "line-chart Absatzprognose" [ref=e34] [cursor=pointer]:
+            - img "line-chart" [ref=e35]:
+              - img [ref=e36]
+            - generic [ref=e38]: Absatzprognose
+          - menuitem "inbox Bestandsaufnahme" [ref=e39] [cursor=pointer]:
+            - img "inbox" [ref=e40]:
+              - img [ref=e41]
+            - generic [ref=e43]: Bestandsaufnahme
+          - menuitem "fund-projection-screen Bestandsprojektion" [ref=e44] [cursor=pointer]:
+            - img "fund-projection-screen" [ref=e45]:
+              - img [ref=e46]
+            - generic [ref=e49]: Bestandsprojektion
+          - menuitem "shopping-cart Bestellungen" [ref=e50] [cursor=pointer]:
+            - img "shopping-cart" [ref=e51]:
+              - img [ref=e52]
+            - generic [ref=e54]: Bestellungen
+          - menuitem "tags Neue Produkte" [ref=e55] [cursor=pointer]:
+            - img "tags" [ref=e56]:
+              - img [ref=e57]
+            - generic [ref=e59]: Neue Produkte
+        - text: Finanzen & Abschluss
+        - group [ref=e60]:
+          - menuitem "form Eingaben" [ref=e61] [cursor=pointer]:
+            - img "form" [ref=e62]:
+              - img [ref=e63]
+            - generic [ref=e66]: Eingaben
+          - menuitem "project Fixkosten" [ref=e67] [cursor=pointer]:
+            - img "project" [ref=e68]:
+              - img [ref=e69]
+            - generic [ref=e71]: Fixkosten
+          - menuitem "pie-chart Dividendenplanung" [ref=e72] [cursor=pointer]:
+            - img "pie-chart" [ref=e73]:
+              - img [ref=e74]
+            - generic [ref=e76]: Dividendenplanung
+          - menuitem "file-text Buchhalter Export" [ref=e77] [cursor=pointer]:
+            - img "file-text" [ref=e78]:
+              - img [ref=e79]
+            - generic [ref=e81]: Buchhalter Export
+        - text: Stammdaten & Tools
+        - group [ref=e82]:
+          - menuitem "tags Produkte" [ref=e83] [cursor=pointer]:
+            - img "tags" [ref=e84]:
+              - img [ref=e85]
+            - generic [ref=e87]: Produkte
+          - menuitem "team Suppliers" [ref=e88] [cursor=pointer]:
+            - img "team" [ref=e89]:
+              - img [ref=e90]
+            - generic [ref=e92]: Suppliers
+          - menuitem "setting Settings" [ref=e93] [cursor=pointer]:
+            - img "setting" [ref=e94]:
+              - img [ref=e95]
+            - generic [ref=e97]: Settings
+          - menuitem "upload Export / Import" [ref=e98] [cursor=pointer]:
+            - img "upload" [ref=e99]:
+              - img [ref=e100]
+            - generic [ref=e102]: Export / Import
+          - menuitem "bug Debug" [ref=e103] [cursor=pointer]:
+            - img "bug" [ref=e104]:
+              - img [ref=e105]
+            - generic [ref=e108]: Debug
+  - generic [ref=e109]:
+    - banner [ref=e110]:
+      - generic [ref=e112]:
+        - button "rollback Legacy App" [ref=e114] [cursor=pointer]:
+          - img "rollback" [ref=e116]:
+            - img [ref=e117]
+          - generic [ref=e119]: Legacy App
+        - button "user Anmelden" [ref=e121] [cursor=pointer]:
+          - img "user" [ref=e123]:
+            - img [ref=e124]
+          - generic [ref=e126]: Anmelden
+      - generic [ref=e127]:
+        - generic [ref=e128]: Online
+        - generic [ref=e129]: nicht verbunden
+        - generic [ref=e130]: Realtime inaktiv
+        - generic [ref=e131]: Nicht angemeldet
+    - main [ref=e132]:
+      - generic [ref=e344]:
+        - generic [ref=e346]:
+          - generic [ref=e348]:
+            - heading "Debug / Werkzeuge" [level=3] [ref=e349]
+            - generic [ref=e350]: Hilfsfunktionen zum schnellen Befuellen, Zuruecksetzen und Pruefen der ABC-Klassifizierung.
+          - generic [ref=e352]:
+            - button "Testdaten & POs laden" [active] [ref=e353] [cursor=pointer]:
+              - generic [ref=e354]: Testdaten & POs laden
+            - button "Alle Daten loeschen" [ref=e355] [cursor=pointer]:
+              - generic [ref=e356]: Alle Daten loeschen
+            - button "Letzten Seed rueckgaengig" [ref=e357] [cursor=pointer]:
+              - generic [ref=e400]: Letzten Seed rueckgaengig
+            - generic [ref=e358]: "Drafts (lokal): 0"
+          - generic [ref=e359]:
+            - generic [ref=e361]:
+              - text: "Storage-Key:"
+              - strong [ref=e362]: amazon_fba_cashflow_v1
+            - generic [ref=e364]:
+              - text: "Last Commit:"
+              - strong [ref=e365]: 2026-02-19T14:08:09.228Z
+            - generic [ref=e367]:
+              - text: "Last Commit Meta:"
+              - strong [ref=e368]: "{\"source\":\"v2:debug:seed:fallback\"}"
+        - generic [ref=e370]:
+          - heading "ABC Debug" [level=4] [ref=e371]
+          - generic [ref=e372]: Kontrolle der ABC-Berechnung auf Basis Forecast der naechsten 6 Monate.
+          - generic [ref=e373]:
+            - generic [ref=e375]:
+              - text: SKU
+              - generic [ref=e376] [cursor=pointer]:
+                - generic [ref=e378]:
+                  - combobox [ref=e380]
+                  - generic "SKU-ALPHA" [ref=e401]
+                - generic:
+                  - img:
+                    - img
+            - generic [ref=e382]:
+              - text: Forecast-Monate
+              - generic [ref=e383]: "-"
+          - generic [ref=e384]:
+            - generic [ref=e386]:
+              - text: "VK-Preis (Brutto):"
+              - strong [ref=e387]: 0,00
+            - generic [ref=e389]:
+              - text: "Forecast Units (6M):"
+              - strong [ref=e390]: "0"
+            - generic [ref=e392]:
+              - text: "Umsatz 6M:"
+              - strong [ref=e393]: 0,00
+            - generic [ref=e395]:
+              - text: "ABC:"
+              - strong [ref=e396]: C
+            - generic [ref=e398]:
+              - text: "Aktiv:"
+              - strong [ref=e399]: ja

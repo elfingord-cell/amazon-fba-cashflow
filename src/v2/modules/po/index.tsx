@@ -276,14 +276,6 @@ function eventIdsOfRow(row: Pick<PoPaymentRow, "id" | "eventIds">): string[] {
   return fallback ? [fallback] : [];
 }
 
-function maxIsoDate(values: Array<string | null | undefined>): string | null {
-  const dates = values
-    .map((value) => String(value || "").trim())
-    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
-    .sort();
-  return dates.length ? dates[dates.length - 1] : null;
-}
-
 function paymentFlowSortRank(entry: Pick<PoPaymentRow, "eventType" | "label" | "typeLabel">): number {
   const eventType = String(entry.eventType || "").toLowerCase();
   const text = `${String(entry.typeLabel || "")} ${String(entry.label || "")}`.toLowerCase();
@@ -304,58 +296,32 @@ function sortPaymentRowsByFlow(rows: PoPaymentRow[]): PoPaymentRow[] {
   });
 }
 
-function combineDutyAndEustRows(rows: PoPaymentRow[]): PoPaymentRow[] {
-  if (!rows.length) return rows;
-  const dutyRows = rows.filter((entry) => entry.eventType === "duty");
-  const eustRows = rows.filter((entry) => entry.eventType === "eust");
-  if (!dutyRows.length || !eustRows.length) return sortPaymentRowsByFlow(rows);
-
-  const sortedDuty = sortPaymentRowsByFlow(dutyRows);
-  const sortedEust = sortPaymentRowsByFlow(eustRows);
-  const pairCount = Math.min(sortedDuty.length, sortedEust.length);
-  const used = new Set<string>();
-  const combinedRows: PoPaymentRow[] = [];
-
-  for (let index = 0; index < pairCount; index += 1) {
-    const duty = sortedDuty[index];
-    const eust = sortedEust[index];
-    used.add(duty.id);
-    used.add(eust.id);
-    const paymentIds = Array.from(new Set([duty.paymentId, eust.paymentId].map((entry) => String(entry || "").trim()).filter(Boolean)));
-    const paidTogether = duty.status === "paid" && eust.status === "paid" && paymentIds.length === 1;
-    const mergedEventIds = Array.from(new Set([...eventIdsOfRow(duty), ...eventIdsOfRow(eust)]));
-    const mergedPaidActual = [duty.paidEurActual, eust.paidEurActual].every((value) => Number.isFinite(Number(value)))
-      ? Number(duty.paidEurActual || 0) + Number(eust.paidEurActual || 0)
-      : null;
-    combinedRows.push({
-      id: `tax-duty-${mergedEventIds.join("+") || `${duty.id}+${eust.id}`}`,
-      eventIds: mergedEventIds,
-      typeLabel: "Umsatzsteuer + Zoll",
-      label: "Umsatzsteuer + Zoll",
-      dueDate: maxIsoDate([duty.dueDate, eust.dueDate]),
-      plannedEur: Number(duty.plannedEur || 0) + Number(eust.plannedEur || 0),
-      status: paidTogether ? "paid" : "open",
-      paidDate: paidTogether ? maxIsoDate([duty.paidDate, eust.paidDate]) : null,
-      paidEurActual: paidTogether ? mergedPaidActual : null,
-      paymentId: paidTogether ? paymentIds[0] : null,
-      method: paidTogether ? String(duty.method || eust.method || "") || null : null,
-      paidBy: paidTogether ? String(duty.paidBy || eust.paidBy || "") || null : null,
-      note: paidTogether ? String(duty.note || eust.note || "") : "",
-      invoiceDriveUrl: paidTogether ? String(duty.invoiceDriveUrl || eust.invoiceDriveUrl || "") : "",
-      invoiceFolderDriveUrl: paidTogether ? String(duty.invoiceFolderDriveUrl || eust.invoiceFolderDriveUrl || "") : "",
-      eventType: "tax_duty_combined",
-      direction: "out",
-    });
-  }
-
-  const passthroughRows = rows.filter((entry) => !used.has(entry.id));
-  return sortPaymentRowsByFlow([...passthroughRows, ...combinedRows]);
+function mapBuiltPaymentRow(row: Record<string, unknown>): PoPaymentRow {
+  return {
+    id: String(row.id || ""),
+    eventIds: [String(row.id || "")],
+    typeLabel: String(row.typeLabel || ""),
+    label: String(row.label || ""),
+    dueDate: row.dueDate ? String(row.dueDate) : null,
+    plannedEur: Number(row.plannedEur || 0),
+    status: row.status === "paid" ? "paid" : "open",
+    paidDate: row.paidDate ? String(row.paidDate) : null,
+    paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
+    paymentId: row.paymentId ? String(row.paymentId) : null,
+    method: row.method ? String(row.method) : null,
+    paidBy: row.paidBy ? String(row.paidBy) : null,
+    note: String(row.note || ""),
+    invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
+    invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
+    eventType: row.eventType ? String(row.eventType) : null,
+    direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
+  };
 }
 
 function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "label">): string {
   if (row.eventType === "tax_duty_combined") return "Umsatzsteuer + Zoll";
-  if (row.eventType === "duty") return "Forwarder-Rechnung (Zoll)";
-  if (row.eventType === "eust") return "Forwarder-Rechnung (EUSt)";
+  if (row.eventType === "duty") return "Zoll";
+  if (row.eventType === "eust") return "EUSt";
   if (row.eventType === "vat_refund") return "EUSt-Erstattung";
   if (row.eventType === "freight") return "Shipping";
   if (row.eventType === "fx_fee") return "FX Gebuehr";
@@ -685,6 +651,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const [markerPendingAction, setMarkerPendingAction] = useState<{ poId: string; eventId: string } | null>(null);
   const [modalFocusTarget, setModalFocusTarget] = useState<"payments" | "shipping" | "arrival" | null>(null);
   const paymentSectionRef = useRef<HTMLDivElement | null>(null);
+  const manualFreightOverrideIdsRef = useRef<Set<string>>(new Set());
+  const suppressFreightTrackingRef = useRef(false);
   const poViewMode = useMemo<"table" | "timeline">(() => {
     const params = new URLSearchParams(location.search);
     return params.get("view") === "timeline" ? "timeline" : "table";
@@ -784,30 +752,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         })();
         const timelineMarkers = (() => {
           try {
-            return combineDutyAndEustRows(
+            const flowRows = sortPaymentRowsByFlow(
               paymentRows
-                .map((row): PoPaymentRow => ({
-                id: String(row.id || ""),
-                eventIds: [String(row.id || "")],
-                typeLabel: String(row.typeLabel || ""),
-                label: String(row.label || ""),
-                dueDate: row.dueDate ? String(row.dueDate) : null,
-                plannedEur: Number(row.plannedEur || 0),
-                status: row.status === "paid" ? "paid" : "open",
-                paidDate: row.paidDate ? String(row.paidDate) : null,
-                paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
-                paymentId: row.paymentId ? String(row.paymentId) : null,
-                method: row.method ? String(row.method) : null,
-                paidBy: row.paidBy ? String(row.paidBy) : null,
-                note: String(row.note || ""),
-                invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
-                invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
-                eventType: row.eventType ? String(row.eventType) : null,
-                direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
-              }))
-              .filter((row) => row.eventType !== "vat_refund")
-              .filter((row) => row.id && row.plannedEur > 0),
-            )
+                .map((row) => mapBuiltPaymentRow(row as Record<string, unknown>))
+                .filter((row) => row.eventType !== "vat_refund")
+                .filter((row) => row.id && row.plannedEur > 0),
+            );
+            return flowRows
               .map((row): PoTimelineMarkerRow => ({
                 id: row.id,
                 eventIds: eventIdsOfRow(row),
@@ -1205,32 +1156,37 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
       );
       return rows
-        .filter((row) => String(row.eventType || "") !== "vat_refund")
-        .map((row) => ({
-          id: String(row.id || ""),
-          eventIds: [String(row.id || "")],
-          typeLabel: String(row.typeLabel || ""),
-          label: String(row.label || ""),
-          dueDate: row.dueDate ? String(row.dueDate) : null,
-          plannedEur: Number(row.plannedEur || 0),
-          status: row.status === "paid" ? "paid" : "open",
-          paidDate: row.paidDate ? String(row.paidDate) : null,
-          paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
-          paymentId: row.paymentId ? String(row.paymentId) : null,
-          method: row.method ? String(row.method) : null,
-          paidBy: row.paidBy ? String(row.paidBy) : null,
-          note: String(row.note || ""),
-          invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
-          invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
-          eventType: row.eventType ? String(row.eventType) : null,
-        }));
+        .map((row) => mapBuiltPaymentRow(row as Record<string, unknown>))
+        .filter((row) => row.direction !== "in")
+        .filter((row) => row.id && row.plannedEur > 0);
+    } catch {
+      return [];
+    }
+  }, [draftPoRecord, poSettings, state.payments]);
+
+  const draftIncomingPaymentRows = useMemo<PoPaymentRow[]>(() => {
+    if (!draftPoRecord) return [];
+    try {
+      const cloned = structuredClone(draftPoRecord);
+      const rows = buildPaymentRows(
+        cloned,
+        PO_CONFIG,
+        poSettings,
+        (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
+        { includeIncoming: true },
+      );
+      return rows
+        .map((row) => mapBuiltPaymentRow(row as Record<string, unknown>))
+        .filter((row) => row.eventType === "vat_refund" || row.direction === "in")
+        .filter((row) => row.id && row.plannedEur > 0)
+        .sort((left, right) => String(left.dueDate || "").localeCompare(String(right.dueDate || "")));
     } catch {
       return [];
     }
   }, [draftPoRecord, poSettings, state.payments]);
 
   const draftPaymentRows = useMemo<PoPaymentRow[]>(
-    () => combineDutyAndEustRows(draftPaymentRowsRaw),
+    () => sortPaymentRowsByFlow(draftPaymentRowsRaw),
     [draftPaymentRowsRaw],
   );
 
@@ -1322,6 +1278,44 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     if (!modalOpen || !modalCollab.readOnly || !modalCollab.remoteDraftPatch) return;
     form.setFieldsValue(modalCollab.remoteDraftPatch as Partial<PoFormValues>);
   }, [form, modalCollab.readOnly, modalCollab.remoteDraftPatch, modalCollab.remoteDraftVersion, modalOpen]);
+
+  function withSuppressedFreightTracking(action: () => void): void {
+    suppressFreightTrackingRef.current = true;
+    action();
+    Promise.resolve().then(() => {
+      suppressFreightTrackingRef.current = false;
+    });
+  }
+
+  function pruneFreightOverrideIds(items: PoItemDraft[]): void {
+    const validIds = new Set(items.map((item) => String(item.id || "").trim()).filter(Boolean));
+    Array.from(manualFreightOverrideIdsRef.current).forEach((id) => {
+      if (!validIds.has(id)) {
+        manualFreightOverrideIdsRef.current.delete(id);
+      }
+    });
+  }
+
+  function trackFreightOverrides(changedValues: Partial<PoFormValues>): void {
+    if (suppressFreightTrackingRef.current) return;
+    const changedItems = Array.isArray(changedValues.items)
+      ? changedValues.items as Array<Record<string, unknown> | undefined>
+      : null;
+    if (!changedItems?.length) return;
+    const currentItems = normalizePoItems(form.getFieldValue("items"), null).map((entry) => normalizeDraftItem(entry));
+    pruneFreightOverrideIds(currentItems);
+    changedItems.forEach((row, index) => {
+      if (!row) return;
+      const itemId = String(currentItems[index]?.id || "").trim();
+      if (!itemId) return;
+      if (Object.prototype.hasOwnProperty.call(row, "sku")) {
+        manualFreightOverrideIdsRef.current.delete(itemId);
+      }
+      if (Object.prototype.hasOwnProperty.call(row, "freightEur")) {
+        manualFreightOverrideIdsRef.current.add(itemId);
+      }
+    });
+  }
 
   function buildDefaultDraft(
     existing?: Record<string, unknown> | null,
@@ -1447,6 +1441,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     if (index < 0 || index >= items.length) return;
     const supplierId = String(current.supplierId || product.supplierId || "");
     const supplier = supplierById.get(supplierId) || null;
+    const priorItemId = String(items[index]?.id || "").trim();
     const defaults = resolvePoProductPrefill({
       state: stateObj,
       product: product.raw,
@@ -1465,14 +1460,20 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       transitDays: defaults.transitDays,
       freightEur: defaults.freightEur,
     });
-    form.setFieldsValue({
-      items,
-      supplierId: supplierId || current.supplierId,
-      transport: current.transport || defaults.transport,
-      dutyRatePct: Number(current.dutyRatePct || defaults.dutyRatePct || 0),
-      eustRatePct: Number(current.eustRatePct || defaults.eustRatePct || 0),
-      fxOverride: Number(current.fxOverride || defaults.fxOverride || 0),
-      ddp: current.ddp === true ? true : defaults.ddp,
+    const nextItemId = String(items[index]?.id || "").trim();
+    if (priorItemId) manualFreightOverrideIdsRef.current.delete(priorItemId);
+    if (nextItemId) manualFreightOverrideIdsRef.current.delete(nextItemId);
+    pruneFreightOverrideIds(items);
+    withSuppressedFreightTracking(() => {
+      form.setFieldsValue({
+        items,
+        supplierId: supplierId || current.supplierId,
+        transport: current.transport || defaults.transport,
+        dutyRatePct: Number(current.dutyRatePct || defaults.dutyRatePct || 0),
+        eustRatePct: Number(current.eustRatePct || defaults.eustRatePct || 0),
+        fxOverride: Number(current.fxOverride || defaults.fxOverride || 0),
+        ddp: current.ddp === true ? true : defaults.ddp,
+      });
     });
   }
 
@@ -1509,16 +1510,20 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       }));
     });
     if (!additions.length) return;
-    form.setFieldsValue({
-      items: [...currentItems, ...additions],
-      transport: current.transport || resolvePoProductPrefill({
-        state: stateObj,
-        product: productBySku.get(additions[0].sku)?.raw || null,
-        settings,
-        supplierId,
-        supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
-        units: additions[0].units,
-      }).transport,
+    const nextItems = [...currentItems, ...additions];
+    pruneFreightOverrideIds(nextItems);
+    withSuppressedFreightTracking(() => {
+      form.setFieldsValue({
+        items: nextItems,
+        transport: current.transport || resolvePoProductPrefill({
+          state: stateObj,
+          product: productBySku.get(additions[0].sku)?.raw || null,
+          settings,
+          supplierId,
+          supplierDefaultProdDays: supplier?.productionLeadTimeDaysDefault,
+          units: additions[0].units,
+        }).transport,
+      });
     });
     setSkuPickerValues([]);
   }
@@ -1544,12 +1549,15 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       lagDays: row.lagDays,
     }));
     const shouldReplaceMilestones = !editingId && (!Array.isArray(current.milestones) || milestoneSum(current.milestones) === milestoneSum(defaultMilestones()));
-    form.setFieldsValue({
-      supplierId,
-      items: filteredItems,
-      milestones: shouldReplaceMilestones
-        ? (supplierMilestones.length ? supplierMilestones : defaultMilestones())
-        : current.milestones,
+    manualFreightOverrideIdsRef.current.clear();
+    withSuppressedFreightTracking(() => {
+      form.setFieldsValue({
+        supplierId,
+        items: filteredItems,
+        milestones: shouldReplaceMilestones
+          ? (supplierMilestones.length ? supplierMilestones : defaultMilestones())
+          : current.milestones,
+      });
     });
     setSkuPickerValues([]);
   }
@@ -1558,10 +1566,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setEditingId(null);
     setModalFocusTarget(null);
     const draft = buildDefaultDraft(null, prefill);
-    form.resetFields();
-    form.setFieldsValue({
-      ...draft,
-      ...(prefill || {}),
+    manualFreightOverrideIdsRef.current.clear();
+    withSuppressedFreightTracking(() => {
+      form.resetFields();
+      form.setFieldsValue({
+        ...draft,
+        ...(prefill || {}),
+      });
     });
     setSkuPickerValues([]);
     setModalOpen(true);
@@ -1570,8 +1581,11 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   function openEditModal(existing: Record<string, unknown>, focusTarget: "payments" | "shipping" | "arrival" | null = null): void {
     setEditingId(String(existing.id || ""));
     setModalFocusTarget(focusTarget);
-    form.resetFields();
-    form.setFieldsValue(buildDefaultDraft(existing));
+    manualFreightOverrideIdsRef.current.clear();
+    withSuppressedFreightTracking(() => {
+      form.resetFields();
+      form.setFieldsValue(buildDefaultDraft(existing));
+    });
     setSkuPickerValues([]);
     setModalOpen(true);
   }
@@ -1581,19 +1595,28 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       ? changedValues.items as Array<Record<string, unknown> | undefined>
       : null;
     if (!changedItems?.length) return;
-    const hasUnitsUpdate = changedItems.some((row) => row && Object.prototype.hasOwnProperty.call(row, "units"));
-    if (!hasUnitsUpdate) return;
+    const hasRecalcTrigger = changedItems.some((row) => row && (
+      Object.prototype.hasOwnProperty.call(row, "units")
+      || Object.prototype.hasOwnProperty.call(row, "sku")
+    ));
+    if (!hasRecalcTrigger) return;
 
     const current = form.getFieldsValue();
     const supplierId = String(current.supplierId || "");
     const currentItems = normalizePoItems(current.items, null).map((entry) => normalizeDraftItem(entry));
+    pruneFreightOverrideIds(currentItems);
     let patched = false;
     const nextItems = currentItems.map((item, index) => {
       const changedRow = changedItems[index];
       const touchedUnits = Boolean(changedRow && Object.prototype.hasOwnProperty.call(changedRow, "units"));
-      if (!touchedUnits) return item;
+      const touchedSku = Boolean(changedRow && Object.prototype.hasOwnProperty.call(changedRow, "sku"));
+      if (!touchedUnits && !touchedSku) return item;
+      const itemId = String(item.id || "").trim();
+      if (touchedSku && itemId) {
+        manualFreightOverrideIdsRef.current.delete(itemId);
+      }
       if (!item.sku) return item;
-      if (Number(item.freightEur || 0) > 0) return item;
+      if (itemId && manualFreightOverrideIdsRef.current.has(itemId)) return item;
       const product = productBySku.get(item.sku) || null;
       if (!product) return item;
       const estimated = estimatePoItemFreightEur({
@@ -1602,7 +1625,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         supplierId: supplierId || product.supplierId,
         units: item.units,
       });
-      if (estimated <= 0) return item;
+      if (Math.abs(Number(item.freightEur || 0) - estimated) <= 0.0001) return item;
       patched = true;
       return {
         ...item,
@@ -1610,7 +1633,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       };
     });
     if (patched) {
-      form.setFieldValue("items", nextItems);
+      withSuppressedFreightTracking(() => {
+        form.setFieldValue("items", nextItems);
+      });
     }
   }
 
@@ -2221,6 +2246,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           disabled={modalCollab.readOnly}
           onValuesChange={(changedValues) => {
             if (modalCollab.readOnly) return;
+            trackFreightOverrides(changedValues as Partial<PoFormValues>);
             hydrateFreightFromMasterData(changedValues as Partial<PoFormValues>);
             modalCollab.publishDraftPatch(changedValues as Record<string, unknown>);
           }}
@@ -2720,6 +2746,42 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                     </tbody>
                   </table>
                 </div>
+                {draftIncomingPaymentRows.length ? (
+                  <Space direction="vertical" size={6} style={{ width: "100%", marginTop: 8 }}>
+                    <Text strong>Automatische Eingaenge (Info)</Text>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="EUSt-Erstattung wird automatisch verbucht und muss nicht manuell als Zahlung validiert werden."
+                    />
+                    <div className="v2-stats-table-wrap">
+                      <table className="v2-stats-table">
+                        <thead>
+                          <tr>
+                            <th>ID</th>
+                            <th>Typ</th>
+                            <th>Due</th>
+                            <th>Planned EUR</th>
+                            <th>Status</th>
+                            <th>Hinweis</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {draftIncomingPaymentRows.map((row) => (
+                            <tr key={`incoming-${row.id}`}>
+                              <td>{shortId(String(row.id || ""))}</td>
+                              <td>{paymentTypeLabel(row)}</td>
+                              <td>{formatDate(row.dueDate)}</td>
+                              <td>{formatCurrency(row.plannedEur)}</td>
+                              <td>{row.status === "paid" ? "Bereits eingegangen" : "Geplant"}</td>
+                              <td>Automatisch (kein Zahlung buchen)</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Space>
+                ) : null}
               </Space>
             ) : (
               <Text type="secondary">Preview erscheint nach Eingabe.</Text>

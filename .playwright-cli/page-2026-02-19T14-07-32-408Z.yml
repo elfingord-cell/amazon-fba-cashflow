@@ -1,0 +1,189 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - img "bank" [ref=e7]:
+          - img [ref=e8]
+        - generic [ref=e10]: FBA Cashflow V2
+      - menu [ref=e11]:
+        - text: Übersicht & Analyse
+        - group [ref=e12]:
+          - menuitem "dashboard Dashboard" [ref=e13] [cursor=pointer]:
+            - img "dashboard" [ref=e14]:
+              - img [ref=e15]
+            - generic [ref=e17]: Dashboard
+          - menuitem "credit-card Soll vs. Ist" [ref=e18] [cursor=pointer]:
+            - img "credit-card" [ref=e19]:
+              - img [ref=e20]
+            - generic [ref=e22]: Soll vs. Ist
+          - menuitem "pie-chart ABC Insights" [ref=e23] [cursor=pointer]:
+            - img "pie-chart" [ref=e24]:
+              - img [ref=e25]
+            - generic [ref=e27]: ABC Insights
+          - menuitem "calculator USt Vorschau" [ref=e28] [cursor=pointer]:
+            - img "calculator" [ref=e29]:
+              - img [ref=e30]
+            - generic [ref=e32]: USt Vorschau
+        - text: Operatives Geschäft
+        - group [ref=e33]:
+          - menuitem "line-chart Absatzprognose" [ref=e34] [cursor=pointer]:
+            - img "line-chart" [ref=e35]:
+              - img [ref=e36]
+            - generic [ref=e38]: Absatzprognose
+          - menuitem "inbox Bestandsaufnahme" [ref=e39] [cursor=pointer]:
+            - img "inbox" [ref=e40]:
+              - img [ref=e41]
+            - generic [ref=e43]: Bestandsaufnahme
+          - menuitem "fund-projection-screen Bestandsprojektion" [ref=e44] [cursor=pointer]:
+            - img "fund-projection-screen" [ref=e45]:
+              - img [ref=e46]
+            - generic [ref=e49]: Bestandsprojektion
+          - menuitem "shopping-cart Bestellungen" [ref=e50] [cursor=pointer]:
+            - img "shopping-cart" [ref=e51]:
+              - img [ref=e52]
+            - generic [ref=e54]: Bestellungen
+          - menuitem "tags Neue Produkte" [ref=e55] [cursor=pointer]:
+            - img "tags" [ref=e56]:
+              - img [ref=e57]
+            - generic [ref=e59]: Neue Produkte
+        - text: Finanzen & Abschluss
+        - group [ref=e60]:
+          - menuitem "form Eingaben" [ref=e61] [cursor=pointer]:
+            - img "form" [ref=e62]:
+              - img [ref=e63]
+            - generic [ref=e66]: Eingaben
+          - menuitem "project Fixkosten" [ref=e67] [cursor=pointer]:
+            - img "project" [ref=e68]:
+              - img [ref=e69]
+            - generic [ref=e71]: Fixkosten
+          - menuitem "pie-chart Dividendenplanung" [ref=e72] [cursor=pointer]:
+            - img "pie-chart" [ref=e73]:
+              - img [ref=e74]
+            - generic [ref=e76]: Dividendenplanung
+          - menuitem "file-text Buchhalter Export" [ref=e77] [cursor=pointer]:
+            - img "file-text" [ref=e78]:
+              - img [ref=e79]
+            - generic [ref=e81]: Buchhalter Export
+        - text: Stammdaten & Tools
+        - group [ref=e82]:
+          - menuitem "tags Produkte" [ref=e83] [cursor=pointer]:
+            - img "tags" [ref=e84]:
+              - img [ref=e85]
+            - generic [ref=e87]: Produkte
+          - menuitem "team Suppliers" [ref=e88] [cursor=pointer]:
+            - img "team" [ref=e89]:
+              - img [ref=e90]
+            - generic [ref=e92]: Suppliers
+          - menuitem "setting Settings" [ref=e93] [cursor=pointer]:
+            - img "setting" [ref=e94]:
+              - img [ref=e95]
+            - generic [ref=e97]: Settings
+          - menuitem "upload Export / Import" [ref=e98] [cursor=pointer]:
+            - img "upload" [ref=e99]:
+              - img [ref=e100]
+            - generic [ref=e102]: Export / Import
+          - menuitem "bug Debug" [ref=e103] [cursor=pointer]:
+            - img "bug" [ref=e104]:
+              - img [ref=e105]
+            - generic [ref=e108]: Debug
+  - generic [ref=e109]:
+    - banner [ref=e110]:
+      - generic [ref=e112]:
+        - button "rollback Legacy App" [ref=e114] [cursor=pointer]:
+          - img "rollback" [ref=e116]:
+            - img [ref=e117]
+          - generic [ref=e119]: Legacy App
+        - button "user Anmelden" [ref=e121] [cursor=pointer]:
+          - img "user" [ref=e123]:
+            - img [ref=e124]
+          - generic [ref=e126]: Anmelden
+      - generic [ref=e127]:
+        - generic [ref=e128]: Online
+        - generic [ref=e129]: nicht verbunden
+        - generic [ref=e130]: Realtime inaktiv
+        - generic [ref=e131]: Nicht angemeldet
+    - main [ref=e132]:
+      - generic [ref=e246]:
+        - generic [ref=e250]:
+          - heading "Bestellungen" [level=3] [ref=e251]
+          - generic [ref=e252]: Gemeinsamer Arbeitsbereich für Forecast Orders und Purchase Orders mit schneller FO-zu-PO Übergabe.
+        - generic [ref=e254]:
+          - generic [ref=e256]:
+            - heading "Zahlungsprotokoll (PO-Ist)" [level=5] [ref=e257]
+            - generic [ref=e258]: Tatsächlich bestätigte Zahlungen werden nur auf POs gebucht. FOs bleiben Planobjekte.
+          - generic [ref=e259]:
+            - generic [ref=e260]: "Eintraege: 0"
+            - generic [ref=e261]: "Summe Ist: 0,00 €"
+          - table [ref=e263]:
+            - rowgroup [ref=e264]:
+              - row "Payment-ID Paid Date Methode Durch Ist EUR Abgedeckte Events" [ref=e265]:
+                - columnheader "Payment-ID" [ref=e266]
+                - columnheader "Paid Date" [ref=e267]
+                - columnheader "Methode" [ref=e268]
+                - columnheader "Durch" [ref=e269]
+                - columnheader "Ist EUR" [ref=e270]
+                - columnheader "Abgedeckte Events" [ref=e271]
+            - rowgroup [ref=e272]:
+              - row "Noch keine Zahlungen verbucht." [ref=e273]:
+                - cell "Noch keine Zahlungen verbucht." [ref=e274]
+        - generic [ref=e275]:
+          - tablist [ref=e276]:
+            - generic [ref=e278]:
+              - tab "Bestellungen (PO)" [selected] [ref=e280] [cursor=pointer]
+              - tab "Forecast Orders (FO)" [ref=e282] [cursor=pointer]
+              - tab "SKU Sicht" [ref=e284] [cursor=pointer]
+          - tabpanel "Bestellungen (PO)" [ref=e287]:
+            - generic [ref=e288]:
+              - generic [ref=e292]:
+                - button "Neue PO" [ref=e293] [cursor=pointer]:
+                  - generic [ref=e294]: Neue PO
+                - radiogroup "segmented control" [ref=e295]:
+                  - generic [ref=e296]:
+                    - generic [ref=e297] [cursor=pointer]:
+                      - radio "Tabelle" [checked]
+                      - generic "Tabelle" [ref=e298]
+                    - generic [ref=e299] [cursor=pointer]:
+                      - radio "Timeline"
+                      - generic "Timeline" [ref=e300]
+              - generic [ref=e302]:
+                - generic [ref=e303]:
+                  - textbox "PO Nummer, SKU, Alias, Supplier" [ref=e304]
+                  - generic [ref=e305] [cursor=pointer]:
+                    - generic [ref=e307]:
+                      - combobox [ref=e309]
+                      - generic "Aktiv" [ref=e310]
+                    - generic:
+                      - img:
+                        - img
+                  - generic [ref=e311] [cursor=pointer]:
+                    - generic [ref=e313]:
+                      - combobox [ref=e315]
+                      - 'generic "Status: Alle" [ref=e316]'
+                    - generic:
+                      - img:
+                        - img
+                  - generic [ref=e317] [cursor=pointer]:
+                    - checkbox "Nur POs mit offenen Zahlungen" [ref=e319]
+                    - generic [ref=e321]: Nur POs mit offenen Zahlungen
+                - table [ref=e323]:
+                  - rowgroup [ref=e324]:
+                    - row "PO Produkt Supplier Order ETD / ETA Warenwert Open / Paid Status Aktionen" [ref=e325]:
+                      - columnheader "PO" [ref=e326]:
+                        - button "PO" [ref=e327] [cursor=pointer]:
+                          - generic [ref=e328]: PO
+                          - generic [ref=e329]: ↕
+                      - columnheader "Produkt" [ref=e330]
+                      - columnheader "Supplier" [ref=e331]:
+                        - button "Supplier" [ref=e332] [cursor=pointer]:
+                          - generic [ref=e333]: Supplier
+                          - generic [ref=e334]: ↕
+                      - columnheader "Order" [ref=e335]
+                      - columnheader "ETD / ETA" [ref=e336]:
+                        - button "ETD / ETA" [ref=e337] [cursor=pointer]:
+                          - generic [ref=e338]: ETD / ETA
+                          - generic [ref=e339]: ↕
+                      - columnheader "Warenwert" [ref=e340]
+                      - columnheader "Open / Paid" [ref=e341]
+                      - columnheader "Status" [ref=e342]
+                      - columnheader "Aktionen" [ref=e343]
+                  - rowgroup
