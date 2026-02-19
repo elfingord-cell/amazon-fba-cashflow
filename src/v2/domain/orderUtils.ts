@@ -337,6 +337,56 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+function resolveFoYearCode(value: unknown): string {
+  const fallback = new Date();
+  const parsed = value instanceof Date
+    ? value
+    : (typeof value === "string" || typeof value === "number")
+      ? new Date(value)
+      : null;
+  if (parsed instanceof Date && !Number.isNaN(parsed.getTime())) {
+    return String(parsed.getFullYear()).slice(-2);
+  }
+  return String(fallback.getFullYear()).slice(-2);
+}
+
+function parseFoSequence(value: unknown, yearCode: string): number | null {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  const compact = raw.replace(/[\s_-]+/g, "");
+  const digits = compact.startsWith("FO") ? compact.slice(2) : compact;
+  if (!/^\d+$/.test(digits)) return null;
+  if (!digits.startsWith(yearCode)) return null;
+  const suffix = digits.slice(yearCode.length);
+  if (!suffix) return null;
+  const sequence = Number(suffix);
+  if (!Number.isFinite(sequence) || sequence <= 0) return null;
+  return sequence;
+}
+
+export function suggestNextFoNumber(
+  foRows: Array<Record<string, unknown>>,
+  referenceDate?: unknown,
+): { foNo: string; foNumber: string } {
+  const yearCode = resolveFoYearCode(referenceDate);
+  let bestSequence = 0;
+  (foRows || []).forEach((entry) => {
+    const row = entry || {};
+    [row.foNo, row.foNumber, row.id].forEach((candidate) => {
+      const sequence = parseFoSequence(candidate, yearCode);
+      if (sequence != null && sequence > bestSequence) {
+        bestSequence = sequence;
+      }
+    });
+  });
+  const nextSuffix = String(bestSequence + 1).padStart(3, "0");
+  const foNo = `${yearCode}${nextSuffix}`;
+  return {
+    foNo,
+    foNumber: `FO${foNo}`,
+  };
+}
+
 export function convertToEur(amount: unknown, currency: unknown, fxRate: unknown): number {
   const value = asNumber(amount, 0);
   const curr = String(currency || "EUR").toUpperCase();

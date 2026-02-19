@@ -51,6 +51,7 @@ import {
   normalizeFoRecord,
   nowIso,
   resolveProductBySku,
+  suggestNextFoNumber,
   sumSupplierPercent,
   type SupplierPaymentTermDraft,
 } from "../../domain/orderUtils";
@@ -81,6 +82,9 @@ interface FoFormValues {
 
 interface FoRow {
   id: string;
+  foNo: string | null;
+  foNumber: string | null;
+  displayNumber: string;
   sku: string;
   alias: string;
   supplierId: string;
@@ -219,6 +223,25 @@ function suggestNextPoNo(pos: unknown[]): string {
   });
   if (best > 0) return String(best + 1);
   return String((pos || []).length + 1);
+}
+
+function normalizeFoNumberToken(value: unknown): string {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const compact = raw.toUpperCase().replace(/[\s_-]+/g, "");
+  return compact.startsWith("FO") ? compact.slice(2) : compact;
+}
+
+function resolveFoDisplayNumber(input: {
+  foNo?: unknown;
+  foNumber?: unknown;
+  id?: unknown;
+}): string {
+  const byFoNo = normalizeFoNumberToken(input.foNo);
+  if (byFoNo) return byFoNo;
+  const byFoNumber = normalizeFoNumberToken(input.foNumber);
+  if (byFoNumber) return byFoNumber;
+  return String(input.id || "").slice(-6).toUpperCase();
 }
 
 function normalizeIsoDate(value: unknown): string | null {
@@ -568,6 +591,13 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
       return {
         id: String(fo.id || ""),
+        foNo: String(fo.foNo || "").trim() || null,
+        foNumber: String(fo.foNumber || "").trim() || null,
+        displayNumber: resolveFoDisplayNumber({
+          foNo: fo.foNo,
+          foNumber: fo.foNumber,
+          id: fo.id,
+        }),
         sku,
         alias: product?.alias || sku || "—",
         supplierId: String(fo.supplierId || ""),
@@ -594,6 +624,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         if (statusFilter !== "ALL" && row.status !== statusFilter) return false;
         if (!needle) return true;
         return [
+          row.displayNumber,
+          row.foNo || "",
+          row.foNumber || "",
           row.alias,
           row.sku,
           row.supplierName,
@@ -712,7 +745,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 disabled={!canSelectForMerge}
                 onChange={(event) => toggleMergeSelectionForRow(row.id, event.target.checked)}
               />
-              <Text strong>FO {String(row.id || "").slice(-6).toUpperCase()}</Text>
+              <Text strong>FO {row.displayNumber}</Text>
               {statusTag(row.status)}
             </div>
             <div className="v2-orders-gantt-subline">
@@ -761,12 +794,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         items.push({
           id: itemId,
           group: row.id,
-          title: `FO ${String(row.id || "").slice(-6).toUpperCase()} · Produktion`,
+          title: `FO ${row.displayNumber} · Produktion`,
           startMs: span.startMs,
           endMs: span.endMs,
           className: "v2-orders-gantt-item v2-orders-gantt-item--fo-production",
           tooltip: [
-            `FO: ${String(row.id || "").slice(-6).toUpperCase()}`,
+            `FO: ${row.displayNumber}`,
             `Produkt: ${row.alias} (${row.sku})`,
             `Produktion: ${formatDate(row.orderDate)} bis ${formatDate(row.etdDate)}`,
           ].join("\n"),
@@ -780,12 +813,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         items.push({
           id: itemId,
           group: row.id,
-          title: `FO ${String(row.id || "").slice(-6).toUpperCase()} · Transit`,
+          title: `FO ${row.displayNumber} · Transit`,
           startMs: span.startMs,
           endMs: span.endMs,
           className: "v2-orders-gantt-item v2-orders-gantt-item--fo-transit",
           tooltip: [
-            `FO: ${String(row.id || "").slice(-6).toUpperCase()}`,
+            `FO: ${row.displayNumber}`,
             `Produkt: ${row.alias} (${row.sku})`,
             `Transit: ${formatDate(row.etdDate || row.orderDate)} bis ${formatDate(row.etaDate || row.targetDeliveryDate)}`,
           ].join("\n"),
@@ -825,7 +858,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     },
     {
       header: "FO",
-      cell: ({ row }) => String(row.original.id || "").slice(-6).toUpperCase(),
+      cell: ({ row }) => row.original.displayNumber,
     },
     {
       header: "Produkt",
@@ -1449,12 +1482,22 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
-      const list = Array.isArray(next.fos) ? [...next.fos] : [];
-      const index = list.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === String(normalized.id));
+      const list = Array.isArray(next.fos) ? [...next.fos] as Record<string, unknown>[] : [];
+      const nextRecord = { ...(normalized as Record<string, unknown>) };
+      const index = list.findIndex((entry) => String(entry.id || "") === String(nextRecord.id || ""));
       if (index >= 0) {
-        list[index] = normalized;
+        list[index] = nextRecord;
       } else {
-        list.push(normalized);
+        if (!String(nextRecord.foNo || "").trim() || !String(nextRecord.foNumber || "").trim()) {
+          const suggestion = suggestNextFoNumber(list, nextRecord.createdAt || nextRecord.updatedAt || nowIso());
+          if (!String(nextRecord.foNo || "").trim()) {
+            nextRecord.foNo = suggestion.foNo;
+          }
+          if (!String(nextRecord.foNumber || "").trim()) {
+            nextRecord.foNumber = suggestion.foNumber;
+          }
+        }
+        list.push(nextRecord);
       }
       next.fos = list;
       return next;
@@ -2401,7 +2444,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                   const row = mergeTimelineRows.find((entry) => entry.id === String(fo.id || ""));
                   return (
                     <tr key={String(fo.id || "")}>
-                      <td>{String(fo.id || "").slice(-6).toUpperCase()}</td>
+                      <td>{resolveFoDisplayNumber({ foNo: fo.foNo, foNumber: fo.foNumber, id: fo.id })}</td>
                       <td>{String(fo.sku || "—")}</td>
                       <td>{formatNumber(fo.units, 0)}</td>
                       <td>{formatDate(target)}</td>

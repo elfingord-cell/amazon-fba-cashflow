@@ -39,7 +39,7 @@ import {
   type ForecastVersionRecord,
 } from "../../domain/forecastVersioning";
 import { currentMonthKey, formatMonthLabel, normalizeMonthKey } from "../../domain/months";
-import { computeFoSchedule } from "../../domain/orderUtils";
+import { computeFoSchedule, suggestNextFoNumber } from "../../domain/orderUtils";
 import {
   type ForecastRecord,
   type ForecastViewMode,
@@ -1119,9 +1119,12 @@ export default function ForecastModule(): JSX.Element {
           });
           const changedAt = nowIso();
           const draftId = randomId("fo");
+          const foNumberSuggestion = suggestNextFoNumber(fos, changedAt);
           const draftFo = {
             ...existing,
             id: draftId,
+            foNo: foNumberSuggestion.foNo,
+            foNumber: foNumberSuggestion.foNumber,
             status: "DRAFT",
             units: Math.max(0, Math.round(Number(conflict.recommendedUnits || 0))),
             targetDeliveryDate: targetDate,
