@@ -1909,10 +1909,16 @@
 
 .v2-dashboard-legend-help {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+
+.v2-dashboard-legend-note {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .v2-dashboard-legend-tag {

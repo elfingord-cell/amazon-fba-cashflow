@@ -1117,6 +1117,22 @@ export default function DashboardModule(): JSX.Element {
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
     const phantomFoOutflowSeries = outflowSplitSeries.map((row) => -row.phantomFo);
+    const cashflowLegendItems = [
+      "Amazon Einzahlungen",
+      "Sonstige Einzahlungen",
+      "Fixkosten",
+      "PO",
+      "FO",
+      "Phantom FO",
+      "Netto",
+    ];
+    const balanceLegendItems = [
+      "Kontostand belastbar",
+      "Kontostand belastbar (<0)",
+      "Kontostand orientierend",
+      "Kontostand orientierend (<0)",
+      ...(simulationDraft ? ["Simulation"] : []),
+    ];
 
     return {
       tooltip: {
@@ -1134,13 +1150,24 @@ export default function DashboardModule(): JSX.Element {
           return lines.join("");
         },
       },
-      legend: {
-        top: 0,
-      },
+      legend: [
+        {
+          top: 0,
+          left: 0,
+          itemGap: 12,
+          data: cashflowLegendItems,
+        },
+        {
+          top: 26,
+          left: 0,
+          itemGap: 12,
+          data: balanceLegendItems,
+        },
+      ],
       grid: {
         left: 56,
         right: 70,
-        top: 44,
+        top: 78,
         bottom: 32,
       },
       xAxis: {
@@ -1236,7 +1263,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#b42318" },
         },
         {
-          name: "Kontostand orientierend (nicht robust)",
+          name: "Kontostand orientierend",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -1246,7 +1273,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#94a3b8" },
         },
         {
-          name: "Orientierend (<0)",
+          name: "Kontostand orientierend (<0)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
@@ -1963,6 +1990,9 @@ export default function DashboardModule(): JSX.Element {
                 <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
               </Space>
               <div className="v2-dashboard-legend-help">
+                <Text type="secondary" className="v2-dashboard-legend-note">
+                  Legende gruppiert: obere Zeile = Cashflow, untere Zeile = Kontostand.
+                </Text>
                 <Tooltip title="Durchgezogene Linie: belastbarer Kontostand (alle Hard-Checks bestanden).">
                   <Tag className="v2-dashboard-legend-tag">Linie solid = belastbar</Tag>
                 </Tooltip>
