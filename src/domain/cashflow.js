@@ -1264,10 +1264,6 @@ export function computeSeries(state) {
   const calibrationRows = cashInCalibrationEnabled
     ? incomings
       .filter((row) => String(row?.month || '') === currentMonth)
-      .map((row) => ({
-        ...row,
-        calibrationSellerboardMonthEndEur: null,
-      }))
     : [];
   const calibrationProfile = buildCalibrationProfile({
     incomings: calibrationRows,

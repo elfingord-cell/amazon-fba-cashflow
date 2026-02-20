@@ -68,8 +68,6 @@ test("buildCalibrationProfile uses sellerboard value if provided", () => {
     incomings: [
       {
         month: "2025-06",
-        calibrationCutoffDate: "2025-06-12",
-        calibrationRevenueToDateEur: 5000,
         calibrationSellerboardMonthEndEur: 9000,
       },
     ],

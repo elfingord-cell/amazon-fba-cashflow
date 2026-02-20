@@ -160,26 +160,6 @@ function resolveCalibrationCandidate(row, forecastRevenueByMonth) {
   const sellerboardMonthEnd = row.sellerboardMonthEnd;
   const rawForecastRevenue = Number(forecastRevenueByMonth?.[month] || 0);
 
-  if (!Number.isFinite(revenueToDate)) {
-    return {
-      month,
-      active: false,
-      reason: "missing_inputs",
-      rawForecastRevenue,
-    };
-  }
-
-  const hasCutoff = Boolean(cutoffDate);
-  const hasRevenueToDate = Number.isFinite(revenueToDate) && revenueToDate >= 0;
-  if (!hasCutoff || !hasRevenueToDate) {
-    return {
-      month,
-      active: false,
-      reason: "missing_inputs",
-      rawForecastRevenue,
-    };
-  }
-
   if (!(rawForecastRevenue > 0)) {
     return {
       month,
@@ -196,6 +176,24 @@ function resolveCalibrationCandidate(row, forecastRevenueByMonth) {
     expectedRevenue = Number(sellerboardMonthEnd);
     method = "sellerboard";
   } else {
+    if (!Number.isFinite(revenueToDate)) {
+      return {
+        month,
+        active: false,
+        reason: "missing_inputs",
+        rawForecastRevenue,
+      };
+    }
+    const hasCutoff = Boolean(cutoffDate);
+    const hasRevenueToDate = Number.isFinite(revenueToDate) && revenueToDate >= 0;
+    if (!hasCutoff || !hasRevenueToDate) {
+      return {
+        month,
+        active: false,
+        reason: "missing_inputs",
+        rawForecastRevenue,
+      };
+    }
     const dayOfMonth = parseDayOfMonthFromIso(cutoffDate);
     const monthDays = daysInMonth(month);
     if (!dayOfMonth || !monthDays || !sameMonth(cutoffDate, month)) {

@@ -79,6 +79,8 @@ export function DeNumberInput({
     <InputNumber
       {...rest}
       style={{ width: "100%", ...(style || {}) }}
+      controls={rest.controls ?? false}
+      changeOnWheel={false}
       precision={effectivePrecision}
       step={effectiveStep}
       decimalSeparator=","

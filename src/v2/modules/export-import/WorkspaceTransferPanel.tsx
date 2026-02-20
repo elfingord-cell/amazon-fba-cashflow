@@ -103,8 +103,8 @@ function validateState(state: Record<string, unknown>): ValidationResult {
     const calibrationPayoutRateToDateRaw = row.calibrationPayoutRateToDatePct;
     if (calibrationPayoutRateToDateRaw != null && String(calibrationPayoutRateToDateRaw).trim() !== "") {
       const value = parseDENull(calibrationPayoutRateToDateRaw);
-      if (!Number.isFinite(value) || value < 0 || value > 100) {
-        errors.push(`Incomings ${index + 1}: calibrationPayoutRateToDatePct muss numerisch in 0..100 sein.`);
+      if (!Number.isFinite(value) || value < 0) {
+        errors.push(`Incomings ${index + 1}: calibrationPayoutRateToDatePct muss numerisch und >= 0 sein.`);
       }
     }
   });
