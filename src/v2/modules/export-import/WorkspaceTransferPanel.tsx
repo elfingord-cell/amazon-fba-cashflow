@@ -99,6 +99,14 @@ function validateState(state: Record<string, unknown>): ValidationResult {
         errors.push(`Incomings ${index + 1}: calibrationSellerboardMonthEndEur muss numerisch und >= 0 sein.`);
       }
     }
+
+    const calibrationPayoutRateToDateRaw = row.calibrationPayoutRateToDatePct;
+    if (calibrationPayoutRateToDateRaw != null && String(calibrationPayoutRateToDateRaw).trim() !== "") {
+      const value = parseDENull(calibrationPayoutRateToDateRaw);
+      if (!Number.isFinite(value) || value < 0 || value > 100) {
+        errors.push(`Incomings ${index + 1}: calibrationPayoutRateToDatePct muss numerisch in 0..100 sein.`);
+      }
+    }
   });
 
   (Array.isArray(state.extras) ? state.extras : []).forEach((entry, index) => {

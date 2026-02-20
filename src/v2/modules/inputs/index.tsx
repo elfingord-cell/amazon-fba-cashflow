@@ -45,6 +45,7 @@ interface IncomingDraft {
   source: "manual" | "forecast";
   calibrationCutoffDate: string | null;
   calibrationRevenueToDateEur: number | null;
+  calibrationPayoutRateToDatePct: number | null;
   calibrationSellerboardMonthEndEur: number | null;
 }
 
@@ -116,6 +117,7 @@ function normalizeIncomingRow(entry: Record<string, unknown>, fallbackMonth: str
     source: String(entry.source || "manual") === "forecast" ? "forecast" : "manual",
     calibrationCutoffDate: cutoffDate,
     calibrationRevenueToDateEur: toNumber(entry.calibrationRevenueToDateEur),
+    calibrationPayoutRateToDatePct: toNumber(entry.calibrationPayoutRateToDatePct),
     calibrationSellerboardMonthEndEur: toNumber(entry.calibrationSellerboardMonthEndEur),
   };
 }
@@ -141,6 +143,7 @@ function syncIncomingsToWindow(rows: IncomingDraft[], startMonth: string, horizo
         payoutPct: toNumber(row.payoutPct),
         calibrationCutoffDate: row.calibrationCutoffDate ? String(row.calibrationCutoffDate) : null,
         calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
+        calibrationPayoutRateToDatePct: toNumber(row.calibrationPayoutRateToDatePct),
         calibrationSellerboardMonthEndEur: toNumber(row.calibrationSellerboardMonthEndEur),
       });
     });
@@ -157,11 +160,32 @@ function formatNumber(value: unknown, digits = 2): string {
   });
 }
 
-function monthSequence(month: string): number | null {
+function todayIsoDate(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
+function daysInMonth(month: string): number | null {
   if (!isMonthKey(month)) return null;
   const [year, monthNumber] = month.split("-").map(Number);
   if (!Number.isFinite(year) || !Number.isFinite(monthNumber)) return null;
-  return year * 12 + (monthNumber - 1);
+  return new Date(year, monthNumber, 0).getDate();
+}
+
+function parseDayFromIsoDate(value: unknown): number | null {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [year, month, day] = raw.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    !Number.isFinite(date.getTime())
+    || date.getFullYear() !== year
+    || date.getMonth() + 1 !== month
+    || date.getDate() !== day
+  ) {
+    return null;
+  }
+  return day;
 }
 
 function formatFactor(value: unknown): string {
@@ -177,6 +201,12 @@ function normalizePayoutInput(value: unknown): number | null {
   const parsed = parsePayoutPctInput(value);
   if (!Number.isFinite(parsed as number)) return null;
   return clampPct(Number(parsed), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
+}
+
+function normalizePercentInput(value: unknown): number | null {
+  const parsed = parsePayoutPctInput(value);
+  if (!Number.isFinite(parsed as number)) return null;
+  return Math.max(0, Math.min(100, Number(parsed)));
 }
 
 function buildCalibrationDecayTooltip(sourceMonth: string, rawFactor: number, horizonMonths: number): string {
@@ -211,6 +241,7 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
       source: row.source === "forecast" ? "forecast" : "manual",
       calibrationCutoffDate: row.calibrationCutoffDate ? String(row.calibrationCutoffDate) : null,
       calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
+      calibrationPayoutRateToDatePct: toNumber(row.calibrationPayoutRateToDatePct),
       calibrationSellerboardMonthEndEur: toNumber(row.calibrationSellerboardMonthEndEur),
     })),
     extras: snapshot.extras
@@ -424,35 +455,89 @@ export default function InputsModule(): JSX.Element {
     return recommendationMap;
   }, [incomings, payoutRecommendation.medianPct]);
 
-  const calibrationProfile = useMemo(() => {
+  const currentMonthValue = currentMonthKey();
+  const currentMonthInPlanning = planningMonths.includes(currentMonthValue);
+  const currentMonthForecastRevenue = Number(forecastRevenueByMonth.get(currentMonthValue) || 0);
+
+  const currentMonthIncoming = useMemo(
+    () => sortIncomings(incomings).find((row) => row.month === currentMonthValue) || null,
+    [currentMonthValue, incomings],
+  );
+
+  const currentCalibrationCutoffDate = String(currentMonthIncoming?.calibrationCutoffDate || todayIsoDate());
+  const currentCalibrationRevenueToDate = toNumber(currentMonthIncoming?.calibrationRevenueToDateEur);
+  const currentCalibrationPayoutRateToDate = toNumber(currentMonthIncoming?.calibrationPayoutRateToDatePct);
+  const currentCalibrationProjection = useMemo(() => {
+    const revenueToDate = Number(currentCalibrationRevenueToDate);
+    if (!(Number.isFinite(revenueToDate) && revenueToDate >= 0)) return null;
+    if (String(currentCalibrationCutoffDate || "").slice(0, 7) !== currentMonthValue) return null;
+    const dayOfMonth = parseDayFromIsoDate(currentCalibrationCutoffDate);
+    const monthDays = daysInMonth(currentMonthValue);
+    if (!dayOfMonth || !monthDays) return null;
+    return revenueToDate * (monthDays / dayOfMonth);
+  }, [currentCalibrationCutoffDate, currentCalibrationRevenueToDate, currentMonthValue]);
+
+  const currentMonthCalibrationProfile = useMemo(() => {
+    const calibrationRow = currentMonthIncoming
+      ? [{
+        ...currentMonthIncoming,
+        calibrationCutoffDate: currentCalibrationCutoffDate,
+        calibrationSellerboardMonthEndEur: null,
+      }]
+      : [];
     return buildCalibrationProfile({
-      incomings,
+      incomings: calibrationRow,
       months: planningMonths,
       forecastRevenueByMonth: forecastRevenueByMonthObject,
       horizonMonths: cashInCalibrationHorizonMonths,
     });
-  }, [cashInCalibrationHorizonMonths, forecastRevenueByMonthObject, incomings, planningMonths]);
+  }, [
+    cashInCalibrationHorizonMonths,
+    currentCalibrationCutoffDate,
+    currentMonthIncoming,
+    forecastRevenueByMonthObject,
+    planningMonths,
+  ]);
+  const currentMonthCalibrationCandidate = currentMonthCalibrationProfile.candidates.find(
+    (candidate) => candidate.month === currentMonthValue,
+  ) || null;
+  const currentMonthCalibrationFactor = Number(currentMonthCalibrationCandidate?.rawFactor);
+  const currentMonthCalibrationTooltip = Number.isFinite(currentMonthCalibrationFactor)
+    ? [
+      "Linearer Forecast aus Umsatz bis Stichtag.",
+      `Startfaktor ${currentMonthValue}: ${formatFactor(currentMonthCalibrationFactor)}`,
+      `Decay über ${cashInCalibrationHorizonMonths} Monate: ${buildCalibrationDecayTooltip(currentMonthValue, currentMonthCalibrationFactor, cashInCalibrationHorizonMonths)}`,
+    ].join(" | ")
+    : "Kalibrierfaktor wird berechnet, sobald Stichtag und Umsatz bis Stichtag im aktuellen Monat gesetzt sind und Forecast-Umsatz > 0 ist.";
 
-  const calibrationCandidateByMonth = useMemo(() => {
-    const map = new Map<string, Record<string, unknown>>();
-    calibrationProfile.candidates.forEach((candidate) => {
-      map.set(candidate.month, candidate as unknown as Record<string, unknown>);
+  function setCurrentMonthCalibrationPatch(patch: Partial<IncomingDraft>): void {
+    setIncomings((prev) => {
+      const index = prev.findIndex((row) => row.month === currentMonthValue);
+      if (index >= 0) {
+        const next = [...prev];
+        next[index] = {
+          ...next[index],
+          ...patch,
+          calibrationSellerboardMonthEndEur: null,
+        };
+        return sortIncomings(next);
+      }
+      if (!currentMonthInPlanning) return prev;
+      const nextRow: IncomingDraft = {
+        id: randomId("inc"),
+        month: currentMonthValue,
+        revenueEur: Number.isFinite(currentMonthForecastRevenue) ? currentMonthForecastRevenue : 0,
+        payoutPct: normalizePayoutInput(payoutRecommendation.medianPct),
+        source: currentMonthForecastRevenue > 0 ? "forecast" : "manual",
+        calibrationCutoffDate: todayIsoDate(),
+        calibrationRevenueToDateEur: null,
+        calibrationPayoutRateToDatePct: null,
+        calibrationSellerboardMonthEndEur: null,
+        ...patch,
+      };
+      return sortIncomings([...prev, nextRow]);
     });
-    return map;
-  }, [calibrationProfile.candidates]);
-
-  const hasAnyRecommendation = useMemo(
-    () => Array.from(payoutRecommendationByMonth.values()).some((value) => Number.isFinite(value)),
-    [payoutRecommendationByMonth],
-  );
-  const currentMonthSerial = monthSequence(currentMonthKey());
-  const hasFutureIncomings = useMemo(() => {
-    if (currentMonthSerial == null) return false;
-    return incomings.some((row) => {
-      const rowSerial = monthSequence(row.month);
-      return rowSerial != null && rowSerial > currentMonthSerial;
-    });
-  }, [currentMonthSerial, incomings]);
+  }
 
   async function saveDraft(source: string): Promise<void> {
     const normalizedIncomings = syncIncomingsToWindow(incomings, startMonth, horizonMonths);
@@ -494,7 +579,8 @@ export default function InputsModule(): JSX.Element {
         source: row.source,
         calibrationCutoffDate: row.calibrationCutoffDate || null,
         calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
-        calibrationSellerboardMonthEndEur: toNumber(row.calibrationSellerboardMonthEndEur),
+        calibrationPayoutRateToDatePct: normalizePercentInput(row.calibrationPayoutRateToDatePct),
+        calibrationSellerboardMonthEndEur: null,
       }));
 
       next.extras = snapshot.extras.map((row) => ({
@@ -617,55 +703,153 @@ export default function InputsModule(): JSX.Element {
 
       <Card>
         <Title level={5}>Basis-Parameter</Title>
-        <Space wrap align="start">
-          <div>
-            <Text>Opening Balance (EUR)</Text>
-            <div data-field-key="inputs.openingBalance">
-              <DeNumberInput
-                value={openingBalance}
-                onChange={(value) => {
-                  setOpeningBalance(Number(toNumber(value) || 0));
-                }}
-                style={{ width: 190 }}
-                mode="decimal"
-                min={0}
-                step={100}
-              />
-            </div>
+        <div
+          style={{
+            display: "grid",
+            gap: 16,
+            gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
+            alignItems: "start",
+          }}
+        >
+          <div
+            style={{
+              padding: 12,
+              border: "1px solid #d9d9d9",
+              borderRadius: 8,
+            }}
+          >
+            <Space wrap align="start">
+              <div>
+                <Text>Opening Balance (EUR)</Text>
+                <div data-field-key="inputs.openingBalance">
+                  <DeNumberInput
+                    value={openingBalance}
+                    onChange={(value) => {
+                      setOpeningBalance(Number(toNumber(value) || 0));
+                    }}
+                    style={{ width: 190 }}
+                    mode="decimal"
+                    min={0}
+                    step={100}
+                  />
+                </div>
+              </div>
+              <div>
+                <Text>Startmonat</Text>
+                <div data-field-key="inputs.startMonth">
+                  <Input
+                    type="month"
+                    value={startMonth}
+                    onChange={(event) => {
+                      const nextStartMonth = normalizeMonth(event.target.value, startMonth);
+                      setStartMonth(nextStartMonth);
+                      setIncomings((prev) => syncIncomingsToWindow(prev, nextStartMonth, horizonMonths));
+                    }}
+                    style={{ width: 170 }}
+                  />
+                </div>
+              </div>
+              <div>
+                <Text>Horizont (Monate)</Text>
+                <div data-field-key="inputs.horizonMonths">
+                  <DeNumberInput
+                    value={horizonMonths}
+                    onChange={(value) => {
+                      const nextHorizon = Math.max(1, Number(toNumber(value) || 1));
+                      setHorizonMonths(nextHorizon);
+                      setIncomings((prev) => syncIncomingsToWindow(prev, startMonth, nextHorizon));
+                    }}
+                    mode="int"
+                    min={1}
+                    max={48}
+                    style={{ width: 160 }}
+                  />
+                </div>
+              </div>
+            </Space>
           </div>
-          <div>
-            <Text>Startmonat</Text>
-            <div data-field-key="inputs.startMonth">
-              <Input
-                type="month"
-                value={startMonth}
-                onChange={(event) => {
-                  const nextStartMonth = normalizeMonth(event.target.value, startMonth);
-                  setStartMonth(nextStartMonth);
-                  setIncomings((prev) => syncIncomingsToWindow(prev, nextStartMonth, horizonMonths));
-                }}
-                style={{ width: 170 }}
-              />
-            </div>
+          <div
+            style={{
+              padding: 12,
+              border: "1px solid #d9d9d9",
+              borderRadius: 8,
+              background: "#fafafa",
+            }}
+          >
+            <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }} wrap>
+              <Title level={5} style={{ margin: 0 }}>
+                Umsatz-Kalibrierung (aktueller Monat: {formatMonthLabel(currentMonthValue)})
+              </Title>
+              {!currentMonthInPlanning ? <Tag color="orange">Aktueller Monat liegt ausserhalb des Planungshorizonts</Tag> : null}
+            </Space>
+            <Space wrap align="start">
+              <div>
+                <Text>Stichtag</Text>
+                <Input
+                  type="date"
+                  value={currentCalibrationCutoffDate}
+                  onChange={(event) => {
+                    const value = String(event.target.value || "").trim() || todayIsoDate();
+                    setCurrentMonthCalibrationPatch({ calibrationCutoffDate: value });
+                  }}
+                  style={{ width: 170 }}
+                  disabled={!currentMonthInPlanning}
+                />
+              </div>
+              <div>
+                <Text>Umsatz bis Stichtag (EUR)</Text>
+                <DeNumberInput
+                  value={currentCalibrationRevenueToDate ?? undefined}
+                  mode="decimal"
+                  min={0}
+                  step={100}
+                  style={{ width: 190 }}
+                  onChange={(value) => {
+                    setCurrentMonthCalibrationPatch({
+                      calibrationRevenueToDateEur: toNumber(value),
+                      calibrationCutoffDate: currentCalibrationCutoffDate || todayIsoDate(),
+                    });
+                  }}
+                  disabled={!currentMonthInPlanning}
+                />
+              </div>
+              <div>
+                <Text>Auszahlungsquote bis Stichtag (%)</Text>
+                <DeNumberInput
+                  value={currentCalibrationPayoutRateToDate ?? undefined}
+                  mode="percent"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                  style={{ width: 210 }}
+                  onChange={(value) => {
+                    setCurrentMonthCalibrationPatch({
+                      calibrationPayoutRateToDatePct: normalizePercentInput(value),
+                    });
+                  }}
+                  disabled={!currentMonthInPlanning}
+                />
+              </div>
+              <div>
+                <Text>Prognostizierter Umsatz Monatsende (EUR)</Text>
+                <div style={{ minWidth: 240, paddingTop: 6 }}>
+                  <Text strong>{formatNumber(currentCalibrationProjection, 2)}</Text>
+                </div>
+              </div>
+              <div>
+                <Text>Kalibrierfaktor {formatMonthLabel(currentMonthValue)}</Text>
+                <div style={{ minWidth: 180, paddingTop: 6 }}>
+                  <Tooltip title={currentMonthCalibrationTooltip}>
+                    <Text strong>{formatFactor(currentMonthCalibrationFactor)}</Text>
+                  </Tooltip>
+                </div>
+              </div>
+            </Space>
+            <Text type="secondary">
+              Forecast {formatMonthLabel(currentMonthValue)}: {formatNumber(currentMonthForecastRevenue, 2)} EUR
+            </Text>
           </div>
-          <div>
-            <Text>Horizont (Monate)</Text>
-            <div data-field-key="inputs.horizonMonths">
-              <DeNumberInput
-                value={horizonMonths}
-                onChange={(value) => {
-                  const nextHorizon = Math.max(1, Number(toNumber(value) || 1));
-                  setHorizonMonths(nextHorizon);
-                  setIncomings((prev) => syncIncomingsToWindow(prev, startMonth, nextHorizon));
-                }}
-                mode="int"
-                min={1}
-                max={48}
-                style={{ width: 160 }}
-              />
-            </div>
-          </div>
-        </Space>
+        </div>
       </Card>
 
       <Card>
@@ -722,6 +906,7 @@ export default function InputsModule(): JSX.Element {
                       source: "manual",
                       calibrationCutoffDate: null,
                       calibrationRevenueToDateEur: null,
+                      calibrationPayoutRateToDatePct: null,
                       calibrationSellerboardMonthEndEur: null,
                     },
                   ]);
@@ -730,23 +915,6 @@ export default function InputsModule(): JSX.Element {
               }}
             >
               Naechsten Monat anhaengen
-            </Button>
-            <Button
-              onClick={() => {
-                setIncomings((prev) => prev.map((entry) => {
-                  const rowSerial = monthSequence(entry.month);
-                  if (currentMonthSerial != null && rowSerial != null && rowSerial <= currentMonthSerial) return entry;
-                  const recommendation = payoutRecommendationByMonth.get(entry.month);
-                  if (!Number.isFinite(recommendation)) return entry;
-                  return {
-                    ...entry,
-                    payoutPct: Number(Number(recommendation).toFixed(2)),
-                  };
-                }));
-              }}
-              disabled={!hasAnyRecommendation || !hasFutureIncomings}
-            >
-              Empfehlung fuer Zukunftsmonate uebernehmen
             </Button>
           </Space>
         </Space>
@@ -769,11 +937,7 @@ export default function InputsModule(): JSX.Element {
                 <th>Auszahlungsquote (manuell) %</th>
                 <th>Empfehlung %</th>
                 <th>Payout EUR</th>
-                <th>Umsatzquelle</th>
-                <th>Stichtag</th>
-                <th>Umsatz bis Stichtag EUR</th>
-                <th>Sellerboard Monatsende EUR (opt.)</th>
-                <th>Kalibrierfaktor</th>
+                <th>Status</th>
                 <th />
               </tr>
             </thead>
@@ -788,18 +952,7 @@ export default function InputsModule(): JSX.Element {
                 const shouldWarnDelta = Number.isFinite(payoutDelta as number) && Math.abs(Number(payoutDelta)) >= PAYOUT_DELTA_WARNING_PCT;
                 const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
                 const forecastMissing = row.source === "forecast" && (!Number.isFinite(forecastRevenue) || forecastRevenue <= 0);
-                const rowSerial = monthSequence(row.month);
-                const isFutureMonth = currentMonthSerial != null && rowSerial != null && rowSerial > currentMonthSerial;
-                const calibrationCandidate = calibrationCandidateByMonth.get(row.month) || null;
-                const calibrationFactor = Number(calibrationCandidate?.rawFactor);
-                const calibrationMethod = String(calibrationCandidate?.method || "").trim().toLowerCase();
-                const calibrationTooltip = Number.isFinite(calibrationFactor)
-                  ? [
-                    `Quelle: ${calibrationMethod === "sellerboard" ? "Sellerboard Monatsende-Prognose" : "Lineare Hochrechnung aus Umsatz bis Stichtag"}`,
-                    `Startfaktor ${row.month}: ${formatFactor(calibrationFactor)}`,
-                    `Decay über ${cashInCalibrationHorizonMonths} Monate: ${buildCalibrationDecayTooltip(row.month, calibrationFactor, cashInCalibrationHorizonMonths)}`,
-                  ].join(" | ")
-                  : "Kalibrierfaktor wird berechnet, wenn Stichtag + Umsatz bis Stichtag gesetzt sind und Forecast-Umsatz im Monat > 0 ist.";
+                const isManualRevenueOverride = row.source === "manual" && Number.isFinite(forecastRevenue) && forecastRevenue > 0;
 
                 return (
                   <tr key={row.id}>
@@ -808,7 +961,14 @@ export default function InputsModule(): JSX.Element {
                       <div><Text type="secondary">{row.month}</Text></div>
                     </td>
                     <td>
-                      <div data-field-key={`inputs.incomings.${row.id}.revenueEur`}>
+                      <div
+                        data-field-key={`inputs.incomings.${row.id}.revenueEur`}
+                        style={isManualRevenueOverride ? {
+                          border: "1px solid #faad14",
+                          borderRadius: 8,
+                          padding: 6,
+                        } : undefined}
+                      >
                         <DeNumberInput
                           value={row.revenueEur ?? undefined}
                           mode="decimal"
@@ -826,6 +986,7 @@ export default function InputsModule(): JSX.Element {
                             }));
                           }}
                         />
+                        {isManualRevenueOverride ? <Text type="warning">manuell ueberschrieben</Text> : null}
                       </div>
                     </td>
                     <td>
@@ -850,114 +1011,22 @@ export default function InputsModule(): JSX.Element {
                     <td>
                       {Number.isFinite(recommendation)
                         ? (
-                          <Space direction="vertical" size={4}>
+                          <div>
                             <Tooltip title={recommendationTooltip}>
                               <div>{formatNumber(recommendation, 2)}</div>
                             </Tooltip>
                             {shouldWarnDelta ? <Tag color="orange">Delta {formatSignedDelta(Number(payoutDelta))}</Tag> : null}
-                            <Button
-                              size="small"
-                              disabled={!isFutureMonth}
-                              onClick={() => {
-                                setIncomings((prev) => prev.map((entry) => (
-                                  entry.id === row.id
-                                    ? { ...entry, payoutPct: Number(Number(recommendation).toFixed(2)) }
-                                    : entry
-                                )));
-                              }}
-                            >
-                              Empfehlung uebernehmen
-                            </Button>
-                          </Space>
+                          </div>
                         )
                         : <Text type="secondary">—</Text>}
                     </td>
                     <td>{formatNumber(payoutByMonth.get(row.month) || 0, 2)}</td>
                     <td>
-                      <div>
-                        <div data-field-key={`inputs.incomings.${row.id}.source`}>
-                          <Select
-                            value={row.source}
-                            options={[
-                              { value: "manual", label: "Manuell" },
-                              { value: "forecast", label: "Forecast" },
-                            ]}
-                            onChange={(value) => {
-                              setIncomings((prev) => prev.map((entry) => {
-                                if (entry.id !== row.id) return entry;
-                                if (value === "forecast") {
-                                  const nextRevenue = Number(forecastRevenueByMonth.get(entry.month) || 0);
-                                  return {
-                                    ...entry,
-                                    source: "forecast",
-                                    revenueEur: Number.isFinite(nextRevenue) ? nextRevenue : entry.revenueEur,
-                                  };
-                                }
-                                return { ...entry, source: "manual" };
-                              }));
-                            }}
-                            style={{ width: 120 }}
-                          />
-                        </div>
+                      <div style={{ minWidth: 170 }}>
+                        {row.source === "forecast" ? <Tag color="blue">Forecast übertragen</Tag> : null}
+                        {isManualRevenueOverride ? <Tag color="orange">Manuell ueberschrieben</Tag> : null}
                         {forecastMissing ? <div><Text type="warning">Kein Forecast-Umsatz vorhanden</Text></div> : null}
                       </div>
-                    </td>
-                    <td>
-                      <div data-field-key={`inputs.incomings.${row.id}.calibrationCutoffDate`}>
-                        <Input
-                          type="date"
-                          value={row.calibrationCutoffDate || ""}
-                          onChange={(event) => {
-                            const value = String(event.target.value || "").trim();
-                            setIncomings((prev) => prev.map((entry) => (
-                              entry.id === row.id
-                                ? { ...entry, calibrationCutoffDate: value || null }
-                                : entry
-                            )));
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <div data-field-key={`inputs.incomings.${row.id}.calibrationRevenueToDateEur`}>
-                        <DeNumberInput
-                          value={row.calibrationRevenueToDateEur ?? undefined}
-                          mode="decimal"
-                          min={0}
-                          step={100}
-                          style={{ width: "100%" }}
-                          onChange={(value) => {
-                            setIncomings((prev) => prev.map((entry) => (
-                              entry.id === row.id
-                                ? { ...entry, calibrationRevenueToDateEur: toNumber(value) }
-                                : entry
-                            )));
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <div data-field-key={`inputs.incomings.${row.id}.calibrationSellerboardMonthEndEur`}>
-                        <DeNumberInput
-                          value={row.calibrationSellerboardMonthEndEur ?? undefined}
-                          mode="decimal"
-                          min={0}
-                          step={100}
-                          style={{ width: "100%" }}
-                          onChange={(value) => {
-                            setIncomings((prev) => prev.map((entry) => (
-                              entry.id === row.id
-                                ? { ...entry, calibrationSellerboardMonthEndEur: toNumber(value) }
-                                : entry
-                            )));
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td>
-                      <Tooltip title={calibrationTooltip}>
-                        <span>{formatFactor(calibrationFactor)}</span>
-                      </Tooltip>
                     </td>
                     <td>
                       <Button

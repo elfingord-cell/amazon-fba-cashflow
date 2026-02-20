@@ -1260,8 +1260,14 @@ export function computeSeries(state) {
     s?.settings?.cashInCalibrationHorizonMonths,
     6,
   );
+  const calibrationRows = incomings
+    .filter((row) => String(row?.month || '') === currentMonth)
+    .map((row) => ({
+      ...row,
+      calibrationSellerboardMonthEndEur: null,
+    }));
   const calibrationProfile = buildCalibrationProfile({
-    incomings,
+    incomings: calibrationRows,
     months: Object.keys(bucket),
     forecastRevenueByMonth: forecastMap,
     horizonMonths: cashInCalibrationHorizonMonths,

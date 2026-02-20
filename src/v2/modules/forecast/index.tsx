@@ -899,6 +899,7 @@ export default function ForecastModule(): JSX.Element {
           source: "forecast",
           calibrationCutoffDate: null,
           calibrationRevenueToDateEur: null,
+          calibrationPayoutRateToDatePct: null,
           calibrationSellerboardMonthEndEur: null,
         });
       });

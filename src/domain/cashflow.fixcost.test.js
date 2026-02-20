@@ -379,11 +379,11 @@ test("computeSeries enforces final quote band 40..60 for manual values", () => {
 });
 
 test("computeSeries applies calibration decay to forecast revenue and exposes full tooltip/meta", () => {
-  const june = "2025-06";
-  const july = "2025-07";
+  const currentMonth = monthKeyFromDate(new Date());
+  const nextMonth = addMonths(currentMonth, 1);
   const state = {
     settings: {
-      startMonth: june,
+      startMonth: currentMonth,
       horizonMonths: 2,
       openingBalance: 0,
       cashInMode: "basis",
@@ -393,22 +393,22 @@ test("computeSeries applies calibration decay to forecast revenue and exposes fu
       settings: { useForecast: true },
       forecastImport: {
         "SKU-LIVE": {
-          [june]: { revenueEur: 1000 },
-          [july]: { revenueEur: 1200 },
+          [currentMonth]: { revenueEur: 1000 },
+          [nextMonth]: { revenueEur: 1200 },
         },
       },
     },
     incomings: [
       {
-        month: june,
+        month: currentMonth,
         revenueEur: "0,00",
         payoutPct: "50",
         source: "forecast",
-        calibrationCutoffDate: "2025-06-15",
+        calibrationCutoffDate: `${currentMonth}-15`,
         calibrationRevenueToDateEur: 450,
       },
       {
-        month: july,
+        month: nextMonth,
         revenueEur: "0,00",
         payoutPct: "50",
         source: "forecast",
@@ -422,21 +422,25 @@ test("computeSeries applies calibration decay to forecast revenue and exposes fu
   };
 
   const report = computeSeries(state);
-  assert.equal(salesPayoutAmountForMonth(report, june), 450);
-  assert.equal(salesPayoutAmountForMonth(report, july), 550);
+  const [year, monthNumber] = currentMonth.split("-").map(Number);
+  const monthDays = new Date(year, monthNumber, 0).getDate();
+  const rawFactor = (450 * (monthDays / 15)) / 1000;
+  const nextFactor = 1 + (rawFactor - 1) * ((6 - 1) / 6);
+  assert.equal(Math.round(salesPayoutAmountForMonth(report, currentMonth)), Math.round(1000 * rawFactor * 0.5));
+  assert.equal(Math.round(salesPayoutAmountForMonth(report, nextMonth)), Math.round(1200 * nextFactor * 0.5));
 
-  const juneEntry = salesEntriesForMonth(report, june)[0];
-  const julyEntry = salesEntriesForMonth(report, july)[0];
-  assert.ok(juneEntry);
-  assert.ok(julyEntry);
-  assert.equal(juneEntry.meta?.cashIn?.quoteSource, "manual");
-  assert.equal(juneEntry.meta?.cashIn?.revenueSource, "forecast_calibrated");
-  assert.equal(julyEntry.meta?.cashIn?.calibrationSourceMonth, june);
-  assert.match(String(juneEntry.tooltip || ""), /Forecast-Umsatz:/);
-  assert.match(String(juneEntry.tooltip || ""), /Kalibrierfaktor:/);
-  assert.match(String(juneEntry.tooltip || ""), /Plan-Umsatz:/);
-  assert.match(String(juneEntry.tooltip || ""), /Quote:/);
-  assert.match(String(juneEntry.tooltip || ""), /Auszahlung:/);
+  const currentEntry = salesEntriesForMonth(report, currentMonth)[0];
+  const nextEntry = salesEntriesForMonth(report, nextMonth)[0];
+  assert.ok(currentEntry);
+  assert.ok(nextEntry);
+  assert.equal(currentEntry.meta?.cashIn?.quoteSource, "manual");
+  assert.equal(currentEntry.meta?.cashIn?.revenueSource, "forecast_calibrated");
+  assert.equal(nextEntry.meta?.cashIn?.calibrationSourceMonth, currentMonth);
+  assert.match(String(currentEntry.tooltip || ""), /Forecast-Umsatz:/);
+  assert.match(String(currentEntry.tooltip || ""), /Kalibrierfaktor:/);
+  assert.match(String(currentEntry.tooltip || ""), /Plan-Umsatz:/);
+  assert.match(String(currentEntry.tooltip || ""), /Quote:/);
+  assert.match(String(currentEntry.tooltip || ""), /Auszahlung:/);
 });
 
 test("computeSeries falls back to latest plan quote when no actual quotes exist", () => {
