@@ -79,6 +79,17 @@ export interface DashboardPnlRow {
     milestone?: string | null;
     dueDate?: string | null;
   };
+  cashInMeta?: {
+    quoteSource?: "manual" | "recommendation" | string;
+    revenueSource?: "manual_override" | "forecast_calibrated" | "manual_no_forecast" | string;
+    forecastRevenueRaw?: number | null;
+    calibrationFactorApplied?: number | null;
+    calibrationSourceMonth?: string | null;
+    calibrationMethod?: "sellerboard" | "linear" | string | null;
+    planRevenueAfterCalibration?: number | null;
+    payoutPct?: number | null;
+    payoutAmount?: number | null;
+  };
 }
 
 interface ProjectionCellData {
@@ -147,7 +158,7 @@ function resolvePnlSource(entry: DashboardEntry): DashboardPnlRow["source"] {
   const source = String(entry.source || "").toLowerCase();
   if (source === "po") return "po";
   if (source === "fo") return "fo";
-  if (source === "sales") return "sales";
+  if (source === "sales" || source === "sales-plan") return "sales";
   if (source === "fixcosts") return "fixcosts";
   if (source === "extras") return "extras";
   if (source === "dividends") return "dividends";
@@ -162,7 +173,7 @@ function resolvePnlGroup(entry: DashboardEntry): DashboardPnlRow["group"] {
   const group = String(entry.group || "").toLowerCase();
 
   if (source === "po" || source === "fo") return "po_fo";
-  if (source === "sales") return "inflow";
+  if (source === "sales" || source === "sales-plan") return "inflow";
   if (source === "fixcosts" || group === "fixkosten") return "fixcost";
   if (
     kind.includes("duty")
@@ -428,6 +439,9 @@ export function buildDashboardPnlRowsByMonth(input: {
         ? `${source}:${sourceNumber}`
         : null;
       const orderMeta = orderMetaKey ? tooltipMetaIndex.get(orderMetaKey) : null;
+      const cashInMetaRaw = (entryMeta.cashIn && typeof entryMeta.cashIn === "object")
+        ? entryMeta.cashIn as Record<string, unknown>
+        : null;
 
       return {
         month,
@@ -447,6 +461,33 @@ export function buildDashboardPnlRowsByMonth(input: {
             units: orderMeta.units,
             milestone: String(entry.label || ""),
             dueDate: entry.date ? String(entry.date) : null,
+          }
+          : undefined,
+        cashInMeta: cashInMetaRaw
+          ? {
+            quoteSource: cashInMetaRaw.quoteSource ? String(cashInMetaRaw.quoteSource) : undefined,
+            revenueSource: cashInMetaRaw.revenueSource ? String(cashInMetaRaw.revenueSource) : undefined,
+            forecastRevenueRaw: Number.isFinite(Number(cashInMetaRaw.forecastRevenueRaw))
+              ? Number(cashInMetaRaw.forecastRevenueRaw)
+              : null,
+            calibrationFactorApplied: Number.isFinite(Number(cashInMetaRaw.calibrationFactorApplied))
+              ? Number(cashInMetaRaw.calibrationFactorApplied)
+              : null,
+            calibrationSourceMonth: cashInMetaRaw.calibrationSourceMonth
+              ? String(cashInMetaRaw.calibrationSourceMonth)
+              : null,
+            calibrationMethod: cashInMetaRaw.calibrationMethod
+              ? String(cashInMetaRaw.calibrationMethod)
+              : null,
+            planRevenueAfterCalibration: Number.isFinite(Number(cashInMetaRaw.planRevenueAfterCalibration))
+              ? Number(cashInMetaRaw.planRevenueAfterCalibration)
+              : null,
+            payoutPct: Number.isFinite(Number(cashInMetaRaw.payoutPct))
+              ? Number(cashInMetaRaw.payoutPct)
+              : null,
+            payoutAmount: Number.isFinite(Number(cashInMetaRaw.payoutAmount))
+              ? Number(cashInMetaRaw.payoutAmount)
+              : null,
           }
           : undefined,
       };

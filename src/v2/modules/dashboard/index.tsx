@@ -213,8 +213,8 @@ function formatCurrency(value: unknown): string {
   return number.toLocaleString("de-DE", {
     style: "currency",
     currency: "EUR",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   });
 }
 
@@ -236,7 +236,7 @@ function formatNumber(value: unknown, digits = 0): string {
 function formatPercent(value: unknown): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
-  return `${number.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+  return `${number.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} %`;
 }
 
 function formatIsoDate(value: string | null | undefined): string {
@@ -607,6 +607,38 @@ function splitInflowEntriesByType(
   });
 
   return totals;
+}
+
+function buildCashInStatusTags(row: DashboardPnlRow): JSX.Element[] {
+  if (row.source !== "sales") return [];
+  const cashInMeta = row.cashInMeta;
+  if (!cashInMeta) return [];
+  const tags: JSX.Element[] = [];
+
+  if (cashInMeta.quoteSource === "manual") {
+    tags.push(<Tag key="quote-source" color="gold">Quote manuell</Tag>);
+  } else if (cashInMeta.quoteSource === "recommendation") {
+    tags.push(<Tag key="quote-source" color="blue">Quote Empfehlung</Tag>);
+  }
+
+  if (cashInMeta.revenueSource === "manual_override") {
+    tags.push(<Tag key="revenue-source" color="gold">Umsatz manuell</Tag>);
+  } else if (cashInMeta.revenueSource === "forecast_calibrated") {
+    const factor = Number(cashInMeta.calibrationFactorApplied);
+    if (Number.isFinite(factor) && Math.abs(factor - 1) > 0.000001) {
+      tags.push(
+        <Tag key="revenue-source" color="orange">
+          Kalibriert {factor.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </Tag>,
+      );
+    } else {
+      tags.push(<Tag key="revenue-source">Forecast</Tag>);
+    }
+  } else if (cashInMeta.revenueSource === "manual_no_forecast") {
+    tags.push(<Tag key="revenue-source">Manuell (kein Forecast)</Tag>);
+  }
+
+  return tags;
 }
 
 function applySimulationToBreakdown(
@@ -1736,7 +1768,10 @@ export default function DashboardModule(): JSX.Element {
                             <td>{row.portfolioBucket ? <Tag>{row.portfolioBucket}</Tag> : "—"}</td>
                             <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
                             <td>
-                              {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
+                              <Space size={6} wrap>
+                                {buildCashInStatusTags(row)}
+                                {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
+                              </Space>
                             </td>
                           </tr>
                         ))}
@@ -1927,11 +1962,11 @@ export default function DashboardModule(): JSX.Element {
                   : "—"}
               </strong>
             </Text>
-            <Tooltip title="BasisQuote = Median der Ist-Auszahlungsquoten (Ist-Auszahlung / Ist-Umsatz)">
+            <Tooltip title="BasisQuote = Median der Ist-Auszahlungsquoten (Ist-Auszahlung / Ist-Umsatz), final auf 40-60% begrenzt.">
               <Tag>BasisQuote Info</Tag>
             </Tooltip>
             {cashInMode === "conservative" ? (
-              <Tooltip title="Konservativ = BasisQuote minus Sicherheitsmarge je Zukunftsmonat (1pp/2pp/3pp/4pp/5pp)">
+              <Tooltip title="Konservativ = BasisQuote minus 1pp je Zukunftsmonat bis max. 5pp; final bleibt die Quote im Band 40-60%.">
                 <Tag color="gold">Konservativ aktiv</Tag>
               </Tooltip>
             ) : <Tag color="blue">Basis aktiv</Tag>}

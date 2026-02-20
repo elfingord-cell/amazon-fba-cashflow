@@ -19,6 +19,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation } from "react-router-dom";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
+import { CASH_IN_QUOTE_MAX_PCT, CASH_IN_QUOTE_MIN_PCT, clampPct, parsePayoutPctInput } from "../../../domain/cashInRules.js";
 import { parseVentoryCsv } from "../../../ui/forecastCsv.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
@@ -866,20 +867,27 @@ export default function ForecastModule(): JSX.Element {
       const next = ensureAppStateV2(current);
       const nextState = next as unknown as Record<string, unknown>;
       const incomings = Array.isArray(nextState.incomings) ? [...(nextState.incomings as Record<string, unknown>[])] : [];
+      const normalizeTransferredPayoutPct = (value: unknown): number => {
+        const parsed = parsePayoutPctInput(value);
+        if (!Number.isFinite(parsed as number)) return 50;
+        return clampPct(Number(parsed), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
+      };
       const lastPayout = incomings
         .slice()
         .reverse()
         .find((entry) => String(entry.payoutPct || "").trim())?.payoutPct;
+      const fallbackPayoutPct = normalizeTransferredPayoutPct(lastPayout);
 
       transferSelection.forEach((month) => {
         const revenue = Number(revenueByMonth.get(month) || 0);
         const index = incomings.findIndex((entry) => String(entry.month || "") === month);
         if (index >= 0) {
+          const existingPayoutPct = normalizeTransferredPayoutPct(incomings[index].payoutPct);
           incomings[index] = {
             ...incomings[index],
             month,
             revenueEur: revenue,
-            payoutPct: incomings[index].payoutPct || lastPayout || "0",
+            payoutPct: existingPayoutPct || fallbackPayoutPct,
             source: "forecast",
           };
           return;
@@ -887,8 +895,11 @@ export default function ForecastModule(): JSX.Element {
         incomings.push({
           month,
           revenueEur: revenue,
-          payoutPct: lastPayout || "0",
+          payoutPct: fallbackPayoutPct,
           source: "forecast",
+          calibrationCutoffDate: null,
+          calibrationRevenueToDateEur: null,
+          calibrationSellerboardMonthEndEur: null,
         });
       });
 

@@ -12,6 +12,15 @@ import {
   PORTFOLIO_BUCKET_VALUES,
   resolveEffectivePortfolioBucket,
 } from "./portfolioBuckets.js";
+import {
+  CASH_IN_QUOTE_MAX_PCT,
+  CASH_IN_QUOTE_MIN_PCT,
+  buildCalibrationProfile,
+  buildPayoutRecommendation,
+  clampPct,
+  normalizeCalibrationHorizonMonths,
+  parsePayoutPctInput,
+} from "./cashInRules.js";
 
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 
@@ -41,23 +50,6 @@ function readOptionalNumber(value, parser = parseEuro) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function median(values) {
-  const sorted = (Array.isArray(values) ? values : [])
-    .filter(v => Number.isFinite(v))
-    .slice()
-    .sort((a, b) => a - b);
-  if (!sorted.length) return null;
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid];
-  return (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function clampCashInQuotePct(value, minPct = 35, maxPct = 75) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return minPct;
-  return Math.min(maxPct, Math.max(minPct, numeric));
-}
-
 function normalizeCashInMode(value) {
   return String(value || '').trim().toLowerCase() === 'basis' ? 'basis' : 'conservative';
 }
@@ -65,14 +57,21 @@ function normalizeCashInMode(value) {
 function marginBucketPctByHorizon(horizonMonths) {
   const horizon = Math.max(0, Math.round(Number(horizonMonths || 0)));
   if (horizon <= 0) return 0;
-  if (horizon === 1) return 1;
-  if (horizon <= 3) return 2;
-  if (horizon <= 6) return 3;
-  if (horizon <= 12) return 4;
-  return 5;
+  return Math.min(5, horizon);
 }
 
-function formatTooltipPercent(value, digits = 1) {
+function formatTooltipCurrency(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0 €';
+  return numeric.toLocaleString('de-DE', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
+function formatTooltipPercent(value, digits = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '0';
   return numeric.toLocaleString('de-DE', {
@@ -82,34 +81,29 @@ function formatTooltipPercent(value, digits = 1) {
 }
 
 function buildCashInTooltip({
-  revenue,
+  forecastRevenue,
+  calibrationFactorApplied,
+  planRevenue,
   payoutPct,
   payoutAmount,
+  quoteSource,
   mode,
-  isFuture,
-  basisQuotePct,
   marginPct,
-  horizonMonths,
-  fallbackUsed,
-  componentLabel,
 }) {
   const modeLabel = mode === 'basis' ? 'Basis' : 'Konservativ';
+  const quoteSourceLabel = quoteSource === 'manual' ? 'manuell' : 'Empfehlung';
+  const calibrationText = Number.isFinite(calibrationFactorApplied) && Math.abs(Number(calibrationFactorApplied) - 1) > 0.000001
+    ? Number(calibrationFactorApplied).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : null;
   const parts = [
-    `Plan-Umsatz${componentLabel ? ` (${componentLabel})` : ''}: ${fmtEUR(revenue)}`,
-    `Quote: ${formatTooltipPercent(payoutPct)}% (${modeLabel})`,
-    `Auszahlung: ${fmtEUR(payoutAmount)}`,
+    `Forecast-Umsatz: ${formatTooltipCurrency(forecastRevenue)}`,
+    `Kalibrierfaktor: ${calibrationText || '1,00'}`,
+    `Plan-Umsatz: ${formatTooltipCurrency(planRevenue)}`,
+    `Quote: ${formatTooltipPercent(payoutPct)}% (${quoteSourceLabel}${marginPct > 0 ? `, ${modeLabel}` : ''})`,
+    `Auszahlung: ${formatTooltipCurrency(payoutAmount)}`,
   ];
-  if (isFuture) {
-    parts.push(`BasisQuote: ${formatTooltipPercent(basisQuotePct)}%`);
-    if (marginPct > 0) {
-      parts.push(`Sicherheitsmarge: -${formatTooltipPercent(marginPct)}pp (Horizont +${horizonMonths})`);
-    }
-    if (fallbackUsed && fallbackUsed !== 'none') {
-      const fallbackText = fallbackUsed === 'last_plan_quote' ? 'letzte Plan-Quote' : '50%-Fallback';
-      parts.push(`Basisquelle: ${fallbackText}`);
-    }
-  } else {
-    parts.push('Historischer/aktueller Monat: Monatsquote aus Eingaben');
+  if (marginPct > 0) {
+    parts.push(`Sicherheitsmarge: -${formatTooltipPercent(marginPct)}pp`);
   }
   return parts.join(' · ');
 }
@@ -1206,100 +1200,156 @@ export function computeSeries(state) {
     });
   }
 
-  const payoutPctMap = {};
-  (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
+  const incomings = Array.isArray(s.incomings) ? s.incomings : [];
+  const incomingByMonth = new Map();
+  const manualRevenueByMonth = {};
+  const manualPayoutPctByMonth = {};
+  incomings.forEach((row) => {
     if (!row || !row.month) return;
-    payoutPctMap[row.month] = row.payoutPct;
-  });
-
-  const manualRevenue = {};
-  (Array.isArray(s.incomings) ? s.incomings : []).forEach(row => {
-    if (!row || !row.month) return;
-    manualRevenue[row.month] = parseEuro(row.revenueEur);
+    const month = String(row.month || '').trim();
+    if (!month) return;
+    incomingByMonth.set(month, row);
+    if (row.revenueEur != null && String(row.revenueEur).trim() !== '') {
+      const revenue = parseEuro(row.revenueEur);
+      if (Number.isFinite(revenue)) manualRevenueByMonth[month] = revenue;
+    }
+    if (row.payoutPct != null && String(row.payoutPct).trim() !== '') {
+      const pct = parsePayoutPctInput(row.payoutPct);
+      if (Number.isFinite(pct)) manualPayoutPctByMonth[month] = pct;
+    }
   });
 
   const currentMonth = toMonthKey(today);
   const currentMonthIdx = monthIndex(currentMonth);
   const cashInMode = normalizeCashInMode(s?.settings?.cashInMode);
-  const cashInQuoteMinPct = 35;
-  const cashInQuoteMaxPct = 75;
+  const cashInQuoteMinPct = CASH_IN_QUOTE_MIN_PCT;
+  const cashInQuoteMaxPct = CASH_IN_QUOTE_MAX_PCT;
   const actualMap = buildActualMap(s);
-  const actualQuotePoints = [];
-  actualMap.forEach((values, month) => {
-    if (!month || month >= currentMonth) return;
-    let quotePct = Number(values?.payoutRatePct);
-    if (!Number.isFinite(quotePct)) {
-      const revenue = Number(values?.revenue);
-      const payout = Number(values?.payout);
-      if (Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payout)) {
-        quotePct = (payout / revenue) * 100;
-      }
-    }
-    if (!Number.isFinite(quotePct)) return;
-    actualQuotePoints.push({ month, quotePct: Number(quotePct) });
+  const payoutRecommendation = buildPayoutRecommendation({
+    monthlyActuals: s?.monthlyActuals,
+    ignoreQ4: s?.settings?.cashInRecommendationIgnoreQ4 === true,
+    maxMonth: currentMonth,
+    minSamples: 4,
   });
-  actualQuotePoints.sort((a, b) => String(a.month || '').localeCompare(String(b.month || '')));
 
-  const latestPlanQuoteEntry = Object.entries(payoutPctMap)
-    .filter(([, raw]) => raw != null && String(raw).trim() !== '')
+  const latestPlanQuoteEntry = Object.entries(manualPayoutPctByMonth)
+    .filter(([, raw]) => Number.isFinite(Number(raw)))
     .sort((left, right) => String(left[0] || '').localeCompare(String(right[0] || '')))
     .pop();
-  const latestPlanQuotePct = latestPlanQuoteEntry ? parsePct(latestPlanQuoteEntry[1]) : null;
+  const latestPlanQuotePct = latestPlanQuoteEntry ? Number(latestPlanQuoteEntry[1]) : null;
 
   let cashInFallbackUsed = 'none';
-  let basisQuoteRaw = median(actualQuotePoints.map(point => point.quotePct));
-  if (!Number.isFinite(basisQuoteRaw)) {
+  const recommendationMedianRaw = parsePayoutPctInput(payoutRecommendation.medianPct);
+  let recommendationQuoteRaw = Number.isFinite(recommendationMedianRaw)
+    ? Number(recommendationMedianRaw)
+    : Number.NaN;
+  if (!Number.isFinite(recommendationQuoteRaw)) {
     if (Number.isFinite(latestPlanQuotePct)) {
-      basisQuoteRaw = Number(latestPlanQuotePct);
+      recommendationQuoteRaw = Number(latestPlanQuotePct);
       cashInFallbackUsed = 'last_plan_quote';
     } else {
-      basisQuoteRaw = 50;
+      recommendationQuoteRaw = 50;
       cashInFallbackUsed = 'hardcoded_50';
     }
   }
-  const basisQuotePct = clampCashInQuotePct(basisQuoteRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+  const recommendationMedianPct = Number.isFinite(recommendationMedianRaw)
+    ? clampPct(recommendationMedianRaw, cashInQuoteMinPct, cashInQuoteMaxPct)
+    : null;
+  const recommendationQuotePct = clampPct(recommendationQuoteRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+  const cashInCalibrationHorizonMonths = normalizeCalibrationHorizonMonths(
+    s?.settings?.cashInCalibrationHorizonMonths,
+    6,
+  );
+  const calibrationProfile = buildCalibrationProfile({
+    incomings,
+    months: Object.keys(bucket),
+    forecastRevenueByMonth: forecastMap,
+    horizonMonths: cashInCalibrationHorizonMonths,
+  });
   const appliedPayoutPctByMonth = {};
   const cashInMetaByMonth = {};
 
   Object.keys(bucket).forEach(m => {
-    const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
-    if (typeof revenue === 'undefined') return;
-    const manualPayoutPct = parsePct(payoutPctMap[m] || 0);
+    const incoming = incomingByMonth.get(m) || null;
+    const incomingSource = String(incoming?.source || '').trim().toLowerCase();
+    const hasManualRevenueInput = incoming?.revenueEur != null && String(incoming.revenueEur).trim() !== '';
+    const manualRevenue = hasManualRevenueInput ? parseEuro(incoming.revenueEur) : null;
+    const hasManualRevenueOverride = forecastEnabled && incomingSource === 'manual' && Number.isFinite(manualRevenue);
+    const hasManualPayoutInput = incoming?.payoutPct != null && String(incoming.payoutPct).trim() !== '';
+    const manualPayoutPct = hasManualPayoutInput
+      ? parsePayoutPctInput(incoming.payoutPct)
+      : null;
+    const quoteSource = hasManualPayoutInput ? 'manual' : 'recommendation';
+    const basePayoutPctRaw = hasManualPayoutInput ? manualPayoutPct : recommendationQuotePct;
+    const basePayoutPct = clampPct(basePayoutPctRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+    const calibration = calibrationProfile.byMonth?.[m] || {
+      factor: 1,
+      active: false,
+      sourceMonth: null,
+      method: null,
+    };
+    const forecastRevenueRaw = Number(forecastMap[m] || 0);
+    const calibrationFactorApplied = Number(calibration.factor || 1);
+    const calibratedPlanRevenue = forecastRevenueRaw * calibrationFactorApplied;
+
+    let revenue = null;
+    let revenueSource = null;
+    if (!forecastEnabled) {
+      if (!Number.isFinite(manualRevenue)) return;
+      revenue = Number(manualRevenue);
+      revenueSource = 'manual_no_forecast';
+    } else if (hasManualRevenueOverride) {
+      revenue = Number(manualRevenue);
+      revenueSource = 'manual_override';
+    } else {
+      revenue = Number(calibratedPlanRevenue || 0);
+      revenueSource = 'forecast_calibrated';
+    }
+    if (!Number.isFinite(revenue)) return;
+
     const monthIdx = monthIndex(m);
     const horizonFromCurrentMonth = (monthIdx != null && currentMonthIdx != null) ? (monthIdx - currentMonthIdx) : 0;
     const isFutureMonth = horizonFromCurrentMonth > 0;
     const marginPct = (isFutureMonth && cashInMode === 'conservative')
       ? marginBucketPctByHorizon(horizonFromCurrentMonth)
       : 0;
-    const payoutPct = isFutureMonth
-      ? clampCashInQuotePct(basisQuotePct - marginPct, cashInQuoteMinPct, cashInQuoteMaxPct)
-      : manualPayoutPct;
+    const payoutPctRaw = isFutureMonth ? (basePayoutPct - marginPct) : basePayoutPct;
+    const payoutPct = clampPct(payoutPctRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+    const planRevenueAfterCalibration = forecastEnabled ? calibratedPlanRevenue : revenue;
+    const forecastRevenueForTooltip = forecastEnabled ? forecastRevenueRaw : revenue;
     appliedPayoutPctByMonth[m] = payoutPct;
     cashInMetaByMonth[m] = {
       mode: cashInMode,
       isFutureMonth,
       horizonFromCurrentMonth,
       marginPct,
-      basisQuotePct,
+      recommendationQuotePct,
       payoutPct,
       manualPayoutPct,
+      quoteSource,
+      revenueSource,
+      appliedRevenue: revenue,
+      forecastRevenueRaw,
+      calibrationFactorApplied,
+      calibrationSourceMonth: calibration.sourceMonth || null,
+      calibrationMethod: calibration.method || null,
+      planRevenueAfterCalibration,
       fallbackUsed: cashInFallbackUsed,
       quoteMinPct: cashInQuoteMinPct,
       quoteMaxPct: cashInQuoteMaxPct,
     };
     const date = monthEndFromKey(m);
-    if (!forecastEnabled) {
+    if (!forecastEnabled || hasManualRevenueOverride) {
       const amt = revenue * (payoutPct / 100);
       const tooltip = buildCashInTooltip({
-        revenue,
+        forecastRevenue: forecastRevenueForTooltip,
+        calibrationFactorApplied,
+        planRevenue: planRevenueAfterCalibration,
         payoutPct,
         payoutAmount: amt,
+        quoteSource,
         mode: cashInMode,
-        isFuture: isFutureMonth,
-        basisQuotePct,
         marginPct,
-        horizonMonths: horizonFromCurrentMonth,
-        fallbackUsed: cashInFallbackUsed,
       });
       pushEntry(m, baseEntry({
         id: `sales-${m}`,
@@ -1326,20 +1376,19 @@ export function computeSeries(state) {
     }
 
     PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
-      const liveRevenue = forecastMapLiveByBucket[bucketName]?.[m] || 0;
+      const liveRevenueRaw = forecastMapLiveByBucket[bucketName]?.[m] || 0;
+      const liveRevenue = liveRevenueRaw * calibrationFactorApplied;
       const liveAmt = liveRevenue * (payoutPct / 100);
       if (Math.abs(liveAmt) > 0.000001) {
         const tooltip = buildCashInTooltip({
-          revenue: liveRevenue,
+          forecastRevenue: forecastRevenueForTooltip,
+          calibrationFactorApplied,
+          planRevenue: planRevenueAfterCalibration,
           payoutPct,
           payoutAmount: liveAmt,
+          quoteSource,
           mode: cashInMode,
-          isFuture: isFutureMonth,
-          basisQuotePct,
           marginPct,
-          horizonMonths: horizonFromCurrentMonth,
-          fallbackUsed: cashInFallbackUsed,
-          componentLabel: `Prognose - Live/CSV · ${bucketName}`,
         });
         pushEntry(m, baseEntry({
           id: `sales-live-${bucketName}-${m}`,
@@ -1360,6 +1409,7 @@ export function computeSeries(state) {
               revenue: liveRevenue,
               payoutAmount: liveAmt,
               component: 'live',
+              componentRevenueRaw: liveRevenueRaw,
               portfolioBucket: bucketName,
             },
           },
@@ -1368,20 +1418,19 @@ export function computeSeries(state) {
     });
 
     PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
-      const planRevenue = forecastMapPlanByBucket[bucketName]?.[m] || 0;
+      const planRevenueRaw = forecastMapPlanByBucket[bucketName]?.[m] || 0;
+      const planRevenue = planRevenueRaw * calibrationFactorApplied;
       const planAmt = planRevenue * (payoutPct / 100);
       if (Math.abs(planAmt) > 0.000001) {
         const tooltip = buildCashInTooltip({
-          revenue: planRevenue,
+          forecastRevenue: forecastRevenueForTooltip,
+          calibrationFactorApplied,
+          planRevenue: planRevenueAfterCalibration,
           payoutPct,
           payoutAmount: planAmt,
+          quoteSource,
           mode: cashInMode,
-          isFuture: isFutureMonth,
-          basisQuotePct,
           marginPct,
-          horizonMonths: horizonFromCurrentMonth,
-          fallbackUsed: cashInFallbackUsed,
-          componentLabel: `Prognose - Plan · ${bucketName}`,
         });
         pushEntry(m, baseEntry({
           id: `sales-plan-${bucketName}-${m}`,
@@ -1402,6 +1451,7 @@ export function computeSeries(state) {
               revenue: planRevenue,
               payoutAmount: planAmt,
               component: 'plan',
+              componentRevenueRaw: planRevenueRaw,
               portfolioBucket: bucketName,
             },
           },
@@ -1706,10 +1756,12 @@ export function computeSeries(state) {
   const plannedRevenueByMonth = {};
   const plannedPayoutByMonth = {};
   Object.keys(bucket).forEach(m => {
-    const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
+    const cashInMeta = cashInMetaByMonth[m];
+    if (!cashInMeta) return;
+    const revenue = Number(cashInMeta.appliedRevenue || 0);
     const payoutPct = Number.isFinite(appliedPayoutPctByMonth[m])
       ? Number(appliedPayoutPctByMonth[m])
-      : parsePct(payoutPctMap[m] || 0);
+      : clampPct(recommendationQuotePct, cashInQuoteMinPct, cashInQuoteMaxPct);
     plannedRevenueByMonth[m] = revenue;
     plannedPayoutByMonth[m] = revenue * (payoutPct / 100);
   });
@@ -1724,18 +1776,24 @@ export function computeSeries(state) {
     cashIn: {
       mode: cashInMode,
       basisMethod: 'median',
-      basisQuotePct,
-      istMonthsCount: actualQuotePoints.length,
-      hasIstData: actualQuotePoints.length > 0,
+      basisQuotePct: recommendationQuotePct,
+      istMonthsCount: payoutRecommendation.sampleCount,
+      hasIstData: payoutRecommendation.sampleCount > 0,
       fallbackUsed: cashInFallbackUsed,
       quoteMinPct: cashInQuoteMinPct,
       quoteMaxPct: cashInQuoteMaxPct,
+      recommendationMedianPct,
+      recommendationSampleCount: payoutRecommendation.sampleCount,
+      recommendationUsedMonths: payoutRecommendation.usedMonths,
+      recommendationUncertain: payoutRecommendation.uncertain,
+      recommendationIgnoreQ4: payoutRecommendation.ignoreQ4,
+      calibrationHorizonMonths: cashInCalibrationHorizonMonths,
       marginBucketsPct: {
         plus1: 1,
-        plus2to3: 2,
-        plus4to6: 3,
-        plus7to12: 4,
-        plus13plus: 5,
+        plus2: 2,
+        plus3: 3,
+        plus4: 4,
+        plus5plus: 5,
       },
     },
   };

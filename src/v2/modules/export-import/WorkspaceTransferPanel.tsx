@@ -38,6 +38,19 @@ function looksLikeMonth(value: unknown): boolean {
   return /^\d{4}-\d{2}$/.test(String(value || ""));
 }
 
+function isValidIsoDate(value: unknown): boolean {
+  const raw = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  const [year, month, day] = raw.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return (
+    Number.isFinite(date.getTime())
+    && date.getFullYear() === year
+    && date.getMonth() + 1 === month
+    && date.getDate() === day
+  );
+}
+
 function validateState(state: Record<string, unknown>): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -59,6 +72,32 @@ function validateState(state: Record<string, unknown>): ValidationResult {
     if (payout > 1) payout /= 100;
     if (!(payout >= 0 && payout <= 1)) {
       errors.push(`Incomings ${index + 1}: payoutPct muss 0..1 oder 0..100 sein.`);
+    }
+
+    const month = String(row.month || "");
+    const calibrationCutoffDate = String(row.calibrationCutoffDate || "").trim();
+    if (calibrationCutoffDate) {
+      if (!isValidIsoDate(calibrationCutoffDate)) {
+        errors.push(`Incomings ${index + 1}: calibrationCutoffDate ungueltig (erwartet JJJJ-MM-TT).`);
+      } else if (looksLikeMonth(month) && calibrationCutoffDate.slice(0, 7) !== month) {
+        errors.push(`Incomings ${index + 1}: calibrationCutoffDate muss im selben Monat wie row.month liegen.`);
+      }
+    }
+
+    const calibrationRevenueToDateRaw = row.calibrationRevenueToDateEur;
+    if (calibrationRevenueToDateRaw != null && String(calibrationRevenueToDateRaw).trim() !== "") {
+      const value = parseDENull(calibrationRevenueToDateRaw);
+      if (!(Number.isFinite(value) && value >= 0)) {
+        errors.push(`Incomings ${index + 1}: calibrationRevenueToDateEur muss numerisch und >= 0 sein.`);
+      }
+    }
+
+    const calibrationSellerboardRaw = row.calibrationSellerboardMonthEndEur;
+    if (calibrationSellerboardRaw != null && String(calibrationSellerboardRaw).trim() !== "") {
+      const value = parseDENull(calibrationSellerboardRaw);
+      if (!(Number.isFinite(value) && value >= 0)) {
+        errors.push(`Incomings ${index + 1}: calibrationSellerboardMonthEndEur muss numerisch und >= 0 sein.`);
+      }
     }
   });
 

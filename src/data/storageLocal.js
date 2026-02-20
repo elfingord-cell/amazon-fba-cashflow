@@ -30,6 +30,8 @@ const defaults = {
     startMonth: "2025-02",
     horizonMonths: 18,
     cashInMode: "conservative",
+    cashInCalibrationHorizonMonths: 6,
+    cashInRecommendationIgnoreQ4: false,
     openingBalance: "50.000,00",
     fxRate: "1,08",
     fxFeePct: "0,5",
@@ -221,6 +223,13 @@ function ensureGlobalSettings(state) {
   settings.defaultDdp = settings.defaultDdp === true;
   const cashInMode = String(settings.cashInMode || defaults.settings.cashInMode || "conservative").trim().toLowerCase();
   settings.cashInMode = cashInMode === "basis" ? "basis" : "conservative";
+  const calibrationHorizon = Math.round(Number(
+    settings.cashInCalibrationHorizonMonths ?? defaults.settings.cashInCalibrationHorizonMonths,
+  ) || defaults.settings.cashInCalibrationHorizonMonths);
+  settings.cashInCalibrationHorizonMonths = [3, 6, 9].includes(calibrationHorizon)
+    ? calibrationHorizon
+    : defaults.settings.cashInCalibrationHorizonMonths;
+  settings.cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
