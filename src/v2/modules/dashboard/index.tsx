@@ -660,6 +660,7 @@ export default function DashboardModule(): JSX.Element {
   const [messageApi, contextHolder] = message.useMessage();
   const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
   const [range, setRange] = useState<DashboardRange>("next12");
+  const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
   const [simType, setSimType] = useState<SimulationType>("dividend");
@@ -679,14 +680,34 @@ export default function DashboardModule(): JSX.Element {
     () => resolvePlanningMonthsFromState(stateObject, 18),
     [state.settings],
   );
+  const resolvedPhantomTargetMonth = useMemo(() => {
+    if (phantomTargetMonth && planningMonths.includes(phantomTargetMonth)) return phantomTargetMonth;
+    return planningMonths[planningMonths.length - 1] || "";
+  }, [phantomTargetMonth, planningMonths]);
   const phantomFoSuggestions = useMemo<PhantomFoSuggestion[]>(
-    () => buildPhantomFoSuggestions({ state: stateObject, months: planningMonths }),
-    [planningMonths, stateObject],
+    () => buildPhantomFoSuggestions({
+      state: stateObject,
+      months: planningMonths,
+      targetMonth: resolvedPhantomTargetMonth || null,
+    }),
+    [planningMonths, resolvedPhantomTargetMonth, stateObject],
   );
   const phantomFoById = useMemo(
     () => new Map(phantomFoSuggestions.map((entry) => [entry.id, entry])),
     [phantomFoSuggestions],
   );
+  const phantomFoByIssueKey = useMemo(() => {
+    const map = new Map<string, PhantomFoSuggestion>();
+    phantomFoSuggestions.forEach((entry) => {
+      const skuKey = String(entry.sku || "").trim().toLowerCase();
+      const firstRiskMonth = String(entry.firstRiskMonth || "").trim();
+      const orderMonth = String(entry.orderMonth || "").trim();
+      if (!skuKey || !firstRiskMonth || !orderMonth) return;
+      const issueKey = `${skuKey}|${firstRiskMonth}|${orderMonth}`;
+      if (!map.has(issueKey)) map.set(issueKey, entry);
+    });
+    return map;
+  }, [phantomFoSuggestions]);
   const phantomFoBySkuKey = useMemo(() => {
     const map = new Map<string, PhantomFoSuggestion>();
     phantomFoSuggestions.forEach((entry) => {
@@ -741,6 +762,18 @@ export default function DashboardModule(): JSX.Element {
       runtimeErrorRoute: runtimeRouteError.routePath,
     });
   }, [runtimeRouteError.errorAt, runtimeRouteError.routePath, stateObject]);
+
+  useEffect(() => {
+    if (!planningMonths.length) {
+      setPhantomTargetMonth("");
+      return;
+    }
+    setPhantomTargetMonth((current) => (
+      current && planningMonths.includes(current)
+        ? current
+        : planningMonths[planningMonths.length - 1]
+    ));
+  }, [planningMonths]);
 
   useEffect(() => {
     if (!robustness.months.length) {
@@ -1606,6 +1639,16 @@ export default function DashboardModule(): JSX.Element {
             </Paragraph>
           </div>
           <div className="v2-toolbar-field">
+            <Text>PFO bis</Text>
+            <Select
+              value={resolvedPhantomTargetMonth || undefined}
+              onChange={(value) => setPhantomTargetMonth(String(value || ""))}
+              options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
+              style={{ width: 220, maxWidth: "100%" }}
+              disabled={!planningMonths.length}
+            />
+          </div>
+          <div className="v2-toolbar-field">
             <Text>Zeitraum</Text>
             <Select
               value={range}
@@ -1622,7 +1665,9 @@ export default function DashboardModule(): JSX.Element {
             <Button onClick={() => navigate("/v2/orders/po")}>Zu Bestellungen</Button>
             <Button onClick={() => navigate("/v2/abschluss/eingaben")}>Zum Abschluss</Button>
           </div>
-          <Text type="secondary">Aktueller Betrachtungszeitraum: {visibleMonths.length} Monat(e).</Text>
+          <Text type="secondary">
+            Aktueller Betrachtungszeitraum: {visibleMonths.length} Monat(e). PFO-Ziel: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}.
+          </Text>
         </div>
       </Card>
 
@@ -1775,6 +1820,7 @@ export default function DashboardModule(): JSX.Element {
                 {phantomFoSuggestions.length ? (
                   <Tag color="gold">Phantom-FOs (vorbehaltlich): {phantomFoSuggestions.length}</Tag>
                 ) : null}
+                {resolvedPhantomTargetMonth ? <Tag color="gold">PFO bis: {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
                 <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
               </Space>
               <div className="v2-dashboard-legend-help">
@@ -2172,7 +2218,9 @@ export default function DashboardModule(): JSX.Element {
                           </thead>
                           <tbody>
                             {selectedOrderDutyIssues.map((issue: RobustnessCoverageOrderDutyIssue) => {
-                              const phantomSuggestion = phantomFoBySkuKey.get(String(issue.sku || "").trim().toLowerCase()) || null;
+                              const skuKey = String(issue.sku || "").trim().toLowerCase();
+                              const issueKey = `${skuKey}|${String(issue.firstRiskMonth || "").trim()}|${String(issue.orderMonth || "").trim()}`;
+                              const phantomSuggestion = phantomFoByIssueKey.get(issueKey) || phantomFoBySkuKey.get(skuKey) || null;
                               return (
                                 <tr key={`${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`}>
                                   <td>{issue.sku}</td>

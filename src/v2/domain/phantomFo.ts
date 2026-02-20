@@ -116,7 +116,8 @@ function buildPhantomFoId(issue: RobustnessCoverageOrderDutyIssue): string {
 function buildPhantomFoNumber(issue: RobustnessCoverageOrderDutyIssue): string {
   const monthToken = sanitizeToken(issue.orderMonth, "000000").slice(0, 6);
   const skuToken = sanitizeToken(issue.sku, "SKU").slice(0, 6);
-  return `PH-${monthToken}-${skuToken}`;
+  const riskMonthToken = sanitizeToken(issue.firstRiskMonth, "000000").slice(0, 6);
+  return `PH-${monthToken}-${skuToken}-${riskMonthToken}`;
 }
 
 function toIssueMapBySku(issues: RobustnessCoverageOrderDutyIssue[]): Map<string, RobustnessCoverageOrderDutyIssue> {
@@ -275,7 +276,156 @@ function compareSuggestionPriority(left: PhantomFoSuggestion, right: PhantomFoSu
   if (byAbc !== 0) return byAbc;
   const byOrderMonth = left.orderMonth.localeCompare(right.orderMonth);
   if (byOrderMonth !== 0) return byOrderMonth;
+  const byRiskMonth = left.firstRiskMonth.localeCompare(right.firstRiskMonth);
+  if (byRiskMonth !== 0) return byRiskMonth;
   return left.sku.localeCompare(right.sku, "de-DE");
+}
+
+function resolvePhantomTargetMonth(months: string[], targetMonth?: string | null): string | null {
+  if (!months.length) return null;
+  const normalizedTarget = normalizeMonthKey(targetMonth);
+  if (!normalizedTarget) return months[months.length - 1];
+  let candidate: string | null = null;
+  months.forEach((month) => {
+    if (month <= normalizedTarget) {
+      candidate = month;
+    }
+  });
+  if (candidate) return candidate;
+  return months[0];
+}
+
+function buildSuggestionForIssue(input: {
+  state: Record<string, unknown>;
+  issue: RobustnessCoverageOrderDutyIssue;
+  productBySkuKey: Map<string, Record<string, unknown>>;
+  supplierById: Map<string, Record<string, unknown>>;
+  settings: Record<string, unknown>;
+  recommendationContext: ReturnType<typeof buildFoRecommendationContext>;
+  horizonMonths: number;
+}): PhantomFoSuggestion | null {
+  const issue = input.issue;
+  const sku = normalizeSku(issue.sku);
+  if (!sku) return null;
+  const skuKey = normalizeSkuKey(sku);
+  const product = input.productBySkuKey.get(skuKey) || null;
+  const supplierId = String(product?.supplierId || "").trim();
+  const supplier = input.supplierById.get(supplierId) || null;
+  const leadTime = resolveLeadTime({
+    state: input.state,
+    product,
+    supplierId,
+    settings: input.settings,
+  });
+  const requiredArrivalDate = normalizeIsoDate(issue.requiredArrivalDate) || monthStartIso(issue.firstRiskMonth);
+  if (!requiredArrivalDate) return null;
+
+  const recommendation = computeFoRecommendationForSku({
+    context: input.recommendationContext,
+    sku,
+    leadTimeDays: leadTime.totalDays,
+    product,
+    settings: input.settings,
+    horizonMonths: Math.max(6, Math.round(Number(input.horizonMonths) || 6)),
+    requiredArrivalMonth: issue.firstRiskMonth,
+  }) as Record<string, unknown> | null;
+
+  const recommendationUnits = recommendationUnitsToInt(recommendation?.recommendedUnits);
+  const shortageUnits = recommendationUnitsToInt(issue.shortageUnits);
+  const suggestedUnits = Math.max(recommendationUnits || 0, shortageUnits || 0);
+  if (!(suggestedUnits > 0)) return null;
+
+  const schedule = computeFoSchedule({
+    targetDeliveryDate: requiredArrivalDate,
+    productionLeadTimeDays: leadTime.productionDays,
+    logisticsLeadTimeDays: leadTime.transitDays,
+    bufferDays: 0,
+  });
+
+  const unitPrice = resolveUnitPriceUsd(product);
+  const freightPerUnit = resolveFreightPerUnitEur(product);
+  const freightTotal = round2(freightPerUnit * suggestedUnits);
+  const fxRate = asPositiveNumber(input.settings.fxRate) ?? 0;
+  const payments = buildFoPayments({
+    supplierTerms: resolveSupplierTerms(supplier),
+    schedule,
+    unitPrice,
+    units: suggestedUnits,
+    currency: "USD",
+    freight: freightTotal,
+    freightCurrency: "EUR",
+    dutyRatePct: leadTime.dutyRatePct,
+    eustRatePct: leadTime.eustRatePct,
+    fxRate,
+    incoterm: leadTime.incoterm,
+    vatRefundLagMonths: input.settings.vatRefundLagMonths,
+    paymentDueDefaults: input.settings.paymentDueDefaults,
+    existingPayments: [],
+  });
+
+  const id = buildPhantomFoId(issue);
+  const foNumber = buildPhantomFoNumber(issue);
+
+  return {
+    id,
+    sku,
+    alias: String(issue.alias || product?.alias || sku),
+    abcClass: issue.abcClass,
+    supplierId,
+    orderMonth: String(issue.orderMonth || "").trim(),
+    firstRiskMonth: String(issue.firstRiskMonth || "").trim(),
+    latestOrderDate: normalizeIsoDate(issue.latestOrderDate) || (schedule.orderDate || ""),
+    requiredArrivalDate,
+    recommendedOrderDate: normalizeIsoDate(issue.recommendedOrderDate) || (schedule.orderDate || ""),
+    leadTimeDays: leadTime.totalDays,
+    overdue: issue.overdue === true,
+    suggestedUnits,
+    shortageUnits: shortageUnits != null ? shortageUnits : null,
+    recommendationStatus: recommendation ? String(recommendation.status || "") : null,
+    recommendationUnits: recommendationUnits != null ? recommendationUnits : null,
+    foRecord: {
+      id,
+      foNo: foNumber,
+      foNumber,
+      sku,
+      supplierId,
+      targetDeliveryDate: requiredArrivalDate,
+      units: suggestedUnits,
+      transportMode: leadTime.transportMode,
+      incoterm: leadTime.incoterm,
+      unitPrice,
+      currency: "USD",
+      freight: freightTotal,
+      freightCurrency: "EUR",
+      dutyRatePct: leadTime.dutyRatePct,
+      eustRatePct: leadTime.eustRatePct,
+      fxRate,
+      productionLeadTimeDays: leadTime.productionDays,
+      logisticsLeadTimeDays: leadTime.transitDays,
+      bufferDays: 0,
+      orderDate: schedule.orderDate || null,
+      productionEndDate: schedule.productionEndDate || null,
+      etdDate: schedule.etdDate || null,
+      etaDate: schedule.etaDate || requiredArrivalDate,
+      deliveryDate: schedule.deliveryDate || requiredArrivalDate,
+      payments,
+      status: "ACTIVE",
+      phantom: true,
+      phantomSource: PHANTOM_FO_SOURCE,
+      phantomStatus: "suggested",
+      phantomGeneratedAt: new Date().toISOString(),
+      phantomMeta: {
+        firstRiskMonth: issue.firstRiskMonth,
+        orderMonth: issue.orderMonth,
+        latestOrderDate: issue.latestOrderDate,
+        recommendedOrderDate: issue.recommendedOrderDate,
+        leadTimeDays: leadTime.totalDays,
+        abcClass: issue.abcClass,
+        shortageUnits: issue.shortageUnits,
+        reason: issue.reason,
+      },
+    },
+  };
 }
 
 export function isPhantomFoRecord(record: unknown): boolean {
@@ -300,11 +450,14 @@ export function resolvePlanningMonthsFromState(
 export function buildPhantomFoSuggestions(input: {
   state: Record<string, unknown>;
   months?: string[] | null;
+  targetMonth?: string | null;
   maxSuggestions?: number;
 }): PhantomFoSuggestion[] {
   const state = input.state || {};
   const months = resolveMonthList({ state, months: input.months });
   if (!months.length) return [];
+  const targetMonth = resolvePhantomTargetMonth(months, input.targetMonth);
+  if (!targetMonth) return [];
 
   const products = (Array.isArray(state.products) ? state.products : [])
     .map((entry) => entry as Record<string, unknown>)
@@ -327,130 +480,55 @@ export function buildPhantomFoSuggestions(input: {
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
-  const recommendationContext = buildFoRecommendationContext(state);
-  const orderDutyIssues = collectOrderDutyIssues(state, months);
-
   const suggestions: PhantomFoSuggestion[] = [];
-  orderDutyIssues.forEach((issue) => {
-    const sku = normalizeSku(issue.sku);
-    if (!sku) return;
-    const skuKey = normalizeSkuKey(sku);
-    const product = productBySkuKey.get(skuKey) || null;
-    const supplierId = String(product?.supplierId || "").trim();
-    const supplier = supplierById.get(supplierId) || null;
-    const leadTime = resolveLeadTime({ state, product, supplierId, settings });
-    const requiredArrivalDate = normalizeIsoDate(issue.requiredArrivalDate) || monthStartIso(issue.firstRiskMonth);
-    if (!requiredArrivalDate) return;
+  const seenSuggestionIds = new Set<string>();
+  let workingState = state;
+  const maxSuggestions = asPositiveInt(input.maxSuggestions);
+  const maxIterations = Math.max(1, months.length * 2);
 
-    const recommendation = computeFoRecommendationForSku({
-      context: recommendationContext,
-      sku,
-      leadTimeDays: leadTime.totalDays,
-      product,
-      settings,
-      horizonMonths: Math.max(6, months.length),
-      requiredArrivalMonth: issue.firstRiskMonth,
-    }) as Record<string, unknown> | null;
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    const recommendationContext = buildFoRecommendationContext(workingState);
+    const scopedIssues = collectOrderDutyIssues(workingState, months)
+      .filter((issue) => {
+        const orderMonth = normalizeMonthKey(issue.orderMonth);
+        if (!orderMonth) return false;
+        return orderMonth <= targetMonth;
+      });
+    if (!scopedIssues.length) break;
 
-    const recommendationUnits = recommendationUnitsToInt(recommendation?.recommendedUnits);
-    const shortageUnits = recommendationUnitsToInt(issue.shortageUnits);
-    const suggestedUnits = Math.max(recommendationUnits || 0, shortageUnits || 0);
-    if (!(suggestedUnits > 0)) return;
+    const existingFoIds = new Set(
+      (Array.isArray(workingState.fos) ? workingState.fos : [])
+        .map((entry) => String((entry as Record<string, unknown>)?.id || "").trim())
+        .filter(Boolean),
+    );
 
-    const schedule = computeFoSchedule({
-      targetDeliveryDate: requiredArrivalDate,
-      productionLeadTimeDays: leadTime.productionDays,
-      logisticsLeadTimeDays: leadTime.transitDays,
-      bufferDays: 0,
+    const iterationSuggestions: PhantomFoSuggestion[] = [];
+    scopedIssues.forEach((issue) => {
+      const suggestion = buildSuggestionForIssue({
+        state: workingState,
+        issue,
+        productBySkuKey,
+        supplierById,
+        settings,
+        recommendationContext,
+        horizonMonths: months.length,
+      });
+      if (!suggestion) return;
+      if (seenSuggestionIds.has(suggestion.id) || existingFoIds.has(suggestion.id)) return;
+      seenSuggestionIds.add(suggestion.id);
+      iterationSuggestions.push(suggestion);
     });
 
-    const unitPrice = resolveUnitPriceUsd(product);
-    const freightPerUnit = resolveFreightPerUnitEur(product);
-    const freightTotal = round2(freightPerUnit * suggestedUnits);
-    const fxRate = asPositiveNumber(settings.fxRate) ?? 0;
-    const payments = buildFoPayments({
-      supplierTerms: resolveSupplierTerms(supplier),
-      schedule,
-      unitPrice,
-      units: suggestedUnits,
-      currency: "USD",
-      freight: freightTotal,
-      freightCurrency: "EUR",
-      dutyRatePct: leadTime.dutyRatePct,
-      eustRatePct: leadTime.eustRatePct,
-      fxRate,
-      incoterm: leadTime.incoterm,
-      vatRefundLagMonths: settings.vatRefundLagMonths,
-      paymentDueDefaults: settings.paymentDueDefaults,
-      existingPayments: [],
+    if (!iterationSuggestions.length) break;
+    suggestions.push(...iterationSuggestions);
+    if (maxSuggestions != null && suggestions.length >= maxSuggestions) break;
+    workingState = buildStateWithPhantomFos({
+      state: workingState,
+      suggestions: iterationSuggestions,
     });
-
-    const id = buildPhantomFoId(issue);
-    const foNumber = buildPhantomFoNumber(issue);
-    suggestions.push({
-      id,
-      sku,
-      alias: String(issue.alias || product?.alias || sku),
-      abcClass: issue.abcClass,
-      supplierId,
-      orderMonth: String(issue.orderMonth || "").trim(),
-      firstRiskMonth: String(issue.firstRiskMonth || "").trim(),
-      latestOrderDate: normalizeIsoDate(issue.latestOrderDate) || (schedule.orderDate || ""),
-      requiredArrivalDate,
-      recommendedOrderDate: normalizeIsoDate(issue.recommendedOrderDate) || (schedule.orderDate || ""),
-      leadTimeDays: leadTime.totalDays,
-      overdue: issue.overdue === true,
-      suggestedUnits,
-      shortageUnits: shortageUnits != null ? shortageUnits : null,
-      recommendationStatus: recommendation ? String(recommendation.status || "") : null,
-      recommendationUnits: recommendationUnits != null ? recommendationUnits : null,
-      foRecord: {
-        id,
-        foNo: foNumber,
-        foNumber,
-        sku,
-        supplierId,
-        targetDeliveryDate: requiredArrivalDate,
-        units: suggestedUnits,
-        transportMode: leadTime.transportMode,
-        incoterm: leadTime.incoterm,
-        unitPrice,
-        currency: "USD",
-        freight: freightTotal,
-        freightCurrency: "EUR",
-        dutyRatePct: leadTime.dutyRatePct,
-        eustRatePct: leadTime.eustRatePct,
-        fxRate,
-        productionLeadTimeDays: leadTime.productionDays,
-        logisticsLeadTimeDays: leadTime.transitDays,
-        bufferDays: 0,
-        orderDate: schedule.orderDate || null,
-        productionEndDate: schedule.productionEndDate || null,
-        etdDate: schedule.etdDate || null,
-        etaDate: schedule.etaDate || requiredArrivalDate,
-        deliveryDate: schedule.deliveryDate || requiredArrivalDate,
-        payments,
-        status: "ACTIVE",
-        phantom: true,
-        phantomSource: PHANTOM_FO_SOURCE,
-        phantomStatus: "suggested",
-        phantomGeneratedAt: new Date().toISOString(),
-        phantomMeta: {
-          firstRiskMonth: issue.firstRiskMonth,
-          orderMonth: issue.orderMonth,
-          latestOrderDate: issue.latestOrderDate,
-          recommendedOrderDate: issue.recommendedOrderDate,
-          leadTimeDays: leadTime.totalDays,
-          abcClass: issue.abcClass,
-          shortageUnits: issue.shortageUnits,
-          reason: issue.reason,
-        },
-      },
-    });
-  });
+  }
 
   suggestions.sort(compareSuggestionPriority);
-  const maxSuggestions = asPositiveInt(input.maxSuggestions);
   if (maxSuggestions != null) {
     return suggestions.slice(0, maxSuggestions);
   }

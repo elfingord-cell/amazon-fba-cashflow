@@ -2519,6 +2519,38 @@
   color: #991b1b;
 }
 
+.v2-sku-planning-overview .v2-sku-plan-row-active > td {
+  background: rgba(14, 116, 144, 0.12) !important;
+}
+
+.v2-sku-planning-controls {
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.v2-sku-planning-hints {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-sku-planning-focus-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.v2-sku-planning-focus-item {
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(248, 250, 252, 0.88);
+}
+
 @media (max-width: 992px) {
   .v2-dashboard-signal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2577,6 +2609,10 @@
 
   .v2-po-timeline-row {
     grid-template-columns: 1fr;
+  }
+
+  .v2-sku-planning-overview .ant-table {
+    font-size: 12px;
   }
 }
 

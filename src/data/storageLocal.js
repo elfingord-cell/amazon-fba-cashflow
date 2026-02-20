@@ -50,6 +50,10 @@ const defaults = {
     safetyStockDohDefault: 60,
     foCoverageDohDefault: 90,
     moqDefaultUnits: 500,
+    skuPlanningHorizonMonths: 12,
+    skuPlanningAbcFilter: "abc",
+    skuPlanningMaxPhantomSuggestionsPerSku: 3,
+    skuPlanningShowSimulationByDefault: true,
     monthAnchorDay: "START",
     eurUsdRate: "0,92",
     lastUpdatedAt: null,
@@ -211,6 +215,21 @@ function ensureGlobalSettings(state) {
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
+  const skuPlanningHorizonMonths = Math.round(Number(settings.skuPlanningHorizonMonths ?? defaults.settings.skuPlanningHorizonMonths) || defaults.settings.skuPlanningHorizonMonths);
+  settings.skuPlanningHorizonMonths = [6, 12, 18].includes(skuPlanningHorizonMonths)
+    ? skuPlanningHorizonMonths
+    : defaults.settings.skuPlanningHorizonMonths;
+  const skuPlanningAbcFilter = String(settings.skuPlanningAbcFilter || defaults.settings.skuPlanningAbcFilter || "abc")
+    .trim()
+    .toLowerCase();
+  settings.skuPlanningAbcFilter = ["abc", "ab", "a"].includes(skuPlanningAbcFilter)
+    ? skuPlanningAbcFilter
+    : defaults.settings.skuPlanningAbcFilter;
+  settings.skuPlanningMaxPhantomSuggestionsPerSku = Math.max(
+    1,
+    Math.round(Number(settings.skuPlanningMaxPhantomSuggestionsPerSku ?? defaults.settings.skuPlanningMaxPhantomSuggestionsPerSku) || defaults.settings.skuPlanningMaxPhantomSuggestionsPerSku),
+  );
+  settings.skuPlanningShowSimulationByDefault = settings.skuPlanningShowSimulationByDefault !== false;
   const monthAnchor = String(settings.monthAnchorDay || defaults.settings.monthAnchorDay || "START").toUpperCase();
   settings.monthAnchorDay = ["START", "MID", "END"].includes(monthAnchor)
     ? monthAnchor

@@ -253,6 +253,13 @@ function normalizeIsoDate(value: unknown): string | null {
   return text;
 }
 
+function normalizeReturnPath(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (!raw.startsWith("/v2/")) return null;
+  return raw;
+}
+
 function compareIsoDate(a: string | null, b: string | null): number {
   if (!a && !b) return 0;
   if (!a) return 1;
@@ -450,6 +457,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [mergeTargetMode, setMergeTargetMode] = useState<"earliest" | "manual">("earliest");
   const [mergeManualTargetDate, setMergeManualTargetDate] = useState("");
   const [mergeAllowMixedTerms, setMergeAllowMixedTerms] = useState(false);
+  const [returnContext, setReturnContext] = useState<{ path: string; sku: string | null } | null>(null);
   const [form] = Form.useForm<FoFormValues>();
   const foViewMode = useMemo<"table" | "timeline">(
     () => resolveFoViewMode(location.search),
@@ -1366,8 +1374,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     });
   }
 
-  function openCreateModal(prefill?: Partial<FoFormValues>): void {
+  function openCreateModal(prefill?: Partial<FoFormValues>, options?: { preserveReturnContext?: boolean }): void {
     setEditingId(null);
+    if (!options?.preserveReturnContext) {
+      setReturnContext(null);
+    }
     const draft = buildDefaultDraft(null, prefill);
     form.setFieldsValue({
       ...draft,
@@ -1376,8 +1387,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     setModalOpen(true);
   }
 
-  function openEditModal(existing: Record<string, unknown>): void {
+  function openEditModal(existing: Record<string, unknown>, options?: { preserveReturnContext?: boolean }): void {
     setEditingId(String(existing.id || ""));
+    if (!options?.preserveReturnContext) {
+      setReturnContext(null);
+    }
     form.setFieldsValue(buildDefaultDraft(existing));
     setModalOpen(true);
   }
@@ -1505,6 +1519,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     modalCollab.clearDraft();
     setModalOpen(false);
     setEditingId(null);
+    setReturnContext(null);
     form.resetFields();
   }
 
@@ -1693,6 +1708,15 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const source = params.get("source");
+    const returnPath = normalizeReturnPath(params.get("returnTo"));
+    const returnSku = String(params.get("returnSku") || "").trim() || null;
+    const applyReturnContext = (): void => {
+      if (!returnPath) {
+        setReturnContext(null);
+        return;
+      }
+      setReturnContext({ path: returnPath, sku: returnSku });
+    };
     const clearHandledParams = (keys: string[]): void => {
       const next = new URLSearchParams(location.search);
       keys.forEach((key) => next.delete(key));
@@ -1712,9 +1736,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         const target = (Array.isArray(state.fos) ? state.fos : [])
           .map((entry) => entry as Record<string, unknown>)
           .find((entry) => String(entry.id || "") === foId);
-        if (target) openEditModal(target);
+        if (target) {
+          applyReturnContext();
+          openEditModal(target, { preserveReturnContext: true });
+        }
       }
-      clearHandledParams(["source", "foId"]);
+      clearHandledParams(["source", "foId", "returnTo", "returnSku"]);
       return;
     }
 
@@ -1733,6 +1760,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           "orderMonth",
           "leadTimeDays",
           "returnTo",
+          "returnSku",
         ]);
         return;
       }
@@ -1748,7 +1776,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       if (product?.supplierId) prefill.supplierId = String(product.supplierId);
       if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
 
-      openCreateModal(prefill);
+      applyReturnContext();
+      openCreateModal(prefill, { preserveReturnContext: true });
       message.info("Phantom-FO geladen. Bitte Daten prüfen, bei Bedarf anpassen und speichern.");
       clearHandledParams([
         "source",
@@ -1762,6 +1791,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         "orderMonth",
         "leadTimeDays",
         "returnTo",
+        "returnSku",
       ]);
       return;
     }
@@ -1769,7 +1799,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (source !== "inventory_projection") return;
     const sku = String(params.get("sku") || "").trim();
     if (!sku) {
-      clearHandledParams(["source"]);
+      clearHandledParams(["source", "returnTo", "returnSku"]);
       return;
     }
     const product = productBySku.get(sku) || null;
@@ -1784,7 +1814,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (product?.supplierId) prefill.supplierId = String(product.supplierId);
     if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
 
-    openCreateModal(prefill);
+    applyReturnContext();
+    openCreateModal(prefill, { preserveReturnContext: true });
     clearHandledParams([
       "source",
       "sku",
@@ -1800,6 +1831,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       "nextSuggestedUnits",
       "nextRequiredArrivalDate",
       "nextRecommendedOrderDate",
+      "returnTo",
+      "returnSku",
     ]);
   }, [location.pathname, location.search, navigate, productBySku, state.fos]);
 
@@ -1897,6 +1930,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         onCancel={() => {
           modalCollab.clearDraft();
           setModalOpen(false);
+          setReturnContext(null);
         }}
         onOk={() => {
           if (modalFieldLocked) {
@@ -1959,6 +1993,22 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               }}
             >
               Zugehoerige PO oeffnen
+            </Button>
+          ) : null}
+          {returnContext ? (
+            <Button
+              size="small"
+              onClick={() => {
+                const params = new URLSearchParams();
+                if (returnContext.sku) params.set("sku", returnContext.sku);
+                const query = params.toString();
+                navigate({
+                  pathname: returnContext.path,
+                  search: query ? `?${query}` : "",
+                });
+              }}
+            >
+              Zurueck zur SKU Planung
             </Button>
           ) : null}
         </Space>

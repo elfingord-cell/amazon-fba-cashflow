@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dayjs, { type Dayjs } from "dayjs";
 import { Button, Card, DatePicker, Input, Segmented, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { useNavigate } from "react-router-dom";
@@ -25,6 +25,7 @@ import {
   resolvePlanningMonthsFromState,
   type PhantomFoSuggestion,
 } from "../../domain/phantomFo";
+import { formatMonthLabel } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Text } = Typography;
@@ -263,6 +264,7 @@ export default function SkuTimelineView(): JSX.Element {
   const [typeFilter, setTypeFilter] = useState<SkuTypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<SkuStatusFilter>("planning");
   const [rangePreset, setRangePreset] = useState<TimeRangePreset>("12m");
+  const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [customRange, setCustomRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
 
   const stateObject = state as unknown as Record<string, unknown>;
@@ -311,9 +313,30 @@ export default function SkuTimelineView(): JSX.Element {
     () => resolvePlanningMonthsFromState(stateObject, 18),
     [state.settings],
   );
+  const resolvedPhantomTargetMonth = useMemo(() => {
+    if (phantomTargetMonth && planningMonths.includes(phantomTargetMonth)) return phantomTargetMonth;
+    return planningMonths[planningMonths.length - 1] || "";
+  }, [phantomTargetMonth, planningMonths]);
+
+  useEffect(() => {
+    if (!planningMonths.length) {
+      setPhantomTargetMonth("");
+      return;
+    }
+    setPhantomTargetMonth((current) => (
+      current && planningMonths.includes(current)
+        ? current
+        : planningMonths[planningMonths.length - 1]
+    ));
+  }, [planningMonths]);
+
   const phantomFoSuggestions = useMemo<PhantomFoSuggestion[]>(
-    () => buildPhantomFoSuggestions({ state: stateObject, months: planningMonths }),
-    [planningMonths, stateObject],
+    () => buildPhantomFoSuggestions({
+      state: stateObject,
+      months: planningMonths,
+      targetMonth: resolvedPhantomTargetMonth || null,
+    }),
+    [planningMonths, resolvedPhantomTargetMonth, stateObject],
   );
   const phantomFoById = useMemo(
     () => new Map(phantomFoSuggestions.map((entry) => [entry.id, entry])),
@@ -814,6 +837,14 @@ export default function SkuTimelineView(): JSX.Element {
             }
           }}
         />
+        <Text type="secondary">PFO bis:</Text>
+        <Select
+          value={resolvedPhantomTargetMonth || undefined}
+          onChange={(value) => setPhantomTargetMonth(String(value || ""))}
+          options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
+          style={{ width: 170, maxWidth: "100%" }}
+          disabled={!planningMonths.length}
+        />
         {rangePreset === "custom" ? (
           <RangePicker
             className="v2-orders-gantt-range-picker"
@@ -835,6 +866,7 @@ export default function SkuTimelineView(): JSX.Element {
         <Tag>{timelineData.groups.length} SKUs</Tag>
         <Tag>{timelineData.items.length} Segmente</Tag>
         {phantomFoSuggestions.length ? <Tag color="gold">Phantom FO: {phantomFoSuggestions.length}</Tag> : null}
+        {resolvedPhantomTargetMonth ? <Tag color="gold">PFO bis: {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
         <Tag color="green">SKU Timeline</Tag>
       </div>
 

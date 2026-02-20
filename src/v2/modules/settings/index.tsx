@@ -44,6 +44,16 @@ const PO_PAYMENT_ANCHOR_OPTIONS = [
   { value: "ETD", label: "ETD" },
   { value: "ETA", label: "ETA" },
 ];
+const SKU_PLANNING_HORIZON_OPTIONS = [
+  { value: 6, label: "6 Monate" },
+  { value: 12, label: "12 Monate" },
+  { value: 18, label: "18 Monate" },
+];
+const SKU_PLANNING_ABC_OPTIONS = [
+  { value: "abc", label: "A + B + C" },
+  { value: "ab", label: "Nur A + B" },
+  { value: "a", label: "Nur A" },
+];
 
 interface SettingsDraft {
   air: number;
@@ -60,6 +70,10 @@ interface SettingsDraft {
   safetyStockDohDefault: number;
   foCoverageDohDefault: number;
   moqDefaultUnits: number;
+  skuPlanningHorizonMonths: number;
+  skuPlanningAbcFilter: "abc" | "ab" | "a";
+  skuPlanningMaxPhantomSuggestionsPerSku: number;
+  skuPlanningShowSimulationByDefault: boolean;
   monthAnchorDay: string;
   cnyStart: string;
   cnyEnd: string;
@@ -111,6 +125,18 @@ function normalizeFoTrigger(value: unknown, fallback: string): string {
 function normalizePoAnchor(value: unknown, fallback: string): string {
   const anchor = String(value || "").trim().toUpperCase();
   if (PO_PAYMENT_ANCHOR_OPTIONS.some((entry) => entry.value === anchor)) return anchor;
+  return fallback;
+}
+
+function normalizeSkuPlanningHorizon(value: unknown, fallback = 12): number {
+  const parsed = Math.round(Number(value || 0));
+  if (parsed === 6 || parsed === 12 || parsed === 18) return parsed;
+  return fallback;
+}
+
+function normalizeSkuPlanningAbcFilter(value: unknown, fallback: "abc" | "ab" | "a" = "abc"): "abc" | "ab" | "a" {
+  const parsed = String(value || "").trim().toLowerCase();
+  if (parsed === "a" || parsed === "ab" || parsed === "abc") return parsed;
   return fallback;
 }
 
@@ -173,6 +199,10 @@ function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
     safetyStockDohDefault: Math.max(0, toNumber(state.safetyStockDohDefault, 60)),
     foCoverageDohDefault: Math.max(0, toNumber(state.foCoverageDohDefault, 90)),
     moqDefaultUnits: Math.max(0, Math.round(toNumber(state.moqDefaultUnits, 500))),
+    skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(state.skuPlanningHorizonMonths, 12),
+    skuPlanningAbcFilter: normalizeSkuPlanningAbcFilter(state.skuPlanningAbcFilter, "abc"),
+    skuPlanningMaxPhantomSuggestionsPerSku: Math.max(1, Math.round(toNumber(state.skuPlanningMaxPhantomSuggestionsPerSku, 3))),
+    skuPlanningShowSimulationByDefault: state.skuPlanningShowSimulationByDefault !== false,
     monthAnchorDay: String(state.monthAnchorDay || "START"),
     cnyStart: String(cny.start || ""),
     cnyEnd: String(cny.end || ""),
@@ -219,6 +249,10 @@ function normalizeDraft(values: SettingsDraft): string {
     safetyStockDohDefault: Number(values.safetyStockDohDefault || 0),
     foCoverageDohDefault: Number(values.foCoverageDohDefault || 0),
     moqDefaultUnits: Number(values.moqDefaultUnits || 0),
+    skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(values.skuPlanningHorizonMonths, 12),
+    skuPlanningAbcFilter: normalizeSkuPlanningAbcFilter(values.skuPlanningAbcFilter, "abc"),
+    skuPlanningMaxPhantomSuggestionsPerSku: Math.max(1, Math.round(toNumber(values.skuPlanningMaxPhantomSuggestionsPerSku, 3))),
+    skuPlanningShowSimulationByDefault: values.skuPlanningShowSimulationByDefault === true,
     monthAnchorDay: String(values.monthAnchorDay || ""),
     cnyStart: String(values.cnyStart || ""),
     cnyEnd: String(values.cnyEnd || ""),
@@ -409,6 +443,10 @@ export default function SettingsModule(): JSX.Element {
         safetyStockDohDefault: Math.max(0, Math.round(values.safetyStockDohDefault)),
         foCoverageDohDefault: Math.max(0, Math.round(values.foCoverageDohDefault)),
         moqDefaultUnits: Math.max(0, Math.round(values.moqDefaultUnits)),
+        skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(values.skuPlanningHorizonMonths, 12),
+        skuPlanningAbcFilter: normalizeSkuPlanningAbcFilter(values.skuPlanningAbcFilter, "abc"),
+        skuPlanningMaxPhantomSuggestionsPerSku: Math.max(1, Math.round(toNumber(values.skuPlanningMaxPhantomSuggestionsPerSku, 3))),
+        skuPlanningShowSimulationByDefault: values.skuPlanningShowSimulationByDefault === true,
         monthAnchorDay: values.monthAnchorDay,
         cny: {
           start: values.cnyStart || "",
@@ -724,6 +762,32 @@ export default function SettingsModule(): JSX.Element {
             <Col xs={24} md={8}>
               <Form.Item label="Default Production Lead Time (Tage)" name="defaultProductionLeadTimeDays">
                 <DeNumberInput mode="int" min={0} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Title level={5} style={{ marginTop: 4 }}>SKU Planung (Simulation)</Title>
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item label="Planungshorizont" name="skuPlanningHorizonMonths" rules={[{ required: true }]}>
+                <Select options={SKU_PLANNING_HORIZON_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="ABC-Klassen" name="skuPlanningAbcFilter" rules={[{ required: true }]}>
+                <Select options={SKU_PLANNING_ABC_OPTIONS} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="Max. Phantom-FO Vorschlaege je SKU" name="skuPlanningMaxPhantomSuggestionsPerSku">
+                <DeNumberInput mode="int" min={1} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item name="skuPlanningShowSimulationByDefault" valuePropName="checked">
+                <Checkbox>Simulation standardmaessig anzeigen</Checkbox>
               </Form.Item>
             </Col>
           </Row>

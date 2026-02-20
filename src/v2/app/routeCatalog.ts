@@ -30,6 +30,7 @@ const ForecastModule = lazyRoute(() => import("../modules/forecast"));
 const AbcInsightsModule = lazyRoute(() => import("../modules/abc-insights"));
 const InventorySnapshotPage = lazyRoute(() => import("../modules/inventory/snapshot"));
 const InventoryProjectionPage = lazyRoute(() => import("../modules/inventory/projection"));
+const SkuPlanningModule = lazyRoute(() => import("../modules/sku-planning"));
 const OrdersModule = lazyRoute(() => import("../modules/orders"));
 const SuppliersModule = lazyRoute(() => import("../modules/suppliers"));
 const SettingsModule = lazyRoute(() => import("../modules/settings"));
@@ -85,6 +86,14 @@ export const V2_ROUTES: V2RouteItem[] = [
     icon: FundProjectionScreenOutlined,
     Component: InventoryProjectionPage,
     redirectFrom: ["inventory", "inventory/projection"],
+  },
+  {
+    key: "sku-planning",
+    path: "sku-planung",
+    label: "SKU Planung",
+    section: "operations",
+    icon: FundProjectionScreenOutlined,
+    Component: SkuPlanningModule,
   },
   {
     key: "orders",

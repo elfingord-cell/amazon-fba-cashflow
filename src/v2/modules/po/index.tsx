@@ -193,6 +193,13 @@ function normalizeIsoDate(value: unknown): string | null {
   return raw;
 }
 
+function normalizeReturnPath(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (!raw.startsWith("/v2/")) return null;
+  return raw;
+}
+
 function etaSortValue(row: unknown): string {
   const eta = normalizeIsoDate((row as { etaDate?: unknown })?.etaDate);
   return eta || "9999-12-31";
@@ -650,6 +657,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const [paymentInitialEventIds, setPaymentInitialEventIds] = useState<string[]>([]);
   const [markerPendingAction, setMarkerPendingAction] = useState<{ poId: string; eventId: string } | null>(null);
   const [modalFocusTarget, setModalFocusTarget] = useState<"payments" | "shipping" | "arrival" | null>(null);
+  const [returnContext, setReturnContext] = useState<{ path: string; sku: string | null } | null>(null);
   const paymentSectionRef = useRef<HTMLDivElement | null>(null);
   const manualFreightOverrideIdsRef = useRef<Set<string>>(new Set());
   const suppressFreightTrackingRef = useRef(false);
@@ -1562,9 +1570,12 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setSkuPickerValues([]);
   }
 
-  function openCreateModal(prefill?: PoCreatePrefill): void {
+  function openCreateModal(prefill?: PoCreatePrefill, options?: { preserveReturnContext?: boolean }): void {
     setEditingId(null);
     setModalFocusTarget(null);
+    if (!options?.preserveReturnContext) {
+      setReturnContext(null);
+    }
     const draft = buildDefaultDraft(null, prefill);
     manualFreightOverrideIdsRef.current.clear();
     withSuppressedFreightTracking(() => {
@@ -1578,9 +1589,16 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setModalOpen(true);
   }
 
-  function openEditModal(existing: Record<string, unknown>, focusTarget: "payments" | "shipping" | "arrival" | null = null): void {
+  function openEditModal(
+    existing: Record<string, unknown>,
+    focusTarget: "payments" | "shipping" | "arrival" | null = null,
+    options?: { preserveReturnContext?: boolean },
+  ): void {
     setEditingId(String(existing.id || ""));
     setModalFocusTarget(focusTarget);
+    if (!options?.preserveReturnContext) {
+      setReturnContext(null);
+    }
     manualFreightOverrideIdsRef.current.clear();
     withSuppressedFreightTracking(() => {
       form.resetFields();
@@ -1944,12 +1962,22 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     setMarkerPendingAction(null);
     setEditingId(null);
     setSkuPickerValues([]);
+    setReturnContext(null);
     form.resetFields();
   }
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const source = params.get("source");
+    const returnPath = normalizeReturnPath(params.get("returnTo"));
+    const returnSku = String(params.get("returnSku") || "").trim() || null;
+    const applyReturnContext = (): void => {
+      if (!returnPath) {
+        setReturnContext(null);
+        return;
+      }
+      setReturnContext({ path: returnPath, sku: returnSku });
+    };
     const clearHandledParams = (keys: string[]): void => {
       let changed = false;
       keys.forEach((key) => {
@@ -1968,13 +1996,24 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       const poNo = String(params.get("poNo") || "").trim();
       if (poNo) {
         setSearch(poNo);
+        const target = canonicalRows.find((entry) => (
+          String(entry.poNo || "").trim() === poNo
+          || String(entry.id || "").trim() === poNo
+        ));
+        if (target?.raw) {
+          applyReturnContext();
+          openEditModal(target.raw, null, { preserveReturnContext: true });
+        }
       }
-      clearHandledParams(["source", "poNo"]);
+      clearHandledParams(["source", "poNo", "returnTo", "returnSku"]);
       return;
     }
     if (source !== "inventory_projection") return;
     const sku = String(params.get("sku") || "").trim();
-    if (!sku) return;
+    if (!sku) {
+      clearHandledParams(["source", "returnTo", "returnSku"]);
+      return;
+    }
     const product = productRows.find((entry) => entry.sku === sku) || null;
     const suggestedUnits = Math.max(0, Math.round(Number(params.get("suggestedUnits") || 0)));
     const requiredArrivalDate = String(params.get("requiredArrivalDate") || "");
@@ -1988,9 +2027,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     if (requiredArrivalDate) prefill.etaManual = requiredArrivalDate;
     if (recommendedOrderDate) prefill.orderDate = recommendedOrderDate;
 
-    openCreateModal(prefill);
-    clearHandledParams(["source", "sku", "suggestedUnits", "requiredArrivalDate", "recommendedOrderDate"]);
-  }, [location.pathname, location.search, navigate, productRows]);
+    applyReturnContext();
+    openCreateModal(prefill, { preserveReturnContext: true });
+    clearHandledParams(["source", "sku", "suggestedUnits", "requiredArrivalDate", "recommendedOrderDate", "returnTo", "returnSku"]);
+  }, [canonicalRows, location.pathname, location.search, navigate, productRows]);
 
   return (
     <div className="v2-page">
@@ -2201,6 +2241,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           setModalFocusTarget(null);
           setMarkerPendingAction(null);
           setSkuPickerValues([]);
+          setReturnContext(null);
         }}
         onOk={() => {
           if (modalCollab.readOnly) {
@@ -2238,6 +2279,25 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           <Tag color="orange" style={{ marginBottom: 10 }}>
             Entwurf von {modalCollab.remoteUserLabel || "Kollege"} wird live gespiegelt.
           </Tag>
+        ) : null}
+        {returnContext ? (
+          <Space style={{ width: "100%", marginBottom: 10 }} wrap>
+            <Button
+              size="small"
+              onClick={() => {
+                const params = new URLSearchParams();
+                if (returnContext.sku) params.set("sku", returnContext.sku);
+                const query = params.toString();
+                navigate({
+                  pathname: returnContext.path,
+                  search: query ? `?${query}` : "",
+                });
+              }}
+            >
+              Zurueck zur SKU Planung
+            </Button>
+            {returnContext.sku ? <Text type="secondary">Fokus: {returnContext.sku}</Text> : null}
+          </Space>
         ) : null}
         <Form
           name="v2-po-modal"
