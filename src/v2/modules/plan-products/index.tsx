@@ -815,57 +815,59 @@ export default function PlanProductsModule(): JSX.Element {
           </div>
 
           <div className="v2-form-row">
-            <Form.List name="launchCosts">
-              {(fields, { add, remove }) => (
-                <Space direction="vertical" style={{ width: "100%" }}>
-                  {fields.map((field) => (
-                    <div key={field.key} className="v2-form-row">
-                      <Form.Item
-                        name={[field.name, "type"]}
-                        label="Launch-Kosten Typ"
-                        style={{ minWidth: 180, flex: 1 }}
-                        rules={[{ required: true, message: "Typ fehlt." }]}
-                      >
-                        <Select options={LAUNCH_COST_TYPE_VALUES.map((value) => ({ value, label: value }))} />
-                      </Form.Item>
-                      <Form.Item
-                        name={[field.name, "amountEur"]}
-                        label="Betrag (EUR)"
-                        style={{ minWidth: 160, flex: 1 }}
-                        rules={[{ required: true, message: "Betrag fehlt." }]}
-                      >
-                        <DeNumberInput mode="decimal" min={0} />
-                      </Form.Item>
-                      <Form.Item
-                        name={[field.name, "date"]}
-                        label="Datum"
-                        style={{ minWidth: 170 }}
-                        rules={[{ required: true, message: "Datum fehlt." }]}
-                      >
-                        <Input type="date" />
-                      </Form.Item>
-                      <Form.Item name={[field.name, "note"]} label="Notiz" style={{ flex: 2 }}>
-                        <Input placeholder="Optional" />
-                      </Form.Item>
-                      <Form.Item style={{ marginTop: 30 }}>
-                        <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
-                      </Form.Item>
-                    </div>
-                  ))}
-                  <Button
-                    onClick={() => add({
-                      type: "Sonstiges",
-                      amountEur: null,
-                      currency: "EUR",
-                      date: "",
-                      note: "",
-                    })}
-                  >
-                    Launch-Kosten hinzufügen
-                  </Button>
-                </Space>
-              )}
-            </Form.List>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Form.List name="launchCosts">
+                {(fields, { add, remove }) => (
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    {fields.map((field) => (
+                      <div key={field.key} className="v2-form-row">
+                        <Form.Item
+                          name={[field.name, "type"]}
+                          label="Launch-Kosten Typ"
+                          style={{ minWidth: 180, flex: 1 }}
+                          rules={[{ required: true, message: "Typ fehlt." }]}
+                        >
+                          <Select options={LAUNCH_COST_TYPE_VALUES.map((value) => ({ value, label: value }))} />
+                        </Form.Item>
+                        <Form.Item
+                          name={[field.name, "amountEur"]}
+                          label="Betrag (EUR)"
+                          style={{ minWidth: 160, flex: 1 }}
+                          rules={[{ required: true, message: "Betrag fehlt." }]}
+                        >
+                          <DeNumberInput mode="decimal" min={0} />
+                        </Form.Item>
+                        <Form.Item
+                          name={[field.name, "date"]}
+                          label="Datum"
+                          style={{ minWidth: 170 }}
+                          rules={[{ required: true, message: "Datum fehlt." }]}
+                        >
+                          <Input type="date" />
+                        </Form.Item>
+                        <Form.Item name={[field.name, "note"]} label="Notiz" style={{ flex: 2 }}>
+                          <Input placeholder="Optional" />
+                        </Form.Item>
+                        <Form.Item style={{ marginTop: 30 }}>
+                          <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
+                        </Form.Item>
+                      </div>
+                    ))}
+                    <Button
+                      onClick={() => add({
+                        type: "Sonstiges",
+                        amountEur: null,
+                        currency: "EUR",
+                        date: "",
+                        note: "",
+                      })}
+                    >
+                      Launch-Kosten hinzufügen
+                    </Button>
+                  </Space>
+                )}
+              </Form.List>
+            </div>
           </div>
         </Form>
 
