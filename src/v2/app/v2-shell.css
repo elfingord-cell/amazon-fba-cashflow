@@ -117,9 +117,14 @@
 
 .v2-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
-  overflow-x: hidden;
+}
+
+.v2-page > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .v2-intro-card {
@@ -221,10 +226,22 @@
 }
 
 .v2-shell .ant-table-wrapper {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   border: 1px solid var(--v2-table-border);
   border-radius: var(--v2-table-radius);
   overflow: hidden;
   background: #fff;
+}
+
+.v2-shell .ant-table-wrapper .ant-spin-nested-loading,
+.v2-shell .ant-table-wrapper .ant-spin-container,
+.v2-shell .ant-table-wrapper .ant-table,
+.v2-shell .ant-table-wrapper .ant-table-container {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .v2-shell .ant-table-wrapper .ant-table-container {
@@ -233,7 +250,10 @@
 }
 
 .v2-shell .ant-table-content {
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto !important;
+  overflow-y: hidden;
   scrollbar-gutter: stable;
 }
 

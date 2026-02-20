@@ -479,6 +479,7 @@ export default function PlanProductsModule(): JSX.Element {
           rowKey={(row) => String((row as Record<string, unknown>).id || (row as Record<string, unknown>).key || "")}
           size="small"
           pagination={false}
+          scroll={{ x: "max-content" }}
           dataSource={tableData}
           columns={[
             {
