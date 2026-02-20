@@ -888,6 +888,9 @@ export default function DashboardModule(): JSX.Element {
   const cashInBasisQuotePct = Number(cashInMeta.basisQuotePct);
   const cashInIstMonthsCount = Math.max(0, Math.round(Number(cashInMeta.istMonthsCount || 0)));
   const cashInHasIstData = cashInMeta.hasIstData === true;
+  const cashInCalibrationEnabled = cashInMeta.calibrationEnabled !== false;
+  const cashInCalibrationApplied = cashInMeta.calibrationApplied === true;
+  const cashInCalibrationHorizonMonths = Math.max(1, Math.round(Number(cashInMeta.calibrationHorizonMonths || 6)));
   const cashInFallbackUsed = String(cashInMeta.fallbackUsed || "none").trim().toLowerCase();
   const cashInFallbackLabel = cashInFallbackUsed === "last_plan_quote"
     ? "Fallback: letzte Plan-Quote"
@@ -1970,6 +1973,17 @@ export default function DashboardModule(): JSX.Element {
                 <Tag color="gold">Konservativ aktiv</Tag>
               </Tooltip>
             ) : <Tag color="blue">Basis aktiv</Tag>}
+            {!cashInCalibrationEnabled ? (
+              <Tag>Umsatzkalibrierung aus</Tag>
+            ) : cashInCalibrationApplied ? (
+              <Tooltip title={`Cash-In nutzt kalibrierte Umsätze mit linearem Fade-Out über ${cashInCalibrationHorizonMonths} Monate.`}>
+                <Tag color="orange">Cash-In kalibriert</Tag>
+              </Tooltip>
+            ) : (
+              <Tooltip title="Umsatzkalibrierung ist aktiv, aktuell aber mit Faktor 1,00 wirksam neutral.">
+                <Tag color="blue">Umsatzkalibrierung aktiv</Tag>
+              </Tooltip>
+            )}
             {cashInFallbackLabel ? <Tag color="default">{cashInFallbackLabel}</Tag> : null}
           </div>
           {cashInIstMonthsCount < 6 ? (

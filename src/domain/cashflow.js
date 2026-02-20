@@ -1256,22 +1256,30 @@ export function computeSeries(state) {
     ? clampPct(recommendationMedianRaw, cashInQuoteMinPct, cashInQuoteMaxPct)
     : null;
   const recommendationQuotePct = clampPct(recommendationQuoteRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+  const cashInCalibrationEnabled = s?.settings?.cashInCalibrationEnabled !== false;
   const cashInCalibrationHorizonMonths = normalizeCalibrationHorizonMonths(
     s?.settings?.cashInCalibrationHorizonMonths,
     6,
   );
-  const calibrationRows = incomings
-    .filter((row) => String(row?.month || '') === currentMonth)
-    .map((row) => ({
-      ...row,
-      calibrationSellerboardMonthEndEur: null,
-    }));
+  const calibrationRows = cashInCalibrationEnabled
+    ? incomings
+      .filter((row) => String(row?.month || '') === currentMonth)
+      .map((row) => ({
+        ...row,
+        calibrationSellerboardMonthEndEur: null,
+      }))
+    : [];
   const calibrationProfile = buildCalibrationProfile({
     incomings: calibrationRows,
     months: Object.keys(bucket),
     forecastRevenueByMonth: forecastMap,
     horizonMonths: cashInCalibrationHorizonMonths,
   });
+  const calibrationApplied = cashInCalibrationEnabled && Object.values(calibrationProfile.byMonth || {})
+    .some((entry) => {
+      const factor = Number(entry?.factor || 1);
+      return Number.isFinite(factor) && Math.abs(factor - 1) > 0.000001;
+    });
   const appliedPayoutPctByMonth = {};
   const cashInMetaByMonth = {};
 
@@ -1326,6 +1334,7 @@ export function computeSeries(state) {
     appliedPayoutPctByMonth[m] = payoutPct;
     cashInMetaByMonth[m] = {
       mode: cashInMode,
+      calibrationEnabled: cashInCalibrationEnabled,
       isFutureMonth,
       horizonFromCurrentMonth,
       marginPct,
@@ -1793,6 +1802,8 @@ export function computeSeries(state) {
       recommendationUsedMonths: payoutRecommendation.usedMonths,
       recommendationUncertain: payoutRecommendation.uncertain,
       recommendationIgnoreQ4: payoutRecommendation.ignoreQ4,
+      calibrationEnabled: cashInCalibrationEnabled,
+      calibrationApplied,
       calibrationHorizonMonths: cashInCalibrationHorizonMonths,
       marginBucketsPct: {
         plus1: 1,

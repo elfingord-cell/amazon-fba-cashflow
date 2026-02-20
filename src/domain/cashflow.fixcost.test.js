@@ -425,7 +425,7 @@ test("computeSeries applies calibration decay to forecast revenue and exposes fu
   const [year, monthNumber] = currentMonth.split("-").map(Number);
   const monthDays = new Date(year, monthNumber, 0).getDate();
   const rawFactor = (450 * (monthDays / 15)) / 1000;
-  const nextFactor = 1 + (rawFactor - 1) * ((6 - 1) / 6);
+  const nextFactor = rawFactor + (1 - rawFactor) * (1 / (6 - 1));
   assert.equal(Math.round(salesPayoutAmountForMonth(report, currentMonth)), Math.round(1000 * rawFactor * 0.5));
   assert.equal(Math.round(salesPayoutAmountForMonth(report, nextMonth)), Math.round(1200 * nextFactor * 0.5));
 

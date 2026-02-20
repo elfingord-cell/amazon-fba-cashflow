@@ -16,6 +16,7 @@ import {
   CASH_IN_QUOTE_MAX_PCT,
   CASH_IN_QUOTE_MIN_PCT,
   buildCalibrationProfile,
+  computeCalibrationFactor,
   buildPayoutRecommendation,
   clampPct,
   normalizeCalibrationHorizonMonths,
@@ -74,6 +75,7 @@ interface InputsDraftSnapshot {
   openingBalance: number;
   startMonth: string;
   horizonMonths: number;
+  cashInCalibrationEnabled: boolean;
   cashInCalibrationHorizonMonths: number;
   cashInRecommendationIgnoreQ4: boolean;
   incomings: IncomingDraft[];
@@ -210,13 +212,14 @@ function normalizePercentInput(value: unknown): number | null {
 }
 
 function buildCalibrationDecayTooltip(sourceMonth: string, rawFactor: number, horizonMonths: number): string {
+  const horizon = Math.max(1, Math.round(Number(horizonMonths || 1)));
   const segments: string[] = [];
-  for (let offset = 0; offset <= horizonMonths; offset += 1) {
+  for (let offset = 0; offset < horizon; offset += 1) {
     const month = addMonths(sourceMonth, offset);
-    const ratio = Math.max(0, (horizonMonths - offset) / horizonMonths);
-    const factor = 1 + (rawFactor - 1) * ratio;
+    const factor = computeCalibrationFactor(rawFactor, horizon, offset);
     segments.push(`${formatMonthLabel(month)}: ${formatFactor(factor)}`);
   }
+  segments.push(`ab ${formatMonthLabel(addMonths(sourceMonth, horizon))}: 1,00`);
   return segments.join(" · ");
 }
 
@@ -231,6 +234,7 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
     openingBalance: Number(snapshot.openingBalance || 0),
     startMonth: String(snapshot.startMonth || ""),
     horizonMonths: Math.max(1, Math.round(Number(snapshot.horizonMonths || 1))),
+    cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
     cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
     cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
     incomings: sortIncomings(snapshot.incomings).map((row) => ({
@@ -280,6 +284,7 @@ export default function InputsModule(): JSX.Element {
   const [openingBalance, setOpeningBalance] = useState<number>(0);
   const [startMonth, setStartMonth] = useState<string>(currentMonthKey());
   const [horizonMonths, setHorizonMonths] = useState<number>(18);
+  const [cashInCalibrationEnabled, setCashInCalibrationEnabled] = useState<boolean>(true);
   const [cashInCalibrationHorizonMonths, setCashInCalibrationHorizonMonths] = useState<number>(6);
   const [cashInRecommendationIgnoreQ4, setCashInRecommendationIgnoreQ4] = useState<boolean>(false);
   const [incomings, setIncomings] = useState<IncomingDraft[]>([]);
@@ -318,6 +323,7 @@ export default function InputsModule(): JSX.Element {
     const nextOpeningBalance = Number(toNumber(settings.openingBalance) || 0);
     const nextStartMonth = normalizeMonth(settings.startMonth, currentMonthKey());
     const nextHorizonMonths = Math.max(1, Math.round(Number(settings.horizonMonths || 18) || 18));
+    const nextCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
     const nextCalibrationHorizon = normalizeCalibrationHorizonMonths(settings.cashInCalibrationHorizonMonths, 6);
     const nextIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
 
@@ -363,6 +369,7 @@ export default function InputsModule(): JSX.Element {
     setOpeningBalance(nextOpeningBalance);
     setStartMonth(nextStartMonth);
     setHorizonMonths(nextHorizonMonths);
+    setCashInCalibrationEnabled(nextCalibrationEnabled);
     setCashInCalibrationHorizonMonths(nextCalibrationHorizon);
     setCashInRecommendationIgnoreQ4(nextIgnoreQ4);
     setIncomings(nextIncomings);
@@ -374,6 +381,7 @@ export default function InputsModule(): JSX.Element {
       openingBalance: nextOpeningBalance,
       startMonth: nextStartMonth,
       horizonMonths: nextHorizonMonths,
+      cashInCalibrationEnabled: nextCalibrationEnabled,
       cashInCalibrationHorizonMonths: nextCalibrationHorizon,
       cashInRecommendationIgnoreQ4: nextIgnoreQ4,
       incomings: nextIncomings,
@@ -392,16 +400,6 @@ export default function InputsModule(): JSX.Element {
       }
     };
   }, []);
-
-  const payoutByMonth = useMemo(() => {
-    const map = new Map<string, number>();
-    incomings.forEach((row) => {
-      const revenue = Number(row.revenueEur || 0);
-      const payoutPct = normalizePayoutInput(row.payoutPct) ?? 0;
-      map.set(row.month, revenue * (payoutPct / 100));
-    });
-    return map;
-  }, [incomings]);
 
   const forecastRevenueByMonthObject = useMemo(() => {
     const object: Record<string, number> = {};
@@ -478,7 +476,7 @@ export default function InputsModule(): JSX.Element {
   }, [currentCalibrationCutoffDate, currentCalibrationRevenueToDate, currentMonthValue]);
 
   const currentMonthCalibrationProfile = useMemo(() => {
-    const calibrationRow = currentMonthIncoming
+    const calibrationRow = cashInCalibrationEnabled && currentMonthIncoming
       ? [{
         ...currentMonthIncoming,
         calibrationCutoffDate: currentCalibrationCutoffDate,
@@ -492,6 +490,7 @@ export default function InputsModule(): JSX.Element {
       horizonMonths: cashInCalibrationHorizonMonths,
     });
   }, [
+    cashInCalibrationEnabled,
     cashInCalibrationHorizonMonths,
     currentCalibrationCutoffDate,
     currentMonthIncoming,
@@ -501,12 +500,17 @@ export default function InputsModule(): JSX.Element {
   const currentMonthCalibrationCandidate = currentMonthCalibrationProfile.candidates.find(
     (candidate) => candidate.month === currentMonthValue,
   ) || null;
-  const currentMonthCalibrationFactor = Number(currentMonthCalibrationCandidate?.rawFactor);
-  const currentMonthCalibrationTooltip = Number.isFinite(currentMonthCalibrationFactor)
+  const currentMonthCalibrationRawFactor = Number(currentMonthCalibrationCandidate?.rawFactor);
+  const currentMonthAppliedFactor = Number(currentMonthCalibrationProfile.byMonth?.[currentMonthValue]?.factor || 1);
+  const currentMonthCalibratedRevenue = currentMonthForecastRevenue
+    * (Number.isFinite(currentMonthAppliedFactor) ? currentMonthAppliedFactor : 1);
+  const currentMonthCalibrationUnusual = Number.isFinite(currentMonthCalibrationRawFactor)
+    && (currentMonthCalibrationRawFactor > 1.25 || currentMonthCalibrationRawFactor < 0.5);
+  const currentMonthCalibrationTooltip = Number.isFinite(currentMonthCalibrationRawFactor)
     ? [
       "Linearer Forecast aus Umsatz bis Stichtag.",
-      `Startfaktor ${currentMonthValue}: ${formatFactor(currentMonthCalibrationFactor)}`,
-      `Decay über ${cashInCalibrationHorizonMonths} Monate: ${buildCalibrationDecayTooltip(currentMonthValue, currentMonthCalibrationFactor, cashInCalibrationHorizonMonths)}`,
+      `Startfaktor ${currentMonthValue}: ${formatFactor(currentMonthCalibrationRawFactor)}`,
+      `Fade-Out über ${cashInCalibrationHorizonMonths} Monate: ${buildCalibrationDecayTooltip(currentMonthValue, currentMonthCalibrationRawFactor, cashInCalibrationHorizonMonths)}`,
     ].join(" | ")
     : "Kalibrierfaktor wird berechnet, sobald Stichtag und Umsatz bis Stichtag im aktuellen Monat gesetzt sind und Forecast-Umsatz > 0 ist.";
 
@@ -545,6 +549,7 @@ export default function InputsModule(): JSX.Element {
       openingBalance,
       startMonth,
       horizonMonths,
+      cashInCalibrationEnabled,
       cashInCalibrationHorizonMonths,
       cashInRecommendationIgnoreQ4,
       incomings: normalizedIncomings,
@@ -566,6 +571,7 @@ export default function InputsModule(): JSX.Element {
         openingBalance: Number(snapshot.openingBalance || 0),
         startMonth: snapshot.startMonth,
         horizonMonths: Math.max(1, Math.round(snapshot.horizonMonths || 1)),
+        cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
         cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
         cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
         lastUpdatedAt: new Date().toISOString(),
@@ -646,6 +652,7 @@ export default function InputsModule(): JSX.Element {
       openingBalance,
       startMonth,
       horizonMonths,
+      cashInCalibrationEnabled,
       cashInCalibrationHorizonMonths,
       cashInRecommendationIgnoreQ4,
       incomings,
@@ -662,6 +669,7 @@ export default function InputsModule(): JSX.Element {
     openingBalance,
     startMonth,
     horizonMonths,
+    cashInCalibrationEnabled,
     cashInCalibrationHorizonMonths,
     cashInRecommendationIgnoreQ4,
     incomings,
@@ -782,6 +790,38 @@ export default function InputsModule(): JSX.Element {
               </Title>
               {!currentMonthInPlanning ? <Tag color="orange">Aktueller Monat liegt ausserhalb des Planungshorizonts</Tag> : null}
             </Space>
+            <Space wrap style={{ marginBottom: 8 }}>
+              <Checkbox
+                checked={cashInCalibrationEnabled}
+                onChange={(event) => setCashInCalibrationEnabled(event.target.checked)}
+              >
+                Umsatzkalibrierung aktiv
+              </Checkbox>
+              <Space size={4}>
+                <Text>Kalibrierung wirkt über</Text>
+                <div data-field-key="inputs.cashInCalibrationHorizonMonths">
+                  <Select
+                    value={cashInCalibrationHorizonMonths}
+                    style={{ width: 92 }}
+                    options={[
+                      { value: 3, label: "3 Mon." },
+                      { value: 6, label: "6 Mon." },
+                      { value: 12, label: "12 Mon." },
+                    ]}
+                    onChange={(value) => {
+                      setCashInCalibrationHorizonMonths(normalizeCalibrationHorizonMonths(value, 6));
+                    }}
+                  />
+                </div>
+                <Text type="secondary">Monate</Text>
+              </Space>
+              <Tooltip title="Der Faktor startet im aktuellen Monat bei F0 und läuft bis zum gewählten Horizont linear auf 1,00 aus. Beispiel: F0=0,80 und 6 Monate ergibt schrittweise 0,80 -> 0,84 -> ... -> 1,00.">
+                <Tag>Info</Tag>
+              </Tooltip>
+            </Space>
+            <Text type="secondary">
+              Faktor läuft linear auf 1,00 aus.
+            </Text>
             <Space wrap align="start">
               <div>
                 <Text>Stichtag</Text>
@@ -840,14 +880,32 @@ export default function InputsModule(): JSX.Element {
                 <Text>Kalibrierfaktor {formatMonthLabel(currentMonthValue)}</Text>
                 <div style={{ minWidth: 180, paddingTop: 6 }}>
                   <Tooltip title={currentMonthCalibrationTooltip}>
-                    <Text strong>{formatFactor(currentMonthCalibrationFactor)}</Text>
+                    <Text strong>{formatFactor(currentMonthAppliedFactor)}</Text>
                   </Tooltip>
                 </div>
               </div>
             </Space>
-            <Text type="secondary">
-              Forecast {formatMonthLabel(currentMonthValue)}: {formatNumber(currentMonthForecastRevenue, 2)} EUR
-            </Text>
+            <div style={{ marginTop: 8 }}>
+              <Text>
+                Kalibrierfaktor aktueller Monat ({formatMonthLabel(currentMonthValue)}):{" "}
+                <Text strong>{formatFactor(currentMonthAppliedFactor)}</Text>
+              </Text>
+              <div>
+                <Text type="secondary">
+                  Forecast Umsatz ({formatMonthLabel(currentMonthValue)}): {formatNumber(currentMonthForecastRevenue, 2)} EUR
+                </Text>
+              </div>
+              <div>
+                <Text type="secondary">
+                  Kalibrierter Umsatz: {formatNumber(currentMonthCalibratedRevenue, 2)} EUR
+                </Text>
+              </div>
+              {currentMonthCalibrationUnusual ? (
+                <Tag color="warning" style={{ marginTop: 6 }}>
+                  Ungewoehnlicher Faktor ({formatFactor(currentMonthCalibrationRawFactor)})
+                </Tag>
+              ) : null}
+            </div>
           </div>
         </div>
       </Card>
@@ -856,23 +914,6 @@ export default function InputsModule(): JSX.Element {
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
           <Title level={5} style={{ margin: 0 }}>Umsaetze x Payout</Title>
           <Space wrap>
-            <Space size={4}>
-              <Text>Kalibrierung wirkt über</Text>
-              <div data-field-key="inputs.cashInCalibrationHorizonMonths">
-                <Select
-                  value={cashInCalibrationHorizonMonths}
-                  style={{ width: 92 }}
-                  options={[
-                    { value: 3, label: "3 Mon." },
-                    { value: 6, label: "6 Mon." },
-                    { value: 9, label: "9 Mon." },
-                  ]}
-                  onChange={(value) => {
-                    setCashInCalibrationHorizonMonths(normalizeCalibrationHorizonMonths(value, 6));
-                  }}
-                />
-              </div>
-            </Space>
             <Checkbox
               checked={cashInRecommendationIgnoreQ4}
               onChange={(event) => setCashInRecommendationIgnoreQ4(event.target.checked)}
@@ -922,6 +963,9 @@ export default function InputsModule(): JSX.Element {
           <Text type="secondary">
             Die Umsatzzeilen sind strikt auf den Planungszeitraum ({startMonth} + {horizonMonths} Monate) synchronisiert.
           </Text>
+          <Tag color={cashInCalibrationEnabled ? "green" : "default"}>
+            {cashInCalibrationEnabled ? "Umsatzkalibrierung aktiv" : "Umsatzkalibrierung aus"}
+          </Tag>
           {payoutRecommendation.uncertain ? (
             <Tag color="orange">
               Empfehlung unsicher ({payoutRecommendation.sampleCount} Ist-Monate)
@@ -934,25 +978,63 @@ export default function InputsModule(): JSX.Element {
               <tr>
                 <th>Monat</th>
                 <th>Umsatz EUR</th>
+                <th>Faktor</th>
+                <th>Umsatz kalibriert (EUR)</th>
                 <th>Auszahlungsquote (manuell) %</th>
                 <th>Empfehlung %</th>
-                <th>Payout EUR</th>
+                <th>Payout EUR (aktiv)</th>
+                <th>Payout kalibriert (EUR)</th>
                 <th>Status</th>
                 <th />
               </tr>
             </thead>
             <tbody>
               {sortIncomings(incomings).map((row) => {
-                const recommendation = payoutRecommendationByMonth.get(row.month);
+                const recommendationRaw = payoutRecommendationByMonth.get(row.month);
+                const recommendation = Number.isFinite(recommendationRaw as number)
+                  ? clampPct(Number(recommendationRaw), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+                  : null;
                 const manualPayout = normalizePayoutInput(row.payoutPct);
+                const payoutPctForCalc = Number.isFinite(manualPayout as number)
+                  ? Number(manualPayout)
+                  : (Number.isFinite(recommendation as number) ? Number(recommendation) : null);
                 const payoutDelta = Number.isFinite(recommendation)
                   && Number.isFinite(manualPayout as number)
                   ? Number(manualPayout) - Number(recommendation)
                   : null;
                 const shouldWarnDelta = Number.isFinite(payoutDelta as number) && Math.abs(Number(payoutDelta)) >= PAYOUT_DELTA_WARNING_PCT;
                 const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
+                const calibrationByMonth = currentMonthCalibrationProfile.byMonth?.[row.month] || null;
+                const factor = Number(calibrationByMonth?.factor || 1);
+                const factorApplied = Number.isFinite(factor) ? factor : 1;
+                const calibratedRevenue = forecastRevenue * factorApplied;
+                const calibrationMethod = String(calibrationByMonth?.method || "").toLowerCase();
+                const calibrationSourceMonth = String(calibrationByMonth?.sourceMonth || "").trim();
+                const calibrationActiveForRow = cashInCalibrationEnabled && Math.abs(factorApplied - 1) > 0.000001;
                 const forecastMissing = row.source === "forecast" && (!Number.isFinite(forecastRevenue) || forecastRevenue <= 0);
+                const manualRevenue = toNumber(row.revenueEur);
                 const isManualRevenueOverride = row.source === "manual" && Number.isFinite(forecastRevenue) && forecastRevenue > 0;
+                const manualPayoutEur = Number.isFinite(payoutPctForCalc as number) && Number.isFinite(manualRevenue as number)
+                  ? Number(manualRevenue) * (Number(payoutPctForCalc) / 100)
+                  : null;
+                const forecastPayout = Number.isFinite(payoutPctForCalc as number)
+                  ? forecastRevenue * (Number(payoutPctForCalc) / 100)
+                  : null;
+                const calibratedPayout = Number.isFinite(payoutPctForCalc as number)
+                  ? calibratedRevenue * (Number(payoutPctForCalc) / 100)
+                  : null;
+                const effectivePayout = isManualRevenueOverride
+                  ? manualPayoutEur
+                  : (cashInCalibrationEnabled ? calibratedPayout : forecastPayout);
+                const factorTooltip = !cashInCalibrationEnabled
+                  ? "Kalibrierung ist deaktiviert. Faktor = 1,00."
+                  : calibrationActiveForRow
+                    ? [
+                      calibrationSourceMonth ? `Quelle: ${formatMonthLabel(calibrationSourceMonth)}` : null,
+                      calibrationMethod === "linear" ? "Methode: lineare Hochrechnung" : null,
+                      `Angewendet: ${formatFactor(factorApplied)}`,
+                    ].filter(Boolean).join(" | ")
+                    : "Keine aktive Kalibrierung in diesem Monat (Faktor 1,00).";
 
                 return (
                   <tr key={row.id}>
@@ -987,8 +1069,15 @@ export default function InputsModule(): JSX.Element {
                           }}
                         />
                         {isManualRevenueOverride ? <Text type="warning">manuell ueberschrieben</Text> : null}
+                        <div><Text type="secondary">Forecast: {formatNumber(forecastRevenue, 2)} EUR</Text></div>
                       </div>
                     </td>
+                    <td>
+                      <Tooltip title={factorTooltip}>
+                        <Text strong>{formatFactor(factorApplied)}</Text>
+                      </Tooltip>
+                    </td>
+                    <td>{formatNumber(calibratedRevenue, 2)}</td>
                     <td>
                       <div data-field-key={`inputs.incomings.${row.id}.payoutPct`}>
                         <DeNumberInput
@@ -1020,11 +1109,22 @@ export default function InputsModule(): JSX.Element {
                         )
                         : <Text type="secondary">—</Text>}
                     </td>
-                    <td>{formatNumber(payoutByMonth.get(row.month) || 0, 2)}</td>
+                    <td>
+                      <div>
+                        <Text strong>{formatNumber(effectivePayout, 2)}</Text>
+                        {isManualRevenueOverride ? (
+                          <div><Text type="secondary">Forecast kalibriert: {formatNumber(calibratedPayout, 2)} EUR</Text></div>
+                        ) : cashInCalibrationEnabled ? (
+                          <div><Text type="secondary">Forecast: {formatNumber(forecastPayout, 2)} EUR</Text></div>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>{formatNumber(calibratedPayout, 2)}</td>
                     <td>
                       <div style={{ minWidth: 170 }}>
                         {row.source === "forecast" ? <Tag color="blue">Forecast übertragen</Tag> : null}
                         {isManualRevenueOverride ? <Tag color="orange">Manuell ueberschrieben</Tag> : null}
+                        {calibrationActiveForRow ? <Tag color="orange">Kalibriert</Tag> : null}
                         {forecastMissing ? <div><Text type="warning">Kein Forecast-Umsatz vorhanden</Text></div> : null}
                       </div>
                     </td>

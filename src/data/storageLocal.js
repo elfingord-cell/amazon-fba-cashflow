@@ -30,6 +30,7 @@ const defaults = {
     startMonth: "2025-02",
     horizonMonths: 18,
     cashInMode: "conservative",
+    cashInCalibrationEnabled: true,
     cashInCalibrationHorizonMonths: 6,
     cashInRecommendationIgnoreQ4: false,
     openingBalance: "50.000,00",
@@ -223,10 +224,11 @@ function ensureGlobalSettings(state) {
   settings.defaultDdp = settings.defaultDdp === true;
   const cashInMode = String(settings.cashInMode || defaults.settings.cashInMode || "conservative").trim().toLowerCase();
   settings.cashInMode = cashInMode === "basis" ? "basis" : "conservative";
+  settings.cashInCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const calibrationHorizon = Math.round(Number(
     settings.cashInCalibrationHorizonMonths ?? defaults.settings.cashInCalibrationHorizonMonths,
   ) || defaults.settings.cashInCalibrationHorizonMonths);
-  settings.cashInCalibrationHorizonMonths = [3, 6, 9].includes(calibrationHorizon)
+  settings.cashInCalibrationHorizonMonths = [3, 6, 12].includes(calibrationHorizon)
     ? calibrationHorizon
     : defaults.settings.cashInCalibrationHorizonMonths;
   settings.cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;

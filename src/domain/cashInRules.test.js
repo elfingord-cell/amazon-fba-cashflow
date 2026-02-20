@@ -105,8 +105,8 @@ test("buildCalibrationProfile uses linear projection and decays to one", () => {
   });
 
   assert.equal(Number(profile.byMonth["2025-06"].factor.toFixed(4)), 0.9);
-  assert.equal(Number(profile.byMonth["2025-07"].factor.toFixed(4)), 0.9167);
-  assert.equal(Number(profile.byMonth["2025-11"].factor.toFixed(4)), 0.9833);
+  assert.equal(Number(profile.byMonth["2025-07"].factor.toFixed(4)), 0.92);
+  assert.equal(Number(profile.byMonth["2025-11"].factor.toFixed(4)), 1);
   assert.equal(Number(profile.byMonth["2025-12"].factor.toFixed(4)), 1);
 });
 
@@ -139,7 +139,7 @@ test("buildCalibrationProfile resolves overlap by latest valid month", () => {
 test("normalizeCalibrationHorizonMonths and clampPct enforce allowed ranges", () => {
   assert.equal(normalizeCalibrationHorizonMonths(3), 3);
   assert.equal(normalizeCalibrationHorizonMonths(4), 6);
-  assert.equal(normalizeCalibrationHorizonMonths(null, 9), 9);
+  assert.equal(normalizeCalibrationHorizonMonths(null, 12), 12);
 
   assert.equal(clampPct(39), 40);
   assert.equal(clampPct(55), 55);

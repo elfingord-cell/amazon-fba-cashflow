@@ -1,4 +1,4 @@
-const CASH_IN_CALIBRATION_HORIZON_OPTIONS = [3, 6, 9];
+const CASH_IN_CALIBRATION_HORIZON_OPTIONS = [3, 6, 12];
 
 export const CASH_IN_QUOTE_MIN_PCT = 40;
 export const CASH_IN_QUOTE_MAX_PCT = 60;
@@ -27,6 +27,20 @@ export function normalizeCalibrationHorizonMonths(value, fallback = 6) {
     return Math.round(Number(fallback || 0));
   }
   return 6;
+}
+
+export function computeCalibrationFactor(rawFactor, horizonMonths, offsetMonths) {
+  const raw = Number(rawFactor);
+  if (!(Number.isFinite(raw) && raw > 0)) return 1;
+  const horizon = Math.max(1, Math.round(Number(horizonMonths || 1)));
+  const offset = Math.max(0, Math.round(Number(offsetMonths || 0)));
+
+  if (horizon <= 1) return offset === 0 ? raw : 1;
+  if (offset >= horizon) return 1;
+
+  const progress = offset / (horizon - 1);
+  const factor = raw + (1 - raw) * progress;
+  return Number.isFinite(factor) && factor > 0 ? factor : 1;
 }
 
 export function clampPct(value, minPct = CASH_IN_QUOTE_MIN_PCT, maxPct = CASH_IN_QUOTE_MAX_PCT) {
@@ -264,7 +278,8 @@ export function buildCalibrationProfile(input = {}) {
         const sourceIdx = monthIndex(candidate.month);
         if (sourceIdx == null || sourceIdx > monthIdx) return false;
         const offset = monthIdx - sourceIdx;
-        return offset <= horizonMonths;
+        if (horizonMonths <= 1) return offset === 0;
+        return offset < horizonMonths;
       })
       .sort((left, right) => left.month.localeCompare(right.month));
 
@@ -286,8 +301,7 @@ export function buildCalibrationProfile(input = {}) {
 
     const sourceIdx = monthIndex(latest.month);
     const offset = monthIdx - sourceIdx;
-    const decayRatio = Math.max(0, (horizonMonths - offset) / horizonMonths);
-    const factor = 1 + (Number(latest.rawFactor) - 1) * decayRatio;
+    const factor = computeCalibrationFactor(latest.rawFactor, horizonMonths, offset);
 
     byMonth[month] = {
       month,
