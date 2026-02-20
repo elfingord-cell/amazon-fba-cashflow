@@ -37,6 +37,7 @@ export interface DashboardEntry {
   direction?: "in" | "out" | string;
   amount?: number;
   label?: string;
+  tooltip?: string;
   date?: string;
   kind?: string;
   group?: string;
@@ -62,6 +63,7 @@ export interface DashboardPnlRow {
   month: string;
   group: "inflow" | "outflow" | "po_fo" | "fixcost" | "tax" | "other";
   label: string;
+  tooltip?: string;
   amount: number;
   provisional: boolean;
   paid: boolean | null;
@@ -425,6 +427,7 @@ export function buildDashboardPnlRowsByMonth(input: {
         month,
         group: resolvePnlGroup(entry),
         label: String(entry.label || "Eintrag"),
+        tooltip: typeof entry.tooltip === "string" ? entry.tooltip : undefined,
         amount: toSignedAmount(entry),
         provisional,
         paid: typeof entry.paid === "boolean" ? entry.paid : null,

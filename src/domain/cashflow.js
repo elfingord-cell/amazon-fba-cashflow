@@ -22,6 +22,128 @@ export function parsePct(p) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function readOptionalNumber(value, parser = parseEuro) {
+  if (value == null) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const parsed = parser(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function median(values) {
+  const sorted = (Array.isArray(values) ? values : [])
+    .filter(v => Number.isFinite(v))
+    .slice()
+    .sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function clampCashInQuotePct(value, minPct = 35, maxPct = 75) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return minPct;
+  return Math.min(maxPct, Math.max(minPct, numeric));
+}
+
+function normalizeCashInMode(value) {
+  return String(value || '').trim().toLowerCase() === 'basis' ? 'basis' : 'conservative';
+}
+
+function marginBucketPctByHorizon(horizonMonths) {
+  const horizon = Math.max(0, Math.round(Number(horizonMonths || 0)));
+  if (horizon <= 0) return 0;
+  if (horizon === 1) return 1;
+  if (horizon <= 3) return 2;
+  if (horizon <= 6) return 3;
+  if (horizon <= 12) return 4;
+  return 5;
+}
+
+function formatTooltipPercent(value, digits = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0';
+  return numeric.toLocaleString('de-DE', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function buildCashInTooltip({
+  revenue,
+  payoutPct,
+  payoutAmount,
+  mode,
+  isFuture,
+  basisQuotePct,
+  marginPct,
+  horizonMonths,
+  fallbackUsed,
+  componentLabel,
+}) {
+  const modeLabel = mode === 'basis' ? 'Basis' : 'Konservativ';
+  const parts = [
+    `Plan-Umsatz${componentLabel ? ` (${componentLabel})` : ''}: ${fmtEUR(revenue)}`,
+    `Quote: ${formatTooltipPercent(payoutPct)}% (${modeLabel})`,
+    `Auszahlung: ${fmtEUR(payoutAmount)}`,
+  ];
+  if (isFuture) {
+    parts.push(`BasisQuote: ${formatTooltipPercent(basisQuotePct)}%`);
+    if (marginPct > 0) {
+      parts.push(`Sicherheitsmarge: -${formatTooltipPercent(marginPct)}pp (Horizont +${horizonMonths})`);
+    }
+    if (fallbackUsed && fallbackUsed !== 'none') {
+      const fallbackText = fallbackUsed === 'last_plan_quote' ? 'letzte Plan-Quote' : '50%-Fallback';
+      parts.push(`Basisquelle: ${fallbackText}`);
+    }
+  } else {
+    parts.push('Historischer/aktueller Monat: Monatsquote aus Eingaben');
+  }
+  return parts.join(' · ');
+}
+
+function buildActualMap(state) {
+  const s = state || {};
+  const actualMap = new Map();
+  const monthlyActuals = s?.monthlyActuals && typeof s.monthlyActuals === 'object' ? s.monthlyActuals : {};
+
+  Object.entries(monthlyActuals).forEach(([month, entry]) => {
+    if (!month) return;
+    const revenue = readOptionalNumber(entry?.realRevenueEUR, parseEuro);
+    const payoutRatePct = readOptionalNumber(entry?.realPayoutRatePct, parsePct);
+    const closing = readOptionalNumber(entry?.realClosingBalanceEUR, parseEuro);
+    const actual = {};
+    if (Number.isFinite(revenue)) actual.revenue = revenue;
+    if (Number.isFinite(payoutRatePct)) actual.payoutRatePct = payoutRatePct;
+    if (Number.isFinite(revenue) && Number.isFinite(payoutRatePct)) {
+      actual.payout = revenue * (payoutRatePct / 100);
+    }
+    if (Number.isFinite(closing)) actual.closing = closing;
+    if (Object.keys(actual).length) actualMap.set(month, actual);
+  });
+
+  const actuals = Array.isArray(s.actuals) ? s.actuals : [];
+  actuals.forEach(entry => {
+    if (!entry || !entry.month) return;
+    const month = entry.month;
+    const revenue = readOptionalNumber(entry.revenueEur, parseEuro);
+    const payout = readOptionalNumber(entry.payoutEur, parseEuro);
+    const closing = readOptionalNumber(entry.closingBalanceEur, parseEuro);
+    const current = actualMap.get(month) || {};
+    if (!Number.isFinite(current.revenue) && Number.isFinite(revenue)) current.revenue = revenue;
+    if (!Number.isFinite(current.payout) && Number.isFinite(payout)) current.payout = payout;
+    if (!Number.isFinite(current.closing) && Number.isFinite(closing)) current.closing = closing;
+    if (!Number.isFinite(current.payoutRatePct) && Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payout)) {
+      current.payoutRatePct = (payout / revenue) * 100;
+    }
+    if (Object.keys(current).length) actualMap.set(month, current);
+  });
+
+  return actualMap;
+}
+
 export function fmtEUR(val) {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 })
     .format(_num(Number(val)));
@@ -906,13 +1028,89 @@ export function computeSeries(state) {
     manualRevenue[row.month] = parseEuro(row.revenueEur);
   });
 
+  const currentMonth = toMonthKey(today);
+  const currentMonthIdx = monthIndex(currentMonth);
+  const cashInMode = normalizeCashInMode(s?.settings?.cashInMode);
+  const cashInQuoteMinPct = 35;
+  const cashInQuoteMaxPct = 75;
+  const actualMap = buildActualMap(s);
+  const actualQuotePoints = [];
+  actualMap.forEach((values, month) => {
+    if (!month || month >= currentMonth) return;
+    let quotePct = Number(values?.payoutRatePct);
+    if (!Number.isFinite(quotePct)) {
+      const revenue = Number(values?.revenue);
+      const payout = Number(values?.payout);
+      if (Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payout)) {
+        quotePct = (payout / revenue) * 100;
+      }
+    }
+    if (!Number.isFinite(quotePct)) return;
+    actualQuotePoints.push({ month, quotePct: Number(quotePct) });
+  });
+  actualQuotePoints.sort((a, b) => String(a.month || '').localeCompare(String(b.month || '')));
+
+  const latestPlanQuoteEntry = Object.entries(payoutPctMap)
+    .filter(([, raw]) => raw != null && String(raw).trim() !== '')
+    .sort((left, right) => String(left[0] || '').localeCompare(String(right[0] || '')))
+    .pop();
+  const latestPlanQuotePct = latestPlanQuoteEntry ? parsePct(latestPlanQuoteEntry[1]) : null;
+
+  let cashInFallbackUsed = 'none';
+  let basisQuoteRaw = median(actualQuotePoints.map(point => point.quotePct));
+  if (!Number.isFinite(basisQuoteRaw)) {
+    if (Number.isFinite(latestPlanQuotePct)) {
+      basisQuoteRaw = Number(latestPlanQuotePct);
+      cashInFallbackUsed = 'last_plan_quote';
+    } else {
+      basisQuoteRaw = 50;
+      cashInFallbackUsed = 'hardcoded_50';
+    }
+  }
+  const basisQuotePct = clampCashInQuotePct(basisQuoteRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+  const appliedPayoutPctByMonth = {};
+  const cashInMetaByMonth = {};
+
   Object.keys(bucket).forEach(m => {
     const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
     if (typeof revenue === 'undefined') return;
-    const payoutPct = parsePct(payoutPctMap[m] || 0);
+    const manualPayoutPct = parsePct(payoutPctMap[m] || 0);
+    const monthIdx = monthIndex(m);
+    const horizonFromCurrentMonth = (monthIdx != null && currentMonthIdx != null) ? (monthIdx - currentMonthIdx) : 0;
+    const isFutureMonth = horizonFromCurrentMonth > 0;
+    const marginPct = (isFutureMonth && cashInMode === 'conservative')
+      ? marginBucketPctByHorizon(horizonFromCurrentMonth)
+      : 0;
+    const payoutPct = isFutureMonth
+      ? clampCashInQuotePct(basisQuotePct - marginPct, cashInQuoteMinPct, cashInQuoteMaxPct)
+      : manualPayoutPct;
+    appliedPayoutPctByMonth[m] = payoutPct;
+    cashInMetaByMonth[m] = {
+      mode: cashInMode,
+      isFutureMonth,
+      horizonFromCurrentMonth,
+      marginPct,
+      basisQuotePct,
+      payoutPct,
+      manualPayoutPct,
+      fallbackUsed: cashInFallbackUsed,
+      quoteMinPct: cashInQuoteMinPct,
+      quoteMaxPct: cashInQuoteMaxPct,
+    };
     const date = monthEndFromKey(m);
     if (!forecastEnabled) {
       const amt = revenue * (payoutPct / 100);
+      const tooltip = buildCashInTooltip({
+        revenue,
+        payoutPct,
+        payoutAmount: amt,
+        mode: cashInMode,
+        isFuture: isFutureMonth,
+        basisQuotePct,
+        marginPct,
+        horizonMonths: horizonFromCurrentMonth,
+        fallbackUsed: cashInFallbackUsed,
+      });
       pushEntry(m, baseEntry({
         id: `sales-${m}`,
         direction: amt >= 0 ? 'in' : 'out',
@@ -924,6 +1122,14 @@ export function computeSeries(state) {
         group: amt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
         source: 'sales',
         sourceTab: '#eingaben',
+        tooltip,
+        meta: {
+          cashIn: {
+            ...cashInMetaByMonth[m],
+            revenue,
+            payoutAmount: amt,
+          },
+        },
       }, { auto: false }));
       return;
     }
@@ -934,6 +1140,18 @@ export function computeSeries(state) {
     const planAmt = planRevenue * (payoutPct / 100);
 
     if (Math.abs(liveAmt) > 0.000001) {
+      const tooltip = buildCashInTooltip({
+        revenue: liveRevenue,
+        payoutPct,
+        payoutAmount: liveAmt,
+        mode: cashInMode,
+        isFuture: isFutureMonth,
+        basisQuotePct,
+        marginPct,
+        horizonMonths: horizonFromCurrentMonth,
+        fallbackUsed: cashInFallbackUsed,
+        componentLabel: 'Prognose - Live/CSV',
+      });
       pushEntry(m, baseEntry({
         id: `sales-live-${m}`,
         direction: liveAmt >= 0 ? 'in' : 'out',
@@ -945,10 +1163,31 @@ export function computeSeries(state) {
         group: liveAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
         source: 'sales',
         sourceTab: '#forecast',
+        tooltip,
+        meta: {
+          cashIn: {
+            ...cashInMetaByMonth[m],
+            revenue: liveRevenue,
+            payoutAmount: liveAmt,
+            component: 'live',
+          },
+        },
       }, { auto: false }));
     }
 
     if (Math.abs(planAmt) > 0.000001) {
+      const tooltip = buildCashInTooltip({
+        revenue: planRevenue,
+        payoutPct,
+        payoutAmount: planAmt,
+        mode: cashInMode,
+        isFuture: isFutureMonth,
+        basisQuotePct,
+        marginPct,
+        horizonMonths: horizonFromCurrentMonth,
+        fallbackUsed: cashInFallbackUsed,
+        componentLabel: 'Prognose - Plan',
+      });
       pushEntry(m, baseEntry({
         id: `sales-plan-${m}`,
         direction: planAmt >= 0 ? 'in' : 'out',
@@ -960,6 +1199,15 @@ export function computeSeries(state) {
         group: planAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
         source: 'sales-plan',
         sourceTab: '#forecast',
+        tooltip,
+        meta: {
+          cashIn: {
+            ...cashInMetaByMonth[m],
+            revenue: planRevenue,
+            payoutAmount: planAmt,
+            component: 'plan',
+          },
+        },
       }, { auto: false }));
     }
   });
@@ -1129,7 +1377,9 @@ export function computeSeries(state) {
   const plannedPayoutByMonth = {};
   Object.keys(bucket).forEach(m => {
     const revenue = forecastEnabled ? (forecastMap[m] || 0) : manualRevenue[m];
-    const payoutPct = parsePct(payoutPctMap[m] || 0);
+    const payoutPct = Number.isFinite(appliedPayoutPctByMonth[m])
+      ? Number(appliedPayoutPctByMonth[m])
+      : parsePct(payoutPctMap[m] || 0);
     plannedRevenueByMonth[m] = revenue;
     plannedPayoutByMonth[m] = revenue * (payoutPct / 100);
   });
@@ -1141,49 +1391,24 @@ export function computeSeries(state) {
     avgSalesPayout,
     firstNegativeMonth: null,
     actuals: {},
+    cashIn: {
+      mode: cashInMode,
+      basisMethod: 'median',
+      basisQuotePct,
+      istMonthsCount: actualQuotePoints.length,
+      hasIstData: actualQuotePoints.length > 0,
+      fallbackUsed: cashInFallbackUsed,
+      quoteMinPct: cashInQuoteMinPct,
+      quoteMaxPct: cashInQuoteMaxPct,
+      marginBucketsPct: {
+        plus1: 1,
+        plus2to3: 2,
+        plus4to6: 3,
+        plus7to12: 4,
+        plus13plus: 5,
+      },
+    },
   };
-
-  const readOptionalNumber = (value, parser = parseEuro) => {
-    if (value == null) return null;
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    const raw = String(value).trim();
-    if (!raw) return null;
-    const parsed = parser(raw);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-
-  const actualMap = new Map();
-  const monthlyActuals = s?.monthlyActuals && typeof s.monthlyActuals === "object" ? s.monthlyActuals : {};
-  const monthlyActualsEntries = Object.entries(monthlyActuals);
-  if (monthlyActualsEntries.length) {
-    monthlyActualsEntries.forEach(([month, entry]) => {
-      if (!month) return;
-      const revenue = readOptionalNumber(entry?.realRevenueEUR, parseEuro);
-      const payoutRate = readOptionalNumber(entry?.realPayoutRatePct, parsePct);
-      const closing = readOptionalNumber(entry?.realClosingBalanceEUR, parseEuro);
-      const actual = {};
-      if (Number.isFinite(revenue)) actual.revenue = revenue;
-      if (Number.isFinite(revenue) && Number.isFinite(payoutRate)) {
-        actual.payout = revenue * (payoutRate / 100);
-      }
-      if (Number.isFinite(closing)) actual.closing = closing;
-      if (Object.keys(actual).length) actualMap.set(month, actual);
-    });
-  } else {
-    const actuals = Array.isArray(s.actuals) ? s.actuals : [];
-    actuals.forEach(entry => {
-      if (!entry || !entry.month) return;
-      const month = entry.month;
-      const revenue = readOptionalNumber(entry.revenueEur, parseEuro);
-      const payout = readOptionalNumber(entry.payoutEur, parseEuro);
-      const closing = readOptionalNumber(entry.closingBalanceEur, parseEuro);
-      const actual = {};
-      if (Number.isFinite(revenue)) actual.revenue = revenue;
-      if (Number.isFinite(payout)) actual.payout = payout;
-      if (Number.isFinite(closing)) actual.closing = closing;
-      if (Object.keys(actual).length) actualMap.set(month, actual);
-    });
-  }
 
   let plannedRunning = opening;
   const plannedBreakdown = months.map((m, idx) => {

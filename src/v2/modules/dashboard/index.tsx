@@ -93,6 +93,14 @@ interface SeriesResult {
     opening?: number;
     salesPayoutAvg?: number;
     firstNegativeMonth?: string | null;
+    cashIn?: {
+      mode?: "basis" | "conservative" | string;
+      basisMethod?: string;
+      basisQuotePct?: number;
+      istMonthsCount?: number;
+      hasIstData?: boolean;
+      fallbackUsed?: string;
+    };
     actuals?: {
       count?: number;
       lastMonth?: string | null;
@@ -729,6 +737,19 @@ export default function DashboardModule(): JSX.Element {
   const months = report.months || [];
   const breakdown = report.breakdown || [];
   const actualComparisons = report.actualComparisons || [];
+  const cashInMeta = (report.kpis?.cashIn && typeof report.kpis.cashIn === "object")
+    ? report.kpis.cashIn
+    : {};
+  const cashInMode = String(cashInMeta.mode || "conservative").trim().toLowerCase() === "basis" ? "basis" : "conservative";
+  const cashInBasisQuotePct = Number(cashInMeta.basisQuotePct);
+  const cashInIstMonthsCount = Math.max(0, Math.round(Number(cashInMeta.istMonthsCount || 0)));
+  const cashInHasIstData = cashInMeta.hasIstData === true;
+  const cashInFallbackUsed = String(cashInMeta.fallbackUsed || "none").trim().toLowerCase();
+  const cashInFallbackLabel = cashInFallbackUsed === "last_plan_quote"
+    ? "Fallback: letzte Plan-Quote"
+    : cashInFallbackUsed === "hardcoded_50"
+      ? "Fallback: 50 %"
+      : null;
 
   const visibleMonths = useMemo(() => {
     const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
@@ -1297,7 +1318,7 @@ export default function DashboardModule(): JSX.Element {
         }))
         .filter((group) => group.rows.length > 0);
 
-      const inflowRows = monthRows.filter((row) => row.group === "inflow");
+      const inflowRows = monthRows.filter((row) => row.amount > 0);
       const outflowRows = monthRows.filter((row) => row.amount < 0);
       const robust = robustness.monthMap.get(monthRow.month)?.robust || false;
 
@@ -1309,9 +1330,7 @@ export default function DashboardModule(): JSX.Element {
             <Space wrap>
               <Tag color="green">Einzahlungen: {formatCurrency(sumRows(inflowRows))}</Tag>
               <Tag color="red">Auszahlungen: {formatCurrency(Math.abs(sumRows(outflowRows)))}</Tag>
-              {provisionalRows.length ? (
-                <Tag color="gold">Vorbehaltlich: {formatSignedCurrency(sumRows(provisionalRows))}</Tag>
-              ) : null}
+              {provisionalRows.length ? <Tag color="gold">Vorbehaltlich (enthalten): {formatSignedCurrency(sumRows(provisionalRows))}</Tag> : null}
               <Tag color={monthRow.net >= 0 ? "green" : "red"}>Netto: {formatCurrency(monthRow.net)}</Tag>
               <Tag color={robust ? "green" : "red"}>Robust: {robust ? "ja" : "nein"}</Tag>
             </Space>
@@ -1522,7 +1541,7 @@ export default function DashboardModule(): JSX.Element {
                       <tbody>
                         {group.rows.map((row, index) => (
                           <tr key={`${monthRow.month}-${group.key}-${index}`}>
-                            <td>{row.label}</td>
+                            <td>{row.tooltip ? <Tooltip title={row.tooltip}>{row.label}</Tooltip> : row.label}</td>
                             <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
                             <td>
                               {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
@@ -1571,6 +1590,19 @@ export default function DashboardModule(): JSX.Element {
 
     setSimAmount(null);
     setSimLabel("");
+  }
+
+  async function saveCashInMode(nextMode: "basis" | "conservative"): Promise<void> {
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const stateDraft = next as unknown as Record<string, unknown>;
+      if (!stateDraft.settings || typeof stateDraft.settings !== "object") {
+        stateDraft.settings = {};
+      }
+      const settingsDraft = stateDraft.settings as Record<string, unknown>;
+      settingsDraft.cashInMode = nextMode === "basis" ? "basis" : "conservative";
+      return next;
+    }, `v2:dashboard:cashin-mode:${nextMode}`);
   }
 
   async function markDriftReviewed(): Promise<void> {
@@ -1657,6 +1689,19 @@ export default function DashboardModule(): JSX.Element {
               style={{ width: 220, maxWidth: "100%" }}
             />
           </div>
+          <div className="v2-toolbar-field">
+            <Text>Cash-In Modus</Text>
+            <Select
+              value={cashInMode}
+              onChange={(value) => { void saveCashInMode(String(value) === "basis" ? "basis" : "conservative"); }}
+              options={[
+                { value: "basis", label: "Basis" },
+                { value: "conservative", label: "Konservativ" },
+              ]}
+              style={{ width: 220, maxWidth: "100%" }}
+              disabled={saving}
+            />
+          </div>
         </div>
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
@@ -1668,6 +1713,32 @@ export default function DashboardModule(): JSX.Element {
           <Text type="secondary">
             Aktueller Betrachtungszeitraum: {visibleMonths.length} Monat(e). PFO-Ziel: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}.
           </Text>
+          <div className="v2-toolbar-row">
+            <Text>
+              BasisQuote ({cashInHasIstData ? `Median letzte ${cashInIstMonthsCount} Monate` : "Keine Ist-Daten"}):{" "}
+              <strong>
+                {Number.isFinite(cashInBasisQuotePct)
+                  ? `${Number(cashInBasisQuotePct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
+                  : "—"}
+              </strong>
+            </Text>
+            <Tooltip title="BasisQuote = Median der Ist-Auszahlungsquoten (Ist-Auszahlung / Ist-Umsatz)">
+              <Tag>BasisQuote Info</Tag>
+            </Tooltip>
+            {cashInMode === "conservative" ? (
+              <Tooltip title="Konservativ = BasisQuote minus Sicherheitsmarge je Zukunftsmonat (1pp/2pp/3pp/4pp/5pp)">
+                <Tag color="gold">Konservativ aktiv</Tag>
+              </Tooltip>
+            ) : <Tag color="blue">Basis aktiv</Tag>}
+            {cashInFallbackLabel ? <Tag color="default">{cashInFallbackLabel}</Tag> : null}
+          </div>
+          {cashInIstMonthsCount < 6 ? (
+            <Alert
+              type="info"
+              showIcon={false}
+              message={`Nur ${cashInIstMonthsCount} Ist-Monate vorhanden – Konservativ empfohlen.`}
+            />
+          ) : null}
         </div>
       </Card>
 

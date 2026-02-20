@@ -25,6 +25,24 @@ function resetStorage() {
   store.clear();
 }
 
+function monthKeyFromDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function addMonths(monthKey, offset) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  const date = new Date(year, month - 1 + Number(offset || 0), 1);
+  return monthKeyFromDate(date);
+}
+
+function salesPayoutAmountForMonth(report, month) {
+  const row = report.series.find((entry) => entry.month === month);
+  if (!row) return 0;
+  return row.itemsIn
+    .filter((entry) => entry.kind === "sales-payout")
+    .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+}
+
 test.beforeEach(() => {
   resetStorage();
   saveState(createEmptyState());
@@ -237,4 +255,188 @@ test("computeSeries treats FO milestones as plan-only and excludes converted/arc
   assert.equal(aprilFoEntries[0].amount, 50);
   assert.equal(marchFoEntries[0].paid, false);
   assert.equal(aprilFoEntries[0].paid, false);
+});
+
+test("computeSeries uses median basis quote from completed actual months in basis mode", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev2 = addMonths(currentMonth, -2);
+  const prev1 = addMonths(currentMonth, -1);
+  const next1 = addMonths(currentMonth, 1);
+  const next2 = addMonths(currentMonth, 2);
+  const state = {
+    settings: {
+      startMonth: prev2,
+      horizonMonths: 5,
+      openingBalance: 0,
+      cashInMode: "basis",
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      { month: prev2, revenueEur: "10.000,00", payoutPct: "48" },
+      { month: prev1, revenueEur: "10.000,00", payoutPct: "49" },
+      { month: currentMonth, revenueEur: "10.000,00", payoutPct: "55" },
+      { month: next1, revenueEur: "10.000,00", payoutPct: "10" },
+      { month: next2, revenueEur: "10.000,00", payoutPct: "10" },
+    ],
+    monthlyActuals: {
+      [prev2]: { realRevenueEUR: 10000, realPayoutRatePct: 70 },
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 50 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  const future1 = salesPayoutAmountForMonth(report, next1);
+  const future2 = salesPayoutAmountForMonth(report, next2);
+  const current = salesPayoutAmountForMonth(report, currentMonth);
+
+  assert.equal(future1, 6000);
+  assert.equal(future2, 6000);
+  assert.equal(current, 5500);
+  assert.equal(report.kpis?.cashIn?.mode, "basis");
+  assert.equal(report.kpis?.cashIn?.basisQuotePct, 60);
+  assert.equal(report.kpis?.cashIn?.istMonthsCount, 2);
+  assert.equal(report.kpis?.cashIn?.hasIstData, true);
+  assert.equal(report.kpis?.cashIn?.fallbackUsed, "none");
+});
+
+test("computeSeries applies conservative margin buckets and clamps max quote", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev2 = addMonths(currentMonth, -2);
+  const prev1 = addMonths(currentMonth, -1);
+  const next1 = addMonths(currentMonth, 1);
+  const next2 = addMonths(currentMonth, 2);
+  const next4 = addMonths(currentMonth, 4);
+  const next7 = addMonths(currentMonth, 7);
+  const next13 = addMonths(currentMonth, 13);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 14,
+      openingBalance: 0,
+      cashInMode: "conservative",
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      ...Array.from({ length: 14 }, (_, index) => ({
+        month: addMonths(currentMonth, index),
+        revenueEur: "1.000,00",
+        payoutPct: "20",
+      })),
+    ],
+    monthlyActuals: {
+      [prev2]: { realRevenueEUR: 10000, realPayoutRatePct: 90 },
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 70 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  assert.equal(report.kpis?.cashIn?.basisQuotePct, 75);
+  assert.equal(salesPayoutAmountForMonth(report, currentMonth), 200);
+  assert.equal(salesPayoutAmountForMonth(report, next1), 740);
+  assert.equal(salesPayoutAmountForMonth(report, next2), 730);
+  assert.equal(salesPayoutAmountForMonth(report, next4), 720);
+  assert.equal(salesPayoutAmountForMonth(report, next7), 710);
+  assert.equal(salesPayoutAmountForMonth(report, next13), 700);
+});
+
+test("computeSeries falls back to latest plan quote when no actual quotes exist", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const next1 = addMonths(currentMonth, 1);
+  const next2 = addMonths(currentMonth, 2);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 3,
+      openingBalance: 0,
+      cashInMode: "basis",
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      { month: currentMonth, revenueEur: "1.000,00", payoutPct: "45" },
+      { month: next1, revenueEur: "1.000,00", payoutPct: "58" },
+      { month: next2, revenueEur: "1.000,00", payoutPct: "58" },
+    ],
+    monthlyActuals: {},
+    actuals: [],
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  assert.equal(report.kpis?.cashIn?.fallbackUsed, "last_plan_quote");
+  assert.equal(report.kpis?.cashIn?.basisQuotePct, 58);
+  assert.equal(salesPayoutAmountForMonth(report, next1), 580);
+  assert.equal(salesPayoutAmountForMonth(report, next2), 580);
+});
+
+test("computeSeries clamps conservative quote to min and applies same quote to forecast live/plan split", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev1 = addMonths(currentMonth, -1);
+  const next1 = addMonths(currentMonth, 1);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 2,
+      openingBalance: 0,
+      cashInMode: "conservative",
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-LIVE": {
+          [next1]: { revenueEur: 500 },
+        },
+        "SKU-PLAN-REF": {
+          [currentMonth]: { units: 10 },
+          [next1]: { units: 10 },
+        },
+      },
+    },
+    planProducts: [
+      {
+        id: "plan-1",
+        alias: "Plan Produkt",
+        status: "active",
+        seasonalityReferenceSku: "SKU-PLAN-REF",
+        baselineReferenceMonth: Number(String(next1).slice(5, 7)),
+        baselineUnitsInReferenceMonth: 10,
+        avgSellingPriceGrossEUR: 100,
+      },
+    ],
+    incomings: [
+      { month: currentMonth, revenueEur: "1.000,00", payoutPct: "20" },
+      { month: next1, revenueEur: "0,00", payoutPct: "20" },
+    ],
+    monthlyActuals: {
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 20 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  assert.equal(report.kpis?.cashIn?.basisQuotePct, 35);
+  const nextRow = report.series.find((entry) => entry.month === next1);
+  assert.ok(nextRow);
+  const salesEntries = nextRow.entries.filter((entry) => entry.kind === "sales-payout");
+  const liveEntry = salesEntries.find((entry) => String(entry.label || "").includes("Live/CSV"));
+  const planEntry = salesEntries.find((entry) => String(entry.label || "").includes("Prognose - Plan"));
+  assert.ok(liveEntry);
+  assert.ok(planEntry);
+  assert.equal(liveEntry.amount, 175);
+  assert.equal(planEntry.amount, 350);
+  assert.match(String(liveEntry.tooltip || ""), /Quote: 35,0%/);
+  assert.match(String(planEntry.tooltip || ""), /Quote: 35,0%/);
 });

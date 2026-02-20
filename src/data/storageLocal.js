@@ -23,6 +23,7 @@ const defaults = {
   settings: {
     startMonth: "2025-02",
     horizonMonths: 18,
+    cashInMode: "conservative",
     openingBalance: "50.000,00",
     fxRate: "1,08",
     fxFeePct: "0,5",
@@ -212,6 +213,8 @@ function ensureGlobalSettings(state) {
   settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
   settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
   settings.defaultDdp = settings.defaultDdp === true;
+  const cashInMode = String(settings.cashInMode || defaults.settings.cashInMode || "conservative").trim().toLowerCase();
+  settings.cashInMode = cashInMode === "basis" ? "basis" : "conservative";
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
