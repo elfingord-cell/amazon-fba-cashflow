@@ -1,5 +1,6 @@
 import { computeInventoryProjection, getProjectionSafetyClass } from "../../domain/inventoryProjection.js";
 import { getEffectiveUnits } from "./tableModels";
+import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
 
 export type RiskClass = "normal" | "safety-low" | "safety-negative";
 
@@ -42,6 +43,7 @@ export interface DashboardEntry {
   kind?: string;
   group?: string;
   source?: "po" | "fo" | "sales" | "fixcosts" | "extras" | "dividends" | "vat" | string;
+  portfolioBucket?: string | null;
   sourceNumber?: string;
   sourceId?: string;
   paid?: boolean;
@@ -68,6 +70,7 @@ export interface DashboardPnlRow {
   provisional: boolean;
   paid: boolean | null;
   source: "po" | "fo" | "sales" | "fixcosts" | "extras" | "dividends" | "vat" | "unknown";
+  portfolioBucket?: string | null;
   sourceNumber?: string;
   sourceId?: string;
   tooltipMeta?: {
@@ -88,6 +91,7 @@ interface ProjectionCellData {
 interface ProductLike {
   sku: string;
   status?: unknown;
+  includeInForecast?: unknown;
   safetyStockDohOverride?: unknown;
   foCoverageDohOverride?: unknown;
 }
@@ -101,6 +105,7 @@ function normalizeSkuRaw(value: unknown): string {
 }
 
 function isActiveProduct(product: ProductLike): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.status === "boolean") return Boolean(product.status);
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;
@@ -147,6 +152,7 @@ function resolvePnlSource(entry: DashboardEntry): DashboardPnlRow["source"] {
   if (source === "extras") return "extras";
   if (source === "dividends") return "dividends";
   if (source === "vat") return "vat";
+  if (source === "launch-costs") return "extras";
   return "unknown";
 }
 
@@ -432,6 +438,7 @@ export function buildDashboardPnlRowsByMonth(input: {
         provisional,
         paid: typeof entry.paid === "boolean" ? entry.paid : null,
         source,
+        portfolioBucket: entry.portfolioBucket ? String(entry.portfolioBucket) : (entryMeta.portfolioBucket ? String(entryMeta.portfolioBucket) : null),
         sourceNumber,
         sourceId,
         tooltipMeta: orderMeta

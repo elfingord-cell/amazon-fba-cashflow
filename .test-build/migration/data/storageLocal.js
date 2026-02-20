@@ -31,6 +31,7 @@ exports.recordRecentProduct = recordRecentProduct;
 exports.getRecentProducts = getRecentProducts;
 // FBA-CF-0027 — Local Storage Layer (schlank, mit Listenern)
 const dataHealth_js_1 = require("../lib/dataHealth.js");
+const portfolioBuckets_js_1 = require("../domain/portfolioBuckets.js");
 exports.STORAGE_KEY = "amazon_fba_cashflow_v1";
 exports.LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
 const CURRENCIES = ["EUR", "USD", "CNY"];
@@ -50,6 +51,7 @@ const defaults = {
     settings: {
         startMonth: "2025-02",
         horizonMonths: 18,
+        cashInMode: "conservative",
         openingBalance: "50.000,00",
         fxRate: "1,08",
         fxFeePct: "0,5",
@@ -77,6 +79,10 @@ const defaults = {
         safetyStockDohDefault: 60,
         foCoverageDohDefault: 90,
         moqDefaultUnits: 500,
+        skuPlanningHorizonMonths: 12,
+        skuPlanningAbcFilter: "abc",
+        skuPlanningMaxPhantomSuggestionsPerSku: 3,
+        skuPlanningShowSimulationByDefault: true,
         monthAnchorDay: "START",
         eurUsdRate: "0,92",
         lastUpdatedAt: null,
@@ -242,9 +248,23 @@ function ensureGlobalSettings(state) {
     settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
     settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
     settings.defaultDdp = settings.defaultDdp === true;
+    const cashInMode = String(settings.cashInMode || defaults.settings.cashInMode || "conservative").trim().toLowerCase();
+    settings.cashInMode = cashInMode === "basis" ? "basis" : "conservative";
     settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
     settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
     settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
+    const skuPlanningHorizonMonths = Math.round(Number(settings.skuPlanningHorizonMonths ?? defaults.settings.skuPlanningHorizonMonths) || defaults.settings.skuPlanningHorizonMonths);
+    settings.skuPlanningHorizonMonths = [6, 12, 18].includes(skuPlanningHorizonMonths)
+        ? skuPlanningHorizonMonths
+        : defaults.settings.skuPlanningHorizonMonths;
+    const skuPlanningAbcFilter = String(settings.skuPlanningAbcFilter || defaults.settings.skuPlanningAbcFilter || "abc")
+        .trim()
+        .toLowerCase();
+    settings.skuPlanningAbcFilter = ["abc", "ab", "a"].includes(skuPlanningAbcFilter)
+        ? skuPlanningAbcFilter
+        : defaults.settings.skuPlanningAbcFilter;
+    settings.skuPlanningMaxPhantomSuggestionsPerSku = Math.max(1, Math.round(Number(settings.skuPlanningMaxPhantomSuggestionsPerSku ?? defaults.settings.skuPlanningMaxPhantomSuggestionsPerSku) || defaults.settings.skuPlanningMaxPhantomSuggestionsPerSku));
+    settings.skuPlanningShowSimulationByDefault = settings.skuPlanningShowSimulationByDefault !== false;
     const monthAnchor = String(settings.monthAnchorDay || defaults.settings.monthAnchorDay || "START").toUpperCase();
     settings.monthAnchorDay = ["START", "MID", "END"].includes(monthAnchor)
         ? monthAnchor
@@ -740,7 +760,7 @@ function migrateLegacyOutgoings(state) {
     });
     state.outgoings = [];
 }
-const PRODUCT_STATUS = new Set(["active", "inactive"]);
+const PRODUCT_STATUS = new Set(["active", "inactive", "prelaunch"]);
 function productKey(value) {
     return String(value || "").trim().toLowerCase();
 }
@@ -841,6 +861,9 @@ function migrateProducts(state) {
             alias: cleanAlias(prod.alias || base.alias, prod.sku || base.sku),
             supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
             status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
+            portfolioBucket: (0, portfolioBuckets_js_1.normalizePortfolioBucket)(prod.portfolioBucket ?? base.portfolioBucket, portfolioBuckets_js_1.PORTFOLIO_BUCKET.CORE),
+            includeInForecast: (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(prod.includeInForecast ?? base.includeInForecast, true),
+            launchCosts: (0, portfolioBuckets_js_1.normalizeLaunchCosts)(prod.launchCosts ?? base.launchCosts, "lc"),
             tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
             categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
             hsCode: cleanOptionalText(prod.hsCode ?? base.hsCode),
@@ -905,6 +928,9 @@ function migrateProducts(state) {
                 alias: cleanAlias(null, sku),
                 supplierId: "",
                 status: "active",
+                portfolioBucket: portfolioBuckets_js_1.PORTFOLIO_BUCKET.CORE,
+                includeInForecast: true,
+                launchCosts: [],
                 tags: [],
                 hsCode: "",
                 goodsDescription: "",
@@ -992,6 +1018,9 @@ function normaliseProductInput(input) {
         ? String(categoryValue).trim()
         : null;
     const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
+    const portfolioBucket = (0, portfolioBuckets_js_1.normalizePortfolioBucket)(input.portfolioBucket, portfolioBuckets_js_1.PORTFOLIO_BUCKET.CORE);
+    const includeInForecast = (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(input.includeInForecast, true);
+    const launchCosts = (0, portfolioBuckets_js_1.normalizeLaunchCosts)(input.launchCosts, "lc");
     const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
     const hsCode = cleanOptionalText(input.hsCode);
     const goodsDescription = cleanOptionalText(input.goodsDescription);
@@ -1019,6 +1048,9 @@ function normaliseProductInput(input) {
         supplierId,
         categoryId,
         status,
+        portfolioBucket,
+        includeInForecast,
+        launchCosts,
         tags,
         hsCode,
         goodsDescription,
@@ -1137,6 +1169,7 @@ function commitState(s, meta = {}) {
     ensureProductSuppliers(_state);
     ensurePayments(_state);
     ensureFos(_state);
+    migrateProducts(_state);
     try {
         const { _computed, ...clean } = _state;
         localStorage.setItem(exports.STORAGE_KEY, JSON.stringify(clean));
@@ -1202,6 +1235,7 @@ function importStateFile(file, cb) {
             ensurePayments(json);
             ensureFos(json);
             migrateLegacyOutgoings(json);
+            migrateProducts(json);
             cb({ state: json, warnings: {} });
         }
         catch (err) {
@@ -1369,6 +1403,9 @@ function upsertProduct(input) {
             supplierId: normalised.supplierId,
             categoryId: normalised.categoryId,
             status: normalised.status,
+            portfolioBucket: normalised.portfolioBucket,
+            includeInForecast: normalised.includeInForecast,
+            launchCosts: normalised.launchCosts,
             tags: normalised.tags,
             hsCode: normalised.hsCode,
             goodsDescription: normalised.goodsDescription,
@@ -1394,6 +1431,9 @@ function upsertProduct(input) {
         target.supplierId = normalised.supplierId;
         target.categoryId = normalised.categoryId;
         target.status = normalised.status;
+        target.portfolioBucket = normalised.portfolioBucket;
+        target.includeInForecast = normalised.includeInForecast;
+        target.launchCosts = normalised.launchCosts;
         target.tags = normalised.tags;
         target.hsCode = normalised.hsCode;
         target.goodsDescription = normalised.goodsDescription;

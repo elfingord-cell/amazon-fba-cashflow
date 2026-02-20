@@ -17,6 +17,7 @@ const dataHealth_js_1 = require("../../lib/dataHealth.js");
 const productCompletenessV2_1 = require("./productCompletenessV2");
 const months_1 = require("./months");
 const planProducts_js_1 = require("../../domain/planProducts.js");
+const portfolioBuckets_js_1 = require("../../domain/portfolioBuckets.js");
 function asNumber(value) {
     if (value === null || value === undefined || value === "")
         return null;
@@ -76,6 +77,8 @@ function buildProductGridRows(input) {
             supplierId: String(product.supplierId || ""),
             categoryId: product.categoryId ? String(product.categoryId) : null,
             status: normalizeStatus(product.status),
+            portfolioBucket: (0, portfolioBuckets_js_1.normalizePortfolioBucket)(product.portfolioBucket, portfolioBuckets_js_1.PORTFOLIO_BUCKET.CORE),
+            includeInForecast: (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(product.includeInForecast, true),
             avgSellingPriceGrossEUR: asNumber(product.avgSellingPriceGrossEUR),
             templateUnitPriceUsd: asNumber(template.unitPriceUsd),
             landedUnitCostEur: asNumber(product.landedUnitCostEur),
@@ -100,6 +103,8 @@ function buildProductGridRows(input) {
             row.alias,
             row.supplierId,
             row.categoryId || "",
+            row.portfolioBucket,
+            row.includeInForecast ? "forecast" : "no-forecast",
             row.hsCode,
             row.goodsDescription,
             input.supplierLabelById.get(row.supplierId) || "",
@@ -110,6 +115,8 @@ function buildProductGridRows(input) {
         .sort((a, b) => a.sku.localeCompare(b.sku));
 }
 function isForecastProductActive(product) {
+    if (!(0, portfolioBuckets_js_1.normalizeIncludeInForecast)(product.includeInForecast, true))
+        return false;
     if (typeof product.active === "boolean")
         return product.active;
     const status = String(product.status || "").trim().toLowerCase();
@@ -225,7 +232,7 @@ function buildForecastProducts(state, categoriesById) {
         categoryLabel: row.categoryId
             ? (categoriesById.get(String(row.categoryId || "")) || "Neue Produkte (Plan)")
             : "Neue Produkte (Plan)",
-        isActive: String(row.status || "active") === "active",
+        isActive: String(row.status || "active") === "active" && (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, true),
         avgSellingPriceGrossEUR: (0, dataHealth_js_1.parseDeNumber)(row.avgSellingPriceGrossEUR),
         sellerboardMarginPct: (0, dataHealth_js_1.parseDeNumber)(row.sellerboardMarginPct),
         isPlan: true,

@@ -1,7 +1,17 @@
 // src/domain/cashflow.js
 // Monatsaggregation (Sales×Payout + Extras – Outgoings – PO – FO)
 // + Utils als Named Exports: fmtEUR, fmtPct, parseEuro, parsePct
-import { buildPlanProductRevenueByMonth } from "./planProducts.js";
+import { buildPlanProductRevenueByMonthAndBucket } from "./planProducts.js";
+import {
+  buildProductProfileIndex,
+  normalizeIncludeInForecast,
+  normalizeLaunchCosts,
+  normalizePortfolioBucket,
+  normalizeSkuKey,
+  PORTFOLIO_BUCKET,
+  PORTFOLIO_BUCKET_VALUES,
+  resolveEffectivePortfolioBucket,
+} from "./portfolioBuckets.js";
 
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 
@@ -300,6 +310,119 @@ function computeFreightTotal(row, totals) {
     return Math.round(total * 100) / 100;
   }
   return parseEuro(row?.freightEur ?? 0);
+}
+
+function extractOrderItemsForBucketing(row) {
+  if (Array.isArray(row?.items) && row.items.length) {
+    return row.items
+      .map((item) => {
+        const sku = String(item?.sku || "").trim();
+        if (!sku) return null;
+        const unitsRaw = item?.units ?? item?.qty ?? item?.quantity ?? 0;
+        const units = Math.max(0, parseEuro(unitsRaw));
+        return {
+          ...item,
+          sku,
+          units,
+        };
+      })
+      .filter(Boolean);
+  }
+  const sku = String(row?.sku || "").trim();
+  if (!sku) return [];
+  const unitsRaw = row?.units ?? 0;
+  const units = Math.max(0, parseEuro(unitsRaw));
+  return [{
+    sku,
+    units,
+    unitCostUsd: row?.unitCostUsd,
+    unitExtraUsd: row?.unitExtraUsd,
+    extraFlatUsd: row?.extraFlatUsd,
+    prodDays: row?.prodDays,
+    transitDays: row?.transitDays,
+    freightEur: row?.freightEur,
+  }];
+}
+
+function buildOrderBucketSegments(input) {
+  const order = input?.order || {};
+  const profileBySku = input?.profileBySku instanceof Map ? input.profileBySku : new Map();
+  const poSkuSet = input?.poSkuSet instanceof Set ? input.poSkuSet : new Set();
+  const fallbackBucket = input?.fallbackBucket || PORTFOLIO_BUCKET.CORE;
+  const items = extractOrderItemsForBucketing(order);
+  if (!items.length) {
+    return [{
+      bucket: fallbackBucket,
+      share: 1,
+      row: {
+        ...order,
+        payments: Array.isArray(order?.payments)
+          ? order.payments.filter(Boolean).map((payment) => ({ ...payment }))
+          : order?.payments,
+      },
+    }];
+  }
+
+  const groups = new Map();
+  let totalWeight = 0;
+  items.forEach((item) => {
+    const sku = String(item?.sku || "").trim();
+    if (!sku) return;
+    const key = normalizeSkuKey(sku);
+    const profile = profileBySku.get(key);
+    const includeInForecast = profile
+      ? profile.includeInForecast
+      : normalizeIncludeInForecast(undefined, true);
+    if (!includeInForecast) return;
+    const bucket = profile
+      ? profile.effectivePortfolioBucket
+      : resolveEffectivePortfolioBucket({ sku, poSkuSet, fallbackBucket });
+    const weightUnits = parseEuro(item?.units ?? 0);
+    const weight = Number.isFinite(weightUnits) && weightUnits > 0 ? weightUnits : 1;
+    totalWeight += weight;
+    if (!groups.has(bucket)) {
+      groups.set(bucket, { bucket, items: [], weight: 0 });
+    }
+    const target = groups.get(bucket);
+    target.items.push(item);
+    target.weight += weight;
+  });
+
+  if (!groups.size) return [];
+
+  return Array.from(groups.values()).map((group, index, all) => {
+    const share = totalWeight > 0
+      ? (group.weight / totalWeight)
+      : (all.length ? (1 / all.length) : 1);
+    const scaledPayments = Array.isArray(order?.payments)
+      ? order.payments
+        .filter(Boolean)
+        .map((payment) => {
+          const amount = Number(payment?.amount);
+          if (!Number.isFinite(amount)) return { ...payment };
+          return {
+            ...payment,
+            amount: Math.round((amount * share) * 100) / 100,
+          };
+        })
+      : undefined;
+    const freightMode = order?.freightMode === 'per_unit' ? 'per_unit' : 'total';
+    const freightTotal = parseEuro(order?.freightEur ?? 0);
+    const rowClone = {
+      ...order,
+      items: group.items.map((item) => ({ ...item })),
+      payments: scaledPayments,
+      freightMode,
+      freightEur: freightMode === 'total'
+        ? Math.round((freightTotal * share) * 100) / 100
+        : order?.freightEur,
+    };
+    return {
+      bucket: group.bucket,
+      share,
+      row: rowClone,
+    };
+  });
 }
 
 export function computeOutflowStack(entries = []) {
@@ -888,6 +1011,26 @@ export function computeSeries(state) {
   const bucket = {};
   months.forEach(m => { bucket[m] = { entries: [] }; });
 
+  const { map: productProfileBySku, poSkuSet } = buildProductProfileIndex(s);
+
+  function profileForSku(sku) {
+    const key = normalizeSkuKey(sku);
+    if (!key) {
+      return {
+        includeInForecast: true,
+        effectivePortfolioBucket: PORTFOLIO_BUCKET.CORE,
+      };
+    }
+    return productProfileBySku.get(key) || {
+      includeInForecast: true,
+      effectivePortfolioBucket: resolveEffectivePortfolioBucket({
+        sku,
+        poSkuSet,
+        fallbackBucket: PORTFOLIO_BUCKET.CORE,
+      }),
+    };
+  }
+
   function pushEntry(month, entry) {
     if (!bucket[month]) return;
     bucket[month].entries.push(entry);
@@ -910,6 +1053,15 @@ export function computeSeries(state) {
       defaultPaid,
     });
 
+    const entryMeta = {
+      ...((overrides.meta && typeof overrides.meta === 'object') ? overrides.meta : {}),
+    };
+    const portfolioBucket = overrides.portfolioBucket
+      ? normalizePortfolioBucket(overrides.portfolioBucket, PORTFOLIO_BUCKET.CORE)
+      : null;
+    if (portfolioBucket) {
+      entryMeta.portfolioBucket = portfolioBucket;
+    }
     return {
       id: baseId,
       direction: overrides.direction || 'in',
@@ -927,7 +1079,8 @@ export function computeSeries(state) {
       percent: overrides.percent,
       scenarioDelta: overrides.scenarioDelta || 0,
       scenarioAmount: overrides.scenarioAmount || overrides.amount || 0,
-      meta: overrides.meta || {},
+      meta: entryMeta,
+      portfolioBucket,
       tooltip: overrides.tooltip,
       sourceTab: overrides.sourceTab,
       sourceNumber: overrides.sourceNumber,
@@ -978,37 +1131,74 @@ export function computeSeries(state) {
   const forecastMapLive = {};
   const forecastMapPlan = {};
   const forecastMap = {};
+  const forecastMapLiveByBucket = PORTFOLIO_BUCKET_VALUES.reduce((acc, bucketName) => {
+    acc[bucketName] = {};
+    return acc;
+  }, {});
+  const forecastMapPlanByBucket = PORTFOLIO_BUCKET_VALUES.reduce((acc, bucketName) => {
+    acc[bucketName] = {};
+    return acc;
+  }, {});
+
+  months.forEach((month) => {
+    forecastMapLive[month] = 0;
+    forecastMapPlan[month] = 0;
+    forecastMap[month] = 0;
+    PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
+      forecastMapLiveByBucket[bucketName][month] = 0;
+      forecastMapPlanByBucket[bucketName][month] = 0;
+    });
+  });
+
   if (forecastEnabled) {
     if (s?.forecast?.forecastImport && typeof s.forecast.forecastImport === "object") {
-      Object.values(s.forecast.forecastImport).forEach(monthMap => {
+      Object.entries(s.forecast.forecastImport).forEach(([sku, monthMap]) => {
+        const profile = profileForSku(sku);
+        if (!profile.includeInForecast) return;
+        const bucketName = normalizePortfolioBucket(
+          profile.effectivePortfolioBucket,
+          PORTFOLIO_BUCKET.CORE,
+        );
         Object.entries(monthMap || {}).forEach(([month, entry]) => {
           if (!month || !bucket[month]) return;
           const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
           if (!Number.isFinite(revenue)) return;
           forecastMapLive[month] = (forecastMapLive[month] || 0) + revenue;
+          forecastMapLiveByBucket[bucketName][month] = (forecastMapLiveByBucket[bucketName][month] || 0) + revenue;
         });
       });
     } else if (Array.isArray(s?.forecast?.items)) {
       s.forecast.items.forEach(item => {
         if (!item || !item.month || !item.sku) return;
+        const profile = profileForSku(item.sku);
+        if (!profile.includeInForecast) return;
+        const bucketName = normalizePortfolioBucket(
+          profile.effectivePortfolioBucket,
+          PORTFOLIO_BUCKET.CORE,
+        );
         const month = item.month;
         if (!bucket[month]) return;
         const qty = Number(item.qty ?? item.quantity ?? 0) || 0;
         const price = parseEuro(item.priceEur ?? item.price ?? 0);
         const revenue = qty * price;
         forecastMapLive[month] = (forecastMapLive[month] || 0) + revenue;
+        forecastMapLiveByBucket[bucketName][month] = (forecastMapLiveByBucket[bucketName][month] || 0) + revenue;
       });
     }
 
-    const planRevenueByMonth = buildPlanProductRevenueByMonth({
+    const planRevenueByMonth = buildPlanProductRevenueByMonthAndBucket({
       state: s,
       months,
     });
-    Object.entries(planRevenueByMonth || {}).forEach(([month, revenueRaw]) => {
-      if (!bucket[month]) return;
-      const revenue = parseEuro(revenueRaw);
-      if (!Number.isFinite(revenue)) return;
-      forecastMapPlan[month] = (forecastMapPlan[month] || 0) + revenue;
+    Object.entries(planRevenueByMonth?.byBucket || {}).forEach(([bucketNameRaw, monthMap]) => {
+      const bucketName = normalizePortfolioBucket(bucketNameRaw, PORTFOLIO_BUCKET.PLAN);
+      Object.entries(monthMap || {}).forEach(([month, revenueRaw]) => {
+        if (!bucket[month]) return;
+        const revenue = parseEuro(revenueRaw);
+        if (!Number.isFinite(revenue)) return;
+        forecastMapPlan[month] = (forecastMapPlan[month] || 0) + revenue;
+        forecastMapPlanByBucket[bucketName][month] = (forecastMapPlanByBucket[bucketName][month] || 0) + revenue;
+      });
     });
 
     Object.keys(bucket).forEach((month) => {
@@ -1123,6 +1313,7 @@ export function computeSeries(state) {
         source: 'sales',
         sourceTab: '#eingaben',
         tooltip,
+        portfolioBucket: null,
         meta: {
           cashIn: {
             ...cashInMetaByMonth[m],
@@ -1134,82 +1325,89 @@ export function computeSeries(state) {
       return;
     }
 
-    const liveRevenue = forecastMapLive[m] || 0;
-    const planRevenue = forecastMapPlan[m] || 0;
-    const liveAmt = liveRevenue * (payoutPct / 100);
-    const planAmt = planRevenue * (payoutPct / 100);
-
-    if (Math.abs(liveAmt) > 0.000001) {
-      const tooltip = buildCashInTooltip({
-        revenue: liveRevenue,
-        payoutPct,
-        payoutAmount: liveAmt,
-        mode: cashInMode,
-        isFuture: isFutureMonth,
-        basisQuotePct,
-        marginPct,
-        horizonMonths: horizonFromCurrentMonth,
-        fallbackUsed: cashInFallbackUsed,
-        componentLabel: 'Prognose - Live/CSV',
-      });
-      pushEntry(m, baseEntry({
-        id: `sales-live-${m}`,
-        direction: liveAmt >= 0 ? 'in' : 'out',
-        amount: Math.abs(liveAmt),
-        label: 'Amazon Payout (Prognose - Live/CSV)',
-        month: m,
-        date: isoDate(date),
-        kind: 'sales-payout',
-        group: liveAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
-        source: 'sales',
-        sourceTab: '#forecast',
-        tooltip,
-        meta: {
-          cashIn: {
-            ...cashInMetaByMonth[m],
-            revenue: liveRevenue,
-            payoutAmount: liveAmt,
-            component: 'live',
+    PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
+      const liveRevenue = forecastMapLiveByBucket[bucketName]?.[m] || 0;
+      const liveAmt = liveRevenue * (payoutPct / 100);
+      if (Math.abs(liveAmt) > 0.000001) {
+        const tooltip = buildCashInTooltip({
+          revenue: liveRevenue,
+          payoutPct,
+          payoutAmount: liveAmt,
+          mode: cashInMode,
+          isFuture: isFutureMonth,
+          basisQuotePct,
+          marginPct,
+          horizonMonths: horizonFromCurrentMonth,
+          fallbackUsed: cashInFallbackUsed,
+          componentLabel: `Prognose - Live/CSV · ${bucketName}`,
+        });
+        pushEntry(m, baseEntry({
+          id: `sales-live-${bucketName}-${m}`,
+          direction: liveAmt >= 0 ? 'in' : 'out',
+          amount: Math.abs(liveAmt),
+          label: `Amazon Payout (Prognose - Live/CSV · ${bucketName})`,
+          month: m,
+          date: isoDate(date),
+          kind: 'sales-payout',
+          group: liveAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+          source: 'sales',
+          sourceTab: '#forecast',
+          tooltip,
+          portfolioBucket: bucketName,
+          meta: {
+            cashIn: {
+              ...cashInMetaByMonth[m],
+              revenue: liveRevenue,
+              payoutAmount: liveAmt,
+              component: 'live',
+              portfolioBucket: bucketName,
+            },
           },
-        },
-      }, { auto: false }));
-    }
+        }, { auto: false }));
+      }
+    });
 
-    if (Math.abs(planAmt) > 0.000001) {
-      const tooltip = buildCashInTooltip({
-        revenue: planRevenue,
-        payoutPct,
-        payoutAmount: planAmt,
-        mode: cashInMode,
-        isFuture: isFutureMonth,
-        basisQuotePct,
-        marginPct,
-        horizonMonths: horizonFromCurrentMonth,
-        fallbackUsed: cashInFallbackUsed,
-        componentLabel: 'Prognose - Plan',
-      });
-      pushEntry(m, baseEntry({
-        id: `sales-plan-${m}`,
-        direction: planAmt >= 0 ? 'in' : 'out',
-        amount: Math.abs(planAmt),
-        label: 'Amazon Payout (Prognose - Plan)',
-        month: m,
-        date: isoDate(date),
-        kind: 'sales-payout',
-        group: planAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
-        source: 'sales-plan',
-        sourceTab: '#forecast',
-        tooltip,
-        meta: {
-          cashIn: {
-            ...cashInMetaByMonth[m],
-            revenue: planRevenue,
-            payoutAmount: planAmt,
-            component: 'plan',
+    PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
+      const planRevenue = forecastMapPlanByBucket[bucketName]?.[m] || 0;
+      const planAmt = planRevenue * (payoutPct / 100);
+      if (Math.abs(planAmt) > 0.000001) {
+        const tooltip = buildCashInTooltip({
+          revenue: planRevenue,
+          payoutPct,
+          payoutAmount: planAmt,
+          mode: cashInMode,
+          isFuture: isFutureMonth,
+          basisQuotePct,
+          marginPct,
+          horizonMonths: horizonFromCurrentMonth,
+          fallbackUsed: cashInFallbackUsed,
+          componentLabel: `Prognose - Plan · ${bucketName}`,
+        });
+        pushEntry(m, baseEntry({
+          id: `sales-plan-${bucketName}-${m}`,
+          direction: planAmt >= 0 ? 'in' : 'out',
+          amount: Math.abs(planAmt),
+          label: `Amazon Payout (Prognose - Plan · ${bucketName})`,
+          month: m,
+          date: isoDate(date),
+          kind: 'sales-payout',
+          group: planAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+          source: 'sales-plan',
+          sourceTab: '#forecast',
+          tooltip,
+          portfolioBucket: bucketName,
+          meta: {
+            cashIn: {
+              ...cashInMetaByMonth[m],
+              revenue: planRevenue,
+              payoutAmount: planAmt,
+              component: 'plan',
+              portfolioBucket: bucketName,
+            },
           },
-        },
-      }, { auto: false }));
-    }
+        }, { auto: false }));
+      }
+    });
   });
 
   (Array.isArray(s.extras) ? s.extras : []).forEach(row => {
@@ -1252,72 +1450,182 @@ export function computeSeries(state) {
     }, { auto: false }));
   });
 
+  (Array.isArray(s.products) ? s.products : []).forEach((entry, productIndex) => {
+    const product = entry && typeof entry === 'object' ? entry : {};
+    const sku = String(product.sku || '').trim();
+    if (!sku) return;
+    const profile = profileForSku(sku);
+    if (!profile.includeInForecast) return;
+    const bucketName = normalizePortfolioBucket(
+      profile.effectivePortfolioBucket,
+      PORTFOLIO_BUCKET.CORE,
+    );
+    const alias = String(product.alias || sku).trim() || sku;
+    const launchCosts = normalizeLaunchCosts(product.launchCosts, `prod-${productIndex + 1}-lc`);
+    launchCosts.forEach((cost, index) => {
+      const month = String(cost.date || '').slice(0, 7);
+      if (!month || !bucket[month]) return;
+      pushEntry(month, baseEntry({
+        id: `launch-product-${normalizeSkuKey(sku)}-${cost.id || index + 1}`,
+        direction: 'out',
+        amount: Math.abs(parseEuro(cost.amountEur)),
+        label: `${alias} · Launch-Kosten (${cost.type || 'Sonstiges'})`,
+        month,
+        date: cost.date,
+        kind: 'launch-cost',
+        group: 'Launch-Kosten',
+        source: 'launch-costs',
+        sourceTab: '#products',
+        portfolioBucket: bucketName,
+        meta: {
+          sku,
+          alias,
+          type: cost.type || 'Sonstiges',
+          note: cost.note || '',
+          currency: cost.currency || 'EUR',
+        },
+      }, { auto: false }));
+    });
+  });
+
+  (Array.isArray(s.planProducts) ? s.planProducts : []).forEach((entry, planIndex) => {
+    const row = entry && typeof entry === 'object' ? entry : {};
+    const status = String(row.status || 'active').trim().toLowerCase();
+    if (status !== 'active') return;
+    const includeInForecast = normalizeIncludeInForecast(row.includeInForecast, true);
+    if (!includeInForecast) return;
+    const planSku = String(row.plannedSku || row.mappedSku || '').trim();
+    const bucketName = resolveEffectivePortfolioBucket({
+      product: row,
+      sku: planSku,
+      poSkuSet,
+      fallbackBucket: PORTFOLIO_BUCKET.PLAN,
+    });
+    const alias = String(row.alias || planSku || `Planprodukt ${planIndex + 1}`).trim();
+    const launchCosts = normalizeLaunchCosts(row.launchCosts, `plan-${planIndex + 1}-lc`);
+    launchCosts.forEach((cost, index) => {
+      const month = String(cost.date || '').slice(0, 7);
+      if (!month || !bucket[month]) return;
+      pushEntry(month, baseEntry({
+        id: `launch-plan-${normalizeSkuKey(planSku || alias)}-${cost.id || index + 1}`,
+        direction: 'out',
+        amount: Math.abs(parseEuro(cost.amountEur)),
+        label: `${alias} · Launch-Kosten (${cost.type || 'Sonstiges'})`,
+        month,
+        date: cost.date,
+        kind: 'launch-cost',
+        group: 'Launch-Kosten',
+        source: 'launch-costs',
+        sourceTab: '#plan-products',
+        portfolioBucket: bucketName,
+        meta: {
+          sku: planSku || null,
+          alias,
+          type: cost.type || 'Sonstiges',
+          note: cost.note || '',
+          currency: cost.currency || 'EUR',
+          source: 'plan-product',
+        },
+      }, { auto: false }));
+    });
+  });
+
   const settingsNorm = normaliseSettings(s.settings);
 
   // PO-Events (Milestones & Importkosten)
   (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
-    expandOrderEvents(po, settingsNorm, 'PO', 'poNo').forEach(ev => {
-      const m = ev.month; if (!bucket[m]) return;
-      const kind = ev.type === 'manual' ? 'po' : (ev.type === 'vat_refund' ? 'po-refund' : 'po-import');
-      const group =
-        kind === 'po'
-          ? 'PO/FO-Zahlungen'
-          : kind === 'po-refund'
-          ? 'Importkosten'
-          : 'Importkosten';
-      pushEntry(m, baseEntry({
-        id: ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`,
-        direction: ev.direction === 'in' ? 'in' : 'out',
-        amount: Math.abs(ev.amount || 0),
-        label: ev.label,
-        month: m,
-        date: isoDate(ev.due),
-        kind,
-        group,
-        source: 'po',
-        sourceTab: '#po',
-        anchor: ev.anchor,
-        lagDays: ev.lagDays,
-        lagMonths: ev.lagMonths,
-        percent: ev.percent,
-        sourceNumber: ev.sourceNumber || po.poNo || po.id,
-        sourceId: po.id || po.poNo || null,
-        tooltip: ev.tooltip,
-      }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
+    const segments = buildOrderBucketSegments({
+      order: po,
+      profileBySku: productProfileBySku,
+      poSkuSet,
+      fallbackBucket: PORTFOLIO_BUCKET.CORE,
+    });
+    const splitByBucket = segments.length > 1;
+    segments.forEach((segment) => {
+      expandOrderEvents(segment.row, settingsNorm, 'PO', 'poNo').forEach(ev => {
+        const m = ev.month; if (!bucket[m]) return;
+        const kind = ev.type === 'manual' ? 'po' : (ev.type === 'vat_refund' ? 'po-refund' : 'po-import');
+        const group =
+          kind === 'po'
+            ? 'PO/FO-Zahlungen'
+            : kind === 'po-refund'
+              ? 'Importkosten'
+              : 'Importkosten';
+        pushEntry(m, baseEntry({
+          id: splitByBucket
+            ? `${ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`}-${normalizeSkuKey(segment.bucket)}`
+            : (ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`),
+          direction: ev.direction === 'in' ? 'in' : 'out',
+          amount: Math.abs(ev.amount || 0),
+          label: ev.label,
+          month: m,
+          date: isoDate(ev.due),
+          kind,
+          group,
+          source: 'po',
+          sourceTab: '#po',
+          anchor: ev.anchor,
+          lagDays: ev.lagDays,
+          lagMonths: ev.lagMonths,
+          percent: ev.percent,
+          sourceNumber: ev.sourceNumber || po.poNo || po.id,
+          sourceId: po.id || po.poNo || null,
+          tooltip: ev.tooltip,
+          portfolioBucket: segment.bucket,
+          meta: {
+            skuBucketShare: segment.share,
+          },
+        }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
+      });
     });
   });
 
   // FO-Events (Milestones & Importkosten)
   (Array.isArray(s.fos) ? s.fos : []).forEach(fo => {
     if (!isActiveFoStatus(fo?.status)) return;
-    expandOrderEvents(fo, settingsNorm, 'FO', 'foNo').forEach(ev => {
-      const m = ev.month; if (!bucket[m]) return;
-      const kind = ev.type === 'manual' ? 'fo' : (ev.type === 'vat_refund' ? 'fo-refund' : 'fo-import');
-      const group =
-        kind === 'fo'
-          ? 'PO/FO-Zahlungen'
-          : kind === 'fo-refund'
-          ? 'Importkosten'
-          : 'Importkosten';
-      pushEntry(m, baseEntry({
-        id: ev.id || `fo-${fo.id || ''}-${ev.type}-${ev.month}`,
-        direction: ev.direction === 'in' ? 'in' : 'out',
-        amount: Math.abs(ev.amount || 0),
-        label: ev.label,
-        month: m,
-        date: isoDate(ev.due),
-        kind,
-        group,
-        source: 'fo',
-        sourceTab: '#fo',
-        anchor: ev.anchor,
-        lagDays: ev.lagDays,
-        lagMonths: ev.lagMonths,
-        percent: ev.percent,
-        sourceNumber: ev.sourceNumber || fo.foNo || fo.foNumber || fo.id,
-        sourceId: fo.id || fo.foNo || fo.foNumber || null,
-        tooltip: ev.tooltip,
-      }, { auto: false, autoEligible: false, defaultPaid: false }));
+    const segments = buildOrderBucketSegments({
+      order: fo,
+      profileBySku: productProfileBySku,
+      poSkuSet,
+      fallbackBucket: PORTFOLIO_BUCKET.CORE,
+    });
+    const splitByBucket = segments.length > 1;
+    segments.forEach((segment) => {
+      expandOrderEvents(segment.row, settingsNorm, 'FO', 'foNo').forEach(ev => {
+        const m = ev.month; if (!bucket[m]) return;
+        const kind = ev.type === 'manual' ? 'fo' : (ev.type === 'vat_refund' ? 'fo-refund' : 'fo-import');
+        const group =
+          kind === 'fo'
+            ? 'PO/FO-Zahlungen'
+            : kind === 'fo-refund'
+              ? 'Importkosten'
+              : 'Importkosten';
+        pushEntry(m, baseEntry({
+          id: splitByBucket
+            ? `${ev.id || `fo-${fo.id || ''}-${ev.type}-${ev.month}`}-${normalizeSkuKey(segment.bucket)}`
+            : (ev.id || `fo-${fo.id || ''}-${ev.type}-${ev.month}`),
+          direction: ev.direction === 'in' ? 'in' : 'out',
+          amount: Math.abs(ev.amount || 0),
+          label: ev.label,
+          month: m,
+          date: isoDate(ev.due),
+          kind,
+          group,
+          source: 'fo',
+          sourceTab: '#fo',
+          anchor: ev.anchor,
+          lagDays: ev.lagDays,
+          lagMonths: ev.lagMonths,
+          percent: ev.percent,
+          sourceNumber: ev.sourceNumber || fo.foNo || fo.foNumber || fo.id,
+          sourceId: fo.id || fo.foNo || fo.foNumber || null,
+          tooltip: ev.tooltip,
+          portfolioBucket: segment.bucket,
+          meta: {
+            skuBucketShare: segment.share,
+          },
+        }, { auto: false, autoEligible: false, defaultPaid: false }));
+      });
     });
   });
 
@@ -1352,6 +1660,24 @@ export function computeSeries(state) {
       .reduce((sum, item) => sum + (item.amount || 0), 0);
     const inflowOpen = Math.max(0, inflow - inflowPaid);
     const outflowOpen = Math.max(0, outflow - outflowPaid);
+    const inflowByBucket = {};
+    const outflowByBucket = {};
+    PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
+      inflowByBucket[bucketName] = 0;
+      outflowByBucket[bucketName] = 0;
+    });
+    entries.forEach((entry) => {
+      const bucketName = normalizePortfolioBucket(
+        entry?.portfolioBucket || entry?.meta?.portfolioBucket,
+        "",
+      );
+      if (!bucketName || !PORTFOLIO_BUCKET_VALUES.includes(bucketName)) return;
+      if (entry.direction === 'in') {
+        inflowByBucket[bucketName] += Math.abs(Number(entry.amount || 0));
+      } else if (entry.direction === 'out') {
+        outflowByBucket[bucketName] += Math.abs(Number(entry.amount || 0));
+      }
+    });
     const netTotal = inflow - outflow;
     const netPaid = inflowPaid - outflowPaid;
     const netOpen = netTotal - netPaid;
@@ -1359,6 +1685,10 @@ export function computeSeries(state) {
       month: m,
       inflow: { total: inflow, paid: inflowPaid, open: inflowOpen },
       outflow: { total: outflow, paid: outflowPaid, open: outflowOpen },
+      bucketBreakdown: {
+        inflow: inflowByBucket,
+        outflow: outflowByBucket,
+      },
       net: { total: netTotal, paid: netPaid, open: netOpen },
       fixcost: { total: fixcostTotal, paid: fixcostPaid, open: fixcostOpen, top: fixcostTop },
       itemsIn: inflowEntries.map(item => ({ kind: item.kind, label: item.label, amount: item.amount })),

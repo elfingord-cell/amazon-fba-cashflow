@@ -1,4 +1,5 @@
 import { computeInventoryProjection } from "../../domain/inventoryProjection.js";
+import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
 import { buildDashboardRobustness } from "./dashboardRobustness";
 import { addMonths, currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 
@@ -59,6 +60,7 @@ function asDate(value: unknown): Date | null {
 }
 
 function isActiveOrPrelaunch(product: Record<string, unknown>): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

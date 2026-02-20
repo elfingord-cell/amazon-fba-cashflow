@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Form,
   Input,
   Modal,
@@ -28,6 +29,13 @@ import {
   normalizeIsoDate,
   normalizePlanProductRecord,
 } from "../../../domain/planProducts.js";
+import {
+  LAUNCH_COST_TYPE_VALUES,
+  normalizeLaunchCosts,
+  normalizePortfolioBucket,
+  PORTFOLIO_BUCKET,
+  PORTFOLIO_BUCKET_VALUES,
+} from "../../../domain/portfolioBuckets.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -38,6 +46,16 @@ interface PlanProductDraft {
   relationType: string;
   categoryId: string | null;
   status: "active" | "draft" | "archived";
+  portfolioBucket: string;
+  includeInForecast: boolean;
+  launchCosts: Array<{
+    id?: string;
+    type: string;
+    amountEur: number | null;
+    currency?: string;
+    date: string;
+    note?: string;
+  }>;
   baselineReferenceMonth: number | null;
   baselineUnitsInReferenceMonth: number | null;
   seasonalityReferenceSku: string;
@@ -85,6 +103,7 @@ function formatNumber(value: unknown, digits = 0): string {
 
 function planDraftFromRow(row?: Record<string, unknown>): PlanProductDraft {
   const normalized = normalizePlanProductRecord(row || {}, 0);
+  const launchCostsRaw = Array.isArray(normalized.launchCosts) ? normalized.launchCosts : [];
   return {
     id: normalized.id || "",
     alias: normalized.alias || "",
@@ -92,6 +111,19 @@ function planDraftFromRow(row?: Record<string, unknown>): PlanProductDraft {
     relationType: normalized.relationType || PLAN_RELATION_TYPES[0],
     categoryId: normalized.categoryId || null,
     status: (normalized.status as "active" | "draft" | "archived") || "active",
+    portfolioBucket: normalizePortfolioBucket(normalized.portfolioBucket, PORTFOLIO_BUCKET.PLAN),
+    includeInForecast: normalized.includeInForecast !== false,
+    launchCosts: launchCostsRaw.map((entry, index) => {
+      const rowCost = entry as Record<string, unknown>;
+      return {
+        id: String(rowCost.id || `lc-${index + 1}`),
+        type: String(rowCost.type || rowCost.category || "Sonstiges"),
+        amountEur: asNumber(rowCost.amountEur ?? rowCost.amount),
+        currency: String(rowCost.currency || "EUR"),
+        date: String(rowCost.date || ""),
+        note: String(rowCost.note || ""),
+      };
+    }),
     baselineReferenceMonth: asNumber(normalized.baselineReferenceMonth),
     baselineUnitsInReferenceMonth: asNumber(normalized.baselineUnitsInReferenceMonth),
     seasonalityReferenceSku: normalized.seasonalityReferenceSku || "",
@@ -196,6 +228,9 @@ export default function PlanProductsModule(): JSX.Element {
       relationType: "standalone",
       categoryId: null,
       status: "active",
+      portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+      includeInForecast: true,
+      launchCosts: [],
       baselineReferenceMonth: new Date().getMonth() + 1,
       baselineUnitsInReferenceMonth: null,
       seasonalityReferenceSku: "",
@@ -228,21 +263,22 @@ export default function PlanProductsModule(): JSX.Element {
   async function saveDraft(values: PlanProductDraft): Promise<void> {
     const alias = String(values.alias || "").trim();
     if (!alias) throw new Error("Alias ist erforderlich.");
-    if (!values.seasonalityReferenceSku) throw new Error("Bitte Referenz-SKU für Saisonalität wählen.");
+    const includeInForecast = values.includeInForecast !== false;
+    if (includeInForecast && !values.seasonalityReferenceSku) throw new Error("Bitte Referenz-SKU für Saisonalität wählen.");
     const baselineMonth = Number(values.baselineReferenceMonth || 0);
-    if (!Number.isFinite(baselineMonth) || baselineMonth < 1 || baselineMonth > 12) {
+    if (includeInForecast && (!Number.isFinite(baselineMonth) || baselineMonth < 1 || baselineMonth > 12)) {
       throw new Error("Referenzmonat muss zwischen 1 und 12 liegen.");
     }
     const baselineUnits = Number(values.baselineUnitsInReferenceMonth || 0);
-    if (!Number.isFinite(baselineUnits) || baselineUnits <= 0) {
+    if (includeInForecast && (!Number.isFinite(baselineUnits) || baselineUnits <= 0)) {
       throw new Error("Baseline Units im Referenzmonat müssen > 0 sein.");
     }
     const price = Number(values.avgSellingPriceGrossEUR || 0);
-    if (!Number.isFinite(price) || price <= 0) {
+    if (includeInForecast && (!Number.isFinite(price) || price <= 0)) {
       throw new Error("Bitte einen gültigen Preis (EUR) für Revenue-Berechnung pflegen.");
     }
     const grossMargin = Number(values.sellerboardMarginPct || 0);
-    if (!Number.isFinite(grossMargin) || grossMargin <= 0 || grossMargin > 100) {
+    if (includeInForecast && (!Number.isFinite(grossMargin) || grossMargin <= 0 || grossMargin > 100)) {
       throw new Error("Bitte eine gültige Brutto-Marge (%) > 0 und <= 100 pflegen.");
     }
     const launchDate = normalizeIsoDate(values.launchDate);
@@ -274,6 +310,7 @@ export default function PlanProductsModule(): JSX.Element {
       }
 
       const id = editingId || randomId("plan");
+      const launchCosts = normalizeLaunchCosts(values.launchCosts as unknown[], `plan-${id}-lc`);
       const payload = {
         id,
         alias,
@@ -281,6 +318,9 @@ export default function PlanProductsModule(): JSX.Element {
         relationType: String(values.relationType || "standalone"),
         categoryId: values.categoryId || null,
         status: values.status || "active",
+        portfolioBucket: normalizePortfolioBucket(values.portfolioBucket, PORTFOLIO_BUCKET.PLAN),
+        includeInForecast,
+        launchCosts,
         baselineReferenceMonth: baselineMonth,
         baselineUnitsInReferenceMonth: baselineUnits,
         seasonalityReferenceSku: String(values.seasonalityReferenceSku || "").trim(),
@@ -468,6 +508,24 @@ export default function PlanProductsModule(): JSX.Element {
               render: (value: string) => RELATION_LABELS[value] || value || "—",
             },
             {
+              title: "Bucket",
+              dataIndex: "portfolioBucket",
+              key: "portfolioBucket",
+              sorter: (a, b) => String(a.portfolioBucket || "").localeCompare(String(b.portfolioBucket || ""), "de-DE"),
+              render: (value: string) => (
+                <Tag color={value === PORTFOLIO_BUCKET.CORE ? "green" : value === PORTFOLIO_BUCKET.PLAN ? "gold" : "blue"}>
+                  {value || PORTFOLIO_BUCKET.PLAN}
+                </Tag>
+              ),
+            },
+            {
+              title: "Forecast",
+              dataIndex: "includeInForecast",
+              key: "includeInForecast",
+              sorter: (a, b) => Number(Boolean(a.includeInForecast)) - Number(Boolean(b.includeInForecast)),
+              render: (value: unknown) => (value === false ? <Tag>Nein</Tag> : <Tag color="green">Ja</Tag>),
+            },
+            {
               title: "Baseline",
               key: "baseline",
               sorter: (a, b) => Number(asNumber(a.baselineUnitsInReferenceMonth) || 0) - Number(asNumber(b.baselineUnitsInReferenceMonth) || 0),
@@ -592,6 +650,9 @@ export default function PlanProductsModule(): JSX.Element {
             <Form.Item name="plannedSku" label="Planned SKU (optional)">
               <Input placeholder="optional, falls intern bereits vergeben" />
             </Form.Item>
+            <Form.Item name="portfolioBucket" label="Portfolio Bucket" initialValue={PORTFOLIO_BUCKET.PLAN}>
+              <Select options={PORTFOLIO_BUCKET_VALUES.map((value) => ({ value, label: value }))} />
+            </Form.Item>
             <Form.Item name="status" label="Status" initialValue="active">
               <Select
                 options={[
@@ -600,6 +661,12 @@ export default function PlanProductsModule(): JSX.Element {
                   { value: "archived", label: "Archiviert" },
                 ]}
               />
+            </Form.Item>
+          </div>
+
+          <div className="v2-form-row">
+            <Form.Item name="includeInForecast" valuePropName="checked" initialValue={true}>
+              <Checkbox>Im Forecast berücksichtigen</Checkbox>
             </Form.Item>
           </div>
 
@@ -621,7 +688,16 @@ export default function PlanProductsModule(): JSX.Element {
             <Form.Item
               name="avgSellingPriceGrossEUR"
               label="Preis (EUR) für Revenue"
-              rules={[{ required: true, message: "Preis ist erforderlich." }]}
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const price = Number(value);
+                    if (Number.isFinite(price) && price > 0) return Promise.resolve();
+                    return Promise.reject(new Error("Preis ist erforderlich."));
+                  },
+                },
+              ]}
             >
               <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
@@ -629,9 +705,9 @@ export default function PlanProductsModule(): JSX.Element {
               name="sellerboardMarginPct"
               label="Brutto-Marge (%)"
               rules={[
-                { required: true, message: "Marge ist erforderlich." },
                 {
                   validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
                     const margin = Number(value);
                     if (Number.isFinite(margin) && margin > 0 && margin <= 100) return Promise.resolve();
                     return Promise.reject(new Error("Marge muss > 0 und <= 100 sein."));
@@ -647,7 +723,16 @@ export default function PlanProductsModule(): JSX.Element {
             <Form.Item
               name="baselineReferenceMonth"
               label="Referenzmonat"
-              rules={[{ required: true, message: "Referenzmonat ist erforderlich." }]}
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const month = Number(value);
+                    if (Number.isFinite(month) && month >= 1 && month <= 12) return Promise.resolve();
+                    return Promise.reject(new Error("Referenzmonat ist erforderlich."));
+                  },
+                },
+              ]}
             >
               <Select
                 options={Array.from({ length: 12 }, (_, idx) => ({
@@ -659,14 +744,31 @@ export default function PlanProductsModule(): JSX.Element {
             <Form.Item
               name="baselineUnitsInReferenceMonth"
               label="Baseline Units im Referenzmonat"
-              rules={[{ required: true, message: "Baseline Units sind erforderlich." }]}
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const units = Number(value);
+                    if (Number.isFinite(units) && units > 0) return Promise.resolve();
+                    return Promise.reject(new Error("Baseline Units sind erforderlich."));
+                  },
+                },
+              ]}
             >
               <DeNumberInput mode="int" min={0} />
             </Form.Item>
             <Form.Item
               name="seasonalityReferenceSku"
               label="Saisonalität übernehmen von SKU"
-              rules={[{ required: true, message: "Referenz-SKU ist erforderlich." }]}
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    if (String(value || "").trim()) return Promise.resolve();
+                    return Promise.reject(new Error("Referenz-SKU ist erforderlich."));
+                  },
+                },
+              ]}
             >
               <Select
                 showSearch
@@ -709,6 +811,60 @@ export default function PlanProductsModule(): JSX.Element {
             >
               <DeNumberInput mode="percent" min={0} max={100} />
             </Form.Item>
+          </div>
+
+          <div className="v2-form-row">
+            <Form.List name="launchCosts">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {fields.map((field) => (
+                    <div key={field.key} className="v2-form-row">
+                      <Form.Item
+                        name={[field.name, "type"]}
+                        label="Launch-Kosten Typ"
+                        style={{ minWidth: 180, flex: 1 }}
+                        rules={[{ required: true, message: "Typ fehlt." }]}
+                      >
+                        <Select options={LAUNCH_COST_TYPE_VALUES.map((value) => ({ value, label: value }))} />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "amountEur"]}
+                        label="Betrag (EUR)"
+                        style={{ minWidth: 160, flex: 1 }}
+                        rules={[{ required: true, message: "Betrag fehlt." }]}
+                      >
+                        <DeNumberInput mode="decimal" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "date"]}
+                        label="Datum"
+                        style={{ minWidth: 170 }}
+                        rules={[{ required: true, message: "Datum fehlt." }]}
+                      >
+                        <Input type="date" />
+                      </Form.Item>
+                      <Form.Item name={[field.name, "note"]} label="Notiz" style={{ flex: 2 }}>
+                        <Input placeholder="Optional" />
+                      </Form.Item>
+                      <Form.Item style={{ marginTop: 30 }}>
+                        <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
+                      </Form.Item>
+                    </div>
+                  ))}
+                  <Button
+                    onClick={() => add({
+                      type: "Sonstiges",
+                      amountEur: null,
+                      currency: "EUR",
+                      date: "",
+                      note: "",
+                    })}
+                  >
+                    Launch-Kosten hinzufügen
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
           </div>
         </Form>
 

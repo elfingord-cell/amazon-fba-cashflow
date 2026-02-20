@@ -2,6 +2,11 @@ import { parseDeNumber } from "../../lib/dataHealth.js";
 import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 import { currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 import { buildPlanProductForecastRows } from "../../domain/planProducts.js";
+import {
+  normalizeIncludeInForecast,
+  normalizePortfolioBucket,
+  PORTFOLIO_BUCKET,
+} from "../../domain/portfolioBuckets.js";
 
 export type ProductStatusFilter = "all" | "active" | "prelaunch" | "inactive";
 export type ForecastViewMode = "units" | "revenue" | "profit";
@@ -13,6 +18,8 @@ export interface ProductGridRow {
   supplierId: string;
   categoryId: string | null;
   status: "active" | "prelaunch" | "inactive";
+  portfolioBucket: string;
+  includeInForecast: boolean;
   avgSellingPriceGrossEUR: number | null;
   templateUnitPriceUsd: number | null;
   landedUnitCostEur: number | null;
@@ -121,6 +128,8 @@ export function buildProductGridRows(input: {
       supplierId: String(product.supplierId || ""),
       categoryId: product.categoryId ? String(product.categoryId) : null,
       status: normalizeStatus(product.status),
+      portfolioBucket: normalizePortfolioBucket(product.portfolioBucket, PORTFOLIO_BUCKET.CORE),
+      includeInForecast: normalizeIncludeInForecast(product.includeInForecast, true),
       avgSellingPriceGrossEUR: asNumber(product.avgSellingPriceGrossEUR),
       templateUnitPriceUsd: asNumber(template.unitPriceUsd),
       landedUnitCostEur: asNumber(product.landedUnitCostEur),
@@ -144,6 +153,8 @@ export function buildProductGridRows(input: {
         row.alias,
         row.supplierId,
         row.categoryId || "",
+        row.portfolioBucket,
+        row.includeInForecast ? "forecast" : "no-forecast",
         row.hsCode,
         row.goodsDescription,
         input.supplierLabelById.get(row.supplierId) || "",
@@ -155,6 +166,7 @@ export function buildProductGridRows(input: {
 }
 
 export function isForecastProductActive(product: Record<string, unknown>): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;
@@ -272,7 +284,7 @@ export function buildForecastProducts(
       categoryLabel: row.categoryId
         ? (categoriesById.get(String(row.categoryId || "")) || "Neue Produkte (Plan)")
         : "Neue Produkte (Plan)",
-      isActive: String(row.status || "active") === "active",
+      isActive: String(row.status || "active") === "active" && normalizeIncludeInForecast(row.includeInForecast, true),
       avgSellingPriceGrossEUR: parseDeNumber(row.avgSellingPriceGrossEUR),
       sellerboardMarginPct: parseDeNumber(row.sellerboardMarginPct),
       isPlan: true,

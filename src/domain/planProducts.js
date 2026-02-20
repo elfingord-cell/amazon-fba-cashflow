@@ -1,4 +1,13 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
+import {
+  collectPoSkuSet,
+  normalizeIncludeInForecast,
+  normalizeLaunchCosts,
+  normalizePortfolioBucket,
+  PORTFOLIO_BUCKET,
+  PORTFOLIO_BUCKET_VALUES,
+  resolveEffectivePortfolioBucket,
+} from "./portfolioBuckets.js";
 
 export const PLAN_RELATION_TYPES = ["standalone", "variant_of_existing", "category_adjacent"];
 
@@ -175,6 +184,8 @@ export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
       ? clamp(Number(softLaunchStartSharePctRaw), 0, 100)
       : 0
   );
+  const normalizedStatus = normalizeStatus(row.status);
+  const includeInForecast = normalizeIncludeInForecast(row.includeInForecast, normalizedStatus === "active");
   return {
     id: id || `plan-${fallbackIndex + 1}`,
     key: buildPlanProductKey({ id, alias }, fallbackIndex),
@@ -182,7 +193,10 @@ export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
     plannedSku: normalizeSku(row.plannedSku),
     relationType,
     categoryId: row.categoryId ? String(row.categoryId) : null,
-    status: normalizeStatus(row.status),
+    status: normalizedStatus,
+    portfolioBucket: normalizePortfolioBucket(row.portfolioBucket, PORTFOLIO_BUCKET.PLAN),
+    includeInForecast,
+    launchCosts: normalizeLaunchCosts(row.launchCosts, `plan-lc-${fallbackIndex + 1}`),
     seasonalityReferenceSku: normalizeSku(row.seasonalityReferenceSku),
     baselineReferenceMonth,
     baselineUnitsInReferenceMonth,
@@ -486,24 +500,47 @@ export function buildPlanProductForecastRows(input) {
 }
 
 export function buildPlanProductRevenueByMonth(input) {
+  return buildPlanProductRevenueByMonthAndBucket(input).totalsByMonth;
+}
+
+export function buildPlanProductRevenueByMonthAndBucket(input) {
   const months = Array.isArray(input?.months) && input.months.length ? input.months : [];
+  const poSkuSet = collectPoSkuSet(input?.state || {});
   const rows = buildPlanProductForecastRows({
     state: input?.state || {},
     months,
   });
-  const totals = {};
+  const totalsByMonth = {};
+  const byBucket = PORTFOLIO_BUCKET_VALUES.reduce((acc, bucket) => {
+    acc[bucket] = {};
+    return acc;
+  }, {});
   months.forEach((month) => {
-    totals[month] = 0;
+    totalsByMonth[month] = 0;
+    PORTFOLIO_BUCKET_VALUES.forEach((bucket) => {
+      byBucket[bucket][month] = 0;
+    });
   });
   rows.forEach((row) => {
     if (row.status !== "active") return;
+    if (!normalizeIncludeInForecast(row.includeInForecast, true)) return;
+    const bucket = resolveEffectivePortfolioBucket({
+      product: row,
+      sku: row.plannedSku || row.mappedSku || row.seasonalityReferenceSku || row.alias,
+      poSkuSet,
+      fallbackBucket: PORTFOLIO_BUCKET.PLAN,
+    });
     months.forEach((month) => {
       const revenue = asNumber(row.revenueByMonth?.[month]);
       if (!Number.isFinite(revenue)) return;
-      totals[month] = (totals[month] || 0) + Number(revenue);
+      totalsByMonth[month] = (totalsByMonth[month] || 0) + Number(revenue);
+      byBucket[bucket][month] = (byBucket[bucket][month] || 0) + Number(revenue);
     });
   });
-  return totals;
+  return {
+    totalsByMonth,
+    byBucket,
+  };
 }
 
 export function buildPlanVsLiveComparisonRows(input) {

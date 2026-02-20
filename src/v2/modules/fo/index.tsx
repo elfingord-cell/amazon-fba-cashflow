@@ -25,6 +25,7 @@ import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "..
 import { getActiveForecastVersion } from "../../domain/forecastVersioning";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
 import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
+import { normalizeIncludeInForecast } from "../../../domain/portfolioBuckets.js";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSyncSession } from "../../sync/session";
@@ -205,6 +206,7 @@ function formatFoPaymentCategory(category: FoPaymentPreviewRow["category"]): str
 }
 
 function isProductActive(product: Record<string, unknown>): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

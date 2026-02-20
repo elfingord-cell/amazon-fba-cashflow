@@ -13,6 +13,7 @@ import {
   buildDashboardRobustness,
   type RobustnessCoverageOrderDutyIssue,
 } from "./dashboardRobustness";
+import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
 
 const PHANTOM_FO_SOURCE = "robustness_order_duty_v2";
 
@@ -92,6 +93,7 @@ function round2(value: number): number {
 }
 
 function statusIsActive(product: Record<string, unknown>): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

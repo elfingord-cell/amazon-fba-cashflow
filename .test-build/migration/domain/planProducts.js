@@ -9,9 +9,11 @@ exports.computeSeasonalityFromForecastImport = computeSeasonalityFromForecastImp
 exports.buildPlanProductForecastRow = buildPlanProductForecastRow;
 exports.buildPlanProductForecastRows = buildPlanProductForecastRows;
 exports.buildPlanProductRevenueByMonth = buildPlanProductRevenueByMonth;
+exports.buildPlanProductRevenueByMonthAndBucket = buildPlanProductRevenueByMonthAndBucket;
 exports.buildPlanVsLiveComparisonRows = buildPlanVsLiveComparisonRows;
 exports.monthNumberToLabel = monthNumberToLabel;
 const dataHealth_js_1 = require("../lib/dataHealth.js");
+const portfolioBuckets_js_1 = require("./portfolioBuckets.js");
 exports.PLAN_RELATION_TYPES = ["standalone", "variant_of_existing", "category_adjacent"];
 const CALENDAR_MONTHS = ["Jan", "Feb", "Maerz", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -187,6 +189,8 @@ function normalizePlanProductRecord(raw, fallbackIndex = 0) {
     const softLaunchStartSharePct = (Number.isFinite(softLaunchStartSharePctRaw)
         ? clamp(Number(softLaunchStartSharePctRaw), 0, 100)
         : 0);
+    const normalizedStatus = normalizeStatus(row.status);
+    const includeInForecast = (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, normalizedStatus === "active");
     return {
         id: id || `plan-${fallbackIndex + 1}`,
         key: buildPlanProductKey({ id, alias }, fallbackIndex),
@@ -194,7 +198,10 @@ function normalizePlanProductRecord(raw, fallbackIndex = 0) {
         plannedSku: normalizeSku(row.plannedSku),
         relationType,
         categoryId: row.categoryId ? String(row.categoryId) : null,
-        status: normalizeStatus(row.status),
+        status: normalizedStatus,
+        portfolioBucket: (0, portfolioBuckets_js_1.normalizePortfolioBucket)(row.portfolioBucket, portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN),
+        includeInForecast,
+        launchCosts: (0, portfolioBuckets_js_1.normalizeLaunchCosts)(row.launchCosts, `plan-lc-${fallbackIndex + 1}`),
         seasonalityReferenceSku: normalizeSku(row.seasonalityReferenceSku),
         baselineReferenceMonth,
         baselineUnitsInReferenceMonth,
@@ -497,26 +504,49 @@ function buildPlanProductForecastRows(input) {
         .filter((row) => row.alias);
 }
 function buildPlanProductRevenueByMonth(input) {
+    return buildPlanProductRevenueByMonthAndBucket(input).totalsByMonth;
+}
+function buildPlanProductRevenueByMonthAndBucket(input) {
     const months = Array.isArray(input?.months) && input.months.length ? input.months : [];
+    const poSkuSet = (0, portfolioBuckets_js_1.collectPoSkuSet)(input?.state || {});
     const rows = buildPlanProductForecastRows({
         state: input?.state || {},
         months,
     });
-    const totals = {};
+    const totalsByMonth = {};
+    const byBucket = portfolioBuckets_js_1.PORTFOLIO_BUCKET_VALUES.reduce((acc, bucket) => {
+        acc[bucket] = {};
+        return acc;
+    }, {});
     months.forEach((month) => {
-        totals[month] = 0;
+        totalsByMonth[month] = 0;
+        portfolioBuckets_js_1.PORTFOLIO_BUCKET_VALUES.forEach((bucket) => {
+            byBucket[bucket][month] = 0;
+        });
     });
     rows.forEach((row) => {
         if (row.status !== "active")
             return;
+        if (!(0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, true))
+            return;
+        const bucket = (0, portfolioBuckets_js_1.resolveEffectivePortfolioBucket)({
+            product: row,
+            sku: row.plannedSku || row.mappedSku || row.seasonalityReferenceSku || row.alias,
+            poSkuSet,
+            fallbackBucket: portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN,
+        });
         months.forEach((month) => {
             const revenue = asNumber(row.revenueByMonth?.[month]);
             if (!Number.isFinite(revenue))
                 return;
-            totals[month] = (totals[month] || 0) + Number(revenue);
+            totalsByMonth[month] = (totalsByMonth[month] || 0) + Number(revenue);
+            byBucket[bucket][month] = (byBucket[bucket][month] || 0) + Number(revenue);
         });
     });
-    return totals;
+    return {
+        totalsByMonth,
+        byBucket,
+    };
 }
 function buildPlanVsLiveComparisonRows(input) {
     const mapping = normalizePlanProductMappingRecord(input?.mapping || {}, 0);

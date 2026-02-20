@@ -22,6 +22,7 @@ import ReactECharts from "echarts-for-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { computeInventoryProjection, getProjectionSafetyClass } from "../../../domain/inventoryProjection.js";
+import { normalizeIncludeInForecast } from "../../../domain/portfolioBuckets.js";
 import { buildPhantomFoSuggestions, type PhantomFoSuggestion } from "../../domain/phantomFo";
 import { addMonths, currentMonthKey, formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
 import { getActiveForecastLabel } from "../../domain/forecastVersioning";
@@ -155,6 +156,7 @@ function resolvePlanningSettings(settings: Record<string, unknown>): PlanningSet
 }
 
 function resolveStatus(product: Record<string, unknown>): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

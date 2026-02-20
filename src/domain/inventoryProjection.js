@@ -1,4 +1,5 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
+import { normalizeIncludeInForecast } from "./portfolioBuckets.js";
 
 function normalizeMonthKey(value) {
   if (!value) return null;
@@ -15,6 +16,7 @@ function normalizeSku(value) {
 
 function isProductActive(product) {
   if (!product) return false;
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

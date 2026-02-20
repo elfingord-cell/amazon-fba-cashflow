@@ -1,5 +1,11 @@
 // FBA-CF-0027 — Local Storage Layer (schlank, mit Listenern)
 import { parseDeNumber } from "../lib/dataHealth.js";
+import {
+  normalizeIncludeInForecast,
+  normalizeLaunchCosts,
+  normalizePortfolioBucket,
+  PORTFOLIO_BUCKET,
+} from "../domain/portfolioBuckets.js";
 
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 export const LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
@@ -694,7 +700,7 @@ function migrateLegacyOutgoings(state) {
   state.outgoings = [];
 }
 
-const PRODUCT_STATUS = new Set(["active", "inactive"]);
+const PRODUCT_STATUS = new Set(["active", "inactive", "prelaunch"]);
 
 function productKey(value) {
   return String(value || "").trim().toLowerCase();
@@ -789,6 +795,9 @@ function migrateProducts(state) {
         alias: cleanAlias(prod.alias || base.alias, prod.sku || base.sku),
         supplierId: prod.supplierId != null ? String(prod.supplierId).trim() : "",
         status: PRODUCT_STATUS.has(prod.status) ? prod.status : "active",
+        portfolioBucket: normalizePortfolioBucket(prod.portfolioBucket ?? base.portfolioBucket, PORTFOLIO_BUCKET.CORE),
+        includeInForecast: normalizeIncludeInForecast(prod.includeInForecast ?? base.includeInForecast, true),
+        launchCosts: normalizeLaunchCosts(prod.launchCosts ?? base.launchCosts, "lc"),
         tags: Array.isArray(prod.tags) ? prod.tags.filter(Boolean).map(t => String(t).trim()) : [],
         categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
         hsCode: cleanOptionalText(prod.hsCode ?? base.hsCode),
@@ -852,6 +861,9 @@ function migrateProducts(state) {
         alias: cleanAlias(null, sku),
         supplierId: "",
         status: "active",
+        portfolioBucket: PORTFOLIO_BUCKET.CORE,
+        includeInForecast: true,
+        launchCosts: [],
         tags: [],
         hsCode: "",
         goodsDescription: "",
@@ -939,6 +951,9 @@ function normaliseProductInput(input) {
     ? String(categoryValue).trim()
     : null;
   const status = PRODUCT_STATUS.has(input.status) ? input.status : "active";
+  const portfolioBucket = normalizePortfolioBucket(input.portfolioBucket, PORTFOLIO_BUCKET.CORE);
+  const includeInForecast = normalizeIncludeInForecast(input.includeInForecast, true);
+  const launchCosts = normalizeLaunchCosts(input.launchCosts, "lc");
   const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
   const hsCode = cleanOptionalText(input.hsCode);
   const goodsDescription = cleanOptionalText(input.goodsDescription);
@@ -966,6 +981,9 @@ function normaliseProductInput(input) {
     supplierId,
     categoryId,
     status,
+    portfolioBucket,
+    includeInForecast,
+    launchCosts,
     tags,
     hsCode,
     goodsDescription,
@@ -1088,6 +1106,7 @@ export function commitState(s, meta = {}){
   ensureProductSuppliers(_state);
   ensurePayments(_state);
   ensureFos(_state);
+  migrateProducts(_state);
   try {
     const { _computed, ...clean } = _state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
@@ -1152,6 +1171,7 @@ export function importStateFile(file, cb){
       ensurePayments(json);
       ensureFos(json);
       migrateLegacyOutgoings(json);
+      migrateProducts(json);
       cb({ state: json, warnings: {} });
     } catch (err) {
       cb({ __error: err?.message || 'Ungültige JSON-Datei' });
@@ -1317,6 +1337,9 @@ export function upsertProduct(input){
       supplierId: normalised.supplierId,
       categoryId: normalised.categoryId,
       status: normalised.status,
+      portfolioBucket: normalised.portfolioBucket,
+      includeInForecast: normalised.includeInForecast,
+      launchCosts: normalised.launchCosts,
       tags: normalised.tags,
       hsCode: normalised.hsCode,
       goodsDescription: normalised.goodsDescription,
@@ -1341,6 +1364,9 @@ export function upsertProduct(input){
     target.supplierId = normalised.supplierId;
     target.categoryId = normalised.categoryId;
     target.status = normalised.status;
+    target.portfolioBucket = normalised.portfolioBucket;
+    target.includeInForecast = normalised.includeInForecast;
+    target.launchCosts = normalised.launchCosts;
     target.tags = normalised.tags;
     target.hsCode = normalised.hsCode;
     target.goodsDescription = normalised.goodsDescription;

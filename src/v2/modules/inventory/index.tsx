@@ -24,6 +24,7 @@ import {
   resolveCoverageDays,
   resolveSafetyStockDays,
 } from "../../../domain/inventoryProjection.js";
+import { normalizeIncludeInForecast } from "../../../domain/portfolioBuckets.js";
 import { TanStackGrid } from "../../components/TanStackGrid";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import {
@@ -613,7 +614,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         if (!sku) return null;
         const alias = String(product.alias || sku);
         const status = String(product.status || "").trim().toLowerCase();
-        const isActive = !status || status === "active" || status === "aktiv";
+        const isActive = normalizeIncludeInForecast(product.includeInForecast, true)
+          && (!status || status === "active" || status === "aktiv");
         const categoryLabel = categoriesById.get(String(product.categoryId || "")) || "Ohne Kategorie";
         const item = snapshotDraft[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
         const prevItem = previousDraft[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };

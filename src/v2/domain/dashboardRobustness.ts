@@ -4,6 +4,7 @@ import {
   getProjectionSafetyClass,
 } from "../../domain/inventoryProjection.js";
 import { parseDeNumber } from "../../lib/dataHealth.js";
+import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
 import { resolveMasterDataHierarchy } from "./masterDataHierarchy";
 import { addMonths, currentMonthKey } from "./months";
 import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
@@ -209,6 +210,7 @@ function normalizeSkuKey(value: unknown): string {
 }
 
 function isActiveProduct(product: Record<string, unknown>): boolean {
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

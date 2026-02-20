@@ -1,5 +1,6 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
 import { DASHBOARD_RANGE_OPTIONS, currentMonthKey, getVisibleMonths } from "../utils/monthRange.js";
+import { normalizeIncludeInForecast } from "./portfolioBuckets.js";
 
 const ABC_THRESHOLDS = {
   A: 0.8,
@@ -12,6 +13,7 @@ function normalizeSku(value) {
 
 function isActiveProduct(product) {
   if (!product) return false;
+  if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

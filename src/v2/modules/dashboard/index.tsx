@@ -4,6 +4,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Collapse,
   Col,
   Input,
@@ -48,6 +49,7 @@ import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../.
 import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
+import { PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModuleExpandedCategoryKeys } from "../../state/uiPrefs";
@@ -172,6 +174,12 @@ const DASHBOARD_SECTION_KEYS = new Set([
 ]);
 
 const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["signals", "cashflow"];
+
+const DASHBOARD_BUCKET_OPTIONS = [
+  { value: PORTFOLIO_BUCKET.CORE, label: "Kern" },
+  { value: PORTFOLIO_BUCKET.PLAN, label: "Plan" },
+  { value: PORTFOLIO_BUCKET.IDEAS, label: "Ideen" },
+];
 
 const COVERAGE_STATUS_UI_META: Record<CoverageStatusKey, {
   label: string;
@@ -434,6 +442,74 @@ function resolveDashboardRoute(input: {
   return route;
 }
 
+function resolveEntryBucket(entry: DashboardEntry): string | null {
+  const direct = typeof entry.portfolioBucket === "string" ? entry.portfolioBucket : null;
+  if (direct) return direct;
+  const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : {};
+  return typeof meta.portfolioBucket === "string" ? String(meta.portfolioBucket) : null;
+}
+
+function isEntryInBucketScope(entry: DashboardEntry, bucketScope: Set<string>): boolean {
+  const bucket = resolveEntryBucket(entry);
+  if (!bucket) return true;
+  if (!PORTFOLIO_BUCKET_VALUES.includes(bucket)) return true;
+  return bucketScope.has(bucket);
+}
+
+function applyBucketScopeToBreakdown(
+  rows: DashboardBreakdownRow[],
+  bucketScope: Set<string>,
+): DashboardBreakdownRow[] {
+  if (!rows.length) return [];
+  const firstOpening = Number(rows[0]?.opening || 0);
+  let running = firstOpening;
+  return rows.map((row, index) => {
+    const opening = index === 0 ? firstOpening : running;
+    const scopedEntries = (Array.isArray(row.entries) ? row.entries : [])
+      .filter((entry) => isEntryInBucketScope(entry, bucketScope));
+    const inflow = scopedEntries
+      .filter((entry) => String(entry.direction || "").toLowerCase() === "in")
+      .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
+    const outflow = scopedEntries
+      .filter((entry) => String(entry.direction || "").toLowerCase() === "out")
+      .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
+    const net = inflow - outflow;
+    const closing = opening + net;
+    running = closing;
+    return {
+      ...row,
+      opening,
+      inflow,
+      outflow,
+      net,
+      closing,
+      entries: scopedEntries,
+    };
+  });
+}
+
+function computeBucketFlowTotals(rows: DashboardBreakdownRow[]): Record<string, { inflow: number; outflow: number }> {
+  const totals: Record<string, { inflow: number; outflow: number }> = {};
+  PORTFOLIO_BUCKET_VALUES.forEach((bucket) => {
+    totals[bucket] = { inflow: 0, outflow: 0 };
+  });
+  rows.forEach((row) => {
+    const entries = Array.isArray(row.entries) ? row.entries : [];
+    entries.forEach((entry) => {
+      const bucket = resolveEntryBucket(entry);
+      if (!bucket || !totals[bucket]) return;
+      const amount = Math.abs(Number(entry.amount || 0));
+      if (!Number.isFinite(amount) || amount <= 0) return;
+      if (String(entry.direction || "").toLowerCase() === "in") {
+        totals[bucket].inflow += amount;
+      } else if (String(entry.direction || "").toLowerCase() === "out") {
+        totals[bucket].outflow += amount;
+      }
+    });
+  });
+  return totals;
+}
+
 function getFixcostAverageFromBreakdown(rows: DashboardBreakdownRow[]): number {
   const monthlyFixcosts = rows
     .map((row) => {
@@ -451,6 +527,7 @@ function getFixcostAverageFromBreakdown(rows: DashboardBreakdownRow[]): number {
 function splitOutflowEntriesByType(
   entries: DashboardEntry[],
   provisionalFoIds?: Set<string>,
+  bucketScope?: Set<string>,
 ): {
   fixcost: number;
   po: number;
@@ -467,6 +544,7 @@ function splitOutflowEntriesByType(
   entries.forEach((entryRaw) => {
     if (!entryRaw || typeof entryRaw !== "object") return;
     const entry = entryRaw as DashboardEntry;
+    if (bucketScope && !isEntryInBucketScope(entry, bucketScope)) return;
     if (String(entry.direction || "").toLowerCase() !== "out") return;
     const amount = Math.abs(Number(entry.amount || 0));
     if (!Number.isFinite(amount) || amount <= 0) return;
@@ -500,6 +578,7 @@ function splitOutflowEntriesByType(
 
 function splitInflowEntriesByType(
   entries: DashboardEntry[],
+  bucketScope?: Set<string>,
 ): {
   amazon: number;
   other: number;
@@ -514,6 +593,7 @@ function splitInflowEntriesByType(
   entries.forEach((entryRaw) => {
     if (!entryRaw || typeof entryRaw !== "object") return;
     const entry = entryRaw as DashboardEntry;
+    if (bucketScope && !isEntryInBucketScope(entry, bucketScope)) return;
     if (String(entry.direction || "").toLowerCase() !== "in") return;
     const amount = Math.abs(Number(entry.amount || 0));
     if (!Number.isFinite(amount) || amount <= 0) return;
@@ -699,6 +779,7 @@ export default function DashboardModule(): JSX.Element {
   const [messageApi, contextHolder] = message.useMessage();
   const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
   const [range, setRange] = useState<DashboardRange>("next12");
+  const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => PORTFOLIO_BUCKET_VALUES.slice());
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
@@ -789,11 +870,12 @@ export default function DashboardModule(): JSX.Element {
   }, [months, range]);
 
   const visibleMonthSet = useMemo(() => new Set(visibleMonths), [visibleMonths]);
+  const bucketScopeSet = useMemo(() => new Set(bucketScopeValues), [bucketScopeValues]);
 
-  const visibleBreakdown = useMemo(
-    () => breakdown.filter((row) => visibleMonthSet.has(row.month)),
-    [breakdown, visibleMonthSet],
-  );
+  const visibleBreakdown = useMemo(() => {
+    const filteredByMonth = breakdown.filter((row) => visibleMonthSet.has(row.month));
+    return applyBucketScopeToBreakdown(filteredByMonth, bucketScopeSet);
+  }, [breakdown, bucketScopeSet, visibleMonthSet]);
   const visibleActualComparisons = useMemo(
     () => actualComparisons.filter((row) => visibleMonthSet.has(row.month)),
     [actualComparisons, visibleMonthSet],
@@ -893,10 +975,13 @@ export default function DashboardModule(): JSX.Element {
   const inflowSplitByMonth = useMemo(() => {
     const map = new Map<string, { amazon: number; other: number; total: number }>();
     simulatedBreakdown.forEach((row) => {
-      map.set(row.month, splitInflowEntriesByType(Array.isArray(row.entries) ? row.entries : []));
+      map.set(row.month, splitInflowEntriesByType(
+        Array.isArray(row.entries) ? row.entries : [],
+        bucketScopeSet,
+      ));
     });
     return map;
-  }, [simulatedBreakdown]);
+  }, [bucketScopeSet, simulatedBreakdown]);
 
   const inflowSplitSeries = useMemo(
     () => simulatedBreakdown.map((row) => inflowSplitByMonth.get(row.month) || { amazon: 0, other: 0, total: 0 }),
@@ -918,6 +1003,10 @@ export default function DashboardModule(): JSX.Element {
   const totalInflow = totalAmazonInflow + totalOtherInflow;
   const totalOutflow = simulatedBreakdown.reduce((sum, row) => sum + Number(row.outflow || 0), 0);
   const totalNet = simulatedBreakdown.reduce((sum, row) => sum + Number(row.net || 0), 0);
+  const bucketFlowTotals = useMemo(
+    () => computeBucketFlowTotals(simulatedBreakdown),
+    [simulatedBreakdown],
+  );
 
   const fixcostAverage = useMemo(() => getFixcostAverageFromBreakdown(visibleBreakdown), [visibleBreakdown]);
   const bufferFloor = fixcostAverage * 2;
@@ -1112,6 +1201,7 @@ export default function DashboardModule(): JSX.Element {
     const outflowSplitSeries = simulatedBreakdown.map((row) => splitOutflowEntriesByType(
       Array.isArray(row.entries) ? row.entries : [],
       phantomFoIdSet,
+      bucketScopeSet,
     ));
     const fixcostOutflowSeries = outflowSplitSeries.map((row) => -row.fixcost);
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
@@ -1298,6 +1388,7 @@ export default function DashboardModule(): JSX.Element {
     };
   }, [
     amazonInflowSeries,
+    bucketScopeSet,
     otherInflowSeries,
     phantomFoIdSet,
     robustness.monthMap,
@@ -1461,6 +1552,9 @@ export default function DashboardModule(): JSX.Element {
 
                 const orderItems = Array.from(orderMap.entries()).map(([orderKey, order]) => {
                   const total = sumRows(order.rows);
+                  const orderBuckets = Array.from(new Set(order.rows
+                    .map((row) => row.portfolioBucket)
+                    .filter((value): value is string => Boolean(value))));
                   const provisionalOrderRows = order.rows.filter((row) => row.provisional);
                   const provisionalOrderSourceId = provisionalOrderRows
                     .map((row) => String(row.sourceId || "").trim())
@@ -1506,6 +1600,9 @@ export default function DashboardModule(): JSX.Element {
                         </div>
                         <Space size={6}>
                           <Tag color={total < 0 ? "red" : "green"}>{formatSignedCurrency(total)}</Tag>
+                          {orderBuckets.map((bucket) => (
+                            <Tag key={`${orderKey}-${bucket}`}>{bucket}</Tag>
+                          ))}
                           {provisionalOrderRows.length ? <Tag color="gold">Vorbehaltlich</Tag> : null}
                           {phantomSuggestion ? <Tag color="orange">Phantom FO</Tag> : null}
                           {tooltipMeta?.units != null ? <Tag>Stück: {formatNumber(tooltipMeta.units, 0)}</Tag> : null}
@@ -1627,6 +1724,7 @@ export default function DashboardModule(): JSX.Element {
                       <thead>
                         <tr>
                           <th>Position</th>
+                          <th>Bucket</th>
                           <th>Betrag</th>
                           <th>Status</th>
                         </tr>
@@ -1635,6 +1733,7 @@ export default function DashboardModule(): JSX.Element {
                         {group.rows.map((row, index) => (
                           <tr key={`${monthRow.month}-${group.key}-${index}`}>
                             <td>{row.tooltip ? <Tooltip title={row.tooltip}>{row.label}</Tooltip> : row.label}</td>
+                            <td>{row.portfolioBucket ? <Tag>{row.portfolioBucket}</Tag> : "—"}</td>
                             <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
                             <td>
                               {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
@@ -1795,6 +1894,18 @@ export default function DashboardModule(): JSX.Element {
               disabled={saving}
             />
           </div>
+          <div className="v2-toolbar-field">
+            <Text>Bucket Scope</Text>
+            <Checkbox.Group
+              value={bucketScopeValues}
+              options={DASHBOARD_BUCKET_OPTIONS}
+              onChange={(values) => {
+                const next = (Array.isArray(values) ? values : []).map((entry) => String(entry || ""));
+                if (!next.length) return;
+                setBucketScopeValues(next);
+              }}
+            />
+          </div>
         </div>
         <div className="v2-toolbar">
           <div className="v2-toolbar-row">
@@ -1805,6 +1916,7 @@ export default function DashboardModule(): JSX.Element {
           </div>
           <Text type="secondary">
             Aktueller Betrachtungszeitraum: {visibleMonths.length} Monat(e). PFO-Ziel: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}.
+            {" "}Bucket-Scope: {bucketScopeValues.join(", ")}.
           </Text>
           <div className="v2-toolbar-row">
             <Text>
@@ -1983,6 +2095,12 @@ export default function DashboardModule(): JSX.Element {
                 <Tag color="lime">Sonstige Einzahlungen: {formatCurrency(totalOtherInflow)}</Tag>
                 <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
                 <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
+                <Tag color="green">Kern In: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.CORE]?.inflow || 0)}</Tag>
+                <Tag color="red">Kern Out: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.CORE]?.outflow || 0)}</Tag>
+                <Tag color="gold">Plan In: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.PLAN]?.inflow || 0)}</Tag>
+                <Tag color="gold">Plan Out: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.PLAN]?.outflow || 0)}</Tag>
+                <Tag color="blue">Ideen In: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.IDEAS]?.inflow || 0)}</Tag>
+                <Tag color="blue">Ideen Out: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.IDEAS]?.outflow || 0)}</Tag>
                 {phantomFoSuggestions.length ? (
                   <Tag color="gold">Phantom-FOs (vorbehaltlich): {phantomFoSuggestions.length}</Tag>
                 ) : null}

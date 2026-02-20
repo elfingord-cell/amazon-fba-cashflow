@@ -30,6 +30,14 @@ import { buildProductGridRows, type ProductGridRow } from "../../domain/tableMod
 import { sourceChipClass } from "../../domain/masterDataHierarchy";
 import { formatMonthLabel } from "../../domain/months";
 import { buildPlanVsLiveComparisonRows, normalizePlanProductMappingRecord } from "../../../domain/planProducts.js";
+import {
+  collectPoSkuSet,
+  LAUNCH_COST_TYPE_VALUES,
+  normalizeLaunchCosts,
+  normalizePortfolioBucket,
+  PORTFOLIO_BUCKET,
+  PORTFOLIO_BUCKET_VALUES,
+} from "../../../domain/portfolioBuckets.js";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
 import {
@@ -48,6 +56,8 @@ const STATUS_OPTIONS = [
   { value: "prelaunch", label: "Noch nicht gelauncht" },
   { value: "inactive", label: "Inaktiv" },
 ];
+
+const PORTFOLIO_BUCKET_OPTIONS = PORTFOLIO_BUCKET_VALUES.map((value) => ({ value, label: value }));
 
 const TRANSPORT_MODES = ["AIR", "RAIL", "SEA"];
 const CURRENCIES = ["EUR", "USD", "CNY"];
@@ -81,6 +91,16 @@ interface ProductDraft {
   supplierId: string;
   categoryId: string | null;
   status: "active" | "prelaunch" | "inactive";
+  portfolioBucket: string;
+  includeInForecast: boolean;
+  launchCosts: Array<{
+    id?: string;
+    type: string;
+    amountEur: number | null;
+    currency?: string;
+    date: string;
+    note?: string;
+  }>;
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
   moqUnits: number | null;
@@ -110,6 +130,8 @@ const PRODUCT_FIELD_LABELS: Partial<Record<keyof ProductDraft, string>> = {
   supplierId: "Supplier",
   categoryId: "Kategorie",
   status: "Status",
+  portfolioBucket: "Portfolio Bucket",
+  includeInForecast: "Im Forecast berücksichtigen",
   avgSellingPriceGrossEUR: "Verkaufspreis (EUR)",
   sellerboardMarginPct: "Marge %",
   moqUnits: "MOQ Units",
@@ -239,6 +261,7 @@ function normalizeIssueFilter(value: unknown): ProductIssueFilter {
 }
 
 function hasRevenueIssue(row: ProductRow): boolean {
+  if (!row.includeInForecast) return false;
   const price = Number(row.avgSellingPriceGrossEUR);
   const missingPrice = !Number.isFinite(price) || price <= 0;
   return missingPrice || row.completeness === "blocked";
@@ -251,6 +274,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
       ? templateSource.fields
       : templateSource
   ) as Record<string, unknown>;
+  const launchCostsRaw = Array.isArray(row?.raw.launchCosts) ? row?.raw.launchCosts : [];
   return {
     id: row?.id,
     sku: row?.sku || "",
@@ -260,6 +284,19 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
     supplierId: row?.supplierId || "",
     categoryId: row?.categoryId || null,
     status: row?.status || "active",
+    portfolioBucket: normalizePortfolioBucket(row?.raw.portfolioBucket, PORTFOLIO_BUCKET.CORE),
+    includeInForecast: row?.includeInForecast !== false,
+    launchCosts: launchCostsRaw.map((entry, index) => {
+      const rowCost = entry as Record<string, unknown>;
+      return {
+        id: String(rowCost.id || `lc-${index + 1}`),
+        type: String(rowCost.type || rowCost.category || "Sonstiges"),
+        amountEur: asNumber(rowCost.amountEur ?? rowCost.amount),
+        currency: String(rowCost.currency || "EUR"),
+        date: String(rowCost.date || ""),
+        note: String(rowCost.note || ""),
+      };
+    }),
     avgSellingPriceGrossEUR: row?.avgSellingPriceGrossEUR ?? null,
     sellerboardMarginPct: row?.sellerboardMarginPct ?? null,
     moqUnits: row?.moqUnits ?? null,
@@ -305,6 +342,7 @@ export default function ProductsModule(): JSX.Element {
   const draftValues = Form.useWatch([], form) as ProductDraft | undefined;
   const bulkDraftValues = Form.useWatch([], bulkForm) as BulkEditDraft | undefined;
   const stateObject = state as unknown as Record<string, unknown>;
+  const poSkuSet = useMemo(() => collectPoSkuSet(stateObject), [state.pos]);
   const settings = (state.settings || {}) as Record<string, unknown>;
   const forecastState = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
@@ -615,6 +653,26 @@ export default function ProductsModule(): JSX.Element {
         ),
       },
       {
+        header: "Bucket",
+        accessorKey: "portfolioBucket",
+        meta: { width: 146 },
+        cell: ({ row }) => (
+          <Tag color={row.original.portfolioBucket === PORTFOLIO_BUCKET.CORE ? "green" : row.original.portfolioBucket === PORTFOLIO_BUCKET.PLAN ? "gold" : "blue"}>
+            {row.original.portfolioBucket}
+          </Tag>
+        ),
+      },
+      {
+        header: "Forecast",
+        accessorKey: "includeInForecast",
+        meta: { width: 120 },
+        cell: ({ row }) => (
+          row.original.includeInForecast
+            ? <Tag color="green">Ja</Tag>
+            : <Tag color="default">Nein</Tag>
+        ),
+      },
+      {
         header: "Completeness",
         accessorKey: "completeness",
         meta: { width: 122 },
@@ -659,6 +717,9 @@ export default function ProductsModule(): JSX.Element {
       ...baseRaw,
       sku: current.sku || baseRaw.sku || "",
       alias: current.alias || baseRaw.alias || "",
+      portfolioBucket: normalizePortfolioBucket(current.portfolioBucket ?? baseRaw.portfolioBucket, PORTFOLIO_BUCKET.CORE),
+      includeInForecast: current.includeInForecast !== false,
+      launchCosts: normalizeLaunchCosts((current.launchCosts as unknown[]) ?? (baseRaw.launchCosts as unknown[]), "draft-lc"),
       hsCode: current.hsCode || baseRaw.hsCode || "",
       goodsDescription: current.goodsDescription || baseRaw.goodsDescription || "",
       supplierId: current.supplierId || baseRaw.supplierId || "",
@@ -1139,13 +1200,17 @@ export default function ProductsModule(): JSX.Element {
     if (!sku) {
       throw new Error("SKU ist erforderlich.");
     }
-    const grossMargin = Number(values.sellerboardMarginPct);
-    if (!Number.isFinite(grossMargin) || grossMargin <= 0 || grossMargin > 100) {
+    const includeInForecastValue = values.includeInForecast !== false;
+    const grossMarginRaw = Number(values.sellerboardMarginPct);
+    const grossMargin = Number.isFinite(grossMarginRaw) ? grossMarginRaw : null;
+    if (includeInForecastValue && (!Number.isFinite(grossMargin as number) || Number(grossMargin) <= 0 || Number(grossMargin) > 100)) {
       throw new Error("Brutto-Marge muss > 0 und <= 100 sein.");
     }
+    let bucketAutoAdjusted = false;
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
       const products = Array.isArray(next.products) ? [...next.products] : [];
+      const poSkuSetLocal = collectPoSkuSet(next as unknown as Record<string, unknown>);
       const lowerSku = sku.toLowerCase();
       const duplicate = products.find((entry) => {
         const product = entry as Record<string, unknown>;
@@ -1159,6 +1224,13 @@ export default function ProductsModule(): JSX.Element {
       const existingIndex = products.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === String(values.id || ""));
       const existing = existingIndex >= 0 ? products[existingIndex] as Record<string, unknown> : null;
       const now = nowIso();
+      const selectedBucket = normalizePortfolioBucket(values.portfolioBucket, PORTFOLIO_BUCKET.CORE);
+      const finalBucket = poSkuSetLocal.has(lowerSku) ? PORTFOLIO_BUCKET.CORE : selectedBucket;
+      if (finalBucket !== selectedBucket) {
+        bucketAutoAdjusted = true;
+      }
+      const includeInForecast = includeInForecastValue;
+      const launchCosts = normalizeLaunchCosts(values.launchCosts as unknown[], `prod-${lowerSku}`);
 
       const templateFields: Record<string, unknown> = {
         unitPriceUsd: values.templateUnitPriceUsd,
@@ -1183,6 +1255,9 @@ export default function ProductsModule(): JSX.Element {
         supplierId: values.supplierId || "",
         categoryId: values.categoryId || null,
         status: values.status || "active",
+        portfolioBucket: finalBucket,
+        includeInForecast,
+        launchCosts,
         avgSellingPriceGrossEUR: values.avgSellingPriceGrossEUR,
         sellerboardMarginPct: grossMargin,
         moqUnits: values.moqUnits,
@@ -1209,7 +1284,7 @@ export default function ProductsModule(): JSX.Element {
         product: payload,
         state: next as unknown as Record<string, unknown>,
       });
-      if (completeness.status === "blocked" && completeness.blockScope) {
+      if (includeInForecast && completeness.status === "blocked" && completeness.blockScope) {
         const fields = completeness.blockingMissing.map((entry) => entry.label).slice(0, 5).join(", ");
         throw new Error(`Blockierende Stammdaten fehlen: ${fields}${completeness.blockingMissing.length > 5 ? " ..." : ""}`);
       }
@@ -1227,6 +1302,9 @@ export default function ProductsModule(): JSX.Element {
     setModalOpen(false);
     setLogisticsManualOverride(false);
     form.resetFields();
+    if (bucketAutoAdjusted) {
+      message.info("Bucket wurde automatisch auf Kernportfolio gesetzt, da bereits mindestens eine PO zur SKU existiert.");
+    }
   }
 
   return (
@@ -1568,7 +1646,7 @@ export default function ProductsModule(): JSX.Element {
             <Input />
           </Form.Item>
 
-          {draftCompleteness.status !== "ok" ? (
+          {(draftValues?.includeInForecast !== false && draftCompleteness.status !== "ok") ? (
             <Alert
               style={{ marginBottom: 10 }}
               type={draftCompleteness.status === "blocked" && draftCompleteness.blockScope ? "error" : "warning"}
@@ -1619,9 +1697,33 @@ export default function ProductsModule(): JSX.Element {
               <Form.Item name="alias" label="Alias" style={{ flex: 1 }} rules={[{ required: true, message: "Alias fehlt." }]}>
                 <Input />
               </Form.Item>
+              <Form.Item name="portfolioBucket" label="Portfolio Bucket" style={{ width: 190 }} rules={[{ required: true }]}>
+                <Select options={PORTFOLIO_BUCKET_OPTIONS} />
+              </Form.Item>
               <Form.Item name="status" label="Status" style={{ width: 140 }}>
                 <Select options={STATUS_OPTIONS} />
               </Form.Item>
+            </div>
+            <div className="v2-form-row">
+              <Form.Item name="includeInForecast" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Checkbox>Im Forecast berücksichtigen</Checkbox>
+              </Form.Item>
+              {(() => {
+                const draftSku = String(draftValues?.sku || editing?.sku || "").trim().toLowerCase();
+                const hasExistingPo = Boolean(draftSku && poSkuSet.has(draftSku));
+                const selectedBucket = normalizePortfolioBucket(
+                  draftValues?.portfolioBucket || editing?.raw?.portfolioBucket,
+                  PORTFOLIO_BUCKET.CORE,
+                );
+                if (!hasExistingPo || selectedBucket === PORTFOLIO_BUCKET.CORE) return null;
+                return (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="PO vorhanden: Produkt wird im Cashflow als Kernportfolio behandelt."
+                  />
+                );
+              })()}
             </div>
             <div className="v2-form-row">
               <Form.Item name="categoryId" label="Kategorie" style={{ flex: 1 }}>
@@ -1661,6 +1763,64 @@ export default function ProductsModule(): JSX.Element {
 
           <div className="v2-form-section">
             <div className="v2-form-section-head">
+              <Title level={5} className="v2-form-section-title">Einmalige Launch-Kosten</Title>
+              <span className="v2-form-section-desc">Datumsgenaue Einmalkosten für Launch-Planung im Cashflow.</span>
+            </div>
+            <Form.List name="launchCosts">
+              {(fields, { add, remove }) => (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {fields.map((field) => (
+                    <div key={field.key} className="v2-form-row">
+                      <Form.Item
+                        name={[field.name, "type"]}
+                        label="Typ"
+                        style={{ minWidth: 180, flex: 1 }}
+                        rules={[{ required: true, message: "Typ fehlt." }]}
+                      >
+                        <Select options={LAUNCH_COST_TYPE_VALUES.map((value) => ({ value, label: value }))} />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "amountEur"]}
+                        label="Betrag (EUR)"
+                        style={{ minWidth: 160, flex: 1 }}
+                        rules={[{ required: true, message: "Betrag fehlt." }]}
+                      >
+                        <DeNumberInput mode="decimal" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name={[field.name, "date"]}
+                        label="Datum"
+                        style={{ minWidth: 170 }}
+                        rules={[{ required: true, message: "Datum fehlt." }]}
+                      >
+                        <Input type="date" />
+                      </Form.Item>
+                      <Form.Item name={[field.name, "note"]} label="Notiz" style={{ flex: 2 }}>
+                        <Input placeholder="Optional" />
+                      </Form.Item>
+                      <Form.Item style={{ marginTop: 30 }}>
+                        <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
+                      </Form.Item>
+                    </div>
+                  ))}
+                  <Button
+                    onClick={() => add({
+                      type: "Sonstiges",
+                      amountEur: null,
+                      currency: "EUR",
+                      date: "",
+                      note: "",
+                    })}
+                  >
+                    Launch-Kosten hinzufügen
+                  </Button>
+                </Space>
+              )}
+            </Form.List>
+          </div>
+
+          <div className="v2-form-section">
+            <div className="v2-form-section-head">
               <Title level={5} className="v2-form-section-title">Preise & Kosten (operativ)</Title>
               <span className="v2-form-section-desc">Kerndaten fuer Planung sowie FO/PO-Prefill.</span>
             </div>
@@ -1671,7 +1831,16 @@ export default function ProductsModule(): JSX.Element {
                 style={{ flex: 1 }}
                 validateStatus={fieldValidateStatus("avgSellingPriceGrossEUR")}
                 help={fieldHelp("avgSellingPriceGrossEUR")}
-                rules={[{ required: true, message: "Verkaufspreis ist erforderlich." }]}
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      if (draftValues?.includeInForecast === false) return Promise.resolve();
+                      const number = Number(value);
+                      if (Number.isFinite(number) && number > 0) return Promise.resolve();
+                      return Promise.reject(new Error("Verkaufspreis ist erforderlich."));
+                    },
+                  },
+                ]}
               >
                 <DeNumberInput mode="decimal" min={0} />
               </Form.Item>
@@ -1682,9 +1851,9 @@ export default function ProductsModule(): JSX.Element {
                 validateStatus={fieldValidateStatus("sellerboardMarginPct")}
                 help={fieldHelp("sellerboardMarginPct")}
                 rules={[
-                  { required: true, message: "Marge ist erforderlich." },
                   {
                     validator: (_, value) => {
+                      if (draftValues?.includeInForecast === false) return Promise.resolve();
                       const margin = Number(value);
                       if (Number.isFinite(margin) && margin > 0 && margin <= 100) return Promise.resolve();
                       return Promise.reject(new Error("Marge muss > 0 und <= 100 sein."));
