@@ -498,6 +498,37 @@ function splitOutflowEntriesByType(
   return totals;
 }
 
+function splitInflowEntriesByType(
+  entries: DashboardEntry[],
+): {
+  amazon: number;
+  other: number;
+  total: number;
+} {
+  const totals = {
+    amazon: 0,
+    other: 0,
+    total: 0,
+  };
+
+  entries.forEach((entryRaw) => {
+    if (!entryRaw || typeof entryRaw !== "object") return;
+    const entry = entryRaw as DashboardEntry;
+    if (String(entry.direction || "").toLowerCase() !== "in") return;
+    const amount = Math.abs(Number(entry.amount || 0));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    const source = String(entry.source || "").toLowerCase();
+    const kind = String(entry.kind || "").toLowerCase();
+    const isAmazon = source === "sales" || source === "sales-plan" || kind === "sales-payout";
+    if (isAmazon) totals.amazon += amount;
+    else totals.other += amount;
+    totals.total += amount;
+  });
+
+  return totals;
+}
+
 function applySimulationToBreakdown(
   rows: DashboardBreakdownRow[],
   simulation: SimulationEventDraft | null,
@@ -859,8 +890,32 @@ export default function DashboardModule(): JSX.Element {
     return map;
   }, [simulatedBreakdown]);
 
+  const inflowSplitByMonth = useMemo(() => {
+    const map = new Map<string, { amazon: number; other: number; total: number }>();
+    simulatedBreakdown.forEach((row) => {
+      map.set(row.month, splitInflowEntriesByType(Array.isArray(row.entries) ? row.entries : []));
+    });
+    return map;
+  }, [simulatedBreakdown]);
+
+  const inflowSplitSeries = useMemo(
+    () => simulatedBreakdown.map((row) => inflowSplitByMonth.get(row.month) || { amazon: 0, other: 0, total: 0 }),
+    [inflowSplitByMonth, simulatedBreakdown],
+  );
+
+  const amazonInflowSeries = useMemo(
+    () => inflowSplitSeries.map((row) => row.amazon),
+    [inflowSplitSeries],
+  );
+  const otherInflowSeries = useMemo(
+    () => inflowSplitSeries.map((row) => row.other),
+    [inflowSplitSeries],
+  );
+
   const latestSimulatedBreakdown = simulatedBreakdown[simulatedBreakdown.length - 1] || null;
-  const totalInflow = simulatedBreakdown.reduce((sum, row) => sum + Number(row.inflow || 0), 0);
+  const totalAmazonInflow = amazonInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalOtherInflow = otherInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalInflow = totalAmazonInflow + totalOtherInflow;
   const totalOutflow = simulatedBreakdown.reduce((sum, row) => sum + Number(row.outflow || 0), 0);
   const totalNet = simulatedBreakdown.reduce((sum, row) => sum + Number(row.net || 0), 0);
 
@@ -1036,11 +1091,11 @@ export default function DashboardModule(): JSX.Element {
 
   const pnlRowsByMonth = useMemo(
     () => buildDashboardPnlRowsByMonth({
-      breakdown: visibleBreakdown,
+      breakdown: simulatedBreakdown,
       state: planningState,
       provisionalFoIds: phantomFoIdSet,
     }),
-    [phantomFoIdSet, planningState, visibleBreakdown],
+    [phantomFoIdSet, planningState, simulatedBreakdown],
   );
 
   const chartOption = useMemo(() => {
@@ -1111,11 +1166,18 @@ export default function DashboardModule(): JSX.Element {
       ],
       series: [
         {
-          name: "Einzahlungen",
+          name: "Amazon Einzahlungen",
           type: "bar",
           stack: "cash",
-          data: simulatedBreakdown.map((row) => Number(row.inflow || 0)),
+          data: amazonInflowSeries,
           itemStyle: { color: "#27ae60" },
+        },
+        {
+          name: "Sonstige Einzahlungen",
+          type: "bar",
+          stack: "cash",
+          data: otherInflowSeries,
+          itemStyle: { color: "#86efac" },
         },
         {
           name: "Fixkosten",
@@ -1208,6 +1270,8 @@ export default function DashboardModule(): JSX.Element {
       ],
     };
   }, [
+    amazonInflowSeries,
+    otherInflowSeries,
     phantomFoIdSet,
     robustness.monthMap,
     simulatedBreakdown,
@@ -1308,7 +1372,7 @@ export default function DashboardModule(): JSX.Element {
   ], [navigate, selectedMonthData?.coverage.projectionMode, selectedMonthData?.month]);
 
   const pnlItems = useMemo(() => {
-    return visibleBreakdown.map((monthRow) => {
+    return simulatedBreakdown.map((monthRow) => {
       const monthRows = pnlRowsByMonth.get(monthRow.month) || [];
       const provisionalRows = monthRows.filter((row) => row.provisional);
       const groupedRows = PNL_GROUP_ORDER
@@ -1318,8 +1382,8 @@ export default function DashboardModule(): JSX.Element {
         }))
         .filter((group) => group.rows.length > 0);
 
-      const inflowRows = monthRows.filter((row) => row.amount > 0);
       const outflowRows = monthRows.filter((row) => row.amount < 0);
+      const inflowSplit = inflowSplitByMonth.get(monthRow.month) || { amazon: 0, other: 0, total: 0 };
       const robust = robustness.monthMap.get(monthRow.month)?.robust || false;
 
       return {
@@ -1328,7 +1392,9 @@ export default function DashboardModule(): JSX.Element {
           <div className="v2-dashboard-pnl-header">
             <Text strong>{formatMonthLabel(monthRow.month)}</Text>
             <Space wrap>
-              <Tag color="green">Einzahlungen: {formatCurrency(sumRows(inflowRows))}</Tag>
+              <Tag color="green">Einzahlungen: {formatCurrency(inflowSplit.total)}</Tag>
+              <Tag color="green">Amazon: {formatCurrency(inflowSplit.amazon)}</Tag>
+              <Tag color="lime">Sonstige: {formatCurrency(inflowSplit.other)}</Tag>
               <Tag color="red">Auszahlungen: {formatCurrency(Math.abs(sumRows(outflowRows)))}</Tag>
               {provisionalRows.length ? <Tag color="gold">Vorbehaltlich (enthalten): {formatSignedCurrency(sumRows(provisionalRows))}</Tag> : null}
               <Tag color={monthRow.net >= 0 ? "green" : "red"}>Netto: {formatCurrency(monthRow.net)}</Tag>
@@ -1558,7 +1624,7 @@ export default function DashboardModule(): JSX.Element {
         ),
       };
     });
-  }, [navigate, phantomFoById, phantomFoIdSet, planningState, pnlRowsByMonth, robustness.monthMap, visibleBreakdown]);
+  }, [inflowSplitByMonth, navigate, phantomFoById, phantomFoIdSet, planningState, pnlRowsByMonth, robustness.monthMap, simulatedBreakdown]);
 
   async function commitSimulation(): Promise<void> {
     if (!simulationDraft) return;
@@ -1886,6 +1952,8 @@ export default function DashboardModule(): JSX.Element {
               <Title level={4}>Kontostand & Cashflow</Title>
               <Space wrap>
                 <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
+                <Tag color="green">Amazon: {formatCurrency(totalAmazonInflow)}</Tag>
+                <Tag color="lime">Sonstige Einzahlungen: {formatCurrency(totalOtherInflow)}</Tag>
                 <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
                 <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
                 {phantomFoSuggestions.length ? (
