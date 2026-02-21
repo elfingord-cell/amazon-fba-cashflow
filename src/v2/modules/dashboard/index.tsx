@@ -1113,6 +1113,46 @@ export default function DashboardModule(): JSX.Element {
   }, [selectedMonthData, selectedMonthIsPast, selectedOptionalChecks]);
   const currentMonth = currentMonthKey();
   const currentMonthIdx = monthIndex(currentMonth);
+  const monthLabelToKey = useMemo(() => {
+    const map = new Map<string, string>();
+    visibleMonths.forEach((month) => {
+      map.set(formatMonthLabel(month), month);
+    });
+    return map;
+  }, [visibleMonths]);
+  const handleChartClick = useCallback((paramsRaw: unknown) => {
+    if (!paramsRaw || typeof paramsRaw !== "object") return;
+    const params = paramsRaw as {
+      dataIndex?: unknown;
+      name?: unknown;
+      axisValue?: unknown;
+      value?: unknown;
+    };
+
+    let month: string | null = null;
+    const dataIndex = Number(params.dataIndex);
+    if (Number.isInteger(dataIndex) && dataIndex >= 0 && dataIndex < visibleMonths.length) {
+      month = visibleMonths[dataIndex];
+    }
+
+    if (!month) {
+      const candidates = [params.name, params.axisValue, params.value]
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean);
+      for (let i = 0; i < candidates.length; i += 1) {
+        const match = monthLabelToKey.get(candidates[i]);
+        if (match) {
+          month = match;
+          break;
+        }
+      }
+    }
+
+    if (month) {
+      openMonthDetails(month);
+    }
+  }, [monthLabelToKey, openMonthDetails, visibleMonths]);
+  const chartEvents = useMemo(() => ({ click: handleChartClick }), [handleChartClick]);
 
   useEffect(() => {
     const refreshRuntimeRouteError = () => setRuntimeRouteError(readRuntimeRouteErrorMeta());
@@ -1221,6 +1261,7 @@ export default function DashboardModule(): JSX.Element {
       xAxis: {
         type: "category",
         data: monthLabels,
+        triggerEvent: true,
       },
       yAxis: [
         {
@@ -2241,7 +2282,7 @@ export default function DashboardModule(): JSX.Element {
                   <Tag className="v2-dashboard-legend-tag">Rot = unter 0</Tag>
                 </Tooltip>
               </div>
-              <ReactECharts style={{ height: 380 }} option={chartOption} />
+              <ReactECharts style={{ height: 380 }} option={chartOption} onEvents={chartEvents} />
             </Card>
           ),
         }]}
