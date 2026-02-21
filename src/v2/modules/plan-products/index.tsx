@@ -101,6 +101,13 @@ function formatNumber(value: unknown, digits = 0): string {
   });
 }
 
+function resolvePlanProductComparableId(row: unknown, fallbackIndex = 0): string {
+  const record = row && typeof row === "object" ? row as Record<string, unknown> : {};
+  const explicitId = String(record.id || "").trim();
+  if (explicitId) return explicitId;
+  return String(normalizePlanProductRecord(record, fallbackIndex).id || "").trim();
+}
+
 function planDraftFromRow(row?: Record<string, unknown>): PlanProductDraft {
   const normalized = normalizePlanProductRecord(row || {}, 0);
   const launchCostsRaw = Array.isArray(normalized.launchCosts) ? normalized.launchCosts : [];
@@ -254,7 +261,7 @@ export default function PlanProductsModule(): JSX.Element {
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
       const list = Array.isArray(next.planProducts) ? next.planProducts : [];
-      next.planProducts = list.filter((entry) => String((entry as Record<string, unknown>).id || "") !== rowId);
+      next.planProducts = list.filter((entry, index) => resolvePlanProductComparableId(entry, index) !== rowId);
       return next;
     }, "v2:plan-products:delete");
     message.success("Plan-Produkt entfernt.");
@@ -298,18 +305,20 @@ export default function PlanProductsModule(): JSX.Element {
       const next = ensureAppStateV2(current);
       const list = Array.isArray(next.planProducts) ? [...next.planProducts] : [];
       const normalizedAlias = alias.toLowerCase();
-      const duplicate = list.find((entry) => {
+      const duplicate = list.find((entry, index) => {
         const row = entry as Record<string, unknown>;
         const sameAlias = String(row.alias || "").trim().toLowerCase() === normalizedAlias;
         if (!sameAlias) return false;
         if (!editingId) return true;
-        return String(row.id || "") !== editingId;
+        return resolvePlanProductComparableId(row, index) !== editingId;
       });
       if (duplicate) {
         throw new Error(`Alias "${alias}" existiert bereits bei einem Plan-Produkt.`);
       }
 
       const id = editingId || randomId("plan");
+      const existingIndex = list.findIndex((entry, index) => resolvePlanProductComparableId(entry, index) === id);
+      const existing = existingIndex >= 0 ? list[existingIndex] as Record<string, unknown> : null;
       const launchCosts = normalizeLaunchCosts(values.launchCosts as unknown[], `plan-${id}-lc`);
       const payload = {
         id,
@@ -332,11 +341,10 @@ export default function PlanProductsModule(): JSX.Element {
         softLaunchStartSharePct,
         updatedAt: nowIso(),
         createdAt: editingId
-          ? String((list.find((entry) => String((entry as Record<string, unknown>).id || "") === editingId) as Record<string, unknown> | undefined)?.createdAt || nowIso())
+          ? String(existing?.createdAt || nowIso())
           : nowIso(),
       };
 
-      const existingIndex = list.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === id);
       if (existingIndex >= 0) {
         list[existingIndex] = payload;
       } else {
@@ -375,7 +383,7 @@ export default function PlanProductsModule(): JSX.Element {
       const next = ensureAppStateV2(current);
       const nextState = next as unknown as Record<string, unknown>;
       const planList = Array.isArray(next.planProducts) ? [...next.planProducts] : [];
-      const targetIndex = planList.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === planId);
+      const targetIndex = planList.findIndex((entry, index) => resolvePlanProductComparableId(entry, index) === planId);
       if (targetIndex < 0) {
         throw new Error("Plan-Produkt wurde nicht gefunden.");
       }

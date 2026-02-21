@@ -626,6 +626,10 @@ function buildCashInStatusTags(row: DashboardPnlRow): JSX.Element[] {
   if (!cashInMeta) return [];
   const tags: JSX.Element[] = [];
 
+  if (cashInMeta.component === "plan") {
+    tags.push(<Tag key="component" color="geekblue">Plan-Produkt</Tag>);
+  }
+
   if (cashInMeta.quoteSource === "manual") {
     tags.push(<Tag key="quote-source" color="gold">Quote manuell</Tag>);
   } else if (cashInMeta.quoteSource === "recommendation") {
@@ -1066,6 +1070,43 @@ export default function DashboardModule(): JSX.Element {
     () => computeBucketFlowTotals(simulatedBreakdown),
     [simulatedBreakdown],
   );
+  const planProductImpact = useMemo(() => {
+    let payout = 0;
+    let revenue = 0;
+    const impactedMonths = new Set<string>();
+    simulatedBreakdown.forEach((row) => {
+      const entries = Array.isArray(row.entries) ? row.entries : [];
+      entries.forEach((entryRaw) => {
+        if (!entryRaw || typeof entryRaw !== "object") return;
+        const entry = entryRaw as Record<string, unknown>;
+        const source = String(entry.source || "").trim().toLowerCase();
+        const meta = (entry.meta && typeof entry.meta === "object")
+          ? entry.meta as Record<string, unknown>
+          : {};
+        const cashInMeta = (meta.cashIn && typeof meta.cashIn === "object")
+          ? meta.cashIn as Record<string, unknown>
+          : {};
+        const component = String(cashInMeta.component || "").trim().toLowerCase();
+        if (source !== "sales-plan" && component !== "plan") return;
+        const amountRaw = Number(entry.amount || 0);
+        if (Number.isFinite(amountRaw) && Math.abs(amountRaw) > 0.000001) {
+          const direction = String(entry.direction || "").trim().toLowerCase();
+          const signedAmount = direction === "out" ? -Math.abs(amountRaw) : Math.abs(amountRaw);
+          payout += signedAmount;
+          impactedMonths.add(String(row.month || ""));
+        }
+        const revenueRaw = Number(cashInMeta.revenue);
+        if (Number.isFinite(revenueRaw) && Math.abs(revenueRaw) > 0.000001) {
+          revenue += revenueRaw;
+        }
+      });
+    });
+    return {
+      payout,
+      revenue,
+      monthCount: impactedMonths.size,
+    };
+  }, [simulatedBreakdown]);
 
   const fixcostAverage = useMemo(() => getFixcostAverageFromBreakdown(visibleBreakdown), [visibleBreakdown]);
   const bufferFloor = fixcostAverage * 2;
@@ -2014,6 +2055,11 @@ export default function DashboardModule(): JSX.Element {
                 <Tag color="blue">Umsatzkalibrierung aktiv</Tag>
               </Tooltip>
             )}
+            {Math.abs(planProductImpact.payout) > 0.000001 ? (
+              <Tooltip title={`Neue Produkte im Zeitraum: Umsatz ${formatCurrency(planProductImpact.revenue)} · Cash-In ${formatCurrency(planProductImpact.payout)} · Monate mit Impact: ${planProductImpact.monthCount}.`}>
+                <Tag color="geekblue">Produkt-Impact: {formatCurrency(planProductImpact.payout)}</Tag>
+              </Tooltip>
+            ) : null}
             {cashInFallbackLabel ? <Tag color="default">{cashInFallbackLabel}</Tag> : null}
           </div>
           {cashInIstMonthsCount < 6 ? (

@@ -82,6 +82,7 @@ export interface DashboardPnlRow {
   cashInMeta?: {
     quoteSource?: "manual" | "recommendation" | string;
     revenueSource?: "manual_override" | "forecast_calibrated" | "manual_no_forecast" | string;
+    component?: "live" | "plan" | string | null;
     forecastRevenueRaw?: number | null;
     calibrationFactorApplied?: number | null;
     calibrationSourceMonth?: string | null;
@@ -470,6 +471,7 @@ export function buildDashboardPnlRowsByMonth(input: {
           ? {
             quoteSource: cashInMetaRaw.quoteSource ? String(cashInMetaRaw.quoteSource) : undefined,
             revenueSource: cashInMetaRaw.revenueSource ? String(cashInMetaRaw.revenueSource) : undefined,
+            component: cashInMetaRaw.component ? String(cashInMetaRaw.component) : null,
             forecastRevenueRaw: Number.isFinite(Number(cashInMetaRaw.forecastRevenueRaw))
               ? Number(cashInMetaRaw.forecastRevenueRaw)
               : null,
