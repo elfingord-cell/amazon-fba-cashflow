@@ -16,7 +16,7 @@ import {
   message,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { CASH_IN_QUOTE_MAX_PCT, CASH_IN_QUOTE_MIN_PCT, clampPct, parsePayoutPctInput } from "../../../domain/cashInRules.js";
@@ -232,6 +232,7 @@ function recomputeStoredImpactSummary(stateObject: Record<string, unknown>, fore
 export default function ForecastModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const location = useLocation();
+  const navigate = useNavigate();
   const hasStoredExpandedPrefs = hasModuleExpandedCategoryKeys("forecast");
 
   const [panel, setPanel] = useState<ForecastPanel>("grid");
@@ -265,6 +266,10 @@ export default function ForecastModule(): JSX.Element {
 
   const settings = (state.settings || {}) as Record<string, unknown>;
   const forecast = (state.forecast || {}) as Record<string, unknown>;
+  const forecastSettings = (forecast.settings && typeof forecast.settings === "object")
+    ? forecast.settings as Record<string, unknown>
+    : {};
+  const methodikUseForecast = forecastSettings.useForecast === true;
   const forecastImport = (forecast.forecastImport || {}) as Record<string, unknown>;
   const stateObject = state as unknown as Record<string, unknown>;
 
@@ -725,19 +730,6 @@ export default function ForecastModule(): JSX.Element {
       return next;
     }, "v2:forecast:manual-save");
     setManualDirty(false);
-  }
-
-  async function toggleUseForecast(nextValue: boolean): Promise<void> {
-    await saveWith((current) => {
-      const next = ensureAppStateV2(current);
-      const nextState = next as unknown as Record<string, unknown>;
-      ensureForecastContainers(nextState);
-      const forecastTarget = nextState.forecast as Record<string, unknown>;
-      const settingsTarget = (forecastTarget.settings || {}) as Record<string, unknown>;
-      settingsTarget.useForecast = nextValue;
-      forecastTarget.settings = settingsTarget;
-      return next;
-    }, "v2:forecast:toggle-useForecast");
   }
 
   async function handleCsvImport(file: File): Promise<void> {
@@ -1321,14 +1313,12 @@ export default function ForecastModule(): JSX.Element {
               <Radio.Button value="versions">Versionen</Radio.Button>
               <Radio.Button value="impact">Impact & FO-Konflikte</Radio.Button>
             </Radio.Group>
-            <Checkbox
-              checked={Boolean((forecast.settings as Record<string, unknown> | undefined)?.useForecast)}
-              onChange={(event) => {
-                void toggleUseForecast(event.target.checked);
-              }}
-            >
-              `useForecast` aktiv
-            </Checkbox>
+            <Space wrap>
+              <Text>Forecast wird im Cashflow genutzt: <strong>{methodikUseForecast ? "Ja" : "Nein"}</strong></Text>
+              <Button size="small" onClick={() => navigate("/v2/methodik")}>
+                In Methodik &amp; Regeln ändern
+              </Button>
+            </Space>
           </div>
 
           {panel === "grid" ? (

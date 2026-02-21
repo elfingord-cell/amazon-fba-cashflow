@@ -20,6 +20,8 @@ const COVERAGE_THRESHOLDS = {
   wide: 0.95,
   partial: 0.8,
 } as const;
+const DEFAULT_ROBUSTNESS_LOOKAHEAD_DAYS_NON_DDP = 90;
+const DEFAULT_ROBUSTNESS_LOOKAHEAD_DAYS_DDP = 35;
 
 const COVERAGE_STATUS_META: Record<CoverageStatusKey, {
   label: string;
@@ -62,6 +64,11 @@ export interface RobustnessCoverageStockIssue {
   value: number | null;
   safetyValue: number | null;
   projectionMode: ProjectionModeForCoverage;
+  safetyThresholdDoh: number | null;
+  minDohInWindow: number | null;
+  firstBreachMonth: string | null;
+  lookaheadDays: number;
+  lookaheadMonths: string[];
 }
 
 export interface RobustnessCoverageOrderDutyIssue {
@@ -258,6 +265,83 @@ function addUtcDays(date: Date, days: number): Date {
   return copy;
 }
 
+function daysInCalendarMonth(month: string): number {
+  const parsed = toMonthStartDate(month);
+  if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) return 30;
+  const year = parsed.getUTCFullYear();
+  const monthIndex = parsed.getUTCMonth();
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+}
+
+function isDdpProduct(product: Record<string, unknown>): boolean {
+  if (product.ddp === true) return true;
+  const incoterm = String(product.incoterm || "").trim().toUpperCase();
+  if (incoterm === "DDP") return true;
+  const template = (product.template && typeof product.template === "object")
+    ? product.template as Record<string, unknown>
+    : {};
+  if (template.ddp === true) return true;
+  const templateFields = (template.fields && typeof template.fields === "object")
+    ? template.fields as Record<string, unknown>
+    : {};
+  return templateFields.ddp === true;
+}
+
+function resolveStockLookaheadDays(state: Record<string, unknown>, product: Record<string, unknown>): number {
+  const settings = (state.settings && typeof state.settings === "object")
+    ? state.settings as Record<string, unknown>
+    : {};
+  const nonDdp = toPositiveInteger(settings.robustnessLookaheadDaysNonDdp)
+    ?? DEFAULT_ROBUSTNESS_LOOKAHEAD_DAYS_NON_DDP;
+  const ddp = toPositiveInteger(settings.robustnessLookaheadDaysDdp)
+    ?? DEFAULT_ROBUSTNESS_LOOKAHEAD_DAYS_DDP;
+  return isDdpProduct(product) ? ddp : nonDdp;
+}
+
+function resolveLookaheadWindowMonths(input: {
+  month: string;
+  months: string[];
+  lookaheadDays: number;
+  cache: Map<string, string[]>;
+}): string[] {
+  const lookaheadDays = Math.max(1, Math.round(Number(input.lookaheadDays || 0)));
+  const cacheKey = `${input.month}:${lookaheadDays}`;
+  const cached = input.cache.get(cacheKey);
+  if (cached) return cached;
+  const startIndex = input.months.indexOf(input.month);
+  if (startIndex < 0) {
+    input.cache.set(cacheKey, [input.month]);
+    return [input.month];
+  }
+  let coveredDays = 0;
+  const windowMonths: string[] = [];
+  for (let i = startIndex; i < input.months.length; i += 1) {
+    const month = input.months[i];
+    windowMonths.push(month);
+    coveredDays += daysInCalendarMonth(month);
+    if (coveredDays >= lookaheadDays) break;
+  }
+  const normalized = windowMonths.length ? windowMonths : [input.month];
+  input.cache.set(cacheKey, normalized);
+  return normalized;
+}
+
+function resolveProjectionMonthData(input: {
+  month: string;
+  nowMonth: string;
+  pastProjection: ProjectionCoverageLookup;
+  futureProjection: ProjectionCoverageLookup;
+  sku: string;
+  skuKey: string;
+}): ProjectionMonthData | undefined {
+  const monthProjection = input.month < input.nowMonth
+    ? input.pastProjection
+    : input.futureProjection;
+  const skuProjection = monthProjection.perSkuMonth.get(input.sku)
+    || monthProjection.perSkuMonth.get(input.skuKey);
+  return skuProjection?.get(input.month);
+}
+
 function resolveAbcClass(
   abcBySku: Map<string, { abcClass?: string }>,
   sku: string,
@@ -294,6 +378,17 @@ function projectionRiskClass(
     projectionMode,
     endAvailable: monthData.endAvailable,
     safetyUnits: monthData.safetyUnits,
+    doh: monthData.doh,
+    safetyDays: monthData.safetyDays,
+  }) as ProjectionRiskClass;
+}
+
+function projectionRiskClassByDoh(
+  monthData: ProjectionMonthData | undefined,
+): ProjectionRiskClass {
+  if (!monthData || !monthData.hasForecast) return "";
+  return getProjectionSafetyClass({
+    projectionMode: "doh",
     doh: monthData.doh,
     safetyDays: monthData.safetyDays,
   }) as ProjectionRiskClass;
@@ -729,6 +824,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
     projectionMode,
     nowMonth,
   });
+  const lookaheadWindowCache = new Map<string, string[]>();
 
   const monthResults: DashboardRobustMonth[] = months.map((month) => {
     const missingForecastSkuSet = new Set<string>();
@@ -749,20 +845,50 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       const skuKey = normalizeSkuKey(sku);
       const alias = String(product.alias || sku);
       const abcClass = resolveAbcClass(abcBySku, sku);
-      const monthProjection = month < nowMonth ? pastProjection : futureProjection;
-      const skuProjection = monthProjection.perSkuMonth.get(sku) || monthProjection.perSkuMonth.get(skuKey);
-      const monthData = skuProjection?.get(month);
-      const riskClass = projectionRiskClass(monthData, projectionMode);
-      const stockOk = Boolean(monthData?.hasForecast) && !riskClass;
+      const lookaheadDays = resolveStockLookaheadDays(state, product);
+      const lookaheadMonths = resolveLookaheadWindowMonths({
+        month,
+        months,
+        lookaheadDays,
+        cache: lookaheadWindowCache,
+      });
+      let firstBreachMonth: string | null = null;
+      let firstBreachData: ProjectionMonthData | undefined;
+      let firstRiskClass: ProjectionRiskClass = "";
+      let minDohInWindow: number | null = null;
+
+      lookaheadMonths.forEach((checkMonth) => {
+        if (firstBreachMonth) return;
+        const checkMonthData = resolveProjectionMonthData({
+          month: checkMonth,
+          nowMonth,
+          pastProjection,
+          futureProjection,
+          sku,
+          skuKey,
+        });
+        const checkDoh = Number(checkMonthData?.doh);
+        if (Number.isFinite(checkDoh)) {
+          minDohInWindow = minDohInWindow == null ? checkDoh : Math.min(minDohInWindow, checkDoh);
+        }
+        const checkRiskClass = projectionRiskClassByDoh(checkMonthData);
+        if (!checkMonthData?.hasForecast || checkRiskClass) {
+          firstBreachMonth = checkMonth;
+          firstBreachData = checkMonthData;
+          firstRiskClass = checkRiskClass;
+        }
+      });
+
+      const stockOk = firstBreachMonth == null;
 
       if (!stockOk) {
-        const issueType = stockIssueType(monthData, riskClass);
-        const value = projectionMode === "doh"
-          ? (Number.isFinite(Number(monthData?.doh)) ? Number(monthData?.doh) : null)
-          : (Number.isFinite(Number(monthData?.endAvailable)) ? Number(monthData?.endAvailable) : null);
-        const safetyValue = projectionMode === "doh"
-          ? (Number.isFinite(Number(monthData?.safetyDays)) ? Number(monthData?.safetyDays) : null)
-          : (Number.isFinite(Number(monthData?.safetyUnits)) ? Number(monthData?.safetyUnits) : null);
+        const issueType = stockIssueType(firstBreachData, firstRiskClass);
+        const value = Number.isFinite(Number(firstBreachData?.doh))
+          ? Number(firstBreachData?.doh)
+          : null;
+        const safetyValue = Number.isFinite(Number(firstBreachData?.safetyDays))
+          ? Number(firstBreachData?.safetyDays)
+          : null;
         stockIssues.push({
           sku,
           alias,
@@ -771,12 +897,17 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
           issueLabel: stockIssueLabel(issueType),
           value,
           safetyValue,
-          projectionMode,
+          projectionMode: "doh",
+          safetyThresholdDoh: safetyValue,
+          minDohInWindow,
+          firstBreachMonth,
+          lookaheadDays,
+          lookaheadMonths,
         });
         blockerSkuSet.add(skuKey);
         if (isAbcCritical(abcClass)) blockerAbSkuSet.add(skuKey);
         else blockerCSkuSet.add(skuKey);
-        if (!monthData?.hasForecast) {
+        if (issueType === "forecast_missing") {
           missingForecastSkuSet.add(sku);
         } else {
           safetyRiskSkuSet.add(sku);
@@ -856,15 +987,17 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
         const issueText = entry.issueType === "forecast_missing"
           ? "Forecast fehlt"
           : (entry.issueType === "stock_oos" ? "Out-of-Stock" : "unter Safety");
+        const firstBreachText = entry.firstBreachMonth ? ` (erster Verstoß ${entry.firstBreachMonth})` : "";
         addBlocker({
           month,
           checkKey: "sku_coverage",
           severity: "error",
-          message: `${entry.sku} (${entry.alias}): ${issueText} (${entry.abcClass}).`,
+          message: `${entry.sku} (${entry.alias}): ${issueText}${firstBreachText} (${entry.abcClass}).`,
           sku: entry.sku,
           alias: entry.alias,
           abcClass: entry.abcClass,
           issueType: entry.issueType,
+          firstRiskMonth: entry.firstBreachMonth || undefined,
           route,
         });
       });
@@ -975,7 +1108,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
         label: "Bestands- & Bestellpflicht-Coverage",
         status: coveragePassed ? "ok" : "error",
         passed: coveragePassed,
-        detail: `${coverageStatus.label}: ${coveragePercentLabel(coverageRatio)} (${coveredSkus}/${activeSkuCount}) · Blocker ${blockerCount} (A/B ${blockerAbCount}, C ${blockerCCount}) · Bestand ${stockIssues.length} · Bestellpflicht ${orderDutyIssues.length}`,
+        detail: `${coverageStatus.label}: ${coveragePercentLabel(coverageRatio)} (${coveredSkus}/${activeSkuCount}) · Blocker ${blockerCount} (A/B ${blockerAbCount}, C ${blockerCCount}) · Bestand (Lookahead) ${stockIssues.length} · Bestellpflicht ${orderDutyIssues.length}`,
         blockerCount: blockerCount + (activeSkuCount === 0 ? 1 : 0),
         route: missingForecastSkuSet.size > 0 ? "/v2/forecast" : "/v2/inventory/projektion",
       },

@@ -469,6 +469,9 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [selectedUrgencyMonth, setSelectedUrgencyMonth] = useState<string | null>(null);
   const [pendingUrgencyMonthFromQuery, setPendingUrgencyMonthFromQuery] = useState<string | null>(null);
   const [expandProjectionFromQuery, setExpandProjectionFromQuery] = useState(false);
+  const [focusSkuFromQuery, setFocusSkuFromQuery] = useState<string | null>(null);
+  const [focusSkuConsumed, setFocusSkuConsumed] = useState(false);
+  const [highlightSku, setHighlightSku] = useState<string | null>(null);
   const [actionIntent, setActionIntent] = useState<ProjectionActionIntent | null>(null);
 
   const showSnapshot = view !== "projection";
@@ -505,7 +508,15 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     appliedDashboardQueryRef.current = true;
 
     const sku = String(params.get("sku") || "").trim();
-    if (sku) setSearch(sku);
+    if (sku) {
+      setSearch(sku);
+      setFocusSkuFromQuery(sku);
+      setFocusSkuConsumed(false);
+    } else {
+      setFocusSkuFromQuery(null);
+      setFocusSkuConsumed(true);
+      setHighlightSku(null);
+    }
 
     const month = normalizeMonthKey(params.get("month"));
     if (month) setPendingUrgencyMonthFromQuery(month);
@@ -1000,6 +1011,26 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     setExpandProjectionFromQuery(false);
   }, [expandProjectionFromQuery, projectionGroupedRows, showProjection]);
 
+  useEffect(() => {
+    if (!showProjection || !focusSkuFromQuery || focusSkuConsumed) return;
+    const anchorId = `v2-proj-sku-${encodeURIComponent(focusSkuFromQuery)}`;
+    const skuKey = focusSkuFromQuery.toLowerCase();
+    const target = Array.from(document.querySelectorAll<HTMLElement>("[data-proj-sku-key]"))
+      .find((entry) => String(entry.dataset.projSkuKey || "") === skuKey)
+      || document.getElementById(anchorId);
+    if (!(target instanceof HTMLElement)) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightSku(focusSkuFromQuery);
+    setFocusSkuConsumed(true);
+    const timer = window.setTimeout(() => {
+      setHighlightSku((current) => {
+        if (!current) return current;
+        return current.toLowerCase() === focusSkuFromQuery.toLowerCase() ? null : current;
+      });
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [focusSkuConsumed, focusSkuFromQuery, projectionGroupedRows, showProjection]);
+
   function openProjectionAction(
     row: InventoryProductRow,
     month: string,
@@ -1207,7 +1238,16 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         accessorKey: "alias",
         meta: { width: 270, minWidth: 250 },
         cell: ({ row }) => (
-          <div className="v2-proj-alias">
+          <div
+            id={`v2-proj-sku-${encodeURIComponent(row.original.sku)}`}
+            data-proj-sku-key={row.original.sku.toLowerCase()}
+            className={[
+              "v2-proj-alias",
+              highlightSku && row.original.sku.toLowerCase() === highlightSku.toLowerCase()
+                ? "v2-proj-alias--highlight"
+                : "",
+            ].filter(Boolean).join(" ")}
+          >
             <div className="v2-proj-alias-main" title={row.original.alias}>{row.original.alias}</div>
             <Text className="v2-proj-sku-secondary" type="secondary" title={row.original.sku}>
               {row.original.sku}
@@ -1380,6 +1420,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     anchorMissingHistorySet,
     anchorSkuFallbackSet,
     firstRiskFoIntentByCellKey,
+    highlightSku,
     projection,
     projectionMode,
     projectionMonthList,

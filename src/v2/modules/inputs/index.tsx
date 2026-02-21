@@ -3,14 +3,13 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Input,
-  Select,
   Space,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
+import { useNavigate } from "react-router-dom";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import {
   CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
@@ -272,6 +271,7 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
 
 export default function InputsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const navigate = useNavigate();
 
   const [openingBalance, setOpeningBalance] = useState<number>(0);
   const [startMonth, setStartMonth] = useState<string>(currentMonthKey());
@@ -298,6 +298,17 @@ export default function InputsModule(): JSX.Element {
     () => monthRange(startMonth, Math.max(1, Math.round(horizonMonths || 1))),
     [horizonMonths, startMonth],
   );
+  const settingsState = (state.settings && typeof state.settings === "object")
+    ? state.settings as Record<string, unknown>
+    : {};
+  const forecastState = (state.forecast && typeof state.forecast === "object")
+    ? state.forecast as Record<string, unknown>
+    : {};
+  const forecastSettings = (forecastState.settings && typeof forecastState.settings === "object")
+    ? forecastState.settings as Record<string, unknown>
+    : {};
+  const methodikUseForecast = forecastSettings.useForecast === true;
+  const methodikCashInMode = String(settingsState.cashInMode || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
 
   const forecastRevenueByMonth = useMemo(() => {
     const stateObject = state as unknown as Record<string, unknown>;
@@ -800,6 +811,24 @@ export default function InputsModule(): JSX.Element {
         </div>
       </Card>
 
+      <Card>
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Space wrap>
+            <Text strong>Methodik (global)</Text>
+            <Tag color="blue">GLOBAL</Tag>
+          </Space>
+          <Space wrap>
+            <Tag>Forecast im Cashflow: {methodikUseForecast ? "Ja" : "Nein"}</Tag>
+            <Tag>Cash-In Modus: {methodikCashInMode === "basis" ? "Basis" : "Konservativ"}</Tag>
+            <Tag>Kalibrierung: {cashInCalibrationEnabled ? `An (${cashInCalibrationHorizonMonths} Monate)` : "Aus"}</Tag>
+            <Tag>Q4 ignorieren: {cashInRecommendationIgnoreQ4 ? "An" : "Aus"}</Tag>
+          </Space>
+          <Button size="small" onClick={() => navigate("/v2/methodik")}>
+            In Methodik &amp; Regeln bearbeiten
+          </Button>
+        </Space>
+      </Card>
+
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
@@ -820,30 +849,13 @@ export default function InputsModule(): JSX.Element {
             {!currentMonthInPlanning ? <Tag color="orange">Aktueller Monat liegt ausserhalb des Planungshorizonts</Tag> : null}
           </Space>
           <Space wrap style={{ marginBottom: 8 }}>
-            <Checkbox
-              checked={cashInCalibrationEnabled}
-              onChange={(event) => setCashInCalibrationEnabled(event.target.checked)}
-            >
-              Umsatzkalibrierung aktiv
-            </Checkbox>
-            <Space size={4}>
-              <Text>Kalibrierung wirkt über</Text>
-              <div data-field-key="inputs.cashInCalibrationHorizonMonths">
-                <Select
-                  value={cashInCalibrationHorizonMonths}
-                  style={{ width: 92 }}
-                  options={[
-                    { value: 3, label: "3 Mon." },
-                    { value: 6, label: "6 Mon." },
-                    { value: 12, label: "12 Mon." },
-                  ]}
-                  onChange={(value) => {
-                    setCashInCalibrationHorizonMonths(normalizeCalibrationHorizonMonths(value, 6));
-                  }}
-                />
-              </div>
-              <Text type="secondary">Monate</Text>
-            </Space>
+            <Tag color={cashInCalibrationEnabled ? "green" : "default"}>
+              Umsatzkalibrierung {cashInCalibrationEnabled ? "aktiv" : "aus"}
+            </Tag>
+            <Tag>Wirkt über: {cashInCalibrationHorizonMonths} Monate</Tag>
+            <Button size="small" onClick={() => navigate("/v2/methodik")}>
+              Methodik (global) ändern
+            </Button>
             <Tooltip title="Faktor wird aus Sellerboard-Umsatzprognose Monatsende / Forecast-Umsatz berechnet und läuft linear bis 1,00 aus.">
               <Tag>Info</Tag>
             </Tooltip>
@@ -943,58 +955,15 @@ export default function InputsModule(): JSX.Element {
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
           <Title level={5} style={{ margin: 0 }}>Umsaetze x Payout</Title>
           <Space wrap>
-            <Space size={6} align="center">
-              <Text type="secondary">Baseline Normal %</Text>
-              <div data-field-key="inputs.cashInRecommendationBaselineNormalPct">
-                <DeNumberInput
-                  value={cashInRecommendationBaselineNormalPct}
-                  mode="percent"
-                  min={CASH_IN_QUOTE_MIN_PCT}
-                  max={CASH_IN_QUOTE_MAX_PCT}
-                  step={0.1}
-                  style={{ width: 116 }}
-                  onChange={(value) => {
-                    const parsed = normalizePayoutInput(value);
-                    if (parsed == null) return;
-                    setCashInRecommendationBaselineNormalPct(parsed);
-                  }}
-                />
-              </div>
-            </Space>
-            <Space size={6} align="center">
-              <Text type="secondary">Baseline Q4 %</Text>
-              <div data-field-key="inputs.cashInRecommendationBaselineQ4Pct">
-                <DeNumberInput
-                  value={cashInRecommendationBaselineQ4Pct ?? recommendationBaselineQ4Pct}
-                  mode="percent"
-                  min={CASH_IN_QUOTE_MIN_PCT}
-                  max={CASH_IN_QUOTE_MAX_PCT}
-                  step={0.1}
-                  style={{ width: 116 }}
-                  onChange={(value) => {
-                    if (value == null || String(value).trim() === "") {
-                      setCashInRecommendationBaselineQ4Pct(null);
-                      return;
-                    }
-                    const parsed = normalizePayoutInput(value);
-                    if (parsed == null) return;
-                    setCashInRecommendationBaselineQ4Pct(parsed);
-                  }}
-                />
-              </div>
-              <Tooltip title="Q4 Vorschlag: Normal + 0,5 * (Dez - Normal).">
-                <Tag>Auto {formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%</Tag>
-              </Tooltip>
-              <Button size="small" onClick={() => setCashInRecommendationBaselineQ4Pct(null)}>
-                Auto
-              </Button>
-            </Space>
-            <Checkbox
-              checked={cashInRecommendationIgnoreQ4}
-              onChange={(event) => setCashInRecommendationIgnoreQ4(event.target.checked)}
-            >
-              Q4 bei Empfehlung ignorieren
-            </Checkbox>
+            <Tag>Baseline Normal: {formatNumber(cashInRecommendationBaselineNormalPct, 1)}%</Tag>
+            <Tag>Baseline Q4: {formatNumber(cashInRecommendationBaselineQ4Pct ?? recommendationBaselineQ4Pct, 1)}%</Tag>
+            <Tag>Q4 ignorieren: {cashInRecommendationIgnoreQ4 ? "Ja" : "Nein"}</Tag>
+            <Tooltip title="Q4 Vorschlag: Normal + 0,5 * (Dez - Normal).">
+              <Tag>Auto-Vorschlag: {formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%</Tag>
+            </Tooltip>
+            <Button size="small" onClick={() => navigate("/v2/methodik")}>
+              Methodik (global) ändern
+            </Button>
             <Button
               onClick={() => {
                 setIncomings((prev) => {

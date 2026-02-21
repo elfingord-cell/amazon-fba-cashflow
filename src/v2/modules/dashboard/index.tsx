@@ -1,5 +1,5 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -7,8 +7,10 @@ import {
   Checkbox,
   Collapse,
   Col,
+  Drawer,
   Input,
   InputNumber,
+  Modal,
   message,
   Row,
   Select,
@@ -63,6 +65,7 @@ type SimulationType = "dividend" | "capex";
 type InventoryRiskFilterParam = "all" | "oos" | "under_safety";
 type InventoryAbcFilterParam = "all" | "a" | "b" | "ab" | "abc";
 type ProductIssueFilterParam = "all" | "needs_fix" | "revenue" | "blocked";
+type RobustMonthBlocker = DashboardRobustMonth["blockers"][number];
 
 interface DashboardSeriesRow {
   month: string;
@@ -274,6 +277,12 @@ function coverageStatusTag(statusKey: CoverageStatusKey): JSX.Element {
   return <Tag color={meta.color}>{meta.label}</Tag>;
 }
 
+function criteriaStateSymbol(state: "ok" | "warn" | "fail"): string {
+  if (state === "ok") return "✅";
+  if (state === "warn") return "⚠️";
+  return "❌";
+}
+
 function stockIssueLabel(issue: RobustnessCoverageStockIssue): string {
   if (issue.issueType === "forecast_missing") return "Forecast fehlt";
   if (issue.issueType === "stock_oos") return "Out-of-Stock";
@@ -292,6 +301,10 @@ function addDays(date: Date, days: number): Date {
 
 function simulationDefaultLabel(type: SimulationType): string {
   return type === "dividend" ? "Dividende (Simulation)" : "CAPEX (Simulation)";
+}
+
+function normalizeCashInMode(value: unknown): "basis" | "conservative" {
+  return String(value || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
 }
 
 function signalTitle(label: string, tooltip: string): JSX.Element {
@@ -859,6 +872,8 @@ export default function DashboardModule(): JSX.Element {
   const [simMonth, setSimMonth] = useState<string>("");
   const [simAmount, setSimAmount] = useState<number | null>(null);
   const [simLabel, setSimLabel] = useState<string>("");
+  const [simulationReviewOpen, setSimulationReviewOpen] = useState(false);
+  const [monthDetailOpen, setMonthDetailOpen] = useState(false);
   const [poArrivalDrafts, setPoArrivalDrafts] = useState<Record<string, string>>({});
   const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
   const [openSections, setOpenSections] = useState<string[]>(() => {
@@ -868,6 +883,20 @@ export default function DashboardModule(): JSX.Element {
   });
 
   const stateObject = state as unknown as Record<string, unknown>;
+  const settings = (state.settings && typeof state.settings === "object")
+    ? state.settings as Record<string, unknown>
+    : {};
+  const forecast = (state.forecast && typeof state.forecast === "object")
+    ? state.forecast as Record<string, unknown>
+    : {};
+  const forecastSettings = (forecast.settings && typeof forecast.settings === "object")
+    ? forecast.settings as Record<string, unknown>
+    : {};
+  const methodikUseForecast = forecastSettings.useForecast === true;
+  const methodikCashInMode = normalizeCashInMode(settings.cashInMode);
+  const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
+  const methodikCalibrationHorizonMonths = Math.max(1, Math.round(Number(settings.cashInCalibrationHorizonMonths || 6)));
+  const methodikRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
   const planningMonths = useMemo(
     () => resolvePlanningMonthsFromState(stateObject, 18),
     [state.settings],
@@ -921,41 +950,16 @@ export default function DashboardModule(): JSX.Element {
   const months = report.months || [];
   const breakdown = report.breakdown || [];
   const actualComparisons = report.actualComparisons || [];
-  const cashInMeta = (report.kpis?.cashIn && typeof report.kpis.cashIn === "object")
-    ? report.kpis.cashIn
-    : {};
-  const cashInMode = String(cashInMeta.mode || "conservative").trim().toLowerCase() === "basis" ? "basis" : "conservative";
-  const cashInBaselineNormalPct = Number(
-    cashInMeta.recommendationBaselineNormalPct ?? cashInMeta.basisQuotePct,
-  );
-  const cashInBaselineQ4Pct = Number(cashInMeta.recommendationBaselineQ4Pct);
-  const cashInObservedNormalSampleCount = Math.max(0, Math.round(Number(
-    cashInMeta.recommendationObservedNormalSampleCount || 0,
-  )));
-  const cashInObservedNormalMedianPct = Number(cashInMeta.recommendationObservedNormalMedianPct);
-  const cashInObservedNormalWithForecastSampleCount = Math.max(0, Math.round(Number(
-    cashInMeta.recommendationObservedNormalWithForecastSampleCount || 0,
-  )));
-  const cashInObservedNormalWithForecastMedianPct = Number(
-    cashInMeta.recommendationObservedNormalWithForecastMedianPct,
-  );
-  const cashInCurrentMonthForecastQuotePct = Number(cashInMeta.recommendationCurrentMonthForecastQuotePct);
-  const cashInIstMonthsCount = Math.max(0, Math.round(Number(cashInMeta.istMonthsCount || 0)));
-  const cashInCalibrationEnabled = cashInMeta.calibrationEnabled !== false;
-  const cashInCalibrationApplied = cashInMeta.calibrationApplied === true;
-  const cashInCalibrationHorizonMonths = Math.max(1, Math.round(Number(cashInMeta.calibrationHorizonMonths || 6)));
-  const cashInFallbackUsed = String(cashInMeta.fallbackUsed || "none").trim().toLowerCase();
-  const cashInFallbackLabel = cashInFallbackUsed === "last_plan_quote"
-    ? "Fallback: letzte Plan-Quote"
-    : cashInFallbackUsed === "hardcoded_50"
-      ? "Fallback: 50 %"
-      : null;
 
   const visibleMonths = useMemo(() => {
     const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
     if (!option || option.count == null) return months;
     return months.slice(0, option.count);
   }, [months, range]);
+  const visibleRangeLabel = useMemo(() => {
+    const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
+    return option?.label || "Alle Monate";
+  }, [range]);
 
   const visibleMonthSet = useMemo(() => new Set(visibleMonths), [visibleMonths]);
   const bucketScopeSet = useMemo(() => new Set(bucketScopeValues), [bucketScopeValues]);
@@ -1038,6 +1042,11 @@ export default function DashboardModule(): JSX.Element {
   const handleDashboardSectionsChange = (value: string | string[]) => {
     setOpenSections(normalizeDashboardSectionKeys(toActiveKeys(value)));
   };
+  const openMonthDetails = useCallback((month: string) => {
+    if (!month) return;
+    setSelectedMonth(month);
+    setMonthDetailOpen(true);
+  }, []);
 
   const simulationDraft = useMemo<SimulationEventDraft | null>(() => {
     if (!simMonth || !Number.isFinite(simAmount as number) || Number(simAmount) <= 0) return null;
@@ -1048,6 +1057,20 @@ export default function DashboardModule(): JSX.Element {
       label: simLabel.trim() || simulationDefaultLabel(simType),
     };
   }, [simAmount, simLabel, simMonth, simType]);
+  const simulationReviewRows = useMemo(() => {
+    if (!simulationDraft) return [] as Array<{ month: string; amount: number; category: string; label: string }>;
+    return [{
+      month: simulationDraft.month,
+      amount: Math.abs(Number(simulationDraft.amount || 0)),
+      category: simulationDraft.type === "dividend" ? "Dividende" : "Extra (Auszahlung)",
+      label: simulationDraft.label,
+    }];
+  }, [simulationDraft]);
+  useEffect(() => {
+    if (!simulationDraft && simulationReviewOpen) {
+      setSimulationReviewOpen(false);
+    }
+  }, [simulationDraft, simulationReviewOpen]);
 
   const simulatedBreakdown = useMemo(
     () => applySimulationToBreakdown(visibleBreakdown, simulationDraft),
@@ -1121,43 +1144,6 @@ export default function DashboardModule(): JSX.Element {
     () => computeBucketFlowTotals(simulatedBreakdown),
     [simulatedBreakdown],
   );
-  const planProductImpact = useMemo(() => {
-    let payout = 0;
-    let revenue = 0;
-    const impactedMonths = new Set<string>();
-    simulatedBreakdown.forEach((row) => {
-      const entries = Array.isArray(row.entries) ? row.entries : [];
-      entries.forEach((entryRaw) => {
-        if (!entryRaw || typeof entryRaw !== "object") return;
-        const entry = entryRaw as Record<string, unknown>;
-        const source = String(entry.source || "").trim().toLowerCase();
-        const meta = (entry.meta && typeof entry.meta === "object")
-          ? entry.meta as Record<string, unknown>
-          : {};
-        const cashInMeta = (meta.cashIn && typeof meta.cashIn === "object")
-          ? meta.cashIn as Record<string, unknown>
-          : {};
-        const component = String(cashInMeta.component || "").trim().toLowerCase();
-        if (source !== "sales-plan" && component !== "plan") return;
-        const amountRaw = Number(entry.amount || 0);
-        if (Number.isFinite(amountRaw) && Math.abs(amountRaw) > 0.000001) {
-          const direction = String(entry.direction || "").trim().toLowerCase();
-          const signedAmount = direction === "out" ? -Math.abs(amountRaw) : Math.abs(amountRaw);
-          payout += signedAmount;
-          impactedMonths.add(String(row.month || ""));
-        }
-        const revenueRaw = Number(cashInMeta.revenue);
-        if (Number.isFinite(revenueRaw) && Math.abs(revenueRaw) > 0.000001) {
-          revenue += revenueRaw;
-        }
-      });
-    });
-    return {
-      payout,
-      revenue,
-      monthCount: impactedMonths.size,
-    };
-  }, [simulatedBreakdown]);
 
   const fixcostAverage = useMemo(() => getFixcostAverageFromBreakdown(visibleBreakdown), [visibleBreakdown]);
   const bufferFloor = fixcostAverage * 2;
@@ -1192,9 +1178,6 @@ export default function DashboardModule(): JSX.Element {
 
   const simulationSafe = Boolean(simulationDraft) && bufferFloor > 0 && !simulationBreachMonth;
 
-  const forecast = (state.forecast && typeof state.forecast === "object")
-    ? state.forecast as Record<string, unknown>
-    : {};
   const forecastVersioningSnapshot = useMemo(() => {
     const clone = structuredClone(forecast || {});
     ensureForecastVersioningContainers(clone as Record<string, unknown>);
@@ -1244,11 +1227,37 @@ export default function DashboardModule(): JSX.Element {
     : null;
 
   const selectedMonthData = selectedMonth ? robustness.monthMap.get(selectedMonth) || null : null;
+  const selectedMonthStatusMeta = selectedMonthData
+    ? coverageStatusMeta(selectedMonthData.coverage.statusKey)
+    : null;
+  const selectedMonthIsPast = useMemo(() => {
+    if (!selectedMonthData) return false;
+    const nowIdx = monthIndex(currentMonthKey());
+    const selectedIdx = monthIndex(selectedMonthData.month);
+    if (selectedIdx == null || nowIdx == null) return false;
+    return selectedIdx < nowIdx;
+  }, [selectedMonthData]);
   const selectedStockIssues = selectedMonthData?.coverage.stockIssues || [];
   const selectedOrderDutyIssues = selectedMonthData?.coverage.orderDutyIssues || [];
   const selectedOptionalChecks = selectedMonthData
     ? selectedMonthData.checks.filter((entry) => entry.key !== "sku_coverage")
     : [];
+  const selectedCoverageWarnings = useMemo(() => {
+    if (!selectedMonthData || selectedMonthData.coverage.statusKey === "full") {
+      return [] as Array<{ id: string; message: string; route: string }>;
+    }
+    const month = selectedMonthData.month;
+    return [{
+      id: `coverage-warning:${month}`,
+      message: `Coverage ist ${selectedMonthData.coverage.statusLabel}: ${formatPercent(selectedMonthData.coverage.ratio * 100)} (${selectedMonthData.coverage.coveredSkus}/${selectedMonthData.coverage.activeSkus}).`,
+      route: buildInventoryDashboardRoute({
+        risk: "under_safety",
+        abc: "ab",
+        month,
+        mode: selectedMonthData.coverage.projectionMode,
+      }),
+    }];
+  }, [selectedMonthData]);
   const selectedAdditionalBlockers = selectedMonthData
     ? selectedMonthData.blockers.filter((entry) => entry.checkKey !== "sku_coverage")
     : [];
@@ -1283,6 +1292,140 @@ export default function DashboardModule(): JSX.Element {
     }));
     return [...base, ...optional];
   }, [selectedMonthData, selectedOptionalChecks]);
+  const selectedCriteriaRows = useMemo(() => {
+    if (!selectedMonthData) {
+      return [] as Array<{ key: string; label: string; state: "ok" | "warn" | "fail"; description: string; route: string | null }>;
+    }
+    const rows: Array<{ key: string; label: string; state: "ok" | "warn" | "fail"; description: string; route: string | null }> = [];
+    const stockIssueCount = selectedMonthData.coverage.stockIssueCount;
+    const orderDutyIssueCount = selectedMonthData.coverage.orderDutyIssueCount;
+    rows.push({
+      key: "stock_lookahead",
+      label: "Bestand robust (mit Lookahead)",
+      state: stockIssueCount === 0 ? "ok" : "fail",
+      description: stockIssueCount === 0
+        ? "Alle aktiven SKUs bleiben im Lookahead-Fenster über Safety."
+        : `${stockIssueCount} aktive SKU(s) unterschreiten Safety im Lookahead-Fenster.`,
+      route: "/v2/inventory/projektion",
+    });
+    rows.push({
+      key: "order_duty",
+      label: "Bestellpflicht rechtzeitig",
+      state: orderDutyIssueCount === 0
+        ? "ok"
+        : (selectedMonthData.coverage.overdueOrderDutySkuCount > 0 ? "fail" : "warn"),
+      description: orderDutyIssueCount === 0
+        ? "Keine fällige Bestellpflicht für PO/FO im Monat."
+        : `${orderDutyIssueCount} SKU(s) mit fälliger Bestellpflicht.`,
+      route: "/v2/orders/fo",
+    });
+    selectedOptionalChecks.forEach((check) => {
+      rows.push({
+        key: check.key,
+        label: check.label,
+        state: check.passed ? "ok" : "fail",
+        description: check.detail,
+        route: check.route || null,
+      });
+    });
+    if (selectedMonthIsPast) {
+      rows.push({
+        key: "past-info",
+        label: "Vergangen (Info)",
+        state: "warn",
+        description: "Vergangener Monat: Status dient zur Einordnung, nicht als offene To-Do-Pflicht.",
+        route: null,
+      });
+    }
+    return rows;
+  }, [selectedMonthData, selectedMonthIsPast, selectedOptionalChecks]);
+  const selectedCoverageIssueRows = useMemo(() => {
+    if (!selectedMonthData) {
+      return [] as Array<{
+        key: string;
+        sku: string;
+        alias: string;
+        abcClass: "A" | "B" | "C" | null;
+        reason: string;
+        type: "stock" | "order_duty";
+        issueType: "forecast_missing" | "stock_oos" | "stock_under_safety" | "order_duty";
+        safetyDoh: number | null;
+        minDoh: number | null;
+        lookaheadDays: number | null;
+        suggestedUnits: number | null;
+        requiredArrivalDate: string | null;
+        recommendedOrderDate: string | null;
+        firstRiskMonth: string | null;
+        orderMonth: string | null;
+        leadTimeDays: number | null;
+      }>;
+    }
+    const rows: Array<{
+      key: string;
+      sku: string;
+      alias: string;
+      abcClass: "A" | "B" | "C" | null;
+      reason: string;
+      type: "stock" | "order_duty";
+      issueType: "forecast_missing" | "stock_oos" | "stock_under_safety" | "order_duty";
+      safetyDoh: number | null;
+      minDoh: number | null;
+      lookaheadDays: number | null;
+      suggestedUnits: number | null;
+      requiredArrivalDate: string | null;
+      recommendedOrderDate: string | null;
+      firstRiskMonth: string | null;
+      orderMonth: string | null;
+      leadTimeDays: number | null;
+    }> = [];
+    selectedStockIssues.forEach((issue) => {
+      const reason = issue.issueType === "forecast_missing"
+        ? "nicht beplant (Forecast fehlt)"
+        : (issue.issueType === "stock_oos" ? "Out-of-Stock" : "unter Safety");
+      const firstRiskMonth = issue.firstBreachMonth || selectedMonthData.month;
+      rows.push({
+        key: `stock:${issue.sku}:${issue.issueType}:${firstRiskMonth}`,
+        sku: issue.sku,
+        alias: issue.alias,
+        abcClass: issue.abcClass,
+        reason: `${reason} · erster kritischer Monat ${formatMonthLabel(firstRiskMonth)}`,
+        type: "stock",
+        issueType: issue.issueType,
+        safetyDoh: Number.isFinite(Number(issue.safetyThresholdDoh))
+          ? Number(issue.safetyThresholdDoh)
+          : (Number.isFinite(Number(issue.safetyValue)) ? Number(issue.safetyValue) : null),
+        minDoh: Number.isFinite(Number(issue.minDohInWindow)) ? Number(issue.minDohInWindow) : null,
+        lookaheadDays: Number.isFinite(Number(issue.lookaheadDays)) ? Number(issue.lookaheadDays) : null,
+        suggestedUnits: null,
+        requiredArrivalDate: firstRiskMonth ? `${firstRiskMonth}-01` : null,
+        recommendedOrderDate: null,
+        firstRiskMonth,
+        orderMonth: firstRiskMonth,
+        leadTimeDays: null,
+      });
+    });
+    selectedOrderDutyIssues.forEach((issue) => {
+      rows.push({
+        key: `order-duty:${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`,
+        sku: issue.sku,
+        alias: issue.alias,
+        abcClass: issue.abcClass,
+        reason: `kritischer Monat: ${formatMonthLabel(issue.firstRiskMonth)} · Bestellung bis ${formatIsoDate(issue.latestOrderDate)}`,
+        type: "order_duty",
+        issueType: "order_duty",
+        safetyDoh: null,
+        minDoh: null,
+        lookaheadDays: null,
+        suggestedUnits: issue.shortageUnits,
+        requiredArrivalDate: issue.requiredArrivalDate,
+        recommendedOrderDate: issue.recommendedOrderDate,
+        firstRiskMonth: issue.firstRiskMonth,
+        orderMonth: issue.orderMonth,
+        leadTimeDays: issue.leadTimeDays,
+      });
+    });
+    return rows;
+  }, [selectedMonthData, selectedOrderDutyIssues, selectedStockIssues]);
   const currentMonth = currentMonthKey();
   const todayIso = todayIsoDate();
   const currentMonthIdx = monthIndex(currentMonth);
@@ -1690,7 +1833,20 @@ export default function DashboardModule(): JSX.Element {
         key: monthRow.month,
         label: (
           <div className="v2-dashboard-pnl-header">
-            <Text strong>{formatMonthLabel(monthRow.month)}</Text>
+            <Space size={6} align="center">
+              <Text strong>{formatMonthLabel(monthRow.month)}</Text>
+              <Button
+                type="text"
+                size="small"
+                icon={<InfoCircleOutlined />}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openMonthDetails(monthRow.month);
+                }}
+              >
+                Details
+              </Button>
+            </Space>
             <Space wrap>
               <Tag color="green">Einzahlungen: {formatCurrency(inflowSplit.total)}</Tag>
               <Tag color="green">Amazon: {formatCurrency(inflowSplit.amazon)}</Tag>
@@ -1935,51 +2091,145 @@ export default function DashboardModule(): JSX.Element {
         ),
       };
     });
-  }, [inflowSplitByMonth, navigate, phantomFoById, phantomFoIdSet, planningState, pnlRowsByMonth, robustness.monthMap, simulatedBreakdown]);
+  }, [inflowSplitByMonth, navigate, openMonthDetails, phantomFoById, phantomFoIdSet, planningState, pnlRowsByMonth, robustness.monthMap, simulatedBreakdown]);
 
   async function commitSimulation(): Promise<void> {
     if (!simulationDraft) return;
-    await saveWith((current) => {
-      const next = ensureAppStateV2(current);
-      const stateDraft = next as unknown as Record<string, unknown>;
-      const label = simulationDraft.label || simulationDefaultLabel(simulationDraft.type);
-      if (simulationDraft.type === "dividend") {
-        const dividends = Array.isArray(stateDraft.dividends) ? [...(stateDraft.dividends as Record<string, unknown>[])] : [];
-        dividends.push({
-          id: `div-${Date.now()}`,
-          month: simulationDraft.month,
-          label,
-          amountEur: Math.abs(simulationDraft.amount),
-        });
-        stateDraft.dividends = dividends;
-      } else {
-        const extras = Array.isArray(stateDraft.extras) ? [...(stateDraft.extras as Record<string, unknown>[])] : [];
-        extras.push({
-          id: `extra-${Date.now()}`,
-          month: simulationDraft.month,
-          label,
-          amountEur: -Math.abs(simulationDraft.amount),
-        });
-        stateDraft.extras = extras;
-      }
-      return next;
-    }, `v2:dashboard:simulation-commit:${simulationDraft.type}`);
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const stateDraft = next as unknown as Record<string, unknown>;
+        const label = simulationDraft.label || simulationDefaultLabel(simulationDraft.type);
+        if (simulationDraft.type === "dividend") {
+          const dividends = Array.isArray(stateDraft.dividends) ? [...(stateDraft.dividends as Record<string, unknown>[])] : [];
+          dividends.push({
+            id: `div-${Date.now()}`,
+            month: simulationDraft.month,
+            label,
+            amountEur: Math.abs(simulationDraft.amount),
+          });
+          stateDraft.dividends = dividends;
+        } else {
+          const extras = Array.isArray(stateDraft.extras) ? [...(stateDraft.extras as Record<string, unknown>[])] : [];
+          extras.push({
+            id: `extra-${Date.now()}`,
+            month: simulationDraft.month,
+            label,
+            amountEur: -Math.abs(simulationDraft.amount),
+          });
+          stateDraft.extras = extras;
+        }
+        return next;
+      }, `v2:dashboard:simulation-commit:${simulationDraft.type}`);
 
-    setSimAmount(null);
-    setSimLabel("");
+      setSimAmount(null);
+      setSimLabel("");
+      setSimulationReviewOpen(false);
+      messageApi.success("Übernommen.");
+    } catch (saveError) {
+      console.error(saveError);
+      messageApi.error(saveError instanceof Error ? saveError.message : "Entwurf konnte nicht übernommen werden.");
+    }
   }
 
-  async function saveCashInMode(nextMode: "basis" | "conservative"): Promise<void> {
-    await saveWith((current) => {
-      const next = ensureAppStateV2(current);
-      const stateDraft = next as unknown as Record<string, unknown>;
-      if (!stateDraft.settings || typeof stateDraft.settings !== "object") {
-        stateDraft.settings = {};
-      }
-      const settingsDraft = stateDraft.settings as Record<string, unknown>;
-      settingsDraft.cashInMode = nextMode === "basis" ? "basis" : "conservative";
-      return next;
-    }, `v2:dashboard:cashin-mode:${nextMode}`);
+  function openBlockerTarget(blocker: RobustMonthBlocker): void {
+    if (!selectedMonthData) return;
+    const targetMonth = blocker.month || selectedMonthData.month;
+    if (blocker.checkKey === "cash_in") {
+      navigate(appendRouteQuery("/v2/abschluss/eingaben", {
+        source: "dashboard",
+        month: targetMonth,
+      }));
+      return;
+    }
+    if (blocker.checkKey === "fixcost") {
+      navigate(appendRouteQuery("/v2/abschluss/fixkosten", {
+        source: "dashboard",
+        month: targetMonth,
+      }));
+      return;
+    }
+    if (blocker.checkKey === "vat") {
+      navigate(appendRouteQuery("/v2/abschluss/ust", {
+        source: "dashboard",
+        month: targetMonth,
+      }));
+      return;
+    }
+    if (blocker.checkKey === "revenue_inputs" && blocker.sku) {
+      navigate(appendRouteQuery("/v2/products", {
+        source: "dashboard",
+        issues: "revenue",
+        sku: blocker.sku,
+      }));
+      return;
+    }
+    if (blocker.issueType === "order_duty" && blocker.sku) {
+      navigate(buildFoDashboardRoute({
+        sku: blocker.sku,
+        month: targetMonth,
+        suggestedUnits: blocker.suggestedUnits ?? null,
+        requiredArrivalDate: blocker.requiredArrivalDate || null,
+        recommendedOrderDate: blocker.recommendedOrderDate || null,
+        source: "inventory_projection",
+        phantomId: null,
+        firstRiskMonth: blocker.firstRiskMonth || null,
+        orderMonth: blocker.orderMonth || null,
+        leadTimeDays: blocker.leadTimeDays ?? null,
+        returnTo: "/v2/dashboard",
+      }));
+      return;
+    }
+    if (blocker.issueType === "forecast_missing" && blocker.sku) {
+      navigate(buildForecastDashboardRoute({
+        sku: blocker.sku,
+        month: targetMonth,
+      }));
+      return;
+    }
+    if ((blocker.issueType === "stock_oos" || blocker.issueType === "stock_under_safety") && blocker.sku) {
+      navigate(buildInventoryDashboardRoute({
+        risk: blocker.issueType === "stock_oos" ? "oos" : "under_safety",
+        abc: blocker.abcClass && (blocker.abcClass === "A" || blocker.abcClass === "B") ? "ab" : "all",
+        month: blocker.firstRiskMonth || targetMonth,
+        sku: blocker.sku,
+        mode: selectedMonthData.coverage.projectionMode || null,
+      }));
+      return;
+    }
+    navigate(resolveDashboardRoute({
+      route: blocker.route,
+      checkKey: blocker.checkKey,
+      month: targetMonth,
+      sku: blocker.sku || null,
+      mode: selectedMonthData.coverage.projectionMode || null,
+    }));
+  }
+
+  function openCoverageIssueTarget(input: {
+    sku: string;
+    type: "stock" | "order_duty";
+    issueType?: "forecast_missing" | "stock_oos" | "stock_under_safety";
+    abcClass?: "A" | "B" | "C" | null;
+    suggestedUnits?: number | null;
+    requiredArrivalDate?: string | null;
+    recommendedOrderDate?: string | null;
+    firstRiskMonth?: string | null;
+    orderMonth?: string | null;
+    leadTimeDays?: number | null;
+  }): void {
+    if (!selectedMonthData) return;
+    const targetMonth = input.firstRiskMonth || selectedMonthData.month;
+    const risk: InventoryRiskFilterParam = input.type === "stock" && input.issueType === "stock_oos"
+      ? "oos"
+      : "under_safety";
+    navigate(buildInventoryDashboardRoute({
+      risk,
+      abc: input.abcClass && (input.abcClass === "A" || input.abcClass === "B") ? "ab" : "all",
+      month: targetMonth,
+      sku: input.sku,
+      mode: selectedMonthData.coverage.projectionMode || null,
+    }));
   }
 
   async function markDriftReviewed(): Promise<void> {
@@ -2067,19 +2317,6 @@ export default function DashboardModule(): JSX.Element {
             />
           </div>
           <div className="v2-toolbar-field">
-            <Text>Cash-In Modus</Text>
-            <Select
-              value={cashInMode}
-              onChange={(value) => { void saveCashInMode(String(value) === "basis" ? "basis" : "conservative"); }}
-              options={[
-                { value: "basis", label: "Basis" },
-                { value: "conservative", label: "Konservativ" },
-              ]}
-              style={{ width: 220, maxWidth: "100%" }}
-              disabled={saving}
-            />
-          </div>
-          <div className="v2-toolbar-field">
             <Text>Bucket Scope</Text>
             <Checkbox.Group
               value={bucketScopeValues}
@@ -2103,59 +2340,91 @@ export default function DashboardModule(): JSX.Element {
             Aktueller Betrachtungszeitraum: {visibleMonths.length} Monat(e). PFO-Ziel: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}.
             {" "}Bucket-Scope: {bucketScopeValues.join(", ")}.
           </Text>
-          <div className="v2-toolbar-row">
-            <Text>
-              Baseline Normal:{" "}
-              <strong>
-                {Number.isFinite(cashInBaselineNormalPct)
-                  ? `${Number(cashInBaselineNormalPct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
-                  : "—"}
-              </strong>
-              {" "}· Q4:{" "}
-              <strong>
-                {Number.isFinite(cashInBaselineQ4Pct)
-                  ? `${Number(cashInBaselineQ4Pct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
-                  : "—"}
-              </strong>
-            </Text>
-            <Tooltip title={`Observed Normal (n=${cashInObservedNormalSampleCount}): ${Number.isFinite(cashInObservedNormalMedianPct) ? `${Number(cashInObservedNormalMedianPct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—"} · inkl. Prognose (n=${cashInObservedNormalWithForecastSampleCount}): ${Number.isFinite(cashInObservedNormalWithForecastMedianPct) ? `${Number(cashInObservedNormalWithForecastMedianPct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—"} · aktuelle Prognose-Quote: ${Number.isFinite(cashInCurrentMonthForecastQuotePct) ? `${Number(cashInCurrentMonthForecastQuotePct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—"}.`}>
-              <Tag>Empfehlung Info</Tag>
-            </Tooltip>
-            {cashInMode === "conservative" ? (
-              <Tooltip title="Konservativ = BasisQuote minus 1pp je Zukunftsmonat bis max. 5pp; final bleibt die Quote im Band 40-60%.">
-                <Tag color="gold">Konservativ aktiv</Tag>
-              </Tooltip>
-            ) : <Tag color="blue">Basis aktiv</Tag>}
-            {!cashInCalibrationEnabled ? (
-              <Tag>Umsatzkalibrierung aus</Tag>
-            ) : cashInCalibrationApplied ? (
-              <Tooltip title={`Cash-In nutzt kalibrierte Umsätze mit linearem Fade-Out über ${cashInCalibrationHorizonMonths} Monate.`}>
-                <Tag color="orange">Cash-In kalibriert</Tag>
-              </Tooltip>
-            ) : (
-              <Tooltip title="Umsatzkalibrierung ist aktiv, aktuell aber mit Faktor 1,00 wirksam neutral.">
-                <Tag color="blue">Umsatzkalibrierung aktiv</Tag>
-              </Tooltip>
-            )}
-            {Math.abs(planProductImpact.payout) > 0.000001 ? (
-              <Tooltip title={`Neue Produkte im Zeitraum: Umsatz ${formatCurrency(planProductImpact.revenue)} · Cash-In ${formatCurrency(planProductImpact.payout)} · Monate mit Impact: ${planProductImpact.monthCount}.`}>
-                <Tag color="geekblue">Produkt-Impact: {formatCurrency(planProductImpact.payout)}</Tag>
-              </Tooltip>
-            ) : null}
-            {cashInFallbackLabel ? <Tag color="default">{cashInFallbackLabel}</Tag> : null}
-          </div>
-          {cashInIstMonthsCount < 6 ? (
-            <Alert
-              type="info"
-              showIcon={false}
-              message={`Nur ${cashInIstMonthsCount} Ist-Monate vorhanden – Konservativ empfohlen.`}
-            />
-          ) : null}
         </div>
+      </Card>
+
+      <Card>
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Space wrap>
+            <Title level={5} style={{ margin: 0 }}>Rechenbasis</Title>
+          </Space>
+          <Row gutter={[12, 12]}>
+            <Col xs={24} lg={8}>
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, height: "100%" }}>
+                <Space wrap style={{ marginBottom: 8 }}>
+                  <Text strong>Methodik (global)</Text>
+                  <Tag color="blue">GLOBAL</Tag>
+                </Space>
+                <div><Text>Forecast: {methodikUseForecast ? "An" : "Aus"}</Text></div>
+                <div><Text>Cash-In Modus: {methodikCashInMode === "basis" ? "Basis" : "Konservativ"}</Text></div>
+                <div><Text>Kalibrierung: {methodikCalibrationEnabled ? `An (${methodikCalibrationHorizonMonths} Monate)` : "Aus"}</Text></div>
+                <div><Text>Q4 ignorieren: {methodikRecommendationIgnoreQ4 ? "An" : "Aus"}</Text></div>
+                <div style={{ marginTop: 8 }}>
+                  <Button size="small" onClick={() => navigate("/v2/methodik")}>Methodik ändern</Button>
+                </div>
+              </div>
+            </Col>
+            <Col xs={24} lg={8}>
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, height: "100%" }}>
+                <Space wrap style={{ marginBottom: 8 }}>
+                  <Text strong>Entwurf/Szenario (wirkt erst nach Übernehmen)</Text>
+                  <Tag color={simulationDraft ? "gold" : "default"}>ENTWURF</Tag>
+                </Space>
+                {simulationDraft ? (
+                  <>
+                    <div><Text>Status: ENTWURF - wirkt erst nach Übernehmen</Text></div>
+                    <div>
+                      <Text>Geplante Änderungen: {simulationReviewRows.length}</Text>
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <Space wrap>
+                        <Button size="small" onClick={() => setSimulationReviewOpen(true)}>Review</Button>
+                        <Button size="small" type="primary" onClick={() => setSimulationReviewOpen(true)}>
+                          Übernehmen
+                        </Button>
+                        <Button
+                          size="small"
+                          onClick={() => {
+                            setSimAmount(null);
+                            setSimLabel("");
+                            setSimulationReviewOpen(false);
+                          }}
+                        >
+                          Verwerfen
+                        </Button>
+                      </Space>
+                    </div>
+                  </>
+                ) : (
+                  <Text type="secondary">Kein aktiver Entwurf.</Text>
+                )}
+              </div>
+            </Col>
+            <Col xs={24} lg={8}>
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, height: "100%" }}>
+                <Space wrap style={{ marginBottom: 8 }}>
+                  <Text strong>Ansicht/Filter (nur Anzeige)</Text>
+                  <Tag color="cyan">NUR ANZEIGE</Tag>
+                </Space>
+                <div><Text>Bucket-Scope: {bucketScopeValues.join(", ")}</Text></div>
+                <div><Text>Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate)</Text></div>
+                <div><Text>Phantom-Horizont: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}</Text></div>
+              </div>
+            </Col>
+          </Row>
+        </Space>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
+      {simulationDraft ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="ENTWURF – wirkt erst nach Übernehmen"
+          description={`${simulationReviewRows.length} geplante Änderung(en) im Szenario aktiv.`}
+        />
+      ) : null}
       {openForecastFoConflicts > 0 ? (
         <Alert
           type="warning"
@@ -2168,6 +2437,211 @@ export default function DashboardModule(): JSX.Element {
           )}
         />
       ) : null}
+
+      <Drawer
+        title={selectedMonthData ? `Monats-Check: ${formatMonthLabel(selectedMonthData.month)}` : "Monats-Check"}
+        placement="right"
+        width={520}
+        open={monthDetailOpen && Boolean(selectedMonthData)}
+        onClose={() => setMonthDetailOpen(false)}
+        destroyOnClose={false}
+      >
+        {selectedMonthData ? (
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Space wrap>
+              <Tag color={selectedMonthStatusMeta?.color || "default"}>{selectedMonthData.coverage.statusLabel}</Tag>
+              <Text>
+                Coverage {formatPercent(selectedMonthData.coverage.ratio * 100)} ({selectedMonthData.coverage.coveredSkus}/{selectedMonthData.coverage.activeSkus}),
+                {" "}Bestand {selectedMonthData.coverage.stockIssueCount},
+                {" "}Bestellpflicht {selectedMonthData.coverage.orderDutyIssueCount},
+                {" "}Blocker {selectedMonthData.coverage.blockerCount}
+              </Text>
+              {selectedMonthIsPast ? <Tag>Vergangen (Info)</Tag> : null}
+            </Space>
+
+            <Card size="small" title="A) Kriterien (transparent & nachvollziehbar)">
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space wrap>
+                  <Tooltip title="Coverage zeigt den Anteil aktiver SKUs ohne Bestands- oder Bestellpflicht-Risiko im Monat.">
+                    <Tag icon={<InfoCircleOutlined />}>Coverage</Tag>
+                  </Tooltip>
+                  <Tooltip title="Blocker sind harte Abweichungen, die den Monatsstatus verschlechtern und aktiv behoben werden sollten.">
+                    <Tag icon={<InfoCircleOutlined />}>Blocker</Tag>
+                  </Tooltip>
+                </Space>
+                {selectedCriteriaRows.map((criteria) => (
+                  <div key={criteria.key} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10 }}>
+                    <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+                      <Text strong>{criteriaStateSymbol(criteria.state)} {criteria.label}</Text>
+                      {criteria.route ? (
+                        <Button
+                          size="small"
+                          onClick={() => navigate(resolveDashboardRoute({
+                            route: criteria.route,
+                            month: selectedMonthData.month,
+                            mode: selectedMonthData.coverage.projectionMode,
+                          }))}
+                        >
+                          Öffnen
+                        </Button>
+                      ) : null}
+                    </Space>
+                    <Text type="secondary">{criteria.description}</Text>
+                  </div>
+                ))}
+              </Space>
+            </Card>
+
+            <Card size="small" title="B) Konkrete Blocker & To-Dos">
+              {selectedMonthData.coverage.statusKey === "full" ? (
+                <Alert type="success" showIcon message="Status ist Vollständig. Es sind keine To-Dos offen." />
+              ) : selectedMonthIsPast ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="Vergangener Monat"
+                  description="Zur Einordnung werden die Ursachen angezeigt, es besteht keine To-Do-Pflicht mehr."
+                />
+              ) : (
+                <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                  <div>
+                    <Text strong>1) Blocker</Text>
+                    {!selectedMonthData.blockers.length ? (
+                      <div><Text type="secondary">Keine expliziten Blocker gelistet.</Text></div>
+                    ) : (
+                      <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 6 }}>
+                        {selectedMonthData.blockers.map((blocker) => (
+                          <div key={blocker.id} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10 }}>
+                            <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+                              <Tag color="red">Blocker</Tag>
+                              <Button size="small" onClick={() => openBlockerTarget(blocker)}>
+                                Öffnen
+                              </Button>
+                            </Space>
+                            <Text>{blocker.message}</Text>
+                          </div>
+                        ))}
+                      </Space>
+                    )}
+                  </div>
+                  <div>
+                    <Text strong>2) Warnungen</Text>
+                    {!selectedCoverageWarnings.length ? (
+                      <div><Text type="secondary">Keine Warnungen.</Text></div>
+                    ) : (
+                      <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 6 }}>
+                        {selectedCoverageWarnings.map((warning) => (
+                          <div key={warning.id} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10 }}>
+                            <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+                              <Tag color="gold">Warnung</Tag>
+                              <Button size="small" onClick={() => navigate(warning.route)}>
+                                Öffnen
+                              </Button>
+                            </Space>
+                            <Text>{warning.message}</Text>
+                          </div>
+                        ))}
+                      </Space>
+                    )}
+                  </div>
+                </Space>
+              )}
+            </Card>
+
+            {selectedCoverageIssueRows.length ? (
+              <Card size="small" title="C) Betroffene SKUs">
+                <div className="v2-table-shell v2-scroll-host">
+                  <table className="v2-stats-table" data-layout="auto">
+                    <thead>
+                      <tr>
+                        <th>Alias / SKU</th>
+                        <th>ABC</th>
+                        <th>Safety DOH</th>
+                        <th>Min DOH</th>
+                        <th>1. kritischer Monat</th>
+                        <th>Grund</th>
+                        <th>Aktionen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedCoverageIssueRows.map((row) => (
+                        <tr key={row.key}>
+                          <td>
+                            <div><Text strong>{row.alias}</Text></div>
+                            <Text type="secondary">{row.sku}</Text>
+                          </td>
+                          <td>{row.abcClass || "—"}</td>
+                          <td>{row.safetyDoh != null ? formatNumber(row.safetyDoh, 0) : "—"}</td>
+                          <td>{row.minDoh != null ? formatNumber(row.minDoh, 0) : "—"}</td>
+                          <td>{row.firstRiskMonth ? formatMonthLabel(row.firstRiskMonth) : "—"}</td>
+                          <td>{row.reason}</td>
+                          <td>
+                            <Space wrap>
+                              <Button
+                                size="small"
+                                onClick={() => openCoverageIssueTarget({
+                                  sku: row.sku,
+                                  type: row.type,
+                                  issueType: row.type === "stock" ? row.issueType : undefined,
+                                  abcClass: row.abcClass,
+                                  suggestedUnits: row.suggestedUnits,
+                                  requiredArrivalDate: row.requiredArrivalDate,
+                                  recommendedOrderDate: row.recommendedOrderDate,
+                                  firstRiskMonth: row.firstRiskMonth,
+                                  orderMonth: row.orderMonth,
+                                  leadTimeDays: row.leadTimeDays,
+                                })}
+                              >
+                                Zur Projection
+                              </Button>
+                              <Button
+                                size="small"
+                                type="primary"
+                                onClick={() => navigate(buildFoDashboardRoute({
+                                  sku: row.sku,
+                                  month: row.firstRiskMonth || selectedMonthData.month,
+                                  suggestedUnits: row.suggestedUnits,
+                                  requiredArrivalDate: row.requiredArrivalDate,
+                                  recommendedOrderDate: row.recommendedOrderDate,
+                                  source: "inventory_projection",
+                                  phantomId: null,
+                                  firstRiskMonth: row.firstRiskMonth,
+                                  orderMonth: row.orderMonth,
+                                  leadTimeDays: row.leadTimeDays,
+                                  returnTo: "/v2/dashboard",
+                                }))}
+                              >
+                                FO erstellen
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => navigate(`/v2/sku-planung?source=dashboard&sku=${encodeURIComponent(row.sku)}`)}
+                              >
+                                SKU-Planung
+                              </Button>
+                              <Button
+                                size="small"
+                                onClick={() => navigate(buildProductsDashboardRoute({
+                                  issues: "all",
+                                  sku: row.sku,
+                                }))}
+                              >
+                                Produkt öffnen
+                              </Button>
+                            </Space>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            ) : null}
+          </Space>
+        ) : (
+          <Text type="secondary">Kein Monat gewählt.</Text>
+        )}
+      </Drawer>
 
       <Collapse
         className="v2-dashboard-module-collapse"
@@ -2570,7 +3044,7 @@ export default function DashboardModule(): JSX.Element {
                         statusMeta.className,
                         isPast ? "is-past" : "",
                       ].filter(Boolean).join(" ")}
-                      onClick={() => setSelectedMonth(month.month)}
+                      onClick={() => openMonthDetails(month.month)}
                     >
                       <div className="v2-dashboard-robust-item-head">
                         <span>{formatMonthLabel(month.month)}</span>
@@ -2898,11 +3372,10 @@ export default function DashboardModule(): JSX.Element {
                 <Button onClick={() => { setSimAmount(null); setSimLabel(""); }}>Simulation zurücksetzen</Button>
                 <Button
                   type="primary"
-                  onClick={() => { void commitSimulation(); }}
+                  onClick={() => setSimulationReviewOpen(true)}
                   disabled={!simulationDraft}
-                  loading={saving}
                 >
-                  Als echten Eintrag übernehmen
+                  Review &amp; übernehmen
                 </Button>
               </Space>
             </Card>
@@ -2991,6 +3464,51 @@ export default function DashboardModule(): JSX.Element {
           ),
         }]}
       />
+
+      <Modal
+        title="Entwurf prüfen"
+        open={simulationReviewOpen}
+        onCancel={() => setSimulationReviewOpen(false)}
+        onOk={() => { void commitSimulation(); }}
+        okText="Übernehmen"
+        cancelText="Abbrechen"
+        okButtonProps={{ disabled: !simulationDraft, loading: saving }}
+      >
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Alert
+            type="warning"
+            showIcon
+            message="ENTWURF – wirkt erst nach Übernehmen"
+            description="Folgende Änderungen werden beim Übernehmen in den Workspace geschrieben."
+          />
+          {!simulationReviewRows.length ? (
+            <Text type="secondary">Kein aktiver Entwurf.</Text>
+          ) : (
+            <div className="v2-table-shell v2-scroll-host">
+              <table className="v2-stats-table" data-layout="auto">
+                <thead>
+                  <tr>
+                    <th>Monat</th>
+                    <th>Betrag</th>
+                    <th>Kategorie</th>
+                    <th>Label</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {simulationReviewRows.map((row) => (
+                    <tr key={`${row.month}-${row.category}-${row.label}`}>
+                      <td>{formatMonthLabel(row.month)}</td>
+                      <td>{formatCurrency(row.amount)}</td>
+                      <td>{row.category}</td>
+                      <td>{row.label}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Space>
+      </Modal>
     </div>
   );
 }

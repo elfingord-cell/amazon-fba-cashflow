@@ -68,6 +68,8 @@ interface SettingsDraft {
   eustRatePct: number;
   defaultDdp: boolean;
   safetyStockDohDefault: number;
+  robustnessLookaheadDaysNonDdp: number;
+  robustnessLookaheadDaysDdp: number;
   foCoverageDohDefault: number;
   moqDefaultUnits: number;
   skuPlanningHorizonMonths: number;
@@ -197,6 +199,8 @@ function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
     eustRatePct: Math.max(0, toNumber(state.eustRatePct, 0)),
     defaultDdp: state.defaultDdp === true,
     safetyStockDohDefault: Math.max(0, toNumber(state.safetyStockDohDefault, 60)),
+    robustnessLookaheadDaysNonDdp: Math.max(1, toNumber(state.robustnessLookaheadDaysNonDdp, 90)),
+    robustnessLookaheadDaysDdp: Math.max(1, toNumber(state.robustnessLookaheadDaysDdp, 35)),
     foCoverageDohDefault: Math.max(0, toNumber(state.foCoverageDohDefault, 90)),
     moqDefaultUnits: Math.max(0, Math.round(toNumber(state.moqDefaultUnits, 500))),
     skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(state.skuPlanningHorizonMonths, 12),
@@ -247,6 +251,8 @@ function normalizeDraft(values: SettingsDraft): string {
     eustRatePct: Number(values.eustRatePct || 0),
     defaultDdp: values.defaultDdp === true,
     safetyStockDohDefault: Number(values.safetyStockDohDefault || 0),
+    robustnessLookaheadDaysNonDdp: Number(values.robustnessLookaheadDaysNonDdp || 0),
+    robustnessLookaheadDaysDdp: Number(values.robustnessLookaheadDaysDdp || 0),
     foCoverageDohDefault: Number(values.foCoverageDohDefault || 0),
     moqDefaultUnits: Number(values.moqDefaultUnits || 0),
     skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(values.skuPlanningHorizonMonths, 12),
@@ -441,6 +447,8 @@ export default function SettingsModule(): JSX.Element {
         eustRatePct: Math.max(0, Number(values.eustRatePct || 0)),
         defaultDdp: values.defaultDdp === true,
         safetyStockDohDefault: Math.max(0, Math.round(values.safetyStockDohDefault)),
+        robustnessLookaheadDaysNonDdp: Math.max(1, Math.round(values.robustnessLookaheadDaysNonDdp)),
+        robustnessLookaheadDaysDdp: Math.max(1, Math.round(values.robustnessLookaheadDaysDdp)),
         foCoverageDohDefault: Math.max(0, Math.round(values.foCoverageDohDefault)),
         moqDefaultUnits: Math.max(0, Math.round(values.moqDefaultUnits)),
         skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(values.skuPlanningHorizonMonths, 12),
@@ -762,6 +770,19 @@ export default function SettingsModule(): JSX.Element {
             <Col xs={24} md={8}>
               <Form.Item label="Default Production Lead Time (Tage)" name="defaultProductionLeadTimeDays">
                 <DeNumberInput mode="int" min={0} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item label="Robustheit Lookahead (Tage) Standard" name="robustnessLookaheadDaysNonDdp">
+                <DeNumberInput mode="int" min={1} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="Robustheit Lookahead (Tage) DDP" name="robustnessLookaheadDaysDdp">
+                <DeNumberInput mode="int" min={1} />
               </Form.Item>
             </Col>
           </Row>

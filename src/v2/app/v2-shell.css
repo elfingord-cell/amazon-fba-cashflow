@@ -371,6 +371,10 @@
   background: #fff;
 }
 
+.v2-stats-table-wrap {
+  overflow: auto;
+}
+
 .v2-scroll-host,
 .v2-stats-table-wrap {
   overflow-x: auto;
@@ -518,6 +522,14 @@
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.v2-proj-alias--highlight {
+  border-radius: 8px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  background: rgba(20, 184, 166, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(13, 148, 136, 0.45);
 }
 
 .v2-proj-alias-main {

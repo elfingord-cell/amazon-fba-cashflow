@@ -60,6 +60,8 @@ const defaults = {
     defaultCurrency: "EUR",
     defaultDdp: false,
     safetyStockDohDefault: 60,
+    robustnessLookaheadDaysNonDdp: 90,
+    robustnessLookaheadDaysDdp: 35,
     foCoverageDohDefault: 90,
     moqDefaultUnits: 500,
     skuPlanningHorizonMonths: 12,
@@ -252,6 +254,14 @@ function ensureGlobalSettings(state) {
       : null;
   }
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
+  settings.robustnessLookaheadDaysNonDdp = Math.max(
+    1,
+    Math.round(Number(settings.robustnessLookaheadDaysNonDdp ?? defaults.settings.robustnessLookaheadDaysNonDdp) || defaults.settings.robustnessLookaheadDaysNonDdp),
+  );
+  settings.robustnessLookaheadDaysDdp = Math.max(
+    1,
+    Math.round(Number(settings.robustnessLookaheadDaysDdp ?? defaults.settings.robustnessLookaheadDaysDdp) || defaults.settings.robustnessLookaheadDaysDdp),
+  );
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
   const skuPlanningHorizonMonths = Math.round(Number(settings.skuPlanningHorizonMonths ?? defaults.settings.skuPlanningHorizonMonths) || defaults.settings.skuPlanningHorizonMonths);
