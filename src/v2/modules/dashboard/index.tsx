@@ -49,7 +49,7 @@ import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../.
 import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
-import { PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
+import { normalizePortfolioBucket, PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModuleExpandedCategoryKeys } from "../../state/uiPrefs";
@@ -592,11 +592,17 @@ function splitInflowEntriesByType(
   bucketScope?: Set<string>,
 ): {
   amazon: number;
+  amazonCore: number;
+  amazonPlanned: number;
+  amazonNew: number;
   other: number;
   total: number;
 } {
   const totals = {
     amazon: 0,
+    amazonCore: 0,
+    amazonPlanned: 0,
+    amazonNew: 0,
     other: 0,
     total: 0,
   };
@@ -612,8 +618,27 @@ function splitInflowEntriesByType(
     const source = String(entry.source || "").toLowerCase();
     const kind = String(entry.kind || "").toLowerCase();
     const isAmazon = source === "sales" || source === "sales-plan" || kind === "sales-payout";
-    if (isAmazon) totals.amazon += amount;
-    else totals.other += amount;
+    if (isAmazon) {
+      totals.amazon += amount;
+      const entryMeta = (entry.meta && typeof entry.meta === "object")
+        ? entry.meta as Record<string, unknown>
+        : {};
+      const cashInMeta = (entryMeta.cashIn && typeof entryMeta.cashIn === "object")
+        ? entryMeta.cashIn as Record<string, unknown>
+        : {};
+      const component = String(cashInMeta.component || "").trim().toLowerCase();
+      const bucketRaw = String(entry.portfolioBucket || entryMeta.portfolioBucket || "").trim();
+      const bucket = normalizePortfolioBucket(bucketRaw, PORTFOLIO_BUCKET.CORE);
+      if (source === "sales-plan" || component === "plan") {
+        totals.amazonNew += amount;
+      } else if (bucket === PORTFOLIO_BUCKET.CORE) {
+        totals.amazonCore += amount;
+      } else {
+        totals.amazonPlanned += amount;
+      }
+    } else {
+      totals.other += amount;
+    }
     totals.total += amount;
   });
 
@@ -1036,7 +1061,14 @@ export default function DashboardModule(): JSX.Element {
   }, [simulatedBreakdown]);
 
   const inflowSplitByMonth = useMemo(() => {
-    const map = new Map<string, { amazon: number; other: number; total: number }>();
+    const map = new Map<string, {
+      amazon: number;
+      amazonCore: number;
+      amazonPlanned: number;
+      amazonNew: number;
+      other: number;
+      total: number;
+    }>();
     simulatedBreakdown.forEach((row) => {
       map.set(row.month, splitInflowEntriesByType(
         Array.isArray(row.entries) ? row.entries : [],
@@ -1047,8 +1079,27 @@ export default function DashboardModule(): JSX.Element {
   }, [bucketScopeSet, simulatedBreakdown]);
 
   const inflowSplitSeries = useMemo(
-    () => simulatedBreakdown.map((row) => inflowSplitByMonth.get(row.month) || { amazon: 0, other: 0, total: 0 }),
+    () => simulatedBreakdown.map((row) => inflowSplitByMonth.get(row.month) || {
+      amazon: 0,
+      amazonCore: 0,
+      amazonPlanned: 0,
+      amazonNew: 0,
+      other: 0,
+      total: 0,
+    }),
     [inflowSplitByMonth, simulatedBreakdown],
+  );
+  const amazonCoreInflowSeries = useMemo(
+    () => inflowSplitSeries.map((row) => row.amazonCore),
+    [inflowSplitSeries],
+  );
+  const amazonPlannedInflowSeries = useMemo(
+    () => inflowSplitSeries.map((row) => row.amazonPlanned),
+    [inflowSplitSeries],
+  );
+  const amazonNewInflowSeries = useMemo(
+    () => inflowSplitSeries.map((row) => row.amazonNew),
+    [inflowSplitSeries],
   );
 
   const amazonInflowSeries = useMemo(
@@ -1288,6 +1339,10 @@ export default function DashboardModule(): JSX.Element {
   );
 
   const chartOption = useMemo(() => {
+    const amazonCoreSeriesName = "Amazon: Kernprodukte";
+    const amazonPlannedSeriesName = "Amazon: Geplante Produkte";
+    const amazonNewSeriesName = "Amazon: Neue Produkte";
+    const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
     const baseClosing = visibleBreakdown.map((row) => Number(row.closing || 0));
     const robustMask = visibleBreakdown.map((row) => Boolean(robustness.monthMap.get(row.month)?.robust));
@@ -1308,7 +1363,9 @@ export default function DashboardModule(): JSX.Element {
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
     const phantomFoOutflowSeries = outflowSplitSeries.map((row) => -row.phantomFo);
     const cashflowLegendItems = [
-      "Amazon Einzahlungen",
+      amazonCoreSeriesName,
+      amazonPlannedSeriesName,
+      amazonNewSeriesName,
       "Sonstige Einzahlungen",
       "Fixkosten",
       "PO",
@@ -1331,12 +1388,21 @@ export default function DashboardModule(): JSX.Element {
           const rows = Array.isArray(params) ? params : [params];
           const first = rows[0] as { axisValueLabel?: string } | undefined;
           const lines = [`<div><strong>${first?.axisValueLabel || ""}</strong></div>`];
+          let amazonSubtotal = 0;
+          let hasAmazonBreakdown = false;
           rows.forEach((entryRaw) => {
             const entry = entryRaw as { marker?: string; seriesName?: string; value?: number | null };
             const value = Number(entry?.value);
             if (!Number.isFinite(value)) return;
+            if (amazonSeriesNames.has(String(entry?.seriesName || ""))) {
+              amazonSubtotal += value;
+              hasAmazonBreakdown = true;
+            }
             lines.push(`<div>${entry?.marker || ""}${entry?.seriesName || ""}: ${formatCurrency(value)}</div>`);
           });
+          if (hasAmazonBreakdown) {
+            lines.push(`<div><strong>Amazon gesamt: ${formatCurrency(amazonSubtotal)}</strong></div>`);
+          }
           return lines.join("");
         },
       },
@@ -1383,18 +1449,32 @@ export default function DashboardModule(): JSX.Element {
       ],
       series: [
         {
-          name: "Amazon Einzahlungen",
+          name: amazonCoreSeriesName,
           type: "bar",
           stack: "cash",
-          data: amazonInflowSeries,
-          itemStyle: { color: "#27ae60" },
+          data: amazonCoreInflowSeries,
+          itemStyle: { color: "#166534" },
+        },
+        {
+          name: amazonPlannedSeriesName,
+          type: "bar",
+          stack: "cash",
+          data: amazonPlannedInflowSeries,
+          itemStyle: { color: "#22c55e" },
+        },
+        {
+          name: amazonNewSeriesName,
+          type: "bar",
+          stack: "cash",
+          data: amazonNewInflowSeries,
+          itemStyle: { color: "#86efac" },
         },
         {
           name: "Sonstige Einzahlungen",
           type: "bar",
           stack: "cash",
           data: otherInflowSeries,
-          itemStyle: { color: "#86efac" },
+          itemStyle: { color: "#6ee7b7" },
         },
         {
           name: "Fixkosten",
@@ -1487,7 +1567,9 @@ export default function DashboardModule(): JSX.Element {
       ],
     };
   }, [
-    amazonInflowSeries,
+    amazonCoreInflowSeries,
+    amazonNewInflowSeries,
+    amazonPlannedInflowSeries,
     bucketScopeSet,
     otherInflowSeries,
     phantomFoIdSet,
