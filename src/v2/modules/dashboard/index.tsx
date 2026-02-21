@@ -8,25 +8,18 @@ import {
   Collapse,
   Col,
   Drawer,
-  Input,
-  InputNumber,
-  Modal,
   Popover,
-  message,
   Row,
   Segmented,
   Select,
   Space,
   Statistic,
-  Table,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
-import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
-import { TanStackGrid } from "../../components/TanStackGrid";
 import { VisTimeline } from "../../components/VisTimeline";
 import {
   buildDashboardPnlRowsByMonth,
@@ -39,9 +32,6 @@ import {
   buildDashboardRobustness,
   type CoverageStatusKey,
   type DashboardRobustMonth,
-  type RobustnessCoverageOrderDutyIssue,
-  type RobustnessCoverageStockIssue,
-  type RobustnessCheckResult,
 } from "../../domain/dashboardRobustness";
 import {
   buildPhantomFoSuggestions,
@@ -64,7 +54,6 @@ const { CheckableTag } = Tag;
 
 type DashboardRange = "next6" | "next12" | "next18" | "all";
 
-type SimulationType = "dividend" | "capex";
 type RevenueBasisMode = "forecast" | "calibrated";
 type CashInQuoteMode = "manual" | "recommendation";
 type CashInSafetyMode = "basis" | "conservative";
@@ -80,26 +69,10 @@ interface DashboardSeriesRow {
   net: { total: number; paid: number; open: number };
 }
 
-interface ActualComparisonRow {
-  month: string;
-  plannedRevenue: number | null;
-  actualRevenue: number | null;
-  revenueDelta: number;
-  revenueDeltaPct: number | null;
-  plannedPayout: number | null;
-  actualPayout: number | null;
-  payoutDelta: number;
-  payoutDeltaPct: number | null;
-  plannedClosing: number | null;
-  actualClosing: number | null;
-  closingDelta: number;
-}
-
 interface SeriesResult {
   months: string[];
   series: DashboardSeriesRow[];
   breakdown: DashboardBreakdownRow[];
-  actualComparisons: ActualComparisonRow[];
   kpis: {
     opening?: number;
     salesPayoutAvg?: number;
@@ -155,17 +128,6 @@ function todayIsoDate(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
-interface SimulatedBreakdownRow extends DashboardBreakdownRow {
-  simApplied?: boolean;
-}
-
-interface SimulationEventDraft {
-  month: string;
-  amount: number;
-  label: string;
-  type: SimulationType;
-}
-
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
   { value: "next6", label: "Nächste 6 Monate", count: 6 },
   { value: "next12", label: "Nächste 12 Monate", count: 12 },
@@ -187,10 +149,7 @@ const DASHBOARD_SECTION_KEYS = new Set([
   "cashflow",
   "actions",
   "robustness",
-  "simulation",
   "pnl",
-  "actuals",
-  "kpis",
 ]);
 
 const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["cashflow", "actions"];
@@ -267,10 +226,6 @@ function formatIsoDate(value: string | null | undefined): string {
   return date.toLocaleDateString("de-DE");
 }
 
-function statusTag(status: RobustnessCheckResult["status"]): JSX.Element {
-  return status === "ok" ? <Tag color="green">OK</Tag> : <Tag color="red">Offen</Tag>;
-}
-
 function coverageStatusMeta(statusKey: CoverageStatusKey): {
   label: string;
   color: string;
@@ -290,12 +245,6 @@ function criteriaStateSymbol(state: "ok" | "warn" | "fail"): string {
   return "❌";
 }
 
-function stockIssueLabel(issue: RobustnessCoverageStockIssue): string {
-  if (issue.issueType === "forecast_missing") return "Forecast fehlt";
-  if (issue.issueType === "stock_oos") return "Out-of-Stock";
-  return "Unter Safety";
-}
-
 function sumRows(rows: DashboardPnlRow[]): number {
   return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
 }
@@ -304,14 +253,6 @@ function addDays(date: Date, days: number): Date {
   const copy = new Date(date.getTime());
   copy.setDate(copy.getDate() + days);
   return copy;
-}
-
-function simulationDefaultLabel(type: SimulationType): string {
-  return type === "dividend" ? "Dividende (Simulation)" : "CAPEX (Simulation)";
-}
-
-function normalizeCashInMode(value: unknown): "basis" | "conservative" {
-  return String(value || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
 }
 
 function bucketLabel(value: string): string {
@@ -457,27 +398,10 @@ function buildFoDashboardRoute(input: {
   });
 }
 
-function buildPoDashboardRoute(input: {
-  sku: string;
-  suggestedUnits?: number | null;
-  requiredArrivalDate?: string | null;
-  recommendedOrderDate?: string | null;
-}): string {
-  return appendRouteQuery("/v2/orders/po", {
-    source: "inventory_projection",
-    sku: input.sku || null,
-    suggestedUnits: Number.isFinite(Number(input.suggestedUnits))
-      ? String(Math.max(0, Math.round(Number(input.suggestedUnits))))
-      : "0",
-    requiredArrivalDate: input.requiredArrivalDate || null,
-    recommendedOrderDate: input.recommendedOrderDate || null,
-  });
-}
-
 function resolveDashboardRoute(input: {
   route: string;
   actionId?: string;
-  checkKey?: RobustnessCheckResult["key"];
+  checkKey?: string;
   month?: string | null;
   sku?: string | null;
   mode?: "units" | "doh" | null;
@@ -724,53 +648,8 @@ function buildCashInStatusTags(row: DashboardPnlRow): JSX.Element[] {
   return tags;
 }
 
-function applySimulationToBreakdown(
-  rows: DashboardBreakdownRow[],
-  simulation: SimulationEventDraft | null,
-): SimulatedBreakdownRow[] {
-  if (!simulation || !Number.isFinite(simulation.amount) || simulation.amount <= 0) {
-    return rows.map((row) => ({ ...row }));
-  }
-
-  let running = Number(rows[0]?.opening || 0);
-  return rows.map((row, index) => {
-    const opening = index === 0 ? Number(row.opening || 0) : running;
-    const isTargetMonth = row.month === simulation.month;
-    const extraOutflow = isTargetMonth ? Math.abs(Number(simulation.amount || 0)) : 0;
-    const inflow = Number(row.inflow || 0);
-    const outflow = Number(row.outflow || 0) + extraOutflow;
-    const net = inflow - outflow;
-    const closing = opening + net;
-    running = closing;
-
-    const simulationEntry = isTargetMonth
-      ? [{
-        id: `sim-${simulation.type}-${simulation.month}`,
-        direction: "out",
-        amount: extraOutflow,
-        label: simulation.label || simulationDefaultLabel(simulation.type),
-        month: simulation.month,
-        kind: simulation.type === "dividend" ? "dividend" : "capex",
-        group: simulation.type === "dividend" ? "Dividende & KapESt" : "Extras (Out)",
-        source: "simulation",
-      }]
-      : [];
-
-    return {
-      ...row,
-      opening,
-      inflow,
-      outflow,
-      net,
-      closing,
-      entries: [...(Array.isArray(row.entries) ? row.entries : []), ...simulationEntry],
-      simApplied: isTargetMonth,
-    };
-  });
-}
-
 function computeFirstNegativeRobustMonth(
-  rows: SimulatedBreakdownRow[],
+  rows: DashboardBreakdownRow[],
   robustMonthMap: Map<string, DashboardRobustMonth>,
 ): string | null {
   for (let i = 0; i < rows.length; i += 1) {
@@ -891,7 +770,6 @@ function readRuntimeRouteErrorMeta(): RuntimeRouteErrorMeta {
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
-  const [messageApi, contextHolder] = message.useMessage();
   const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
   const [range, setRange] = useState<DashboardRange>("next6");
   const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
@@ -904,11 +782,6 @@ export default function DashboardModule(): JSX.Element {
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
-  const [simType, setSimType] = useState<SimulationType>("dividend");
-  const [simMonth, setSimMonth] = useState<string>("");
-  const [simAmount, setSimAmount] = useState<number | null>(null);
-  const [simLabel, setSimLabel] = useState<string>("");
-  const [simulationReviewOpen, setSimulationReviewOpen] = useState(false);
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
   const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
   const [openSections, setOpenSections] = useState<string[]>(() => {
@@ -957,27 +830,6 @@ export default function DashboardModule(): JSX.Element {
     () => new Map(phantomFoSuggestions.map((entry) => [entry.id, entry])),
     [phantomFoSuggestions],
   );
-  const phantomFoByIssueKey = useMemo(() => {
-    const map = new Map<string, PhantomFoSuggestion>();
-    phantomFoSuggestions.forEach((entry) => {
-      const skuKey = String(entry.sku || "").trim().toLowerCase();
-      const firstRiskMonth = String(entry.firstRiskMonth || "").trim();
-      const orderMonth = String(entry.orderMonth || "").trim();
-      if (!skuKey || !firstRiskMonth || !orderMonth) return;
-      const issueKey = `${skuKey}|${firstRiskMonth}|${orderMonth}`;
-      if (!map.has(issueKey)) map.set(issueKey, entry);
-    });
-    return map;
-  }, [phantomFoSuggestions]);
-  const phantomFoBySkuKey = useMemo(() => {
-    const map = new Map<string, PhantomFoSuggestion>();
-    phantomFoSuggestions.forEach((entry) => {
-      const key = String(entry.sku || "").trim().toLowerCase();
-      if (!key || map.has(key)) return;
-      map.set(key, entry);
-    });
-    return map;
-  }, [phantomFoSuggestions]);
   const phantomFoIdSet = useMemo(
     () => new Set(phantomFoSuggestions.map((entry) => entry.id)),
     [phantomFoSuggestions],
@@ -998,7 +850,6 @@ export default function DashboardModule(): JSX.Element {
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
   const breakdown = report.breakdown || [];
-  const actualComparisons = report.actualComparisons || [];
 
   const visibleMonths = useMemo(() => {
     const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
@@ -1017,11 +868,6 @@ export default function DashboardModule(): JSX.Element {
     const filteredByMonth = breakdown.filter((row) => visibleMonthSet.has(row.month));
     return applyBucketScopeToBreakdown(filteredByMonth, bucketScopeSet);
   }, [breakdown, bucketScopeSet, visibleMonthSet]);
-  const visibleActualComparisons = useMemo(
-    () => actualComparisons.filter((row) => visibleMonthSet.has(row.month)),
-    [actualComparisons, visibleMonthSet],
-  );
-
   const robustness = useMemo(() => {
     return buildDashboardRobustness({
       state: stateObject,
@@ -1068,21 +914,9 @@ export default function DashboardModule(): JSX.Element {
     }
     setOpenPnlMonths((current) => {
       const valid = new Set(visibleBreakdown.map((entry) => entry.month));
-      const kept = current.filter((month) => valid.has(month));
-      if (kept.length) return kept;
-      return [visibleBreakdown[0].month];
+      return current.filter((month) => valid.has(month));
     });
   }, [visibleBreakdown]);
-
-  useEffect(() => {
-    if (!visibleMonths.length) {
-      setSimMonth("");
-      return;
-    }
-    if (!simMonth || !visibleMonths.includes(simMonth)) {
-      setSimMonth(visibleMonths[0]);
-    }
-  }, [simMonth, visibleMonths]);
 
   useEffect(() => {
     setModuleExpandedCategoryKeys("dashboard", openSections);
@@ -1097,40 +931,10 @@ export default function DashboardModule(): JSX.Element {
     setMonthDetailOpen(true);
   }, []);
 
-  const simulationDraft = useMemo<SimulationEventDraft | null>(() => {
-    if (!simMonth || !Number.isFinite(simAmount as number) || Number(simAmount) <= 0) return null;
-    return {
-      month: simMonth,
-      amount: Math.abs(Number(simAmount)),
-      type: simType,
-      label: simLabel.trim() || simulationDefaultLabel(simType),
-    };
-  }, [simAmount, simLabel, simMonth, simType]);
-  const simulationReviewRows = useMemo(() => {
-    if (!simulationDraft) return [] as Array<{ month: string; amount: number; category: string; label: string }>;
-    return [{
-      month: simulationDraft.month,
-      amount: Math.abs(Number(simulationDraft.amount || 0)),
-      category: simulationDraft.type === "dividend" ? "Dividende" : "Extra (Auszahlung)",
-      label: simulationDraft.label,
-    }];
-  }, [simulationDraft]);
-  useEffect(() => {
-    if (!simulationDraft && simulationReviewOpen) {
-      setSimulationReviewOpen(false);
-    }
-  }, [simulationDraft, simulationReviewOpen]);
-
   const simulatedBreakdown = useMemo(
-    () => applySimulationToBreakdown(visibleBreakdown, simulationDraft),
-    [simulationDraft, visibleBreakdown],
+    () => visibleBreakdown.map((row) => ({ ...row })),
+    [visibleBreakdown],
   );
-
-  const simulatedBreakdownMap = useMemo(() => {
-    const map = new Map<string, SimulatedBreakdownRow>();
-    simulatedBreakdown.forEach((row) => map.set(row.month, row));
-    return map;
-  }, [simulatedBreakdown]);
 
   const inflowSplitByMonth = useMemo(() => {
     const map = new Map<string, {
@@ -1183,7 +987,6 @@ export default function DashboardModule(): JSX.Element {
     [inflowSplitSeries],
   );
 
-  const latestSimulatedBreakdown = simulatedBreakdown[simulatedBreakdown.length - 1] || null;
   const totalInflow = amazonInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0)
     + otherInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0);
   const totalOutflow = simulatedBreakdown.reduce((sum, row) => sum + Number(row.outflow || 0), 0);
@@ -1222,18 +1025,6 @@ export default function DashboardModule(): JSX.Element {
     () => computeFirstNegativeRobustMonth(simulatedBreakdown, robustness.monthMap),
     [robustness.monthMap, simulatedBreakdown],
   );
-
-  const simulationBreachMonth = useMemo(() => {
-    if (!simulationDraft || bufferFloor <= 0) return null;
-    return simulatedBreakdown.find((row) => {
-      const idxRow = monthIndex(row.month);
-      const idxSim = monthIndex(simulationDraft.month);
-      if (idxRow == null || idxSim == null || idxRow < idxSim) return false;
-      return Number(row.closing || 0) < bufferFloor;
-    })?.month || null;
-  }, [bufferFloor, simulatedBreakdown, simulationDraft]);
-
-  const simulationSafe = Boolean(simulationDraft) && bufferFloor > 0 && !simulationBreachMonth;
 
   const forecastVersioningSnapshot = useMemo(() => {
     const clone = structuredClone(forecast || {});
@@ -1294,8 +1085,6 @@ export default function DashboardModule(): JSX.Element {
     if (selectedIdx == null || nowIdx == null) return false;
     return selectedIdx < nowIdx;
   }, [selectedMonthData]);
-  const selectedStockIssues = selectedMonthData?.coverage.stockIssues || [];
-  const selectedOrderDutyIssues = selectedMonthData?.coverage.orderDutyIssues || [];
   const selectedOptionalChecks = selectedMonthData
     ? selectedMonthData.checks.filter((entry) => entry.key !== "sku_coverage")
     : [];
@@ -1396,93 +1185,6 @@ export default function DashboardModule(): JSX.Element {
     }
     return rows;
   }, [selectedMonthData, selectedMonthIsPast, selectedOptionalChecks]);
-  const selectedCoverageIssueRows = useMemo(() => {
-    if (!selectedMonthData) {
-      return [] as Array<{
-        key: string;
-        sku: string;
-        alias: string;
-        abcClass: "A" | "B" | "C" | null;
-        reason: string;
-        type: "stock" | "order_duty";
-        issueType: "forecast_missing" | "stock_oos" | "stock_under_safety" | "order_duty";
-        safetyDoh: number | null;
-        minDoh: number | null;
-        lookaheadDays: number | null;
-        suggestedUnits: number | null;
-        requiredArrivalDate: string | null;
-        recommendedOrderDate: string | null;
-        firstRiskMonth: string | null;
-        orderMonth: string | null;
-        leadTimeDays: number | null;
-      }>;
-    }
-    const rows: Array<{
-      key: string;
-      sku: string;
-      alias: string;
-      abcClass: "A" | "B" | "C" | null;
-      reason: string;
-      type: "stock" | "order_duty";
-      issueType: "forecast_missing" | "stock_oos" | "stock_under_safety" | "order_duty";
-      safetyDoh: number | null;
-      minDoh: number | null;
-      lookaheadDays: number | null;
-      suggestedUnits: number | null;
-      requiredArrivalDate: string | null;
-      recommendedOrderDate: string | null;
-      firstRiskMonth: string | null;
-      orderMonth: string | null;
-      leadTimeDays: number | null;
-    }> = [];
-    selectedStockIssues.forEach((issue) => {
-      const reason = issue.issueType === "forecast_missing"
-        ? "nicht beplant (Forecast fehlt)"
-        : (issue.issueType === "stock_oos" ? "Out-of-Stock" : "unter Safety");
-      const firstRiskMonth = issue.firstBreachMonth || selectedMonthData.month;
-      rows.push({
-        key: `stock:${issue.sku}:${issue.issueType}:${firstRiskMonth}`,
-        sku: issue.sku,
-        alias: issue.alias,
-        abcClass: issue.abcClass,
-        reason: `${reason} · erster kritischer Monat ${formatMonthLabel(firstRiskMonth)}`,
-        type: "stock",
-        issueType: issue.issueType,
-        safetyDoh: Number.isFinite(Number(issue.safetyThresholdDoh))
-          ? Number(issue.safetyThresholdDoh)
-          : (Number.isFinite(Number(issue.safetyValue)) ? Number(issue.safetyValue) : null),
-        minDoh: Number.isFinite(Number(issue.minDohInWindow)) ? Number(issue.minDohInWindow) : null,
-        lookaheadDays: Number.isFinite(Number(issue.lookaheadDays)) ? Number(issue.lookaheadDays) : null,
-        suggestedUnits: null,
-        requiredArrivalDate: firstRiskMonth ? `${firstRiskMonth}-01` : null,
-        recommendedOrderDate: null,
-        firstRiskMonth,
-        orderMonth: firstRiskMonth,
-        leadTimeDays: null,
-      });
-    });
-    selectedOrderDutyIssues.forEach((issue) => {
-      rows.push({
-        key: `order-duty:${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`,
-        sku: issue.sku,
-        alias: issue.alias,
-        abcClass: issue.abcClass,
-        reason: `kritischer Monat: ${formatMonthLabel(issue.firstRiskMonth)} · Bestellung bis ${formatIsoDate(issue.latestOrderDate)}`,
-        type: "order_duty",
-        issueType: "order_duty",
-        safetyDoh: null,
-        minDoh: null,
-        lookaheadDays: null,
-        suggestedUnits: issue.shortageUnits,
-        requiredArrivalDate: issue.requiredArrivalDate,
-        recommendedOrderDate: issue.recommendedOrderDate,
-        firstRiskMonth: issue.firstRiskMonth,
-        orderMonth: issue.orderMonth,
-        leadTimeDays: issue.leadTimeDays,
-      });
-    });
-    return rows;
-  }, [selectedMonthData, selectedOrderDutyIssues, selectedStockIssues]);
   const currentMonth = currentMonthKey();
   const todayIso = todayIsoDate();
   const currentMonthIdx = monthIndex(currentMonth);
@@ -1529,9 +1231,6 @@ export default function DashboardModule(): JSX.Element {
     const robustNegative = baseClosing.map((value, idx) => (robustMask[idx] && value < 0 ? value : null));
     const softPositive = baseClosing.map((value, idx) => (!robustMask[idx] && value >= 0 ? value : null));
     const softNegative = baseClosing.map((value, idx) => (!robustMask[idx] && value < 0 ? value : null));
-    const simulationSeries = simulationDraft
-      ? visibleBreakdown.map((row) => Number(simulatedBreakdownMap.get(row.month)?.closing || 0))
-      : [];
     const outflowSplitSeries = simulatedBreakdown.map((row) => splitOutflowEntriesByType(
       Array.isArray(row.entries) ? row.entries : [],
       phantomFoIdSet,
@@ -1557,7 +1256,6 @@ export default function DashboardModule(): JSX.Element {
       "Kontostand belastbar (<0)",
       "Kontostand orientierend",
       "Kontostand orientierend (<0)",
-      ...(simulationDraft ? ["Simulation"] : []),
     ];
 
     return {
@@ -1731,18 +1429,6 @@ export default function DashboardModule(): JSX.Element {
           lineStyle: { width: 2, type: "dashed", color: "#c2410c" },
           itemStyle: { color: "#c2410c" },
         },
-        ...(simulationDraft ? [
-          {
-            name: "Simulation",
-            type: "line",
-            smooth: true,
-            yAxisIndex: 1,
-            connectNulls: false,
-            data: simulationSeries,
-            lineStyle: { width: 2, type: "dashed", color: "#f59e0b" },
-            itemStyle: { color: "#f59e0b" },
-          },
-        ] : []),
       ],
     };
   }, [
@@ -1754,101 +1440,9 @@ export default function DashboardModule(): JSX.Element {
     phantomFoIdSet,
     robustness.monthMap,
     simulatedBreakdown,
-    simulatedBreakdownMap,
-    simulationDraft,
     visibleBreakdown,
     visibleMonths,
   ]);
-
-  const actualColumns = useMemo<ColumnDef<ActualComparisonRow>[]>(() => [
-    { header: "Monat", accessorKey: "month" },
-    {
-      header: "Plan Umsatz",
-      accessorKey: "plannedRevenue",
-      cell: ({ row }) => formatCurrency(row.original.plannedRevenue),
-    },
-    {
-      header: "Ist Umsatz",
-      accessorKey: "actualRevenue",
-      cell: ({ row }) => formatCurrency(row.original.actualRevenue),
-    },
-    {
-      header: "Delta Umsatz",
-      accessorKey: "revenueDelta",
-      cell: ({ row }) => (
-        <span className={Number(row.original.revenueDelta || 0) < 0 ? "v2-negative" : undefined}>
-          {formatCurrency(row.original.revenueDelta)}
-        </span>
-      ),
-    },
-    {
-      header: "Delta Umsatz %",
-      accessorKey: "revenueDeltaPct",
-      cell: ({ row }) => formatPercent(row.original.revenueDeltaPct),
-    },
-    {
-      header: "Plan Kontostand",
-      accessorKey: "plannedClosing",
-      cell: ({ row }) => formatCurrency(row.original.plannedClosing),
-    },
-    {
-      header: "Ist Kontostand",
-      accessorKey: "actualClosing",
-      cell: ({ row }) => formatCurrency(row.original.actualClosing),
-    },
-    {
-      header: "Delta Kontostand",
-      accessorKey: "closingDelta",
-      cell: ({ row }) => (
-        <span className={Number(row.original.closingDelta || 0) < 0 ? "v2-negative" : undefined}>
-          {formatCurrency(row.original.closingDelta)}
-        </span>
-      ),
-    },
-  ], []);
-
-  const checkColumns = useMemo(() => [
-    {
-      title: "Check",
-      dataIndex: "label",
-      key: "label",
-      sorter: (a: RobustnessCheckResult, b: RobustnessCheckResult) => String(a.label || "").localeCompare(String(b.label || ""), "de-DE"),
-    },
-    {
-      title: "Status",
-      dataIndex: "status",
-      key: "status",
-      width: 130,
-      sorter: (a: RobustnessCheckResult, b: RobustnessCheckResult) => String(a.status || "").localeCompare(String(b.status || ""), "de-DE"),
-      render: (status: RobustnessCheckResult["status"]) => statusTag(status),
-    },
-    {
-      title: "Detail",
-      dataIndex: "detail",
-      key: "detail",
-      width: 320,
-      sorter: (a: RobustnessCheckResult, b: RobustnessCheckResult) => String(a.detail || "").localeCompare(String(b.detail || ""), "de-DE"),
-      render: (value: string) => <Text type="secondary">{value}</Text>,
-    },
-    {
-      title: "",
-      key: "route",
-      width: 132,
-      render: (_: unknown, row: RobustnessCheckResult) => (
-        <Button
-          size="small"
-          onClick={() => navigate(resolveDashboardRoute({
-            route: row.route,
-            checkKey: row.key,
-            month: selectedMonthData?.month || null,
-            mode: selectedMonthData?.coverage.projectionMode || null,
-          }))}
-        >
-          Öffnen
-        </Button>
-      ),
-    },
-  ], [navigate, selectedMonthData?.coverage.projectionMode, selectedMonthData?.month]);
 
   const pnlItems = useMemo(() => {
     return simulatedBreakdown.map((monthRow) => {
@@ -2139,45 +1733,6 @@ export default function DashboardModule(): JSX.Element {
     setCockpitDetailsOpen(false);
   }
 
-  async function commitSimulation(): Promise<void> {
-    if (!simulationDraft) return;
-    try {
-      await saveWith((current) => {
-        const next = ensureAppStateV2(current);
-        const stateDraft = next as unknown as Record<string, unknown>;
-        const label = simulationDraft.label || simulationDefaultLabel(simulationDraft.type);
-        if (simulationDraft.type === "dividend") {
-          const dividends = Array.isArray(stateDraft.dividends) ? [...(stateDraft.dividends as Record<string, unknown>[])] : [];
-          dividends.push({
-            id: `div-${Date.now()}`,
-            month: simulationDraft.month,
-            label,
-            amountEur: Math.abs(simulationDraft.amount),
-          });
-          stateDraft.dividends = dividends;
-        } else {
-          const extras = Array.isArray(stateDraft.extras) ? [...(stateDraft.extras as Record<string, unknown>[])] : [];
-          extras.push({
-            id: `extra-${Date.now()}`,
-            month: simulationDraft.month,
-            label,
-            amountEur: -Math.abs(simulationDraft.amount),
-          });
-          stateDraft.extras = extras;
-        }
-        return next;
-      }, `v2:dashboard:simulation-commit:${simulationDraft.type}`);
-
-      setSimAmount(null);
-      setSimLabel("");
-      setSimulationReviewOpen(false);
-      messageApi.success("Übernommen.");
-    } catch (saveError) {
-      console.error(saveError);
-      messageApi.error(saveError instanceof Error ? saveError.message : "Entwurf konnte nicht übernommen werden.");
-    }
-  }
-
   function openBlockerTarget(blocker: RobustMonthBlocker): void {
     if (!selectedMonthData) return;
     const targetMonth = blocker.month || selectedMonthData.month;
@@ -2252,32 +1807,6 @@ export default function DashboardModule(): JSX.Element {
     }));
   }
 
-  function openCoverageIssueTarget(input: {
-    sku: string;
-    type: "stock" | "order_duty";
-    issueType?: "forecast_missing" | "stock_oos" | "stock_under_safety";
-    abcClass?: "A" | "B" | "C" | null;
-    suggestedUnits?: number | null;
-    requiredArrivalDate?: string | null;
-    recommendedOrderDate?: string | null;
-    firstRiskMonth?: string | null;
-    orderMonth?: string | null;
-    leadTimeDays?: number | null;
-  }): void {
-    if (!selectedMonthData) return;
-    const targetMonth = input.firstRiskMonth || selectedMonthData.month;
-    const risk: InventoryRiskFilterParam = input.type === "stock" && input.issueType === "stock_oos"
-      ? "oos"
-      : "under_safety";
-    navigate(buildInventoryDashboardRoute({
-      risk,
-      abc: input.abcClass && (input.abcClass === "A" || input.abcClass === "B") ? "ab" : "all",
-      month: targetMonth,
-      sku: input.sku,
-      mode: selectedMonthData.coverage.projectionMode || null,
-    }));
-  }
-
   async function markDriftReviewed(): Promise<void> {
     if (!driftSummary.comparedAt) return;
     await saveWith((current) => {
@@ -2310,7 +1839,6 @@ export default function DashboardModule(): JSX.Element {
 
   return (
     <div className="v2-page">
-      {contextHolder}
       <Card className="v2-intro-card">
         <div className="v2-page-head">
           <div>
@@ -2353,14 +1881,6 @@ export default function DashboardModule(): JSX.Element {
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
-      {simulationDraft ? (
-        <Alert
-          type="warning"
-          showIcon
-          message="ENTWURF – wirkt erst nach Übernehmen"
-          description={`${simulationReviewRows.length} geplante Änderung(en) im Szenario aktiv.`}
-        />
-      ) : null}
       {openForecastFoConflicts > 0 ? (
         <Alert
           type="warning"
@@ -2483,96 +2003,6 @@ export default function DashboardModule(): JSX.Element {
                 </Space>
               )}
             </Card>
-
-            {selectedCoverageIssueRows.length ? (
-              <Card size="small" title="C) Betroffene SKUs">
-                <div className="v2-table-shell v2-scroll-host">
-                  <table className="v2-stats-table" data-layout="auto">
-                    <thead>
-                      <tr>
-                        <th>Alias / SKU</th>
-                        <th>ABC</th>
-                        <th>Safety DOH</th>
-                        <th>Min DOH</th>
-                        <th>1. kritischer Monat</th>
-                        <th>Grund</th>
-                        <th>Aktionen</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedCoverageIssueRows.map((row) => (
-                        <tr key={row.key}>
-                          <td>
-                            <div><Text strong>{row.alias}</Text></div>
-                            <Text type="secondary">{row.sku}</Text>
-                          </td>
-                          <td>{row.abcClass || "—"}</td>
-                          <td>{row.safetyDoh != null ? formatNumber(row.safetyDoh, 0) : "—"}</td>
-                          <td>{row.minDoh != null ? formatNumber(row.minDoh, 0) : "—"}</td>
-                          <td>{row.firstRiskMonth ? formatMonthLabel(row.firstRiskMonth) : "—"}</td>
-                          <td>{row.reason}</td>
-                          <td>
-                            <Space wrap>
-                              <Button
-                                size="small"
-                                onClick={() => openCoverageIssueTarget({
-                                  sku: row.sku,
-                                  type: row.type,
-                                  issueType: row.type === "stock" ? row.issueType : undefined,
-                                  abcClass: row.abcClass,
-                                  suggestedUnits: row.suggestedUnits,
-                                  requiredArrivalDate: row.requiredArrivalDate,
-                                  recommendedOrderDate: row.recommendedOrderDate,
-                                  firstRiskMonth: row.firstRiskMonth,
-                                  orderMonth: row.orderMonth,
-                                  leadTimeDays: row.leadTimeDays,
-                                })}
-                              >
-                                Zur Projection
-                              </Button>
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => navigate(buildFoDashboardRoute({
-                                  sku: row.sku,
-                                  month: row.firstRiskMonth || selectedMonthData.month,
-                                  suggestedUnits: row.suggestedUnits,
-                                  requiredArrivalDate: row.requiredArrivalDate,
-                                  recommendedOrderDate: row.recommendedOrderDate,
-                                  source: "inventory_projection",
-                                  phantomId: null,
-                                  firstRiskMonth: row.firstRiskMonth,
-                                  orderMonth: row.orderMonth,
-                                  leadTimeDays: row.leadTimeDays,
-                                  returnTo: "/v2/dashboard",
-                                }))}
-                              >
-                                FO erstellen
-                              </Button>
-                              <Button
-                                size="small"
-                                onClick={() => navigate(`/v2/sku-planung?source=dashboard&sku=${encodeURIComponent(row.sku)}`)}
-                              >
-                                SKU-Planung
-                              </Button>
-                              <Button
-                                size="small"
-                                onClick={() => navigate(buildProductsDashboardRoute({
-                                  issues: "all",
-                                  sku: row.sku,
-                                }))}
-                              >
-                                Produkt öffnen
-                              </Button>
-                            </Space>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            ) : null}
           </Space>
         ) : (
           <Text type="secondary">Kein Monat gewählt.</Text>
@@ -2637,7 +2067,7 @@ export default function DashboardModule(): JSX.Element {
                   )}
                   value={firstNegativeRobustMonth ? formatMonthLabel(firstNegativeRobustMonth) : "Keiner"}
                 />
-                <Text type="secondary">Simulation wird berücksichtigt</Text>
+                <Text type="secondary">Nur robuste Monate werden berücksichtigt</Text>
               </Card>
 
               <Card className="v2-dashboard-signal-card">
@@ -2901,7 +2331,6 @@ export default function DashboardModule(): JSX.Element {
                 <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
                 {phantomFoSuggestions.length ? <Tag color="gold">Phantom-FOs: {phantomFoSuggestions.length}</Tag> : null}
                 {resolvedPhantomTargetMonth ? <Tag color="gold">PFO bis: {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
-                <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
               </Space>
               <div className="v2-dashboard-legend-help">
                 <Text type="secondary" className="v2-dashboard-legend-note">
@@ -3125,179 +2554,6 @@ export default function DashboardModule(): JSX.Element {
                     ))}
                   </div>
 
-                  <Table
-                    size="small"
-                    pagination={false}
-                    rowKey="key"
-                    columns={checkColumns}
-                    dataSource={selectedMonthData.checks}
-                  />
-
-                  <div className="v2-dashboard-blockers">
-                    <Text strong>Bestands-Probleme in {formatMonthLabel(selectedMonthData.month)}</Text>
-                    {!selectedStockIssues.length ? (
-                      <Text type="secondary">Keine Bestandsprobleme in diesem Monat.</Text>
-                    ) : (
-                      <div className="v2-table-shell v2-scroll-host">
-                        <table className="v2-stats-table" data-layout="auto">
-                          <thead>
-                            <tr>
-                              <th>SKU</th>
-                              <th>Alias</th>
-                              <th>ABC</th>
-                              <th>Problem</th>
-                              <th>Aktionen</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {selectedStockIssues.map((issue) => (
-                              <tr key={`${issue.sku}:${issue.issueType}`}>
-                                <td>{issue.sku}</td>
-                                <td>{issue.alias}</td>
-                                <td>{issue.abcClass}</td>
-                                <td>{stockIssueLabel(issue)}</td>
-                                <td>
-                                  <Space wrap>
-                                    <Button
-                                      size="small"
-                                      onClick={() => navigate(resolveDashboardRoute({
-                                        route: "/v2/inventory/projektion",
-                                        checkKey: "sku_coverage",
-                                        month: selectedMonthData.month,
-                                        sku: issue.sku,
-                                        mode: selectedMonthData.coverage.projectionMode,
-                                      }))}
-                                    >
-                                      Zur Bestandsprojektion
-                                    </Button>
-                                    <Button
-                                      size="small"
-                                      onClick={() => navigate(buildProductsDashboardRoute({
-                                        issues: "all",
-                                        sku: issue.sku,
-                                      }))}
-                                    >
-                                      Produkt öffnen
-                                    </Button>
-                                    {issue.issueType === "forecast_missing" ? (
-                                      <Button
-                                        size="small"
-                                        onClick={() => navigate(buildForecastDashboardRoute({
-                                          sku: issue.sku,
-                                          month: selectedMonthData.month,
-                                        }))}
-                                      >
-                                        Absatzprognose öffnen
-                                      </Button>
-                                    ) : null}
-                                  </Space>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="v2-dashboard-blockers">
-                    <Text strong>Bestellpflicht in {formatMonthLabel(selectedMonthData.month)}</Text>
-                    {!selectedOrderDutyIssues.length ? (
-                      <Text type="secondary">Keine fällige Bestellpflicht in diesem Monat.</Text>
-                    ) : (
-                      <div className="v2-table-shell v2-scroll-host">
-                        <table className="v2-stats-table" data-layout="auto">
-                          <thead>
-                            <tr>
-                              <th>SKU</th>
-                              <th>Alias</th>
-                              <th>ABC</th>
-                              <th>Erster Risikomonat</th>
-                              <th>Spätester Bestellzeitpunkt</th>
-                              <th>Warum Blocker</th>
-                              <th>Aktionen</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {selectedOrderDutyIssues.map((issue: RobustnessCoverageOrderDutyIssue) => {
-                              const skuKey = String(issue.sku || "").trim().toLowerCase();
-                              const issueKey = `${skuKey}|${String(issue.firstRiskMonth || "").trim()}|${String(issue.orderMonth || "").trim()}`;
-                              const phantomSuggestion = phantomFoByIssueKey.get(issueKey) || phantomFoBySkuKey.get(skuKey) || null;
-                              return (
-                                <tr key={`${issue.sku}:${issue.firstRiskMonth}:${issue.orderMonth}`}>
-                                  <td>{issue.sku}</td>
-                                  <td>{issue.alias}</td>
-                                  <td>{issue.abcClass}</td>
-                                  <td>{formatMonthLabel(issue.firstRiskMonth)}</td>
-                                  <td>
-                                    {formatIsoDate(issue.latestOrderDate)} ({formatMonthLabel(issue.orderMonth)})
-                                    {issue.overdue ? <Tag color="red" style={{ marginInlineStart: 8 }}>Überfällig</Tag> : null}
-                                  </td>
-                                  <td>{issue.reason}</td>
-                                  <td>
-                                    <Space wrap>
-                                      <Button
-                                        size="small"
-                                        onClick={() => navigate(resolveDashboardRoute({
-                                          route: "/v2/inventory/projektion",
-                                          checkKey: "sku_coverage",
-                                          month: selectedMonthData.month,
-                                          sku: issue.sku,
-                                          mode: selectedMonthData.coverage.projectionMode,
-                                        }))}
-                                      >
-                                        Zur Bestandsprojektion
-                                      </Button>
-                                      <Button
-                                        size="small"
-                                        type="primary"
-                                        onClick={() => navigate(buildFoDashboardRoute({
-                                          sku: issue.sku,
-                                          month: selectedMonthData.month,
-                                          suggestedUnits: phantomSuggestion?.suggestedUnits ?? issue.shortageUnits,
-                                          requiredArrivalDate: phantomSuggestion?.requiredArrivalDate ?? issue.requiredArrivalDate,
-                                          recommendedOrderDate: phantomSuggestion?.recommendedOrderDate ?? issue.recommendedOrderDate,
-                                          source: phantomSuggestion ? "phantom_fo" : "inventory_projection",
-                                          phantomId: phantomSuggestion?.id || null,
-                                          firstRiskMonth: phantomSuggestion?.firstRiskMonth ?? issue.firstRiskMonth,
-                                          orderMonth: phantomSuggestion?.orderMonth ?? issue.orderMonth,
-                                          leadTimeDays: phantomSuggestion?.leadTimeDays ?? issue.leadTimeDays,
-                                          returnTo: "/v2/dashboard",
-                                        }))}
-                                      >
-                                        FO anlegen
-                                      </Button>
-                                      <Button
-                                        size="small"
-                                        onClick={() => navigate(buildPoDashboardRoute({
-                                          sku: issue.sku,
-                                          suggestedUnits: issue.shortageUnits,
-                                          requiredArrivalDate: issue.requiredArrivalDate,
-                                          recommendedOrderDate: issue.recommendedOrderDate,
-                                        }))}
-                                      >
-                                        PO öffnen
-                                      </Button>
-                                      <Button
-                                        size="small"
-                                        onClick={() => navigate(buildProductsDashboardRoute({
-                                          issues: "all",
-                                          sku: issue.sku,
-                                        }))}
-                                      >
-                                        Produkt öffnen
-                                      </Button>
-                                    </Space>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
                   <div className="v2-dashboard-blockers">
                     <Text strong>Weitere Hard-Checks</Text>
                     {!selectedAdditionalBlockers.length ? (
@@ -3339,89 +2595,6 @@ export default function DashboardModule(): JSX.Element {
         activeKey={openSections}
         onChange={handleDashboardSectionsChange}
         items={[{
-          key: "simulation",
-          label: "Payout Planner (Simulation)",
-          children: (
-            <Card>
-              <Title level={4}>Payout Planner (Simulation)</Title>
-              <Paragraph type="secondary">
-                Einmalige Dividenden oder CAPEX simulieren und optional als echten Eintrag übernehmen.
-              </Paragraph>
-
-              <div className="v2-dashboard-sim-grid">
-                <div className="v2-dashboard-sim-field">
-                  <Text>Typ</Text>
-                  <Select
-                    value={simType}
-                    onChange={(value) => setSimType(value)}
-                    options={[
-                      { value: "dividend", label: "Dividende" },
-                      { value: "capex", label: "CAPEX" },
-                    ]}
-                  />
-                </div>
-
-                <div className="v2-dashboard-sim-field">
-                  <Text>Monat</Text>
-                  <Select
-                    value={simMonth}
-                    onChange={(value) => setSimMonth(value)}
-                    options={visibleMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
-                  />
-                </div>
-
-                <div className="v2-dashboard-sim-field">
-                  <Text>Betrag (EUR)</Text>
-                  <InputNumber
-                    value={Number.isFinite(simAmount as number) ? simAmount : null}
-                    onChange={(value) => setSimAmount(typeof value === "number" ? value : null)}
-                    min={0}
-                    controls={false}
-                    placeholder="0"
-                  />
-                </div>
-
-                <div className="v2-dashboard-sim-field">
-                  <Text>Label</Text>
-                  <Input
-                    value={simLabel}
-                    onChange={(event) => setSimLabel(event.target.value)}
-                    placeholder={simulationDefaultLabel(simType)}
-                  />
-                </div>
-              </div>
-
-              <div className="v2-dashboard-sim-status">
-                <Tag color={simulationDraft ? "gold" : "default"}>{simulationDraft ? "Simulation aktiv" : "Keine Simulation"}</Tag>
-                <Tag color={bufferFloor > 0 ? "blue" : "red"}>Buffer-Ziel: {formatCurrency(bufferFloor)}</Tag>
-                {simulationDraft && bufferFloor <= 0 ? <Tag color="red">Fixkostenbasis fehlt</Tag> : null}
-                {simulationDraft && bufferFloor > 0 ? (
-                  <Tag color={simulationSafe ? "green" : "red"}>
-                    {simulationSafe ? "Sicher" : `Kritisch ab ${simulationBreachMonth ? formatMonthLabel(simulationBreachMonth) : "sofort"}`}
-                  </Tag>
-                ) : null}
-              </div>
-
-              <Space>
-                <Button onClick={() => { setSimAmount(null); setSimLabel(""); }}>Simulation zurücksetzen</Button>
-                <Button
-                  type="primary"
-                  onClick={() => setSimulationReviewOpen(true)}
-                  disabled={!simulationDraft}
-                >
-                  Review &amp; übernehmen
-                </Button>
-              </Space>
-            </Card>
-          ),
-        }]}
-      />
-
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
           key: "pnl",
           label: "Monatliche PnL (Drilldown)",
           children: (
@@ -3440,109 +2613,6 @@ export default function DashboardModule(): JSX.Element {
           ),
         }]}
       />
-
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
-          key: "actuals",
-          label: "Plan/Ist Drilldown",
-          children: (
-            <Card>
-              <Title level={4}>Plan/Ist Drilldown</Title>
-              <Paragraph type="secondary">
-                Monatsvergleich zwischen geplantem und erfasstem Istwert aus den Monats-Ist-Daten.
-              </Paragraph>
-              <TanStackGrid
-                data={visibleActualComparisons}
-                columns={actualColumns}
-                minTableWidth={980}
-                tableLayout="auto"
-              />
-            </Card>
-          ),
-        }]}
-      />
-
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
-          key: "kpis",
-          label: "KPI-Übersicht",
-          children: (
-            <Row gutter={[12, 12]}>
-              <Col xs={24} md={12} xl={6}>
-                <Card>
-                  <Statistic title="Opening Balance" value={Number(report.kpis?.opening || 0)} formatter={(value) => formatCurrency(value)} />
-                </Card>
-              </Col>
-              <Col xs={24} md={12} xl={6}>
-                <Card>
-                  <Statistic title="Sales Payout Ø" value={Number(report.kpis?.salesPayoutAvg || 0)} formatter={(value) => formatCurrency(value)} />
-                </Card>
-              </Col>
-              <Col xs={24} md={12} xl={6}>
-                <Card>
-                  <Statistic title="Robuste Monate" value={`${robustness.robustMonthsCount}/${robustness.totalMonths}`} />
-                </Card>
-              </Col>
-              <Col xs={24} md={12} xl={6}>
-                <Card>
-                  <Statistic title="Letzter Kontostand" value={Number(latestSimulatedBreakdown?.closing || 0)} formatter={(value) => formatCurrency(value)} />
-                </Card>
-              </Col>
-            </Row>
-          ),
-        }]}
-      />
-
-      <Modal
-        title="Entwurf prüfen"
-        open={simulationReviewOpen}
-        onCancel={() => setSimulationReviewOpen(false)}
-        onOk={() => { void commitSimulation(); }}
-        okText="Übernehmen"
-        cancelText="Abbrechen"
-        okButtonProps={{ disabled: !simulationDraft, loading: saving }}
-      >
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <Alert
-            type="warning"
-            showIcon
-            message="ENTWURF – wirkt erst nach Übernehmen"
-            description="Folgende Änderungen werden beim Übernehmen in den Workspace geschrieben."
-          />
-          {!simulationReviewRows.length ? (
-            <Text type="secondary">Kein aktiver Entwurf.</Text>
-          ) : (
-            <div className="v2-table-shell v2-scroll-host">
-              <table className="v2-stats-table" data-layout="auto">
-                <thead>
-                  <tr>
-                    <th>Monat</th>
-                    <th>Betrag</th>
-                    <th>Kategorie</th>
-                    <th>Label</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {simulationReviewRows.map((row) => (
-                    <tr key={`${row.month}-${row.category}-${row.label}`}>
-                      <td>{formatMonthLabel(row.month)}</td>
-                      <td>{formatCurrency(row.amount)}</td>
-                      <td>{row.category}</td>
-                      <td>{row.label}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Space>
-      </Modal>
     </div>
   );
 }
