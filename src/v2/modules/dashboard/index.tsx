@@ -102,6 +102,17 @@ interface SeriesResult {
       istMonthsCount?: number;
       hasIstData?: boolean;
       fallbackUsed?: string;
+      recommendationBaselineNormalPct?: number;
+      recommendationBaselineQ4Pct?: number;
+      recommendationBaselineQ4SuggestedPct?: number;
+      recommendationObservedNormalMedianPct?: number;
+      recommendationObservedNormalAveragePct?: number;
+      recommendationObservedNormalSampleCount?: number;
+      recommendationObservedNormalWithForecastMedianPct?: number;
+      recommendationObservedNormalWithForecastAveragePct?: number;
+      recommendationObservedNormalWithForecastSampleCount?: number;
+      recommendationCurrentMonthForecastQuotePct?: number;
+      recommendationCurrentMonth?: string;
     };
     actuals?: {
       count?: number;
@@ -885,9 +896,22 @@ export default function DashboardModule(): JSX.Element {
     ? report.kpis.cashIn
     : {};
   const cashInMode = String(cashInMeta.mode || "conservative").trim().toLowerCase() === "basis" ? "basis" : "conservative";
-  const cashInBasisQuotePct = Number(cashInMeta.basisQuotePct);
+  const cashInBaselineNormalPct = Number(
+    cashInMeta.recommendationBaselineNormalPct ?? cashInMeta.basisQuotePct,
+  );
+  const cashInBaselineQ4Pct = Number(cashInMeta.recommendationBaselineQ4Pct);
+  const cashInObservedNormalSampleCount = Math.max(0, Math.round(Number(
+    cashInMeta.recommendationObservedNormalSampleCount || 0,
+  )));
+  const cashInObservedNormalMedianPct = Number(cashInMeta.recommendationObservedNormalMedianPct);
+  const cashInObservedNormalWithForecastSampleCount = Math.max(0, Math.round(Number(
+    cashInMeta.recommendationObservedNormalWithForecastSampleCount || 0,
+  )));
+  const cashInObservedNormalWithForecastMedianPct = Number(
+    cashInMeta.recommendationObservedNormalWithForecastMedianPct,
+  );
+  const cashInCurrentMonthForecastQuotePct = Number(cashInMeta.recommendationCurrentMonthForecastQuotePct);
   const cashInIstMonthsCount = Math.max(0, Math.round(Number(cashInMeta.istMonthsCount || 0)));
-  const cashInHasIstData = cashInMeta.hasIstData === true;
   const cashInCalibrationEnabled = cashInMeta.calibrationEnabled !== false;
   const cashInCalibrationApplied = cashInMeta.calibrationApplied === true;
   const cashInCalibrationHorizonMonths = Math.max(1, Math.round(Number(cashInMeta.calibrationHorizonMonths || 6)));
@@ -1958,15 +1982,21 @@ export default function DashboardModule(): JSX.Element {
           </Text>
           <div className="v2-toolbar-row">
             <Text>
-              BasisQuote ({cashInHasIstData ? `Median letzte ${cashInIstMonthsCount} Monate` : "Keine Ist-Daten"}):{" "}
+              Baseline Normal:{" "}
               <strong>
-                {Number.isFinite(cashInBasisQuotePct)
-                  ? `${Number(cashInBasisQuotePct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
+                {Number.isFinite(cashInBaselineNormalPct)
+                  ? `${Number(cashInBaselineNormalPct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
+                  : "—"}
+              </strong>
+              {" "}· Q4:{" "}
+              <strong>
+                {Number.isFinite(cashInBaselineQ4Pct)
+                  ? `${Number(cashInBaselineQ4Pct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`
                   : "—"}
               </strong>
             </Text>
-            <Tooltip title="BasisQuote = Median der Ist-Auszahlungsquoten (Ist-Auszahlung / Ist-Umsatz), final auf 40-60% begrenzt.">
-              <Tag>BasisQuote Info</Tag>
+            <Tooltip title={`Observed Normal (n=${cashInObservedNormalSampleCount}): ${Number.isFinite(cashInObservedNormalMedianPct) ? `${Number(cashInObservedNormalMedianPct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—"} · inkl. Prognose (n=${cashInObservedNormalWithForecastSampleCount}): ${Number.isFinite(cashInObservedNormalWithForecastMedianPct) ? `${Number(cashInObservedNormalWithForecastMedianPct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—"} · aktuelle Prognose-Quote: ${Number.isFinite(cashInCurrentMonthForecastQuotePct) ? `${Number(cashInCurrentMonthForecastQuotePct).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%` : "—"}.`}>
+              <Tag>Empfehlung Info</Tag>
             </Tooltip>
             {cashInMode === "conservative" ? (
               <Tooltip title="Konservativ = BasisQuote minus 1pp je Zukunftsmonat bis max. 5pp; final bleibt die Quote im Band 40-60%.">

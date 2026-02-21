@@ -87,6 +87,9 @@ export interface DashboardPnlRow {
     calibrationSourceMonth?: string | null;
     calibrationMethod?: "sellerboard" | "linear" | string | null;
     planRevenueAfterCalibration?: number | null;
+    recommendationQuotePct?: number | null;
+    recommendationSourceTag?: "IST" | "PROGNOSE" | "BASELINE_NORMAL" | "BASELINE_Q4" | string;
+    recommendationExplanation?: string | null;
     payoutPct?: number | null;
     payoutAmount?: number | null;
   };

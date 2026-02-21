@@ -296,12 +296,96 @@ test("computeSeries uses manual quote first and recommendation for future months
 
   const report = computeSeries(state);
   assert.equal(salesPayoutAmountForMonth(report, next1), 580);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 500);
+  assert.equal(salesPayoutAmountForMonth(report, next2), 510);
 
   const next1Entry = salesEntriesForMonth(report, next1)[0];
   const next2Entry = salesEntriesForMonth(report, next2)[0];
   assert.equal(next1Entry?.meta?.cashIn?.quoteSource, "manual");
   assert.equal(next2Entry?.meta?.cashIn?.quoteSource, "recommendation");
+});
+
+test("computeSeries keeps future recommendation on normal baseline even when only Dec/Jan IST are high", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev2 = addMonths(currentMonth, -2);
+  const prev1 = addMonths(currentMonth, -1);
+  const next1 = addMonths(currentMonth, 1);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 3,
+      openingBalance: 0,
+      cashInMode: "basis",
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      { month: currentMonth, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
+      { month: next1, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
+    ],
+    monthlyActuals: {
+      [prev2]: { realRevenueEUR: 10000, realPayoutRatePct: 55 },
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 54 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  assert.equal(report.kpis?.cashIn?.basisQuotePct, 51);
+  assert.equal(salesPayoutAmountForMonth(report, next1), 510);
+});
+
+test("computeSeries applies Q4 baseline unless Q4 ignore toggle is active", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  let q4Month = null;
+  let q4Offset = null;
+  for (let idx = 0; idx < 18; idx += 1) {
+    const month = addMonths(currentMonth, idx);
+    const monthNumber = Number(month.slice(5, 7));
+    if (monthNumber >= 10 && monthNumber <= 12) {
+      q4Month = month;
+      q4Offset = idx;
+      break;
+    }
+  }
+  assert.ok(q4Month);
+  assert.ok(q4Offset != null);
+  const currentYear = Number(currentMonth.slice(0, 4));
+  const priorDecember = `${currentYear - 1}-12`;
+
+  const baseState = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: Number(q4Offset) + 1,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInRecommendationBaselineNormalPct: 51,
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      { month: q4Month, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
+    ],
+    monthlyActuals: {
+      [priorDecember]: { realRevenueEUR: 10000, realPayoutRatePct: 58 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const q4Report = computeSeries(baseState);
+  assert.equal(Math.round(salesPayoutAmountForMonth(q4Report, q4Month)), 545);
+
+  const ignoreQ4Report = computeSeries({
+    ...baseState,
+    settings: {
+      ...baseState.settings,
+      cashInRecommendationIgnoreQ4: true,
+    },
+  });
+  assert.equal(Math.round(salesPayoutAmountForMonth(ignoreQ4Report, q4Month)), 510);
 });
 
 test("computeSeries applies conservative margin linearly and caps at five percentage points", () => {
@@ -320,6 +404,7 @@ test("computeSeries applies conservative margin linearly and caps at five percen
       horizonMonths: 8,
       openingBalance: 0,
       cashInMode: "conservative",
+      cashInRecommendationBaselineNormalPct: 60,
     },
     forecast: { settings: { useForecast: false } },
     incomings: Array.from({ length: 8 }, (_, idx) => ({
@@ -443,7 +528,7 @@ test("computeSeries applies calibration decay to forecast revenue and exposes fu
   assert.match(String(currentEntry.tooltip || ""), /Auszahlung:/);
 });
 
-test("computeSeries falls back to latest plan quote when no actual quotes exist", () => {
+test("computeSeries uses manual normal baseline when no IST quotes exist", () => {
   const currentMonth = monthKeyFromDate(new Date());
   const next1 = addMonths(currentMonth, 1);
   const next2 = addMonths(currentMonth, 2);
@@ -453,6 +538,7 @@ test("computeSeries falls back to latest plan quote when no actual quotes exist"
       horizonMonths: 3,
       openingBalance: 0,
       cashInMode: "basis",
+      cashInRecommendationBaselineNormalPct: 53,
     },
     forecast: { settings: { useForecast: false } },
     incomings: [
@@ -469,8 +555,8 @@ test("computeSeries falls back to latest plan quote when no actual quotes exist"
   };
 
   const report = computeSeries(state);
-  assert.equal(report.kpis?.cashIn?.fallbackUsed, "last_plan_quote");
-  assert.equal(report.kpis?.cashIn?.basisQuotePct, 58);
-  assert.equal(salesPayoutAmountForMonth(report, next1), 580);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 580);
+  assert.equal(report.kpis?.cashIn?.fallbackUsed, "baseline_manual");
+  assert.equal(report.kpis?.cashIn?.basisQuotePct, 53);
+  assert.equal(salesPayoutAmountForMonth(report, next1), 530);
+  assert.equal(salesPayoutAmountForMonth(report, next2), 530);
 });

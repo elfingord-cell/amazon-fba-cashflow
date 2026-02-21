@@ -8,52 +8,72 @@ import {
   normalizeCalibrationHorizonMonths,
 } from "./cashInRules.js";
 
-test("buildPayoutRecommendation computes median and Q4 filter", () => {
-  const monthlyActuals = {
-    "2025-07": { realPayoutRatePct: 45 },
-    "2025-08": { realPayoutRatePct: 55 },
-    "2025-10": { realPayoutRatePct: 60 },
-    "2025-11": { realPayoutRatePct: 58 },
-  };
+test("buildPayoutRecommendation applies IST/PROGNOSE/BASELINE priority and Q4 baseline suggestion", () => {
+  const recommendation = buildPayoutRecommendation({
+    months: ["2026-01", "2026-02", "2026-10", "2026-12"],
+    currentMonth: "2026-02",
+    baselineNormalPct: 51,
+    monthlyActuals: {
+      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 58 },
+      "2026-01": { realRevenueEUR: 10000, realPayoutRatePct: 54 },
+    },
+    incomings: [
+      {
+        month: "2026-02",
+        calibrationSellerboardMonthEndEur: 100000,
+        calibrationPayoutRateToDatePct: 52000,
+      },
+    ],
+    ignoreQ4: false,
+    maxMonth: "2026-02",
+    minSamples: 4,
+  });
 
-  const allMonths = buildPayoutRecommendation({ monthlyActuals, ignoreQ4: false, maxMonth: "2025-12", minSamples: 4 });
-  const noQ4 = buildPayoutRecommendation({ monthlyActuals, ignoreQ4: true, maxMonth: "2025-12", minSamples: 4 });
-
-  assert.equal(allMonths.sampleCount, 4);
-  assert.equal(allMonths.medianPct, 56.5);
-  assert.equal(allMonths.uncertain, false);
-  assert.deepEqual(allMonths.usedMonths, ["2025-07", "2025-08", "2025-10", "2025-11"]);
-
-  assert.equal(noQ4.sampleCount, 2);
-  assert.equal(noQ4.medianPct, 50);
-  assert.equal(noQ4.uncertain, true);
-  assert.deepEqual(noQ4.usedMonths, ["2025-07", "2025-08"]);
+  assert.equal(recommendation.baselineNormalPct, 51);
+  assert.equal(recommendation.decemberQuotePct, 58);
+  assert.equal(Number(recommendation.baselineQ4SuggestedPct.toFixed(2)), 54.5);
+  assert.equal(Number(recommendation.baselineQ4Pct.toFixed(2)), 54.5);
+  assert.equal(recommendation.byMonth["2026-01"].sourceTag, "IST");
+  assert.equal(Number(recommendation.byMonth["2026-01"].quotePct.toFixed(2)), 54);
+  assert.equal(recommendation.byMonth["2026-02"].sourceTag, "PROGNOSE");
+  assert.equal(Number(recommendation.byMonth["2026-02"].quotePct.toFixed(2)), 52);
+  assert.equal(recommendation.byMonth["2026-10"].sourceTag, "BASELINE_Q4");
+  assert.equal(Number(recommendation.byMonth["2026-10"].quotePct.toFixed(2)), 54.5);
+  assert.equal(recommendation.sampleCount, 2);
+  assert.equal(recommendation.uncertain, true);
 });
 
-test("buildPayoutRecommendation marks uncertain for less than 4 samples", () => {
-  const two = buildPayoutRecommendation({
+test("buildPayoutRecommendation switches Q4 months to normal baseline when ignoreQ4 is active", () => {
+  const recommendation = buildPayoutRecommendation({
+    months: ["2026-10"],
+    currentMonth: "2026-02",
+    baselineNormalPct: 51,
     monthlyActuals: {
-      "2025-01": { realPayoutRatePct: 41 },
-      "2025-02": { realPayoutRatePct: 43 },
+      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 58 },
     },
-    maxMonth: "2025-12",
-    minSamples: 4,
-  });
-  const four = buildPayoutRecommendation({
-    monthlyActuals: {
-      "2025-01": { realPayoutRatePct: 41 },
-      "2025-02": { realPayoutRatePct: 43 },
-      "2025-03": { realPayoutRatePct: 45 },
-      "2025-04": { realPayoutRatePct: 47 },
-    },
-    maxMonth: "2025-12",
-    minSamples: 4,
+    ignoreQ4: true,
+    maxMonth: "2026-02",
   });
 
-  assert.equal(two.sampleCount, 2);
-  assert.equal(two.uncertain, true);
-  assert.equal(four.sampleCount, 4);
-  assert.equal(four.uncertain, false);
+  assert.equal(recommendation.byMonth["2026-10"].sourceTag, "BASELINE_NORMAL");
+  assert.equal(Number(recommendation.byMonth["2026-10"].quotePct.toFixed(2)), 51);
+});
+
+test("buildPayoutRecommendation uses manual Q4 baseline override when provided", () => {
+  const recommendation = buildPayoutRecommendation({
+    months: ["2026-10"],
+    currentMonth: "2026-02",
+    baselineNormalPct: 51,
+    baselineQ4Pct: 56,
+    monthlyActuals: {
+      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 58 },
+    },
+    ignoreQ4: false,
+    maxMonth: "2026-02",
+  });
+
+  assert.equal(recommendation.baselineQ4Source, "manual");
+  assert.equal(Number(recommendation.byMonth["2026-10"].quotePct.toFixed(2)), 56);
 });
 
 test("buildCalibrationProfile uses sellerboard value if provided", () => {

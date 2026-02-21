@@ -13,6 +13,7 @@ import {
 } from "antd";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import {
+  CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
   CASH_IN_QUOTE_MAX_PCT,
   CASH_IN_QUOTE_MIN_PCT,
   buildCalibrationProfile,
@@ -78,10 +79,18 @@ interface InputsDraftSnapshot {
   cashInCalibrationEnabled: boolean;
   cashInCalibrationHorizonMonths: number;
   cashInRecommendationIgnoreQ4: boolean;
+  cashInRecommendationBaselineNormalPct: number;
+  cashInRecommendationBaselineQ4Pct: number | null;
   incomings: IncomingDraft[];
   extras: ExtraDraft[];
   dividends: DividendDraft[];
   monthlyActuals: MonthlyActualDraft[];
+}
+
+interface RecommendationByMonthEntry {
+  quotePct: number;
+  sourceTag: "IST" | "PROGNOSE" | "BASELINE_NORMAL" | "BASELINE_Q4" | string;
+  explanation?: string;
 }
 
 function isEditableNode(target: EventTarget | null): boolean {
@@ -208,6 +217,9 @@ function formatSignedCurrencyDelta(value: number): string {
 }
 
 function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
+  const normalizedBaselineNormal = normalizePayoutInput(snapshot.cashInRecommendationBaselineNormalPct)
+    ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
+  const normalizedBaselineQ4 = normalizePayoutInput(snapshot.cashInRecommendationBaselineQ4Pct);
   return JSON.stringify({
     openingBalance: Number(snapshot.openingBalance || 0),
     startMonth: String(snapshot.startMonth || ""),
@@ -215,6 +227,8 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
     cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
     cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
     cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
+    cashInRecommendationBaselineNormalPct: normalizedBaselineNormal,
+    cashInRecommendationBaselineQ4Pct: normalizedBaselineQ4,
     incomings: sortIncomings(snapshot.incomings).map((row) => ({
       id: String(row.id || ""),
       month: String(row.month || ""),
@@ -265,6 +279,10 @@ export default function InputsModule(): JSX.Element {
   const [cashInCalibrationEnabled, setCashInCalibrationEnabled] = useState<boolean>(true);
   const [cashInCalibrationHorizonMonths, setCashInCalibrationHorizonMonths] = useState<number>(6);
   const [cashInRecommendationIgnoreQ4, setCashInRecommendationIgnoreQ4] = useState<boolean>(false);
+  const [cashInRecommendationBaselineNormalPct, setCashInRecommendationBaselineNormalPct] = useState<number>(
+    CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
+  );
+  const [cashInRecommendationBaselineQ4Pct, setCashInRecommendationBaselineQ4Pct] = useState<number | null>(null);
   const [incomings, setIncomings] = useState<IncomingDraft[]>([]);
   const [extras, setExtras] = useState<ExtraDraft[]>([]);
   const [dividends, setDividends] = useState<DividendDraft[]>([]);
@@ -304,6 +322,9 @@ export default function InputsModule(): JSX.Element {
     const nextCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
     const nextCalibrationHorizon = normalizeCalibrationHorizonMonths(settings.cashInCalibrationHorizonMonths, 6);
     const nextIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+    const nextBaselineNormal = normalizePayoutInput(settings.cashInRecommendationBaselineNormalPct)
+      ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
+    const nextBaselineQ4 = normalizePayoutInput(settings.cashInRecommendationBaselineQ4Pct);
 
     const nextIncomingsRaw = (Array.isArray(state.incomings) ? state.incomings : [])
       .map((entry) => normalizeIncomingRow(entry as Record<string, unknown>, nextStartMonth));
@@ -350,6 +371,8 @@ export default function InputsModule(): JSX.Element {
     setCashInCalibrationEnabled(nextCalibrationEnabled);
     setCashInCalibrationHorizonMonths(nextCalibrationHorizon);
     setCashInRecommendationIgnoreQ4(nextIgnoreQ4);
+    setCashInRecommendationBaselineNormalPct(nextBaselineNormal);
+    setCashInRecommendationBaselineQ4Pct(nextBaselineQ4);
     setIncomings(nextIncomings);
     setExtras(nextExtras);
     setDividends(nextDividends);
@@ -362,6 +385,8 @@ export default function InputsModule(): JSX.Element {
       cashInCalibrationEnabled: nextCalibrationEnabled,
       cashInCalibrationHorizonMonths: nextCalibrationHorizon,
       cashInRecommendationIgnoreQ4: nextIgnoreQ4,
+      cashInRecommendationBaselineNormalPct: nextBaselineNormal,
+      cashInRecommendationBaselineQ4Pct: nextBaselineQ4,
       incomings: nextIncomings,
       extras: nextExtras,
       dividends: nextDividends,
@@ -388,48 +413,81 @@ export default function InputsModule(): JSX.Element {
   }, [forecastRevenueByMonth, planningMonths]);
 
   const payoutRecommendation = useMemo(() => {
-    const monthlyActualsMap: Record<string, { realPayoutRatePct?: number }> = {};
+    const monthlyActualsMap: Record<string, { realRevenueEUR?: number; realPayoutRatePct?: number }> = {};
     monthlyActuals.forEach((row) => {
       if (!isMonthKey(row.month)) return;
+      const revenue = toNumber(row.realRevenueEUR);
       const payoutPct = toNumber(row.realPayoutRatePct);
-      if (!Number.isFinite(payoutPct as number)) return;
-      monthlyActualsMap[row.month] = { realPayoutRatePct: Number(payoutPct) };
+      const monthlyEntry: { realRevenueEUR?: number; realPayoutRatePct?: number } = {};
+      if (Number.isFinite(revenue as number)) monthlyEntry.realRevenueEUR = Number(revenue);
+      if (Number.isFinite(payoutPct as number)) monthlyEntry.realPayoutRatePct = Number(payoutPct);
+      if (!Object.keys(monthlyEntry).length) return;
+      monthlyActualsMap[row.month] = monthlyEntry;
     });
     return buildPayoutRecommendation({
+      months: planningMonths,
+      incomings,
       monthlyActuals: monthlyActualsMap,
+      currentMonth: currentMonthKey(),
       ignoreQ4: cashInRecommendationIgnoreQ4,
       maxMonth: currentMonthKey(),
+      baselineNormalPct: cashInRecommendationBaselineNormalPct,
+      baselineQ4Pct: cashInRecommendationBaselineQ4Pct,
       minSamples: 4,
     });
-  }, [cashInRecommendationIgnoreQ4, monthlyActuals]);
-
-  const recommendationTooltip = useMemo(() => {
-    const usedMonthsText = payoutRecommendation.usedMonths.length
-      ? payoutRecommendation.usedMonths.map((month) => formatMonthLabel(month)).join(", ")
-      : "keine";
-    const medianText = Number.isFinite(payoutRecommendation.medianPct as number)
-      ? `${formatNumber(payoutRecommendation.medianPct, 2)} %`
-      : "nicht verfügbar";
-    const uncertaintyText = payoutRecommendation.uncertain
-      ? `Hinweis: nur ${payoutRecommendation.sampleCount} verwendbare Ist-Monate (< ${payoutRecommendation.minSamples}) - Empfehlung unsicher.`
-      : "Stichprobe ausreichend.";
-    return [
-      `Genutzte Monate: ${usedMonthsText}`,
-      `Q4 ausgeschlossen: ${payoutRecommendation.ignoreQ4 ? "ja" : "nein"}`,
-      `Median: ${medianText}`,
-      uncertaintyText,
-    ].join(" | ");
-  }, [payoutRecommendation]);
+  }, [
+    cashInRecommendationBaselineNormalPct,
+    cashInRecommendationBaselineQ4Pct,
+    cashInRecommendationIgnoreQ4,
+    incomings,
+    monthlyActuals,
+    planningMonths,
+  ]);
 
   const payoutRecommendationByMonth = useMemo(() => {
-    const recommendationMap = new Map<string, number>();
-    const median = Number(payoutRecommendation.medianPct);
-    if (!Number.isFinite(median)) return recommendationMap;
+    const recommendationMap = new Map<string, RecommendationByMonthEntry>();
     incomings.forEach((incoming) => {
-      recommendationMap.set(incoming.month, median);
+      const entry = payoutRecommendation.byMonth?.[incoming.month];
+      if (!entry || !Number.isFinite(Number(entry.quotePct))) return;
+      recommendationMap.set(incoming.month, entry as RecommendationByMonthEntry);
     });
     return recommendationMap;
-  }, [incomings, payoutRecommendation.medianPct]);
+  }, [incomings, payoutRecommendation.byMonth]);
+
+  const recommendationBaselineNormalPct = normalizePayoutInput(payoutRecommendation.baselineNormalPct)
+    ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
+  const recommendationBaselineQ4Pct = normalizePayoutInput(payoutRecommendation.baselineQ4Pct)
+    ?? recommendationBaselineNormalPct;
+  const recommendationBaselineQ4SuggestedPct = normalizePayoutInput(payoutRecommendation.baselineQ4SuggestedPct)
+    ?? recommendationBaselineNormalPct;
+  const recommendationCurrentMonthForecastQuotePct = normalizePayoutInput(payoutRecommendation.currentMonthForecastQuotePct);
+  const recommendationObservedNormalSampleCount = Math.max(0, Math.round(Number(payoutRecommendation.observedNormalSampleCount || 0)));
+  const recommendationObservedNormalMedianPct = normalizePayoutInput(payoutRecommendation.observedNormalMedianPct);
+  const recommendationObservedNormalAveragePct = normalizePayoutInput(payoutRecommendation.observedNormalAveragePct);
+  const recommendationObservedNormalWithForecastSampleCount = Math.max(0, Math.round(Number(
+    payoutRecommendation.observedNormalWithForecastSampleCount || 0,
+  )));
+  const recommendationObservedNormalWithForecastMedianPct = normalizePayoutInput(
+    payoutRecommendation.observedNormalWithForecastMedianPct,
+  );
+  const recommendationObservedNormalWithForecastAveragePct = normalizePayoutInput(
+    payoutRecommendation.observedNormalWithForecastAveragePct,
+  );
+  const recommendationUsedMonths = Array.isArray(payoutRecommendation.usedMonths)
+    ? payoutRecommendation.usedMonths
+    : [];
+  const recommendationUsedMonthsText = recommendationUsedMonths.length
+    ? recommendationUsedMonths.map((month) => formatMonthLabel(month)).join(", ")
+    : "keine";
+  const recommendationInfoTooltip = [
+    `Normal Baseline (manuell): ${formatNumber(recommendationBaselineNormalPct, 1)}%`,
+    `Q4 Baseline (aktiv): ${formatNumber(recommendationBaselineQ4Pct, 1)}%`,
+    `Q4 Vorschlag: ${formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%`,
+    `Observed IST normal (n=${recommendationObservedNormalSampleCount}): Median ${formatNumber(recommendationObservedNormalMedianPct, 1)}%, Ø ${formatNumber(recommendationObservedNormalAveragePct, 1)}%`,
+    `Observed normal inkl. Prognose (n=${recommendationObservedNormalWithForecastSampleCount}): Median ${formatNumber(recommendationObservedNormalWithForecastMedianPct, 1)}%, Ø ${formatNumber(recommendationObservedNormalWithForecastAveragePct, 1)}%`,
+    `Genutzte IST-Monate: ${recommendationUsedMonthsText}`,
+    `Q4 ignorieren: ${cashInRecommendationIgnoreQ4 ? "ja" : "nein"}`,
+  ].join(" | ");
 
   const currentMonthValue = currentMonthKey();
   const currentMonthInPlanning = planningMonths.includes(currentMonthValue);
@@ -471,8 +529,9 @@ export default function InputsModule(): JSX.Element {
     const manualPayoutPct = normalizePayoutInput(currentMonthIncoming?.payoutPct);
     if (Number.isFinite(manualPayoutPct as number)) return Number(manualPayoutPct);
     const recommendation = payoutRecommendationByMonth.get(currentMonthValue);
-    if (!Number.isFinite(recommendation)) return null;
-    return clampPct(Number(recommendation), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
+    const recommendationQuote = Number(recommendation?.quotePct);
+    if (!Number.isFinite(recommendationQuote)) return null;
+    return clampPct(recommendationQuote, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
   }, [currentMonthIncoming?.payoutPct, currentMonthValue, payoutRecommendationByMonth]);
   const currentMonthCalibratedPayout = Number.isFinite(currentMonthPayoutPct as number)
     ? currentMonthCalibratedRevenue * (Number(currentMonthPayoutPct) / 100)
@@ -481,7 +540,7 @@ export default function InputsModule(): JSX.Element {
     && (currentMonthCalibrationRawFactor > 1.25 || currentMonthCalibrationRawFactor < 0.5);
   const currentMonthCalibrationTooltip = Number.isFinite(currentMonthCalibrationRawFactor) && cashInCalibrationEnabled
     ? [
-      "Kalibrierung über Sellerboard-Prognose Monatsende.",
+      "Kalibrierung ueber Umsatzprognose Monatsende.",
       `Startfaktor ${currentMonthValue}: ${formatFactor(currentMonthCalibrationRawFactor)}`,
       `Fade-Out über ${cashInCalibrationHorizonMonths} Monate: ${buildCalibrationDecayTooltip(currentMonthValue, currentMonthCalibrationRawFactor, cashInCalibrationHorizonMonths)}`,
     ].join(" | ")
@@ -514,9 +573,12 @@ export default function InputsModule(): JSX.Element {
 
       const manualPayoutPct = normalizePayoutInput(row.payoutPct);
       const recommendation = payoutRecommendationByMonth.get(month);
+      const recommendationQuote = Number(recommendation?.quotePct);
       const payoutPct = Number.isFinite(manualPayoutPct as number)
         ? Number(manualPayoutPct)
-        : (Number.isFinite(recommendation) ? clampPct(Number(recommendation), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT) : null);
+        : (Number.isFinite(recommendationQuote)
+          ? clampPct(recommendationQuote, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+          : null);
       if (!Number.isFinite(payoutPct as number)) return;
 
       basePayoutTotal += Number(baseRevenue || 0) * (Number(payoutPct) / 100);
@@ -554,7 +616,7 @@ export default function InputsModule(): JSX.Element {
         id: randomId("inc"),
         month: currentMonthValue,
         revenueEur: Number.isFinite(currentMonthForecastRevenue) ? currentMonthForecastRevenue : 0,
-        payoutPct: normalizePayoutInput(payoutRecommendation.medianPct),
+        payoutPct: normalizePayoutInput(payoutRecommendation.byMonth?.[currentMonthValue]?.quotePct),
         source: currentMonthForecastRevenue > 0 ? "forecast" : "manual",
         calibrationCutoffDate: null,
         calibrationRevenueToDateEur: null,
@@ -575,6 +637,8 @@ export default function InputsModule(): JSX.Element {
       cashInCalibrationEnabled,
       cashInCalibrationHorizonMonths,
       cashInRecommendationIgnoreQ4,
+      cashInRecommendationBaselineNormalPct,
+      cashInRecommendationBaselineQ4Pct,
       incomings: normalizedIncomings,
       extras,
       dividends,
@@ -597,6 +661,9 @@ export default function InputsModule(): JSX.Element {
         cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
         cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
         cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
+        cashInRecommendationBaselineNormalPct: normalizePayoutInput(snapshot.cashInRecommendationBaselineNormalPct)
+          ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
+        cashInRecommendationBaselineQ4Pct: normalizePayoutInput(snapshot.cashInRecommendationBaselineQ4Pct),
         lastUpdatedAt: new Date().toISOString(),
       };
 
@@ -678,6 +745,8 @@ export default function InputsModule(): JSX.Element {
       cashInCalibrationEnabled,
       cashInCalibrationHorizonMonths,
       cashInRecommendationIgnoreQ4,
+      cashInRecommendationBaselineNormalPct,
+      cashInRecommendationBaselineQ4Pct,
       incomings,
       extras,
       dividends,
@@ -695,6 +764,8 @@ export default function InputsModule(): JSX.Element {
     cashInCalibrationEnabled,
     cashInCalibrationHorizonMonths,
     cashInRecommendationIgnoreQ4,
+    cashInRecommendationBaselineNormalPct,
+    cashInRecommendationBaselineQ4Pct,
     incomings,
     extras,
     dividends,
@@ -851,6 +922,14 @@ export default function InputsModule(): JSX.Element {
                 Auszahlung Monatsende Prognose (manuell): {formatNumber(currentCalibrationPayoutForecast, 2)} EUR
               </Text>
             </div>
+            {Number.isFinite(recommendationCurrentMonthForecastQuotePct as number) ? (
+              <div>
+                <Text type="secondary">
+                  Prognose-Quote aktueller Monat: {formatNumber(recommendationCurrentMonthForecastQuotePct, 1)}%
+                  {" "}(wird als Datenpunkt fuer Baseline-Info genutzt)
+                </Text>
+              </div>
+            ) : null}
             {currentMonthCalibrationUnusual ? (
               <Tag color="warning" style={{ marginTop: 6 }}>
                 Ungewoehnlicher Faktor ({formatFactor(currentMonthCalibrationRawFactor)})
@@ -864,6 +943,52 @@ export default function InputsModule(): JSX.Element {
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
           <Title level={5} style={{ margin: 0 }}>Umsaetze x Payout</Title>
           <Space wrap>
+            <Space size={6} align="center">
+              <Text type="secondary">Baseline Normal %</Text>
+              <div data-field-key="inputs.cashInRecommendationBaselineNormalPct">
+                <DeNumberInput
+                  value={cashInRecommendationBaselineNormalPct}
+                  mode="percent"
+                  min={CASH_IN_QUOTE_MIN_PCT}
+                  max={CASH_IN_QUOTE_MAX_PCT}
+                  step={0.1}
+                  style={{ width: 116 }}
+                  onChange={(value) => {
+                    const parsed = normalizePayoutInput(value);
+                    if (parsed == null) return;
+                    setCashInRecommendationBaselineNormalPct(parsed);
+                  }}
+                />
+              </div>
+            </Space>
+            <Space size={6} align="center">
+              <Text type="secondary">Baseline Q4 %</Text>
+              <div data-field-key="inputs.cashInRecommendationBaselineQ4Pct">
+                <DeNumberInput
+                  value={cashInRecommendationBaselineQ4Pct ?? recommendationBaselineQ4Pct}
+                  mode="percent"
+                  min={CASH_IN_QUOTE_MIN_PCT}
+                  max={CASH_IN_QUOTE_MAX_PCT}
+                  step={0.1}
+                  style={{ width: 116 }}
+                  onChange={(value) => {
+                    if (value == null || String(value).trim() === "") {
+                      setCashInRecommendationBaselineQ4Pct(null);
+                      return;
+                    }
+                    const parsed = normalizePayoutInput(value);
+                    if (parsed == null) return;
+                    setCashInRecommendationBaselineQ4Pct(parsed);
+                  }}
+                />
+              </div>
+              <Tooltip title="Q4 Vorschlag: Normal + 0,5 * (Dez - Normal).">
+                <Tag>Auto {formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%</Tag>
+              </Tooltip>
+              <Button size="small" onClick={() => setCashInRecommendationBaselineQ4Pct(null)}>
+                Auto
+              </Button>
+            </Space>
             <Checkbox
               checked={cashInRecommendationIgnoreQ4}
               onChange={(event) => setCashInRecommendationIgnoreQ4(event.target.checked)}
@@ -884,14 +1009,16 @@ export default function InputsModule(): JSX.Element {
                     .reverse()
                     .find((entry) => Number.isFinite(normalizePayoutInput(entry.payoutPct) as number))
                     ?.payoutPct;
-                  const recommendedPayout = Number(payoutRecommendation.medianPct);
+                  const recommendedPayout = normalizePayoutInput(
+                    payoutRecommendation.byMonth?.[nextMonth]?.quotePct,
+                  );
                   return sortIncomings([
                     ...sorted,
                     {
                       id: randomId("inc"),
                       month: nextMonth,
                       revenueEur: 0,
-                      payoutPct: Number.isFinite(recommendedPayout)
+                      payoutPct: Number.isFinite(recommendedPayout as number)
                         ? recommendedPayout
                         : (normalizePayoutInput(lastPayout) ?? null),
                       source: "manual",
@@ -926,6 +1053,16 @@ export default function InputsModule(): JSX.Element {
               Impact Auszahlung: {formatSignedCurrencyDelta(calibrationImpact.payoutDelta)}
             </Tag>
           </Tooltip>
+          <Tooltip title={recommendationInfoTooltip}>
+            <Tag>
+              Baseline N/Q4: {formatNumber(recommendationBaselineNormalPct, 1)}% / {formatNumber(recommendationBaselineQ4Pct, 1)}%
+            </Tag>
+          </Tooltip>
+          {Number.isFinite(recommendationCurrentMonthForecastQuotePct as number) ? (
+            <Tag color="blue">
+              Prognose-Quote aktuell: {formatNumber(recommendationCurrentMonthForecastQuotePct, 1)}%
+            </Tag>
+          ) : null}
           <Tag>Aktive Kalibrier-Monate: {calibrationImpact.affectedMonths}</Tag>
           {payoutRecommendation.uncertain ? (
             <Tag color="orange">
@@ -934,7 +1071,7 @@ export default function InputsModule(): JSX.Element {
           ) : null}
         </Space>
         <div className="v2-stats-table-wrap">
-          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1650 }}>
+          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1720 }}>
             <thead>
               <tr>
                 <th style={{ width: 130 }}>Monat</th>
@@ -942,7 +1079,7 @@ export default function InputsModule(): JSX.Element {
                 <th style={{ width: 90 }}>Faktor</th>
                 <th style={{ width: 180 }}>Umsatz kalibriert (EUR)</th>
                 <th style={{ width: 180 }}>Auszahlungsquote (manuell) %</th>
-                <th style={{ width: 120 }}>Empfehlung %</th>
+                <th style={{ width: 170 }}>Empfehlung %</th>
                 <th style={{ width: 190 }}>Payout EUR (aktiv)</th>
                 <th style={{ width: 190 }}>Payout kalibriert (EUR)</th>
                 <th style={{ width: 240 }}>Status</th>
@@ -951,10 +1088,39 @@ export default function InputsModule(): JSX.Element {
             </thead>
             <tbody>
               {sortIncomings(incomings).map((row) => {
-                const recommendationRaw = payoutRecommendationByMonth.get(row.month);
-                const recommendation = Number.isFinite(recommendationRaw as number)
-                  ? clampPct(Number(recommendationRaw), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+                const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
+                const recommendationSourceTag = String(recommendationEntry?.sourceTag || "BASELINE_NORMAL");
+                const recommendationQuoteRaw = Number(recommendationEntry?.quotePct);
+                const recommendation = Number.isFinite(recommendationQuoteRaw)
+                  ? clampPct(recommendationQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
                   : null;
+                const recommendationSourceLabel = recommendationSourceTag === "IST"
+                  ? "IST"
+                  : recommendationSourceTag === "PROGNOSE"
+                    ? "PROGNOSE"
+                    : recommendationSourceTag === "BASELINE_Q4"
+                      ? "BASELINE Q4"
+                      : "BASELINE";
+                const recommendationBadgeColor = recommendationSourceTag === "IST"
+                  ? "green"
+                  : recommendationSourceTag === "PROGNOSE"
+                    ? "purple"
+                    : "blue";
+                const recommendationFormula = recommendationSourceTag === "BASELINE_Q4"
+                  ? `Q4 Baseline: ${formatNumber(recommendationBaselineQ4Pct, 1)}% (Vorschlag ${formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%)`
+                  : recommendationSourceTag === "BASELINE_NORMAL"
+                    ? `Normal Baseline: ${formatNumber(recommendationBaselineNormalPct, 1)}%`
+                    : recommendationSourceTag === "PROGNOSE"
+                      ? "PROGNOSE = Auszahlung Monatsende / Umsatzprognose Monatsende"
+                      : "IST = Monats-Istwerte";
+                const recommendationTooltip = [
+                  `Quelle: ${recommendationSourceLabel}`,
+                  recommendationEntry?.explanation ? String(recommendationEntry.explanation) : null,
+                  recommendationFormula,
+                  `Q4 ignorieren: ${cashInRecommendationIgnoreQ4 ? "ja" : "nein"}`,
+                ]
+                  .filter(Boolean)
+                  .join(" | ");
                 const manualPayout = normalizePayoutInput(row.payoutPct);
                 const payoutPctForCalc = Number.isFinite(manualPayout as number)
                   ? Number(manualPayout)
@@ -1063,7 +1229,12 @@ export default function InputsModule(): JSX.Element {
                         ? (
                           <div>
                             <Tooltip title={recommendationTooltip}>
-                              <div>{formatNumber(recommendation, 2)}</div>
+                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                <span>{formatNumber(recommendation, 2)}</span>
+                                <Tag color={recommendationBadgeColor} style={{ marginRight: 0 }}>
+                                  {recommendationSourceLabel}
+                                </Tag>
+                              </div>
                             </Tooltip>
                             {shouldWarnDelta ? <Tag color="orange">Delta {formatSignedDelta(Number(payoutDelta))}</Tag> : null}
                           </div>

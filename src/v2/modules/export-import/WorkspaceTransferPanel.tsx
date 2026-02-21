@@ -61,6 +61,16 @@ function validateState(state: Record<string, unknown>): ValidationResult {
   if (!looksLikeMonth(settings.startMonth)) errors.push("Startmonat fehlt oder ist ungueltig (settings.startMonth).");
   const horizon = Number(settings.horizonMonths || 0);
   if (!Number.isFinite(horizon) || horizon <= 0) errors.push("Horizont fehlt oder ist ungueltig (settings.horizonMonths).");
+  const baselineNormal = parseDENull(settings.cashInRecommendationBaselineNormalPct);
+  if (!(baselineNormal != null && baselineNormal >= 40 && baselineNormal <= 60)) {
+    errors.push("settings.cashInRecommendationBaselineNormalPct muss im Band 40..60 liegen.");
+  }
+  if (settings.cashInRecommendationBaselineQ4Pct != null && String(settings.cashInRecommendationBaselineQ4Pct).trim() !== "") {
+    const baselineQ4 = parseDENull(settings.cashInRecommendationBaselineQ4Pct);
+    if (!(baselineQ4 != null && baselineQ4 >= 40 && baselineQ4 <= 60)) {
+      errors.push("settings.cashInRecommendationBaselineQ4Pct muss im Band 40..60 liegen.");
+    }
+  }
 
   (Array.isArray(state.incomings) ? state.incomings : []).forEach((entry, index) => {
     const row = (entry || {}) as Record<string, unknown>;

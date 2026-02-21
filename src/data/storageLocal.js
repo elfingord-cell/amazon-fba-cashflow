@@ -33,6 +33,8 @@ const defaults = {
     cashInCalibrationEnabled: true,
     cashInCalibrationHorizonMonths: 6,
     cashInRecommendationIgnoreQ4: false,
+    cashInRecommendationBaselineNormalPct: 51,
+    cashInRecommendationBaselineQ4Pct: null,
     openingBalance: "50.000,00",
     fxRate: "1,08",
     fxFeePct: "0,5",
@@ -232,6 +234,23 @@ function ensureGlobalSettings(state) {
     ? calibrationHorizon
     : defaults.settings.cashInCalibrationHorizonMonths;
   settings.cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+  const baselineNormalRaw = parseNumber(
+    settings.cashInRecommendationBaselineNormalPct ?? defaults.settings.cashInRecommendationBaselineNormalPct,
+  );
+  settings.cashInRecommendationBaselineNormalPct = Number.isFinite(baselineNormalRaw)
+    ? Math.min(60, Math.max(40, Number(baselineNormalRaw)))
+    : defaults.settings.cashInRecommendationBaselineNormalPct;
+  if (
+    settings.cashInRecommendationBaselineQ4Pct == null
+    || String(settings.cashInRecommendationBaselineQ4Pct).trim() === ""
+  ) {
+    settings.cashInRecommendationBaselineQ4Pct = null;
+  } else {
+    const baselineQ4Raw = parseNumber(settings.cashInRecommendationBaselineQ4Pct);
+    settings.cashInRecommendationBaselineQ4Pct = Number.isFinite(baselineQ4Raw)
+      ? Math.min(60, Math.max(40, Number(baselineQ4Raw)))
+      : null;
+  }
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));

@@ -2,6 +2,7 @@ const CASH_IN_CALIBRATION_HORIZON_OPTIONS = [3, 6, 12];
 
 export const CASH_IN_QUOTE_MIN_PCT = 40;
 export const CASH_IN_QUOTE_MAX_PCT = 60;
+export const CASH_IN_BASELINE_NORMAL_DEFAULT_PCT = 51;
 
 function asFiniteNumber(value) {
   if (value == null) return null;
@@ -68,6 +69,14 @@ function computeMedian(values) {
   return (numeric[middle - 1] + numeric[middle]) / 2;
 }
 
+function computeAverage(values) {
+  const numeric = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!numeric.length) return null;
+  return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+}
+
 function isQ4Month(month) {
   if (!isMonthKey(month)) return false;
   const monthNumber = Number(String(month).slice(5, 7));
@@ -95,40 +104,208 @@ function sameMonth(dateIso, month) {
   return String(dateIso || "").slice(0, 7) === String(month || "");
 }
 
+function computeActualQuotePct(row) {
+  const source = row && typeof row === "object" ? row : {};
+  const revenue = asFiniteNumber(source.realRevenueEUR);
+  const payoutRatePct = parsePayoutPctInput(source.realPayoutRatePct);
+  if (Number.isFinite(revenue) && revenue > 0 && Number.isFinite(payoutRatePct)) {
+    return Number(payoutRatePct);
+  }
+  const payoutEur = asFiniteNumber(source.realPayoutEUR ?? source.realPayoutEur);
+  if (Number.isFinite(revenue) && revenue > 0 && Number.isFinite(payoutEur) && payoutEur >= 0) {
+    return (Number(payoutEur) / Number(revenue)) * 100;
+  }
+  return null;
+}
+
+function normalizeRecommendationMonths(input = {}) {
+  const result = new Set();
+  const sourceMonths = Array.isArray(input.months) ? input.months : [];
+  sourceMonths.forEach((month) => {
+    if (isMonthKey(month)) result.add(String(month));
+  });
+  const incomings = Array.isArray(input.incomings) ? input.incomings : [];
+  incomings.forEach((row) => {
+    if (!row || typeof row !== "object") return;
+    const month = String(row.month || "").trim();
+    if (isMonthKey(month)) result.add(month);
+  });
+  const monthlyActuals = input.monthlyActuals && typeof input.monthlyActuals === "object"
+    ? input.monthlyActuals
+    : {};
+  Object.keys(monthlyActuals).forEach((month) => {
+    if (isMonthKey(month)) result.add(month);
+  });
+  return Array.from(result).sort((left, right) => left.localeCompare(right));
+}
+
 export function buildPayoutRecommendation(input = {}) {
   const monthlyActuals = input.monthlyActuals && typeof input.monthlyActuals === "object"
     ? input.monthlyActuals
     : {};
+  const incomings = Array.isArray(input.incomings) ? input.incomings : [];
   const ignoreQ4 = input.ignoreQ4 === true;
-  const maxMonth = isMonthKey(input.maxMonth) ? input.maxMonth : null;
+  const maxMonth = isMonthKey(input.maxMonth)
+    ? input.maxMonth
+    : (isMonthKey(input.currentMonth) ? input.currentMonth : null);
+  const currentMonth = isMonthKey(input.currentMonth) ? input.currentMonth : maxMonth;
   const minSamples = Math.max(1, Math.round(Number(input.minSamples || 4)));
+  const baselineNormalRaw = parsePayoutPctInput(input.baselineNormalPct);
+  const baselineNormalPct = clampPct(
+    Number.isFinite(baselineNormalRaw) ? Number(baselineNormalRaw) : CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
+    CASH_IN_QUOTE_MIN_PCT,
+    CASH_IN_QUOTE_MAX_PCT,
+  );
 
-  const points = Object.entries(monthlyActuals)
+  const istPoints = Object.entries(monthlyActuals)
     .map(([month, row]) => {
       if (!isMonthKey(month)) return null;
       if (maxMonth && month > maxMonth) return null;
-      if (ignoreQ4 && isQ4Month(month)) return null;
       const source = row && typeof row === "object" ? row : {};
-      const quotePct = parsePayoutPctInput(source.realPayoutRatePct);
-      if (!Number.isFinite(quotePct)) return null;
-      return { month, quotePct: Number(quotePct) };
+      const quotePctRaw = computeActualQuotePct(source);
+      if (!Number.isFinite(quotePctRaw)) return null;
+      return {
+        month,
+        quotePct: clampPct(Number(quotePctRaw), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT),
+        realRevenueEUR: asFiniteNumber(source.realRevenueEUR),
+        realPayoutRatePct: parsePayoutPctInput(source.realPayoutRatePct),
+      };
     })
     .filter(Boolean)
     .sort((left, right) => String(left.month).localeCompare(String(right.month)));
 
-  const medianPctRaw = computeMedian(points.map((point) => point.quotePct));
-  const medianPct = Number.isFinite(medianPctRaw)
-    ? clampPct(medianPctRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+  const istByMonth = new Map(istPoints.map((point) => [String(point.month), point]));
+  const normalIstPoints = istPoints.filter((point) => !isQ4Month(point.month));
+  const normalObservedMedianRaw = computeMedian(normalIstPoints.map((point) => point.quotePct));
+  const normalObservedAverageRaw = computeAverage(normalIstPoints.map((point) => point.quotePct));
+
+  const decemberIstPoints = istPoints
+    .filter((point) => String(point.month).slice(5, 7) === "12")
+    .sort((left, right) => String(left.month).localeCompare(String(right.month)));
+  const decemberPoint = decemberIstPoints.length ? decemberIstPoints[decemberIstPoints.length - 1] : null;
+  const decemberQuotePct = Number.isFinite(decemberPoint?.quotePct)
+    ? clampPct(Number(decemberPoint.quotePct), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+    : null;
+  const baselineQ4SuggestedRaw = Number.isFinite(decemberQuotePct)
+    ? baselineNormalPct + 0.5 * (Number(decemberQuotePct) - baselineNormalPct)
+    : baselineNormalPct;
+  const baselineQ4SuggestedPct = clampPct(
+    baselineQ4SuggestedRaw,
+    CASH_IN_QUOTE_MIN_PCT,
+    CASH_IN_QUOTE_MAX_PCT,
+  );
+  const baselineQ4Raw = parsePayoutPctInput(input.baselineQ4Pct);
+  const baselineQ4Pct = clampPct(
+    Number.isFinite(baselineQ4Raw) ? Number(baselineQ4Raw) : baselineQ4SuggestedPct,
+    CASH_IN_QUOTE_MIN_PCT,
+    CASH_IN_QUOTE_MAX_PCT,
+  );
+  const baselineQ4Source = Number.isFinite(baselineQ4Raw) ? "manual" : "suggested";
+
+  const currentMonthIncoming = currentMonth
+    ? incomings.find((row) => String(row?.month || "") === currentMonth) || null
+    : null;
+  const currentMonthRevenueForecast = asFiniteNumber(currentMonthIncoming?.calibrationSellerboardMonthEndEur);
+  const currentMonthPayoutForecast = asFiniteNumber(currentMonthIncoming?.calibrationPayoutRateToDatePct);
+  const currentMonthForecastQuoteRaw = Number.isFinite(currentMonthRevenueForecast)
+    && currentMonthRevenueForecast > 0
+    && Number.isFinite(currentMonthPayoutForecast)
+    && currentMonthPayoutForecast >= 0
+    ? (Number(currentMonthPayoutForecast) / Number(currentMonthRevenueForecast)) * 100
+    : null;
+  const currentMonthForecastQuotePct = Number.isFinite(currentMonthForecastQuoteRaw)
+    ? clampPct(currentMonthForecastQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+    : null;
+
+  const useForecastPointInNormalObserved = Boolean(
+    currentMonth
+    && Number.isFinite(currentMonthForecastQuotePct)
+    && (!isQ4Month(currentMonth) || ignoreQ4),
+  );
+  const normalObservedWithForecastQuotes = useForecastPointInNormalObserved
+    ? [...normalIstPoints.map((point) => point.quotePct), Number(currentMonthForecastQuotePct)]
+    : normalIstPoints.map((point) => point.quotePct);
+  const normalObservedWithForecastMedianRaw = computeMedian(normalObservedWithForecastQuotes);
+  const normalObservedWithForecastAverageRaw = computeAverage(normalObservedWithForecastQuotes);
+
+  const months = normalizeRecommendationMonths({
+    months: input.months,
+    incomings,
+    monthlyActuals,
+  });
+  const byMonth = {};
+  months.forEach((month) => {
+    const istPoint = istByMonth.get(month);
+    if (istPoint) {
+      byMonth[month] = {
+        month,
+        quotePct: clampPct(istPoint.quotePct, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT),
+        sourceTag: "IST",
+        explanation: "IST: Auszahlungsquote aus Monats-Istwerten.",
+      };
+      return;
+    }
+    if (currentMonth && month === currentMonth && Number.isFinite(currentMonthForecastQuotePct)) {
+      byMonth[month] = {
+        month,
+        quotePct: Number(currentMonthForecastQuotePct),
+        sourceTag: "PROGNOSE",
+        explanation: "PROGNOSE: Auszahlung Monatsende / Umsatzprognose Monatsende.",
+      };
+      return;
+    }
+    const useQ4Baseline = isQ4Month(month) && !ignoreQ4;
+    const baselineQuote = useQ4Baseline ? baselineQ4Pct : baselineNormalPct;
+    const sourceTag = useQ4Baseline ? "BASELINE_Q4" : "BASELINE_NORMAL";
+    const explanation = useQ4Baseline
+      ? "Baseline Q4: Q4 = Normal + 0,5 * (Dez - Normal) (manuell ueberschreibbar)."
+      : "Baseline Normal: manuell gesetzter Referenzwert.";
+    byMonth[month] = {
+      month,
+      quotePct: baselineQuote,
+      sourceTag,
+      explanation,
+    };
+  });
+
+  const normalObservedMedianPct = Number.isFinite(normalObservedMedianRaw)
+    ? clampPct(normalObservedMedianRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+    : null;
+  const normalObservedAveragePct = Number.isFinite(normalObservedAverageRaw)
+    ? clampPct(normalObservedAverageRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+    : null;
+  const normalObservedWithForecastMedianPct = Number.isFinite(normalObservedWithForecastMedianRaw)
+    ? clampPct(normalObservedWithForecastMedianRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+    : null;
+  const normalObservedWithForecastAveragePct = Number.isFinite(normalObservedWithForecastAverageRaw)
+    ? clampPct(normalObservedWithForecastAverageRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
     : null;
 
   return {
-    medianPct,
-    sampleCount: points.length,
-    usedMonths: points.map((point) => point.month),
-    uncertain: points.length < minSamples,
+    // Compatibility fields used by existing callers.
+    medianPct: baselineNormalPct,
+    sampleCount: istPoints.length,
+    usedMonths: istPoints.map((point) => point.month),
+    uncertain: istPoints.length < minSamples,
     ignoreQ4,
     minSamples,
-    points,
+    points: istPoints,
+    byMonth,
+    baselineNormalPct,
+    baselineQ4Pct,
+    baselineQ4SuggestedPct,
+    baselineQ4Source,
+    decemberQuotePct,
+    currentMonth,
+    currentMonthForecastQuotePct,
+    currentMonthForecastPointUsed: useForecastPointInNormalObserved,
+    observedNormalMedianPct: normalObservedMedianPct,
+    observedNormalAveragePct: normalObservedAveragePct,
+    observedNormalSampleCount: normalIstPoints.length,
+    observedNormalUsedMonths: normalIstPoints.map((point) => point.month),
+    observedNormalWithForecastMedianPct: normalObservedWithForecastMedianPct,
+    observedNormalWithForecastAveragePct: normalObservedWithForecastAveragePct,
+    observedNormalWithForecastSampleCount: normalObservedWithForecastQuotes.length,
   };
 }
 
