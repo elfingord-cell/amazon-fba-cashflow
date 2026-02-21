@@ -2009,6 +2009,48 @@
   color: #64748b;
 }
 
+.v2-dashboard-chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 6px;
+}
+
+.v2-dashboard-chart-summary .ant-tag {
+  margin-inline-end: 0 !important;
+  font-size: 13px;
+}
+
+.v2-dashboard-chart-hint {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.v2-dashboard-pnl-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+  background: rgba(241, 245, 249, 0.82);
+  color: #334155;
+}
+
+.v2-dashboard-pnl-table .ant-table-tbody > tr > td {
+  white-space: nowrap;
+}
+
+.v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-group > td {
+  background: rgba(240, 253, 250, 0.55);
+}
+
+.v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-total > td {
+  background: rgba(248, 250, 252, 0.85);
+  border-top: 1px solid rgba(15, 27, 45, 0.12);
+}
+
+.v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-detail > td:first-child {
+  color: #475569;
+}
+
 .v2-dashboard-legend-help {
   display: flex;
   align-items: flex-start;

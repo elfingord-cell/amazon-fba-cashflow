@@ -8,26 +8,22 @@ import {
   Collapse,
   Col,
   Drawer,
-  Popover,
   Row,
   Segmented,
   Select,
   Space,
-  Statistic,
+  Table,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
-import { VisTimeline } from "../../components/VisTimeline";
 import {
-  buildDashboardPnlRowsByMonth,
   type DashboardBreakdownRow,
   type DashboardEntry,
-  type DashboardPnlRow,
 } from "../../domain/dashboardMaturity";
-import { buildDashboardOrderTimeline } from "../../domain/dashboardOrderTimeline";
 import {
   buildDashboardRobustness,
   type CoverageStatusKey,
@@ -39,8 +35,7 @@ import {
   resolvePlanningMonthsFromState,
   type PhantomFoSuggestion,
 } from "../../domain/phantomFo";
-import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
-import { buildReadinessGate } from "../../domain/readinessGate";
+import { ensureForecastVersioningContainers } from "../../domain/forecastVersioning";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { normalizePortfolioBucket, PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { useWorkspaceState } from "../../state/workspace";
@@ -48,7 +43,6 @@ import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModule
 import { useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
-const { CheckableTag } = Tag;
 
 type DashboardRange = "next6" | "next12" | "next18" | "all";
 
@@ -93,6 +87,9 @@ interface SeriesResult {
       recommendationObservedNormalWithForecastSampleCount?: number;
       recommendationCurrentMonthForecastQuotePct?: number;
       recommendationCurrentMonth?: string;
+      calibrationEnabled?: boolean;
+      calibrationApplied?: boolean;
+      calibrationHorizonMonths?: number;
     };
     actuals?: {
       count?: number;
@@ -107,15 +104,12 @@ interface SeriesResult {
   };
 }
 
-interface RuntimeRouteErrorMeta {
-  errorAt: string | null;
-  routeKey: string | null;
-  routePath: string | null;
-  routeLabel: string | null;
-  message: string | null;
+interface PnlMatrixRow {
+  key: string;
+  label: string;
+  values: Record<string, number>;
+  children?: PnlMatrixRow[];
 }
-
-const ROUTE_ERROR_STORAGE_KEY = "v2:last-route-error";
 
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
   { value: "next6", label: "Nächste 6 Monate", count: 6 },
@@ -124,19 +118,8 @@ const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; cou
   { value: "all", label: "Alle Monate", count: null },
 ];
 
-const PNL_GROUP_ORDER: Array<{ key: DashboardPnlRow["group"]; label: string }> = [
-  { key: "inflow", label: "Einzahlungen" },
-  { key: "po_fo", label: "PO/FO Zahlungen" },
-  { key: "fixcost", label: "Fixkosten" },
-  { key: "tax", label: "Steuern & Importkosten" },
-  { key: "outflow", label: "Sonstige Auszahlungen" },
-  { key: "other", label: "Sonstige" },
-];
-
 const DASHBOARD_SECTION_KEYS = new Set([
-  "signals",
   "cashflow",
-  "robustness",
   "pnl",
 ]);
 
@@ -222,41 +205,10 @@ function coverageStatusMeta(statusKey: CoverageStatusKey): {
   return COVERAGE_STATUS_UI_META[statusKey] || COVERAGE_STATUS_UI_META.insufficient;
 }
 
-function coverageStatusTag(statusKey: CoverageStatusKey): JSX.Element {
-  const meta = coverageStatusMeta(statusKey);
-  return <Tag color={meta.color}>{meta.label}</Tag>;
-}
-
 function criteriaStateSymbol(state: "ok" | "warn" | "fail"): string {
   if (state === "ok") return "✅";
   if (state === "warn") return "⚠️";
   return "❌";
-}
-
-function sumRows(rows: DashboardPnlRow[]): number {
-  return rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-}
-
-function addDays(date: Date, days: number): Date {
-  const copy = new Date(date.getTime());
-  copy.setDate(copy.getDate() + days);
-  return copy;
-}
-
-function bucketLabel(value: string): string {
-  const option = DASHBOARD_BUCKET_OPTIONS.find((entry) => entry.value === value);
-  return option?.label || value;
-}
-
-function formatBucketScopeLabel(values: string[]): string {
-  const normalized = Array.from(new Set((Array.isArray(values) ? values : [])
-    .map((entry) => String(entry || ""))
-    .filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry))));
-  const key = normalized.slice().sort().join("|");
-  if (key === [PORTFOLIO_BUCKET.CORE].join("|")) return "Nur Kern";
-  if (key === [PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN].sort().join("|")) return "Kern+Plan";
-  if (normalized.length === PORTFOLIO_BUCKET_VALUES.length) return "Alles";
-  return normalized.map((entry) => bucketLabel(entry)).join(", ");
 }
 
 function applyDashboardCalculationOverrides(
@@ -286,17 +238,6 @@ function applyDashboardCalculationOverrides(
     });
   }
   return next;
-}
-
-function signalTitle(label: string, tooltip: string): JSX.Element {
-  return (
-    <span className="v2-dashboard-signal-title">
-      {label}
-      <Tooltip title={tooltip}>
-        <InfoCircleOutlined />
-      </Tooltip>
-    </span>
-  );
 }
 
 function appendRouteQuery(route: string, params: Record<string, string | null | undefined>): string {
@@ -476,20 +417,6 @@ function applyBucketScopeToBreakdown(
   });
 }
 
-function getFixcostAverageFromBreakdown(rows: DashboardBreakdownRow[]): number {
-  const monthlyFixcosts = rows
-    .map((row) => {
-      const entries = Array.isArray(row.entries) ? row.entries : [];
-      const total = entries
-        .filter((entry) => String(entry.direction || "").toLowerCase() === "out" && String(entry.group || "") === "Fixkosten")
-        .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
-      return total;
-    })
-    .filter((value) => value > 0);
-  if (!monthlyFixcosts.length) return 0;
-  return monthlyFixcosts.reduce((sum, value) => sum + value, 0) / monthlyFixcosts.length;
-}
-
 function splitOutflowEntriesByType(
   entries: DashboardEntry[],
   provisionalFoIds?: Set<string>,
@@ -499,12 +426,16 @@ function splitOutflowEntriesByType(
   po: number;
   fo: number;
   phantomFo: number;
+  other: number;
+  total: number;
 } {
   const totals = {
     fixcost: 0,
     po: 0,
     fo: 0,
     phantomFo: 0,
+    other: 0,
+    total: 0,
   };
 
   entries.forEach((entryRaw) => {
@@ -514,6 +445,7 @@ function splitOutflowEntriesByType(
     if (String(entry.direction || "").toLowerCase() !== "out") return;
     const amount = Math.abs(Number(entry.amount || 0));
     if (!Number.isFinite(amount) || amount <= 0) return;
+    totals.total += amount;
 
     const source = String(entry.source || "").toLowerCase();
     if (source === "po") {
@@ -536,7 +468,9 @@ function splitOutflowEntriesByType(
     const group = String(entry.group || "").toLowerCase();
     if (source === "fixcosts" || group === "fixkosten") {
       totals.fixcost += amount;
+      return;
     }
+    totals.other += amount;
   });
 
   return totals;
@@ -600,54 +534,6 @@ function splitInflowEntriesByType(
   return totals;
 }
 
-function buildCashInStatusTags(row: DashboardPnlRow): JSX.Element[] {
-  if (row.source !== "sales") return [];
-  const cashInMeta = row.cashInMeta;
-  if (!cashInMeta) return [];
-  const tags: JSX.Element[] = [];
-
-  if (cashInMeta.component === "plan") {
-    tags.push(<Tag key="component" color="geekblue">Plan-Produkt</Tag>);
-  }
-
-  if (cashInMeta.quoteSource === "manual") {
-    tags.push(<Tag key="quote-source" color="gold">Quote manuell</Tag>);
-  } else if (cashInMeta.quoteSource === "recommendation") {
-    tags.push(<Tag key="quote-source" color="blue">Quote Empfehlung</Tag>);
-  }
-
-  if (cashInMeta.revenueSource === "manual_override") {
-    tags.push(<Tag key="revenue-source" color="gold">Umsatz manuell</Tag>);
-  } else if (cashInMeta.revenueSource === "forecast_calibrated") {
-    const factor = Number(cashInMeta.calibrationFactorApplied);
-    if (Number.isFinite(factor) && Math.abs(factor - 1) > 0.000001) {
-      tags.push(
-        <Tag key="revenue-source" color="orange">
-          Kalibriert {factor.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </Tag>,
-      );
-    } else {
-      tags.push(<Tag key="revenue-source">Forecast</Tag>);
-    }
-  } else if (cashInMeta.revenueSource === "manual_no_forecast") {
-    tags.push(<Tag key="revenue-source">Manuell (kein Forecast)</Tag>);
-  }
-
-  return tags;
-}
-
-function computeFirstNegativeRobustMonth(
-  rows: DashboardBreakdownRow[],
-  robustMonthMap: Map<string, DashboardRobustMonth>,
-): string | null {
-  for (let i = 0; i < rows.length; i += 1) {
-    const month = rows[i].month;
-    const robust = robustMonthMap.get(month)?.robust;
-    if (!robust) continue;
-    if (Number(rows[i].closing || 0) < 0) return month;
-  }
-  return null;
-}
 
 function normalizeForecastImpactSummary(value: unknown): {
   toVersionId: string | null;
@@ -666,46 +552,6 @@ function normalizeForecastImpactSummary(value: unknown): {
   };
 }
 
-function readRuntimeRouteErrorMeta(): RuntimeRouteErrorMeta {
-  if (typeof window === "undefined" || !window.sessionStorage) {
-    return {
-      errorAt: null,
-      routeKey: null,
-      routePath: null,
-      routeLabel: null,
-      message: null,
-    };
-  }
-  try {
-    const raw = window.sessionStorage.getItem(ROUTE_ERROR_STORAGE_KEY);
-    if (!raw) {
-      return {
-        errorAt: null,
-        routeKey: null,
-        routePath: null,
-        routeLabel: null,
-        message: null,
-      };
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      errorAt: typeof parsed.errorAt === "string" ? parsed.errorAt : null,
-      routeKey: typeof parsed.routeKey === "string" ? parsed.routeKey : null,
-      routePath: typeof parsed.routePath === "string" ? parsed.routePath : null,
-      routeLabel: typeof parsed.routeLabel === "string" ? parsed.routeLabel : null,
-      message: typeof parsed.message === "string" ? parsed.message : null,
-    };
-  } catch {
-    return {
-      errorAt: null,
-      routeKey: null,
-      routePath: null,
-      routeLabel: null,
-      message: null,
-    };
-  }
-}
-
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error } = useWorkspaceState();
   const navigate = useNavigate();
@@ -716,13 +562,10 @@ export default function DashboardModule(): JSX.Element {
   const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
   const [safetyMode, setSafetyMode] = useState<CashInSafetyMode>("basis");
   const [q4SeasonalityEnabled, setQ4SeasonalityEnabled] = useState<boolean>(true);
-  const [cockpitDetailsOpen, setCockpitDetailsOpen] = useState(false);
   const [cockpitDefaultsApplied, setCockpitDefaultsApplied] = useState(false);
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
-  const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
-  const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
   const [openSections, setOpenSections] = useState<string[]>(() => {
     const stored = getModuleExpandedCategoryKeys("dashboard");
     if (!hasStoredDashboardSections) return DEFAULT_DASHBOARD_OPEN_SECTIONS.slice();
@@ -764,10 +607,6 @@ export default function DashboardModule(): JSX.Element {
       targetMonth: resolvedPhantomTargetMonth || null,
     }),
     [planningMonths, resolvedPhantomTargetMonth, stateObject],
-  );
-  const phantomFoById = useMemo(
-    () => new Map(phantomFoSuggestions.map((entry) => [entry.id, entry])),
-    [phantomFoSuggestions],
   );
   const phantomFoIdSet = useMemo(
     () => new Set(phantomFoSuggestions.map((entry) => entry.id)),
@@ -814,15 +653,6 @@ export default function DashboardModule(): JSX.Element {
     });
   }, [stateObject, visibleMonths]);
 
-  const readiness = useMemo(() => {
-    return buildReadinessGate({
-      state: stateObject,
-      horizonMonths: 12,
-      runtimeErrorAt: runtimeRouteError.errorAt,
-      runtimeErrorRoute: runtimeRouteError.routePath,
-    });
-  }, [runtimeRouteError.errorAt, runtimeRouteError.routePath, stateObject]);
-
   useEffect(() => {
     if (!planningMonths.length) {
       setPhantomTargetMonth("");
@@ -847,23 +677,24 @@ export default function DashboardModule(): JSX.Element {
   }, [robustness, selectedMonth]);
 
   useEffect(() => {
-    if (!visibleBreakdown.length) {
-      setOpenPnlMonths([]);
-      return;
-    }
-    setOpenPnlMonths((current) => {
-      const valid = new Set(visibleBreakdown.map((entry) => entry.month));
-      return current.filter((month) => valid.has(month));
-    });
-  }, [visibleBreakdown]);
-
-  useEffect(() => {
     setModuleExpandedCategoryKeys("dashboard", openSections);
   }, [openSections]);
 
   const handleDashboardSectionsChange = (value: string | string[]) => {
     setOpenSections(normalizeDashboardSectionKeys(toActiveKeys(value)));
   };
+  const toggleBucketScopeValue = useCallback((bucket: string) => {
+    if (!PORTFOLIO_BUCKET_VALUES.includes(bucket)) return;
+    setBucketScopeValues((current) => {
+      const normalized = Array.from(new Set((current || []).filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry))));
+      const isSelected = normalized.includes(bucket);
+      if (!isSelected) {
+        return [...normalized, bucket];
+      }
+      const filtered = normalized.filter((entry) => entry !== bucket);
+      return filtered.length ? filtered : normalized;
+    });
+  }, []);
   const openMonthDetails = useCallback((month: string) => {
     if (!month) return;
     setSelectedMonth(month);
@@ -904,6 +735,35 @@ export default function DashboardModule(): JSX.Element {
     }),
     [inflowSplitByMonth, simulatedBreakdown],
   );
+  const outflowSplitByMonth = useMemo(() => {
+    const map = new Map<string, {
+      fixcost: number;
+      po: number;
+      fo: number;
+      phantomFo: number;
+      other: number;
+      total: number;
+    }>();
+    simulatedBreakdown.forEach((row) => {
+      map.set(row.month, splitOutflowEntriesByType(
+        Array.isArray(row.entries) ? row.entries : [],
+        phantomFoIdSet,
+        bucketScopeSet,
+      ));
+    });
+    return map;
+  }, [bucketScopeSet, phantomFoIdSet, simulatedBreakdown]);
+  const outflowSplitSeries = useMemo(
+    () => simulatedBreakdown.map((row) => outflowSplitByMonth.get(row.month) || {
+      fixcost: 0,
+      po: 0,
+      fo: 0,
+      phantomFo: 0,
+      other: 0,
+      total: 0,
+    }),
+    [outflowSplitByMonth, simulatedBreakdown],
+  );
   const amazonCoreInflowSeries = useMemo(
     () => inflowSplitSeries.map((row) => row.amazonCore),
     [inflowSplitSeries],
@@ -934,71 +794,19 @@ export default function DashboardModule(): JSX.Element {
     if (!simulatedBreakdown.length) return null;
     return Math.min(...simulatedBreakdown.map((row) => Number(row.closing || 0)));
   }, [simulatedBreakdown]);
-  const bucketScopeLabel = useMemo(
-    () => formatBucketScopeLabel(bucketScopeValues),
-    [bucketScopeValues],
-  );
-  const revenueBasisLabel = revenueBasisMode === "calibrated" ? "Kalibrierter Umsatz" : "Forecast-Umsatz";
-  const quoteModeLabel = quoteMode === "manual" ? "Manuell je Monat" : "Empfehlung";
-  const safetyModeLabel = safetyMode === "basis" ? "Basis" : "Konservativ";
-  const q4StatusLabel = q4SeasonalityEnabled ? "berücksichtigt" : "ignoriert";
   const q4ToggleVisible = quoteMode === "recommendation";
-
-  const fixcostAverage = useMemo(() => getFixcostAverageFromBreakdown(visibleBreakdown), [visibleBreakdown]);
-  const bufferFloor = fixcostAverage * 2;
-
-  const robustClosings = useMemo(
-    () => simulatedBreakdown
-      .filter((row) => robustness.monthMap.get(row.month)?.robust)
-      .map((row) => Number(row.closing || 0)),
-    [robustness.monthMap, simulatedBreakdown],
-  );
-
-  const freeCashAfterBuffer = useMemo(() => {
-    if (!robustClosings.length || bufferFloor <= 0) return null;
-    const minClosing = Math.min(...robustClosings);
-    return minClosing - bufferFloor;
-  }, [bufferFloor, robustClosings]);
-
-  const firstNegativeRobustMonth = useMemo(
-    () => computeFirstNegativeRobustMonth(simulatedBreakdown, robustness.monthMap),
-    [robustness.monthMap, simulatedBreakdown],
-  );
+  const calibrationApplied = report.kpis?.cashIn?.calibrationApplied === true;
 
   const forecastVersioningSnapshot = useMemo(() => {
     const clone = structuredClone(forecast || {});
     ensureForecastVersioningContainers(clone as Record<string, unknown>);
     return clone as Record<string, unknown>;
   }, [forecast]);
-  const activeForecastLabel = useMemo(
-    () => getActiveForecastLabel(forecastVersioningSnapshot as Record<string, unknown>),
-    [forecastVersioningSnapshot],
-  );
   const impactSummary = normalizeForecastImpactSummary(forecastVersioningSnapshot.lastImpactSummary);
   const activeVersionId = String(forecastVersioningSnapshot.activeVersionId || "").trim() || null;
   const openForecastFoConflicts = impactSummary.toVersionId && activeVersionId && impactSummary.toVersionId === activeVersionId
     ? impactSummary.foConflictsOpen
     : 0;
-  const lastImportAt = typeof forecast.lastImportAt === "string" ? forecast.lastImportAt : null;
-  const importDate = lastImportAt ? new Date(lastImportAt) : null;
-  const now = new Date();
-  const msPerDay = 24 * 60 * 60 * 1000;
-  const daysSinceImport = importDate ? Math.floor((now.getTime() - importDate.getTime()) / msPerDay) : null;
-  const forecastFreshnessStatus = !importDate
-    ? "none"
-    : daysSinceImport != null && daysSinceImport <= 35
-      ? "fresh"
-      : daysSinceImport != null && daysSinceImport <= 45
-        ? "aging"
-        : "stale";
-
-  const forecastFreshnessLabel = !importDate
-    ? "Kein Forecast-Import"
-    : `${daysSinceImport} Tage seit Import`;
-
-  const nextRecommendedImport = importDate
-    ? addDays(importDate, 30)
-    : null;
 
   const selectedMonthData = selectedMonth ? robustness.monthMap.get(selectedMonth) || null : null;
   const selectedMonthStatusMeta = selectedMonthData
@@ -1030,40 +838,6 @@ export default function DashboardModule(): JSX.Element {
       }),
     }];
   }, [selectedMonthData]);
-  const selectedAdditionalBlockers = selectedMonthData
-    ? selectedMonthData.blockers.filter((entry) => entry.checkKey !== "sku_coverage")
-    : [];
-  const selectedChecklist = useMemo(() => {
-    if (!selectedMonthData) return [] as Array<{ key: string; label: string; passed: boolean; description: string }>;
-    const coverageMode = selectedMonthData.coverage.projectionMode === "doh" ? "DOH" : "Units";
-    const stockIssueCount = selectedMonthData.coverage.stockIssueCount;
-    const orderDutyIssueCount = selectedMonthData.coverage.orderDutyIssueCount;
-    const base = [
-      {
-        key: "stock",
-        label: "Bestands-Check ok?",
-        passed: stockIssueCount === 0,
-        description: stockIssueCount === 0
-          ? `Alle aktiven SKUs im Monat ${formatMonthLabel(selectedMonthData.month)} über Safety (${coverageMode}).`
-          : `${stockIssueCount} SKU(s) mit OOS/unter Safety oder fehlendem Forecast.`,
-      },
-      {
-        key: "order_duty",
-        label: "Bestellpflicht/Look-Ahead ok?",
-        passed: orderDutyIssueCount === 0,
-        description: orderDutyIssueCount === 0
-          ? "Keine SKU benötigt spätestens in diesem Monat eine neue FO/PO."
-          : `${orderDutyIssueCount} SKU(s) mit fälliger Bestellpflicht (inkl. Look-Ahead).`,
-      },
-    ];
-    const optional = selectedOptionalChecks.map((check) => ({
-      key: check.key,
-      label: `${check.label} ok?`,
-      passed: check.passed,
-      description: check.detail,
-    }));
-    return [...base, ...optional];
-  }, [selectedMonthData, selectedOptionalChecks]);
   const selectedCriteriaRows = useMemo(() => {
     if (!selectedMonthData) {
       return [] as Array<{ key: string; label: string; state: "ok" | "warn" | "fail"; description: string; route: string | null }>;
@@ -1111,8 +885,6 @@ export default function DashboardModule(): JSX.Element {
     }
     return rows;
   }, [selectedMonthData, selectedMonthIsPast, selectedOptionalChecks]);
-  const currentMonth = currentMonthKey();
-  const currentMonthIdx = monthIndex(currentMonth);
   const monthLabelToKey = useMemo(() => {
     const map = new Map<string, string>();
     visibleMonths.forEach((month) => {
@@ -1154,30 +926,10 @@ export default function DashboardModule(): JSX.Element {
   }, [monthLabelToKey, openMonthDetails, visibleMonths]);
   const chartEvents = useMemo(() => ({ click: handleChartClick }), [handleChartClick]);
 
-  useEffect(() => {
-    const refreshRuntimeRouteError = () => setRuntimeRouteError(readRuntimeRouteErrorMeta());
-    refreshRuntimeRouteError();
-    window.addEventListener("v2:route-load-state", refreshRuntimeRouteError as EventListener);
-    window.addEventListener("storage", refreshRuntimeRouteError);
-    return () => {
-      window.removeEventListener("v2:route-load-state", refreshRuntimeRouteError as EventListener);
-      window.removeEventListener("storage", refreshRuntimeRouteError);
-    };
-  }, []);
-
-  const pnlRowsByMonth = useMemo(
-    () => buildDashboardPnlRowsByMonth({
-      breakdown: simulatedBreakdown,
-      state: calculationState,
-      provisionalFoIds: phantomFoIdSet,
-    }),
-    [calculationState, phantomFoIdSet, simulatedBreakdown],
-  );
-
   const chartOption = useMemo(() => {
-    const amazonCoreSeriesName = "Amazon: Kernprodukte";
-    const amazonPlannedSeriesName = "Amazon: Geplante Produkte";
-    const amazonNewSeriesName = "Amazon: Neue Produkte";
+    const amazonCoreSeriesName = "Amazon Kern";
+    const amazonPlannedSeriesName = "Amazon Plan";
+    const amazonNewSeriesName = "Amazon Neu";
     const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
     const baseClosing = visibleBreakdown.map((row) => Number(row.closing || 0));
@@ -1186,27 +938,20 @@ export default function DashboardModule(): JSX.Element {
     const robustNegative = baseClosing.map((value, idx) => (robustMask[idx] && value < 0 ? value : null));
     const softPositive = baseClosing.map((value, idx) => (!robustMask[idx] && value >= 0 ? value : null));
     const softNegative = baseClosing.map((value, idx) => (!robustMask[idx] && value < 0 ? value : null));
-    const outflowSplitSeries = simulatedBreakdown.map((row) => splitOutflowEntriesByType(
-      Array.isArray(row.entries) ? row.entries : [],
-      phantomFoIdSet,
-      bucketScopeSet,
-    ));
     const fixcostOutflowSeries = outflowSplitSeries.map((row) => -row.fixcost);
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
     const phantomFoOutflowSeries = outflowSplitSeries.map((row) => -row.phantomFo);
-    const cashflowLegendItems = [
+    const legendItems = [
       amazonCoreSeriesName,
       amazonPlannedSeriesName,
       amazonNewSeriesName,
-      "Sonstige Einzahlungen",
+      "Sonstige In",
       "Fixkosten",
       "PO",
       "FO",
       "Phantom FO",
       "Netto",
-    ];
-    const balanceLegendItems = [
       "Kontostand belastbar",
       "Kontostand belastbar (<0)",
       "Kontostand orientierend",
@@ -1238,45 +983,78 @@ export default function DashboardModule(): JSX.Element {
           return lines.join("");
         },
       },
-      legend: [
-        {
-          top: 0,
-          left: 0,
-          itemGap: 12,
-          data: cashflowLegendItems,
+      legend: {
+        type: "scroll",
+        top: 0,
+        left: 0,
+        right: 0,
+        itemGap: 10,
+        itemWidth: 14,
+        itemHeight: 8,
+        textStyle: {
+          fontSize: 12,
+          color: "#334155",
         },
-        {
-          top: 26,
-          left: 0,
-          itemGap: 12,
-          data: balanceLegendItems,
+        pageTextStyle: {
+          fontSize: 11,
+          color: "#64748b",
         },
-      ],
+        data: legendItems,
+      },
       grid: {
-        left: 56,
-        right: 70,
-        top: 78,
-        bottom: 32,
+        left: 54,
+        right: 68,
+        top: 54,
+        bottom: 42,
       },
       xAxis: {
         type: "category",
         data: monthLabels,
         triggerEvent: true,
+        axisLabel: {
+          hideOverlap: true,
+          fontSize: 12,
+          color: "#475569",
+          margin: 12,
+        },
+        axisLine: {
+          lineStyle: { color: "rgba(15,27,45,0.24)" },
+        },
       },
       yAxis: [
         {
           type: "value",
           name: "Cashflow",
+          nameTextStyle: {
+            fontSize: 12,
+            color: "#475569",
+          },
           axisLabel: {
             formatter: (value: number) => formatSignedCurrency(value),
+            fontSize: 12,
+            color: "#475569",
+          },
+          splitLine: {
+            lineStyle: {
+              color: "rgba(15,27,45,0.10)",
+            },
           },
         },
         {
           type: "value",
           name: "Kontostand",
           position: "right",
+          nameTextStyle: {
+            fontSize: 12,
+            color: "#475569",
+          },
           axisLabel: {
             formatter: (value: number) => formatCurrency(value),
+            fontSize: 12,
+            color: "#475569",
+          },
+          splitLine: {
+            show: false,
           },
         },
       ],
@@ -1303,7 +1081,7 @@ export default function DashboardModule(): JSX.Element {
           itemStyle: { color: "#86efac" },
         },
         {
-          name: "Sonstige Einzahlungen",
+          name: "Sonstige In",
           type: "bar",
           stack: "cash",
           data: otherInflowSeries,
@@ -1341,6 +1119,7 @@ export default function DashboardModule(): JSX.Element {
           name: "Netto",
           type: "line",
           smooth: true,
+          showSymbol: false,
           data: simulatedBreakdown.map((row) => Number(row.net || 0)),
           itemStyle: { color: "#0f1b2d" },
           lineStyle: { width: 2 },
@@ -1351,6 +1130,7 @@ export default function DashboardModule(): JSX.Element {
           smooth: true,
           yAxisIndex: 1,
           connectNulls: false,
+          showSymbol: false,
           data: robustPositive,
           lineStyle: { width: 2, color: "#3bc2a7" },
           itemStyle: { color: "#3bc2a7" },
@@ -1361,6 +1141,7 @@ export default function DashboardModule(): JSX.Element {
           smooth: true,
           yAxisIndex: 1,
           connectNulls: false,
+          showSymbol: false,
           data: robustNegative,
           lineStyle: { width: 2, color: "#b42318" },
           itemStyle: { color: "#b42318" },
@@ -1371,6 +1152,7 @@ export default function DashboardModule(): JSX.Element {
           smooth: true,
           yAxisIndex: 1,
           connectNulls: false,
+          showSymbol: false,
           data: softPositive,
           lineStyle: { width: 2, type: "dashed", color: "#94a3b8" },
           itemStyle: { color: "#94a3b8" },
@@ -1381,6 +1163,7 @@ export default function DashboardModule(): JSX.Element {
           smooth: true,
           yAxisIndex: 1,
           connectNulls: false,
+          showSymbol: false,
           data: softNegative,
           lineStyle: { width: 2, type: "dashed", color: "#c2410c" },
           itemStyle: { color: "#c2410c" },
@@ -1391,293 +1174,123 @@ export default function DashboardModule(): JSX.Element {
     amazonCoreInflowSeries,
     amazonNewInflowSeries,
     amazonPlannedInflowSeries,
-    bucketScopeSet,
     otherInflowSeries,
-    phantomFoIdSet,
+    outflowSplitSeries,
     robustness.monthMap,
     simulatedBreakdown,
     visibleBreakdown,
     visibleMonths,
   ]);
+  const pnlMatrixRows = useMemo<PnlMatrixRow[]>(() => {
+    const byMonth = new Map(simulatedBreakdown.map((row) => [row.month, row]));
+    const values = (resolve: (month: string) => number): Record<string, number> => {
+      const next: Record<string, number> = {};
+      visibleMonths.forEach((month) => {
+        next[month] = Number(resolve(month) || 0);
+      });
+      return next;
+    };
 
-  const pnlItems = useMemo(() => {
-    return simulatedBreakdown.map((monthRow) => {
-      const monthRows = pnlRowsByMonth.get(monthRow.month) || [];
-      const provisionalRows = monthRows.filter((row) => row.provisional);
-      const groupedRows = PNL_GROUP_ORDER
-        .map((group) => ({
-          ...group,
-          rows: monthRows.filter((row) => row.group === group.key),
-        }))
-        .filter((group) => group.rows.length > 0);
-
-      const outflowRows = monthRows.filter((row) => row.amount < 0);
-      const inflowSplit = inflowSplitByMonth.get(monthRow.month) || { amazon: 0, other: 0, total: 0 };
-      const robust = robustness.monthMap.get(monthRow.month)?.robust || false;
-
-      return {
-        key: monthRow.month,
-        label: (
-          <div className="v2-dashboard-pnl-header">
-            <Space size={6} align="center">
-              <Text strong>{formatMonthLabel(monthRow.month)}</Text>
-              <Button
-                type="text"
-                size="small"
-                icon={<InfoCircleOutlined />}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openMonthDetails(monthRow.month);
-                }}
-              >
-                Details
-              </Button>
-            </Space>
-            <Space wrap>
-              <Tag color="green">Einzahlungen: {formatCurrency(inflowSplit.total)}</Tag>
-              <Tag color="green">Amazon: {formatCurrency(inflowSplit.amazon)}</Tag>
-              <Tag color="lime">Sonstige: {formatCurrency(inflowSplit.other)}</Tag>
-              <Tag color="red">Auszahlungen: {formatCurrency(Math.abs(sumRows(outflowRows)))}</Tag>
-              {provisionalRows.length ? <Tag color="gold">Vorbehaltlich (enthalten): {formatSignedCurrency(sumRows(provisionalRows))}</Tag> : null}
-              <Tag color={monthRow.net >= 0 ? "green" : "red"}>Netto: {formatCurrency(monthRow.net)}</Tag>
-              <Tag color={robust ? "green" : "red"}>Robust: {robust ? "ja" : "nein"}</Tag>
-            </Space>
-          </div>
-        ),
-        children: (
-          <div className="v2-dashboard-pnl-month">
-            {groupedRows.map((group) => {
-              if (group.key === "po_fo") {
-                const orderMap = new Map<string, {
-                  source: "po" | "fo";
-                  sourceId: string | null;
-                  sourceNumber: string | null;
-                  rows: DashboardPnlRow[];
-                }>();
-                group.rows.forEach((row) => {
-                  const source = row.source === "fo" ? "fo" : "po";
-                  const sourceId = row.sourceId ? String(row.sourceId) : null;
-                  const sourceNumber = row.sourceNumber ? String(row.sourceNumber) : null;
-                  const key = `${source}:${sourceId || sourceNumber || row.label}`;
-                  const existing = orderMap.get(key);
-                  if (existing) {
-                    existing.rows.push(row);
-                    if (!existing.sourceId && sourceId) existing.sourceId = sourceId;
-                    if (!existing.sourceNumber && sourceNumber) existing.sourceNumber = sourceNumber;
-                    return;
-                  }
-                  orderMap.set(key, {
-                    source,
-                    sourceId,
-                    sourceNumber,
-                    rows: [row],
-                  });
-                });
-
-                const orderItems = Array.from(orderMap.entries()).map(([orderKey, order]) => {
-                  const total = sumRows(order.rows);
-                  const orderBuckets = Array.from(new Set(order.rows
-                    .map((row) => row.portfolioBucket)
-                    .filter((value): value is string => Boolean(value))));
-                  const provisionalOrderRows = order.rows.filter((row) => row.provisional);
-                  const provisionalOrderSourceId = provisionalOrderRows
-                    .map((row) => String(row.sourceId || "").trim())
-                    .find((id) => id && phantomFoIdSet.has(id))
-                    || null;
-                  const phantomFoId = order.source === "fo"
-                    ? (
-                      order.sourceId && phantomFoIdSet.has(order.sourceId)
-                        ? order.sourceId
-                        : provisionalOrderSourceId
-                    )
-                    : null;
-                  const phantomSuggestion = phantomFoId ? (phantomFoById.get(phantomFoId) || null) : null;
-                  const tooltipMeta = order.rows.find((row) => row.tooltipMeta)?.tooltipMeta;
-                  const aliases = Array.from(new Set(
-                    order.rows.flatMap((row) => row.tooltipMeta?.aliases || []).filter(Boolean),
-                  ));
-                  const aliasSummary = aliases.length > 3
-                    ? `${aliases.slice(0, 3).join(", ")} +${aliases.length - 3}`
-                    : aliases.join(", ");
-                  const timeline = buildDashboardOrderTimeline({
-                    state: calculationState,
-                    source: order.source,
-                    sourceId: order.sourceId,
-                    sourceNumber: order.sourceNumber,
-                  });
-
-                  return {
-                    key: orderKey,
-                    label: (
-                      <div className="v2-dashboard-pnl-order-row">
-                        <div className="v2-dashboard-pnl-order-row-main">
-                          <Text strong>{String(order.source).toUpperCase()} {order.sourceNumber || order.sourceId || "—"}</Text>
-                          {aliasSummary ? (
-                            aliases.length > 3 ? (
-                              <Tooltip title={aliases.join(", ")}>
-                                <Text type="secondary">· {aliasSummary}</Text>
-                              </Tooltip>
-                            ) : (
-                              <Text type="secondary">· {aliasSummary}</Text>
-                            )
-                          ) : null}
-                        </div>
-                        <Space size={6}>
-                          <Tag color={total < 0 ? "red" : "green"}>{formatSignedCurrency(total)}</Tag>
-                          {orderBuckets.map((bucket) => (
-                            <Tag key={`${orderKey}-${bucket}`}>{bucket}</Tag>
-                          ))}
-                          {provisionalOrderRows.length ? <Tag color="gold">Vorbehaltlich</Tag> : null}
-                          {phantomSuggestion ? <Tag color="orange">Phantom FO</Tag> : null}
-                          {tooltipMeta?.units != null ? <Tag>Stück: {formatNumber(tooltipMeta.units, 0)}</Tag> : null}
-                        </Space>
-                      </div>
-                    ),
-                    children: (
-                      <div className="v2-dashboard-pnl-order-detail">
-                        {phantomSuggestion ? (
-                          <div className="v2-dashboard-pnl-phantom-hint">
-                            <Space wrap>
-                              <Tag color="gold">Automatisch vorgeschlagen</Tag>
-                              <Text type="secondary">
-                                Risikomonat {formatMonthLabel(phantomSuggestion.firstRiskMonth)} · bestellen bis {formatIsoDate(phantomSuggestion.latestOrderDate)}
-                              </Text>
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => navigate(buildFoDashboardRoute({
-                                  sku: phantomSuggestion.sku,
-                                  month: monthRow.month,
-                                  suggestedUnits: phantomSuggestion.suggestedUnits,
-                                  requiredArrivalDate: phantomSuggestion.requiredArrivalDate,
-                                  recommendedOrderDate: phantomSuggestion.recommendedOrderDate,
-                                  source: "phantom_fo",
-                                  phantomId: phantomSuggestion.id,
-                                  firstRiskMonth: phantomSuggestion.firstRiskMonth,
-                                  orderMonth: phantomSuggestion.orderMonth,
-                                  leadTimeDays: phantomSuggestion.leadTimeDays,
-                                  returnTo: "/v2/dashboard",
-                                }))}
-                              >
-                                Prüfen & bestätigen
-                              </Button>
-                            </Space>
-                          </div>
-                        ) : null}
-                        {timeline ? (
-                          <div className="v2-dashboard-order-timeline-shell">
-                            <VisTimeline
-                              className="v2-dashboard-order-timeline"
-                              items={timeline.items}
-                              visibleStartMs={timeline.visibleStartMs}
-                              visibleEndMs={timeline.visibleEndMs}
-                              height={188}
-                            />
-                          </div>
-                        ) : (
-                          <Alert
-                            type="info"
-                            showIcon
-                            message={`Keine Timeline-Daten für ${String(order.source).toUpperCase()} ${order.sourceNumber || order.sourceId || "—"} verfügbar.`}
-                          />
-                        )}
-                        <div className="v2-table-shell v2-scroll-host">
-                          <table className="v2-stats-table" data-layout="auto">
-                            <thead>
-                              <tr>
-                                <th>Milestone</th>
-                                <th>Betrag</th>
-                                <th>Fällig</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {order.rows.map((row, index) => {
-                                const tooltip = row.tooltipMeta ? (
-                                  <div>
-                                    <div><strong>{String(row.source).toUpperCase()} {row.sourceNumber || row.sourceId || "—"}</strong></div>
-                                    <div>Alias: {row.tooltipMeta.aliases.join(", ") || "-"}</div>
-                                    <div>Stückzahl: {row.tooltipMeta.units != null ? formatNumber(row.tooltipMeta.units, 0) : "-"}</div>
-                                    <div>Fälligkeit: {formatIsoDate(row.tooltipMeta.dueDate)}</div>
-                                  </div>
-                                ) : null;
-                                return (
-                                  <tr key={`${orderKey}-${index}`}>
-                                    <td>{tooltip ? <Tooltip title={tooltip}>{row.label}</Tooltip> : row.label}</td>
-                                    <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
-                                    <td>{formatIsoDate(row.tooltipMeta?.dueDate)}</td>
-                                    <td>
-                                      {row.provisional
-                                        ? <Tag color="gold">Vorbehaltlich</Tag>
-                                        : (row.paid == null
-                                          ? <Tag>—</Tag>
-                                          : row.paid
-                                            ? <Tag color="green">Bezahlt</Tag>
-                                            : <Tag color="gold">Offen</Tag>)}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    ),
-                  };
-                });
-
-                return (
-                  <div key={`${monthRow.month}-${group.key}`} className="v2-dashboard-pnl-group">
-                    <div className="v2-dashboard-pnl-group-head">
-                      <Text strong>{group.label}</Text>
-                      <Tag color="blue">{formatSignedCurrency(sumRows(group.rows))}</Tag>
-                    </div>
-                    <Collapse size="small" items={orderItems} destroyInactivePanel />
-                  </div>
-                );
-              }
-
-              return (
-                <div key={`${monthRow.month}-${group.key}`} className="v2-dashboard-pnl-group">
-                  <div className="v2-dashboard-pnl-group-head">
-                    <Text strong>{group.label}</Text>
-                    <Tag color={sumRows(group.rows) < 0 ? "red" : "green"}>{formatSignedCurrency(sumRows(group.rows))}</Tag>
-                  </div>
-                  <div className="v2-table-shell v2-scroll-host">
-                    <table className="v2-stats-table" data-layout="auto">
-                      <thead>
-                        <tr>
-                          <th>Position</th>
-                          <th>Bucket</th>
-                          <th>Betrag</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {group.rows.map((row, index) => (
-                          <tr key={`${monthRow.month}-${group.key}-${index}`}>
-                            <td>{row.tooltip ? <Tooltip title={row.tooltip}>{row.label}</Tooltip> : row.label}</td>
-                            <td>{row.portfolioBucket ? <Tag>{row.portfolioBucket}</Tag> : "—"}</td>
-                            <td className={row.amount < 0 ? "v2-negative" : undefined}>{formatSignedCurrency(row.amount)}</td>
-                            <td>
-                              <Space size={6} wrap>
-                                {buildCashInStatusTags(row)}
-                                {row.paid == null ? <Tag>—</Tag> : row.paid ? <Tag color="green">Bezahlt</Tag> : <Tag color="gold">Offen</Tag>}
-                              </Space>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ),
-      };
-    });
-  }, [calculationState, inflowSplitByMonth, navigate, openMonthDetails, phantomFoById, phantomFoIdSet, pnlRowsByMonth, robustness.monthMap, simulatedBreakdown]);
+    return [
+      {
+        key: "inflows",
+        label: "Einnahmen",
+        values: values((month) => inflowSplitByMonth.get(month)?.total || 0),
+        children: [
+          {
+            key: "inflows-amazon-core",
+            label: "Amazon Kernprodukte",
+            values: values((month) => inflowSplitByMonth.get(month)?.amazonCore || 0),
+          },
+          {
+            key: "inflows-amazon-plan",
+            label: "Amazon geplante Produkte",
+            values: values((month) => inflowSplitByMonth.get(month)?.amazonPlanned || 0),
+          },
+          {
+            key: "inflows-amazon-new",
+            label: "Amazon neue Produkte",
+            values: values((month) => inflowSplitByMonth.get(month)?.amazonNew || 0),
+          },
+          {
+            key: "inflows-other",
+            label: "Sonstige Einzahlungen",
+            values: values((month) => inflowSplitByMonth.get(month)?.other || 0),
+          },
+        ],
+      },
+      {
+        key: "outflows",
+        label: "Ausgaben",
+        values: values((month) => -(outflowSplitByMonth.get(month)?.total || 0)),
+        children: [
+          {
+            key: "outflows-po",
+            label: "PO",
+            values: values((month) => -(outflowSplitByMonth.get(month)?.po || 0)),
+          },
+          {
+            key: "outflows-fo",
+            label: "FO",
+            values: values((month) => -(outflowSplitByMonth.get(month)?.fo || 0)),
+          },
+          {
+            key: "outflows-phantom-fo",
+            label: "Phantom FO",
+            values: values((month) => -(outflowSplitByMonth.get(month)?.phantomFo || 0)),
+          },
+          {
+            key: "outflows-fixcost",
+            label: "Fixkosten",
+            values: values((month) => -(outflowSplitByMonth.get(month)?.fixcost || 0)),
+          },
+          {
+            key: "outflows-other",
+            label: "Sonstige Auszahlungen",
+            values: values((month) => -(outflowSplitByMonth.get(month)?.other || 0)),
+          },
+        ],
+      },
+      {
+        key: "net",
+        label: "Netto Cashflow",
+        values: values((month) => Number(byMonth.get(month)?.net || 0)),
+      },
+      {
+        key: "closing",
+        label: "Kontostand",
+        values: values((month) => Number(byMonth.get(month)?.closing || 0)),
+      },
+    ];
+  }, [inflowSplitByMonth, outflowSplitByMonth, simulatedBreakdown, visibleMonths]);
+  const pnlMatrixColumns = useMemo<ColumnsType<PnlMatrixRow>>(() => {
+    return [{
+      title: "Position",
+      key: "label",
+      dataIndex: "label",
+      fixed: "left",
+      width: 260,
+      render: (_value, row) => {
+        const isTotal = row.key === "inflows" || row.key === "outflows" || row.key === "net" || row.key === "closing";
+        return <Text strong={isTotal}>{row.label}</Text>;
+      },
+    }, ...visibleMonths.map((month) => ({
+      title: formatMonthLabel(month),
+      key: month,
+      width: 132,
+      align: "right" as const,
+      render: (_value: unknown, row: PnlMatrixRow) => {
+        const value = Number(row.values[month] || 0);
+        const isBalanceRow = row.key === "closing";
+        const isNegative = !isBalanceRow && value < 0;
+        return (
+          <Text strong={row.key === "net" || row.key === "closing"} type={isNegative ? "danger" : undefined}>
+            {isBalanceRow ? formatCurrency(value) : formatSignedCurrency(value)}
+          </Text>
+        );
+      },
+    }))];
+  }, [visibleMonths]);
 
   function resetCalculationCockpit(): void {
     setRange("next6");
@@ -1686,7 +1299,6 @@ export default function DashboardModule(): JSX.Element {
     setQuoteMode("manual");
     setSafetyMode("basis");
     setQ4SeasonalityEnabled(true);
-    setCockpitDetailsOpen(false);
   }
 
   function openBlockerTarget(blocker: RobustMonthBlocker): void {
@@ -1950,174 +1562,17 @@ export default function DashboardModule(): JSX.Element {
         activeKey={openSections}
         onChange={handleDashboardSectionsChange}
         items={[{
-          key: "signals",
-          label: "Executive Signals",
-          children: (
-            <div className="v2-dashboard-signal-grid">
-              <Card className="v2-dashboard-signal-card v2-dashboard-readiness-card">
-                <Statistic
-                  title={signalTitle(
-                    "Readiness Gate",
-                    "Go/No-Go vor großer Datenpflege. Alle Checks müssen grün sein.",
-                  )}
-                  value={readiness.ready ? "Bereit" : "Nicht bereit"}
-                />
-                <Space wrap>
-                  <Tag color={readiness.ready ? "green" : "red"}>
-                    {readiness.ready ? "Go" : "No-Go"}
-                  </Tag>
-                  <Tag color={readiness.ready ? "green" : "gold"}>
-                    {readiness.robustMonthsCount}/{readiness.robustRequiredCount} robuste Monate
-                  </Tag>
-                </Space>
-                {!readiness.ready && readiness.blockers.length ? (
-                  <div className="v2-dashboard-readiness-blockers">
-                    {readiness.blockers.slice(0, 2).map((blocker) => (
-                      <div key={blocker.id} className="v2-dashboard-readiness-blocker-item">
-                        <Text type="secondary">{blocker.label}: {blocker.message}</Text>
-                        <Button size="small" onClick={() => navigate(blocker.route)}>Öffnen</Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <Text type="secondary">Alle Gate-Checks erfüllt.</Text>
-                )}
-              </Card>
-
-              <Card className="v2-dashboard-signal-card">
-                <Statistic
-                  title={signalTitle(
-                    "Robust bis",
-                    "Letzter Monat, in dem alle Hard-Checks erfüllt sind. Danach ist der Kontostand nur Orientierung.",
-                  )}
-                  value={robustness.robustUntilMonth ? formatMonthLabel(robustness.robustUntilMonth) : "—"}
-                />
-                <Text type="secondary">{robustness.robustMonthsCount}/{robustness.totalMonths} Monate robust</Text>
-              </Card>
-
-              <Card className="v2-dashboard-signal-card">
-                <Statistic
-                  title={signalTitle(
-                    "Erster negativer Monat (robust)",
-                    "Erster belastbarer Monat mit negativem Kontostand. Nicht robuste Monate werden dafür ignoriert.",
-                  )}
-                  value={firstNegativeRobustMonth ? formatMonthLabel(firstNegativeRobustMonth) : "Keiner"}
-                />
-                <Text type="secondary">Nur robuste Monate werden berücksichtigt</Text>
-              </Card>
-
-              <Card className="v2-dashboard-signal-card">
-                <Statistic
-                  title={signalTitle(
-                    "Freier Cash nach Buffer",
-                    "Minimaler belastbarer Kontostand minus Sicherheitsreserve aus 2 Monaten Fixkosten.",
-                  )}
-                  value={freeCashAfterBuffer != null ? formatCurrency(freeCashAfterBuffer) : "—"}
-                />
-                <Text type="secondary">Buffer (2M Fixkosten): {formatCurrency(bufferFloor)}</Text>
-              </Card>
-
-              <Card className="v2-dashboard-signal-card">
-                <div className="v2-dashboard-forecast-status-head">
-                  <Text strong>
-                    Forecast Freshness
-                    <Tooltip title="Ampel nach Importalter: Grün <=35 Tage, Gelb 36-45 Tage, Rot >45 Tage.">
-                      <InfoCircleOutlined className="v2-dashboard-inline-info" />
-                    </Tooltip>
-                  </Text>
-                  <Tag color={
-                    forecastFreshnessStatus === "fresh"
-                      ? "green"
-                      : forecastFreshnessStatus === "aging"
-                        ? "gold"
-                        : forecastFreshnessStatus === "stale"
-                          ? "red"
-                          : "default"
-                  }>
-                    {forecastFreshnessStatus === "fresh"
-                      ? "Grün"
-                      : forecastFreshnessStatus === "aging"
-                        ? "Gelb"
-                        : forecastFreshnessStatus === "stale"
-                          ? "Rot"
-                          : "Keine Daten"}
-                  </Tag>
-                </div>
-                <div className="v2-dashboard-forecast-status-meta">
-                  <div>Baseline Forecast: {activeForecastLabel}</div>
-                  <div>{forecastFreshnessLabel}</div>
-                  <div>Letzter Import: {formatIsoDate(lastImportAt)}</div>
-                  <div>Nächster Import empfohlen: {nextRecommendedImport ? nextRecommendedImport.toLocaleDateString("de-DE") : "—"}</div>
-                  {openForecastFoConflicts > 0 ? (
-                    <div>
-                      <Button size="small" onClick={() => navigate("/v2/forecast?panel=conflicts")}>
-                        Forecast-Änderung: {openForecastFoConflicts} FOs prüfen
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-              </Card>
-            </div>
-          ),
-        }]}
-      />
-
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
           key: "cashflow",
           label: "Kontostand & Cashflow",
           children: (
             <Card className="v2-dashboard-chart-card">
               <div className="v2-calc-cockpit-shell">
                 <div className="v2-calc-cockpit-status">
-                  <div>
-                    <Text strong>Aktive Berechnung</Text>
-                    <Space wrap style={{ marginTop: 6 }}>
-                      <Tag>Scope: {bucketScopeLabel}</Tag>
-                      <Tag>Umsatzbasis: {revenueBasisLabel}</Tag>
-                      <Tag>Auszahlungsquote: {quoteModeLabel}</Tag>
-                      <Tag>Sicherheitsmodus: {safetyModeLabel}</Tag>
-                      {q4ToggleVisible ? <Tag>Q4: {q4StatusLabel}</Tag> : null}
-                    </Space>
-                  </div>
-                  <div className="v2-calc-cockpit-status-right">
-                    <Space wrap>
-                      <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
-                      <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
-                    </Space>
-                    <Space wrap>
-                      <Popover
-                        trigger="click"
-                        open={cockpitDetailsOpen}
-                        onOpenChange={setCockpitDetailsOpen}
-                        placement="bottomRight"
-                        content={(
-                          <div className="v2-calc-cockpit-popover">
-                            <Text strong>Aktive Einstellungen</Text>
-                            <div>Scope: {bucketScopeLabel}</div>
-                            <div>Umsatzbasis: {revenueBasisLabel}</div>
-                            <div>Auszahlungsquote: {quoteModeLabel}</div>
-                            <div>Sicherheitsmodus: {safetyModeLabel}</div>
-                            {q4ToggleVisible ? <div>Q4: {q4StatusLabel}</div> : null}
-                            <Text type="secondary">
-                              Diese Auswahl wirkt direkt auf Umsatz, Cash-In, Netto und Kontostand im Chart.
-                            </Text>
-                            <Space wrap>
-                              <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>Eingaben</Button>
-                              <Button size="small" type="link" onClick={() => navigate("/v2/forecast")}>Forecast</Button>
-                              <Button size="small" type="link" onClick={() => navigate("/v2/products")}>Produkte</Button>
-                            </Space>
-                          </div>
-                        )}
-                      >
-                        <Button size="small">Details</Button>
-                      </Popover>
-                      <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
-                    </Space>
-                  </div>
+                  <Space wrap>
+                    <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
+                    <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
+                  </Space>
+                  <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
                 </div>
 
                 <div className="v2-calc-cockpit-modules">
@@ -2131,48 +1586,19 @@ export default function DashboardModule(): JSX.Element {
                     <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
                     <div className="v2-calc-cockpit-chip-row">
                       {DASHBOARD_BUCKET_OPTIONS.map((option) => {
-                        const checked = bucketScopeValues.includes(option.value);
+                        const selected = bucketScopeValues.includes(option.value);
                         return (
-                          <CheckableTag
+                          <Button
                             key={option.value}
-                            checked={checked}
-                            onChange={(nextChecked) => {
-                              setBucketScopeValues((current) => {
-                                const normalized = Array.from(new Set((current || []).filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry))));
-                                if (nextChecked) return Array.from(new Set([...normalized, option.value]));
-                                const filtered = normalized.filter((entry) => entry !== option.value);
-                                return filtered.length ? filtered : normalized;
-                              });
-                            }}
+                            size="small"
+                            type={selected ? "primary" : "default"}
+                            onClick={() => toggleBucketScopeValue(option.value)}
                           >
                             {option.label}
-                          </CheckableTag>
+                          </Button>
                         );
                       })}
                     </div>
-                    <Space wrap>
-                      <Button
-                        size="small"
-                        type={bucketScopeValues.length === 1 && bucketScopeValues[0] === PORTFOLIO_BUCKET.CORE ? "primary" : "default"}
-                        onClick={() => setBucketScopeValues([PORTFOLIO_BUCKET.CORE])}
-                      >
-                        Nur Kern
-                      </Button>
-                      <Button
-                        size="small"
-                        type={formatBucketScopeLabel(bucketScopeValues) === "Kern+Plan" ? "primary" : "default"}
-                        onClick={() => setBucketScopeValues([PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN])}
-                      >
-                        Kern+Plan
-                      </Button>
-                      <Button
-                        size="small"
-                        type={bucketScopeValues.length === PORTFOLIO_BUCKET_VALUES.length ? "primary" : "default"}
-                        onClick={() => setBucketScopeValues(PORTFOLIO_BUCKET_VALUES.slice())}
-                      >
-                        Alles
-                      </Button>
-                    </Space>
                     <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
                   </Card>
 
@@ -2202,11 +1628,16 @@ export default function DashboardModule(): JSX.Element {
                         {revenueBasisMode === "calibrated" ? "Eingaben öffnen" : "In Eingaben aktivieren"}
                       </Button>
                     </Text>
+                    {revenueBasisMode === "calibrated" && !calibrationApplied ? (
+                      <Text type="warning">
+                        Keine wirksamen Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.
+                      </Text>
+                    ) : null}
                   </Card>
 
                   <Card size="small" className="v2-calc-cockpit-module">
                     <Space size={6}>
-                      <Text strong>Amazon Auszahlung (Cash-In)</Text>
+                      <Text strong>Amazon Auszahlungsquote</Text>
                       <Tooltip title="Manuell nutzt die Monatsquote aus Eingaben. Empfehlung berechnet die Quote automatisch als Vorschlag je Monat.">
                         <InfoCircleOutlined />
                       </Tooltip>
@@ -2217,7 +1648,7 @@ export default function DashboardModule(): JSX.Element {
                       value={quoteMode}
                       onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
                       options={[
-                        { label: "Manuell je Monat", value: "manual" },
+                        { label: "Manuelle Quote", value: "manual" },
                         { label: "Empfehlung", value: "recommendation" },
                       ]}
                     />
@@ -2260,154 +1691,17 @@ export default function DashboardModule(): JSX.Element {
                 </div>
               </div>
 
-              <Title level={4} style={{ marginTop: 16 }}>Kontostand &amp; Cashflow</Title>
-              <Space wrap>
+              <div className="v2-dashboard-chart-summary">
                 <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
                 <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
                 <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-                {phantomFoSuggestions.length ? <Tag color="gold">Phantom-FOs: {phantomFoSuggestions.length}</Tag> : null}
-                {resolvedPhantomTargetMonth ? <Tag color="gold">PFO bis: {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
-              </Space>
-              <div className="v2-dashboard-legend-help">
-                <Text type="secondary" className="v2-dashboard-legend-note">
-                  Die Legende steuert nur die Sichtbarkeit von Serien. Die Berechnung bleibt unverändert.
-                </Text>
-                <Tooltip title="Durchgezogene Linie: belastbarer Kontostand (alle Hard-Checks bestanden).">
-                  <Tag className="v2-dashboard-legend-tag">Linie solid = belastbar</Tag>
-                </Tooltip>
-                <Tooltip title="Gestrichelte Linie: orientierend, weil mindestens ein Hard-Check fehlt.">
-                  <Tag className="v2-dashboard-legend-tag">Linie gestrichelt = orientierend</Tag>
-                </Tooltip>
-                <Tooltip title="Rot markiert: Kontostand liegt unter 0 im jeweiligen Zustand.">
-                  <Tag className="v2-dashboard-legend-tag">Rot = unter 0</Tag>
-                </Tooltip>
+                {phantomFoSuggestions.length ? <Tag color="gold">PFO: {phantomFoSuggestions.length}</Tag> : null}
+                {resolvedPhantomTargetMonth ? <Tag color="gold">bis {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
               </div>
-              <ReactECharts style={{ height: 380 }} option={chartOption} onEvents={chartEvents} />
-            </Card>
-          ),
-        }]}
-      />
-
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
-          key: "robustness",
-          label: "Robustheits-Matrix",
-          children: (
-            <Card>
-              <Title level={4}>Robustheits-Matrix</Title>
-              <Paragraph type="secondary">
-                Ein Monat wird nur dann grün, wenn Bestands-Check und Look-Ahead-Bestellpflicht passen. Die Stufen folgen den Schwellen:
-                Vollständig 100 %, Weitgehend ≥95 % ohne A/B-Blocker, Teilweise ≥80 %, sonst Unzureichend.
-              </Paragraph>
-
-              <div className="v2-dashboard-robust-legend">
-                {(["full", "wide", "partial", "insufficient"] as CoverageStatusKey[]).map((statusKey) => {
-                  const meta = coverageStatusMeta(statusKey);
-                  return (
-                    <div key={statusKey} className="v2-dashboard-robust-legend-item">
-                      <span className={`v2-dashboard-robust-dot ${meta.className}`} />
-                      <Text>{meta.label}</Text>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="v2-dashboard-robust-grid">
-                {robustness.months.map((month) => {
-                  const monthIdx = monthIndex(month.month);
-                  const isPast = monthIdx != null && currentMonthIdx != null && monthIdx < currentMonthIdx;
-                  const statusMeta = coverageStatusMeta(month.coverage.statusKey);
-                  return (
-                    <button
-                      key={month.month}
-                      type="button"
-                      className={[
-                        "v2-dashboard-robust-item",
-                        selectedMonth === month.month ? "is-selected" : "",
-                        statusMeta.className,
-                        isPast ? "is-past" : "",
-                      ].filter(Boolean).join(" ")}
-                      onClick={() => openMonthDetails(month.month)}
-                    >
-                      <div className="v2-dashboard-robust-item-head">
-                        <span>{formatMonthLabel(month.month)}</span>
-                        <Space size={6}>
-                          <Tag color={statusMeta.color}>{statusMeta.label}</Tag>
-                          {isPast ? <Tag>Vergangen</Tag> : null}
-                        </Space>
-                      </div>
-                      <div className="v2-dashboard-robust-item-meta">
-                        Coverage: {formatPercent(month.coverage.ratio * 100)} ({month.coverage.coveredSkus}/{month.coverage.activeSkus})
-                      </div>
-                      <div className="v2-dashboard-robust-item-meta">
-                        Blocker SKUs: {month.coverage.blockerCount} (A/B {month.coverage.blockerAbCount} · C {month.coverage.blockerCCount})
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {selectedMonthData ? (
-                <div className="v2-dashboard-robust-detail">
-                  <div className="v2-dashboard-robust-detail-head">
-                    <Text strong>{formatMonthLabel(selectedMonthData.month)}</Text>
-                    <Space wrap>
-                      {coverageStatusTag(selectedMonthData.coverage.statusKey)}
-                      <Tag>Coverage: {formatPercent(selectedMonthData.coverage.ratio * 100)}</Tag>
-                      <Tag>Blocker: {selectedMonthData.coverage.blockerCount}</Tag>
-                      <Tag>A/B: {selectedMonthData.coverage.blockerAbCount} · C: {selectedMonthData.coverage.blockerCCount}</Tag>
-                      {selectedMonthData.coverage.overdueOrderDutySkuCount > 0 ? (
-                        <Tag color="red">Überfällig: {selectedMonthData.coverage.overdueOrderDutySkuCount}</Tag>
-                      ) : null}
-                    </Space>
-                  </div>
-
-                  <div className="v2-dashboard-robust-checklist">
-                    {selectedChecklist.map((entry) => (
-                      <div key={entry.key} className={`v2-dashboard-robust-checklist-item ${entry.passed ? "is-pass" : "is-fail"}`}>
-                        <span className="v2-dashboard-robust-check-icon">{entry.passed ? "✅" : "❌"}</span>
-                        <div>
-                          <Text strong>{entry.label}</Text>
-                          <div><Text type="secondary">{entry.description}</Text></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="v2-dashboard-blockers">
-                    <Text strong>Weitere Hard-Checks</Text>
-                    {!selectedAdditionalBlockers.length ? (
-                      <Text type="secondary">Keine weiteren Hard-Check-Blocker.</Text>
-                    ) : (
-                      <div className="v2-dashboard-blocker-list">
-                        {selectedAdditionalBlockers.map((blocker) => (
-                          <div key={blocker.id} className="v2-dashboard-blocker-item">
-                            <div>
-                              <Text>{blocker.message}</Text>
-                              {blocker.sku ? <Text type="secondary"> · {blocker.sku}</Text> : null}
-                            </div>
-                            <Button
-                              size="small"
-                              onClick={() => navigate(resolveDashboardRoute({
-                                route: blocker.route,
-                                checkKey: blocker.checkKey,
-                                month: blocker.month,
-                                sku: blocker.sku || null,
-                                mode: selectedMonthData.coverage.projectionMode,
-                              }))}
-                            >
-                              Öffnen
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : null}
+              <Text type="secondary" className="v2-dashboard-chart-hint">
+                Klick auf Monat oder Balken für Details. Legende ist scrollbar.
+              </Text>
+              <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} />
             </Card>
           ),
         }]}
@@ -2419,18 +1713,29 @@ export default function DashboardModule(): JSX.Element {
         onChange={handleDashboardSectionsChange}
         items={[{
           key: "pnl",
-          label: "Monatliche PnL (Drilldown)",
+          label: "Monatliche PnL (Matrix)",
           children: (
             <Card>
-              <Title level={4}>Monatliche PnL (Drilldown)</Title>
+              <Title level={4}>Monatliche PnL (Matrix)</Title>
               <Paragraph type="secondary">
-                Einzahlungen, PO/FO-Zahlungen, Fixkosten und Steuern je Monat. PO/FO-Positionen sind bis auf Milestone-Ebene aufklappbar.
+                Zeilen = Einnahmen/Ausgaben-Struktur, Spalten = gewählter Zeitraum. Klappe Einnahmen und Ausgaben für Details auf.
               </Paragraph>
-              <Collapse
-                className="v2-dashboard-pnl-collapse"
-                activeKey={openPnlMonths}
-                onChange={(keys) => setOpenPnlMonths(Array.isArray(keys) ? keys.map(String) : [String(keys)])}
-                items={pnlItems}
+              <Table<PnlMatrixRow>
+                className="v2-dashboard-pnl-table"
+                columns={pnlMatrixColumns}
+                dataSource={pnlMatrixRows}
+                pagination={false}
+                size="small"
+                rowKey="key"
+                rowClassName={(row) => {
+                  if (row.key === "net" || row.key === "closing") return "v2-dashboard-pnl-table-row-total";
+                  if (Array.isArray(row.children) && row.children.length) return "v2-dashboard-pnl-table-row-group";
+                  return "v2-dashboard-pnl-table-row-detail";
+                }}
+                expandable={{
+                  defaultExpandAllRows: true,
+                }}
+                scroll={{ x: "max-content" }}
               />
             </Card>
           ),
