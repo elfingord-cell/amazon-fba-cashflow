@@ -1938,6 +1938,62 @@
   width: 100%;
 }
 
+.v2-calc-cockpit-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.v2-calc-cockpit-status {
+  position: sticky;
+  top: 10px;
+  z-index: 9;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid rgba(15, 27, 45, 0.12);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(6px);
+}
+
+.v2-calc-cockpit-status-right {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.v2-calc-cockpit-popover {
+  max-width: 360px;
+  display: grid;
+  gap: 6px;
+}
+
+.v2-calc-cockpit-modules {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.v2-calc-cockpit-module .ant-card-body {
+  display: grid;
+  gap: 10px;
+}
+
+.v2-calc-cockpit-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.v2-calc-cockpit-q4-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .v2-dashboard-signal-title {
   display: inline-flex;
   align-items: center;
@@ -2604,6 +2660,19 @@
 }
 
 @media (max-width: 992px) {
+  .v2-calc-cockpit-status {
+    flex-direction: column;
+  }
+
+  .v2-calc-cockpit-status-right {
+    width: 100%;
+    justify-items: start;
+  }
+
+  .v2-calc-cockpit-modules {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .v2-dashboard-signal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2669,6 +2738,14 @@
 }
 
 @media (max-width: 640px) {
+  .v2-calc-cockpit-modules {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-calc-cockpit-q4-row {
+    align-items: flex-start;
+  }
+
   .v2-dashboard-signal-grid,
   .v2-dashboard-sim-grid {
     grid-template-columns: 1fr;

@@ -11,8 +11,10 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popover,
   message,
   Row,
+  Segmented,
   Select,
   Space,
   Statistic,
@@ -58,10 +60,14 @@ import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModule
 import { useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
+const { CheckableTag } = Tag;
 
 type DashboardRange = "next6" | "next12" | "next18" | "all";
 
 type SimulationType = "dividend" | "capex";
+type RevenueBasisMode = "forecast" | "calibrated";
+type CashInQuoteMode = "manual" | "recommendation";
+type CashInSafetyMode = "basis" | "conservative";
 type InventoryRiskFilterParam = "all" | "oos" | "under_safety";
 type InventoryAbcFilterParam = "all" | "a" | "b" | "ab" | "abc";
 type ProductIssueFilterParam = "all" | "needs_fix" | "revenue" | "blocked";
@@ -187,13 +193,14 @@ const DASHBOARD_SECTION_KEYS = new Set([
   "kpis",
 ]);
 
-const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["signals", "cashflow"];
+const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["cashflow", "actions"];
 
 const DASHBOARD_BUCKET_OPTIONS = [
-  { value: PORTFOLIO_BUCKET.CORE, label: "Kern" },
-  { value: PORTFOLIO_BUCKET.PLAN, label: "Plan" },
-  { value: PORTFOLIO_BUCKET.IDEAS, label: "Ideen" },
+  { value: PORTFOLIO_BUCKET.CORE, label: "Kernportfolio" },
+  { value: PORTFOLIO_BUCKET.PLAN, label: "Planprodukte" },
+  { value: PORTFOLIO_BUCKET.IDEAS, label: "Ideenprodukte" },
 ];
+const DEFAULT_BUCKET_SCOPE = [PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN];
 
 const COVERAGE_STATUS_UI_META: Record<CoverageStatusKey, {
   label: string;
@@ -305,6 +312,51 @@ function simulationDefaultLabel(type: SimulationType): string {
 
 function normalizeCashInMode(value: unknown): "basis" | "conservative" {
   return String(value || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
+}
+
+function bucketLabel(value: string): string {
+  const option = DASHBOARD_BUCKET_OPTIONS.find((entry) => entry.value === value);
+  return option?.label || value;
+}
+
+function formatBucketScopeLabel(values: string[]): string {
+  const normalized = Array.from(new Set((Array.isArray(values) ? values : [])
+    .map((entry) => String(entry || ""))
+    .filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry))));
+  const key = normalized.slice().sort().join("|");
+  if (key === [PORTFOLIO_BUCKET.CORE].join("|")) return "Nur Kern";
+  if (key === [PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN].sort().join("|")) return "Kern+Plan";
+  if (normalized.length === PORTFOLIO_BUCKET_VALUES.length) return "Alles";
+  return normalized.map((entry) => bucketLabel(entry)).join(", ");
+}
+
+function applyDashboardCalculationOverrides(
+  sourceState: Record<string, unknown>,
+  options: {
+    quoteMode: CashInQuoteMode;
+    safetyMode: CashInSafetyMode;
+    revenueBasisMode: RevenueBasisMode;
+    q4SeasonalityEnabled: boolean;
+  },
+): Record<string, unknown> {
+  const next = structuredClone(sourceState || {});
+  if (!next.settings || typeof next.settings !== "object") {
+    next.settings = {};
+  }
+  const settings = next.settings as Record<string, unknown>;
+  settings.cashInMode = options.safetyMode === "basis" ? "basis" : "conservative";
+  settings.cashInCalibrationEnabled = options.revenueBasisMode === "calibrated";
+  settings.cashInRecommendationIgnoreQ4 = !options.q4SeasonalityEnabled;
+  if (options.quoteMode === "recommendation" && Array.isArray(next.incomings)) {
+    next.incomings = (next.incomings as unknown[]).map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      return {
+        ...(entry as Record<string, unknown>),
+        payoutPct: null,
+      };
+    });
+  }
+  return next;
 }
 
 function signalTitle(label: string, tooltip: string): JSX.Element {
@@ -510,28 +562,6 @@ function applyBucketScopeToBreakdown(
       entries: scopedEntries,
     };
   });
-}
-
-function computeBucketFlowTotals(rows: DashboardBreakdownRow[]): Record<string, { inflow: number; outflow: number }> {
-  const totals: Record<string, { inflow: number; outflow: number }> = {};
-  PORTFOLIO_BUCKET_VALUES.forEach((bucket) => {
-    totals[bucket] = { inflow: 0, outflow: 0 };
-  });
-  rows.forEach((row) => {
-    const entries = Array.isArray(row.entries) ? row.entries : [];
-    entries.forEach((entry) => {
-      const bucket = resolveEntryBucket(entry);
-      if (!bucket || !totals[bucket]) return;
-      const amount = Math.abs(Number(entry.amount || 0));
-      if (!Number.isFinite(amount) || amount <= 0) return;
-      if (String(entry.direction || "").toLowerCase() === "in") {
-        totals[bucket].inflow += amount;
-      } else if (String(entry.direction || "").toLowerCase() === "out") {
-        totals[bucket].outflow += amount;
-      }
-    });
-  });
-  return totals;
 }
 
 function getFixcostAverageFromBreakdown(rows: DashboardBreakdownRow[]): number {
@@ -863,8 +893,14 @@ export default function DashboardModule(): JSX.Element {
   const navigate = useNavigate();
   const [messageApi, contextHolder] = message.useMessage();
   const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
-  const [range, setRange] = useState<DashboardRange>("next12");
-  const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => PORTFOLIO_BUCKET_VALUES.slice());
+  const [range, setRange] = useState<DashboardRange>("next6");
+  const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
+  const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>("forecast");
+  const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
+  const [safetyMode, setSafetyMode] = useState<CashInSafetyMode>("basis");
+  const [q4SeasonalityEnabled, setQ4SeasonalityEnabled] = useState<boolean>(true);
+  const [cockpitDetailsOpen, setCockpitDetailsOpen] = useState(false);
+  const [cockpitDefaultsApplied, setCockpitDefaultsApplied] = useState(false);
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [openPnlMonths, setOpenPnlMonths] = useState<string[]>([]);
@@ -874,7 +910,6 @@ export default function DashboardModule(): JSX.Element {
   const [simLabel, setSimLabel] = useState<string>("");
   const [simulationReviewOpen, setSimulationReviewOpen] = useState(false);
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
-  const [poArrivalDrafts, setPoArrivalDrafts] = useState<Record<string, string>>({});
   const [runtimeRouteError, setRuntimeRouteError] = useState<RuntimeRouteErrorMeta>(() => readRuntimeRouteErrorMeta());
   const [openSections, setOpenSections] = useState<string[]>(() => {
     const stored = getModuleExpandedCategoryKeys("dashboard");
@@ -889,14 +924,19 @@ export default function DashboardModule(): JSX.Element {
   const forecast = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
     : {};
-  const forecastSettings = (forecast.settings && typeof forecast.settings === "object")
-    ? forecast.settings as Record<string, unknown>
-    : {};
-  const methodikUseForecast = forecastSettings.useForecast === true;
-  const methodikCashInMode = normalizeCashInMode(settings.cashInMode);
   const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const methodikCalibrationHorizonMonths = Math.max(1, Math.round(Number(settings.cashInCalibrationHorizonMonths || 6)));
   const methodikRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+  useEffect(() => {
+    if (cockpitDefaultsApplied) return;
+    setRevenueBasisMode(methodikCalibrationEnabled ? "calibrated" : "forecast");
+    setQ4SeasonalityEnabled(!methodikRecommendationIgnoreQ4);
+    setCockpitDefaultsApplied(true);
+  }, [
+    cockpitDefaultsApplied,
+    methodikCalibrationEnabled,
+    methodikRecommendationIgnoreQ4,
+  ]);
   const planningMonths = useMemo(
     () => resolvePlanningMonthsFromState(stateObject, 18),
     [state.settings],
@@ -946,7 +986,16 @@ export default function DashboardModule(): JSX.Element {
     () => buildStateWithPhantomFos({ state: stateObject, suggestions: phantomFoSuggestions }),
     [phantomFoSuggestions, stateObject],
   );
-  const report = useMemo(() => computeSeries(planningState) as SeriesResult, [planningState]);
+  const calculationState = useMemo(
+    () => applyDashboardCalculationOverrides(planningState, {
+      quoteMode,
+      safetyMode,
+      revenueBasisMode,
+      q4SeasonalityEnabled,
+    }),
+    [planningState, q4SeasonalityEnabled, quoteMode, revenueBasisMode, safetyMode],
+  );
+  const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
   const breakdown = report.breakdown || [];
   const actualComparisons = report.actualComparisons || [];
@@ -1135,15 +1184,23 @@ export default function DashboardModule(): JSX.Element {
   );
 
   const latestSimulatedBreakdown = simulatedBreakdown[simulatedBreakdown.length - 1] || null;
-  const totalAmazonInflow = amazonInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0);
-  const totalOtherInflow = otherInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0);
-  const totalInflow = totalAmazonInflow + totalOtherInflow;
+  const totalInflow = amazonInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0)
+    + otherInflowSeries.reduce((sum, value) => sum + Number(value || 0), 0);
   const totalOutflow = simulatedBreakdown.reduce((sum, row) => sum + Number(row.outflow || 0), 0);
   const totalNet = simulatedBreakdown.reduce((sum, row) => sum + Number(row.net || 0), 0);
-  const bucketFlowTotals = useMemo(
-    () => computeBucketFlowTotals(simulatedBreakdown),
-    [simulatedBreakdown],
+  const minClosing = useMemo(() => {
+    if (!simulatedBreakdown.length) return null;
+    return Math.min(...simulatedBreakdown.map((row) => Number(row.closing || 0)));
+  }, [simulatedBreakdown]);
+  const bucketScopeLabel = useMemo(
+    () => formatBucketScopeLabel(bucketScopeValues),
+    [bucketScopeValues],
   );
+  const revenueBasisLabel = revenueBasisMode === "calibrated" ? "Kalibrierter Umsatz" : "Forecast-Umsatz";
+  const quoteModeLabel = quoteMode === "manual" ? "Manuell je Monat" : "Empfehlung";
+  const safetyModeLabel = safetyMode === "basis" ? "Basis" : "Konservativ";
+  const q4StatusLabel = q4SeasonalityEnabled ? "berücksichtigt" : "ignoriert";
+  const q4ToggleVisible = quoteMode === "recommendation";
 
   const fixcostAverage = useMemo(() => getFixcostAverageFromBreakdown(visibleBreakdown), [visibleBreakdown]);
   const bufferFloor = fixcostAverage * 2;
@@ -1451,34 +1508,13 @@ export default function DashboardModule(): JSX.Element {
     };
   }, []);
 
-  useEffect(() => {
-    setPoArrivalDrafts((current) => {
-      const validIds = new Set(poArrivalTasks.map((task) => task.id));
-      let changed = false;
-      const next: Record<string, string> = {};
-      Object.entries(current).forEach(([id, value]) => {
-        if (!validIds.has(id)) {
-          changed = true;
-          return;
-        }
-        next[id] = value;
-      });
-      poArrivalTasks.forEach((task) => {
-        if (next[task.id]) return;
-        next[task.id] = task.arrivalDate || todayIso;
-        changed = true;
-      });
-      return changed ? next : current;
-    });
-  }, [poArrivalTasks, todayIso]);
-
   const pnlRowsByMonth = useMemo(
     () => buildDashboardPnlRowsByMonth({
       breakdown: simulatedBreakdown,
-      state: planningState,
+      state: calculationState,
       provisionalFoIds: phantomFoIdSet,
     }),
-    [phantomFoIdSet, planningState, simulatedBreakdown],
+    [calculationState, phantomFoIdSet, simulatedBreakdown],
   );
 
   const chartOption = useMemo(() => {
@@ -1914,7 +1950,7 @@ export default function DashboardModule(): JSX.Element {
                     ? `${aliases.slice(0, 3).join(", ")} +${aliases.length - 3}`
                     : aliases.join(", ");
                   const timeline = buildDashboardOrderTimeline({
-                    state: planningState,
+                    state: calculationState,
                     source: order.source,
                     sourceId: order.sourceId,
                     sourceNumber: order.sourceNumber,
@@ -2091,7 +2127,17 @@ export default function DashboardModule(): JSX.Element {
         ),
       };
     });
-  }, [inflowSplitByMonth, navigate, openMonthDetails, phantomFoById, phantomFoIdSet, planningState, pnlRowsByMonth, robustness.monthMap, simulatedBreakdown]);
+  }, [calculationState, inflowSplitByMonth, navigate, openMonthDetails, phantomFoById, phantomFoIdSet, pnlRowsByMonth, robustness.monthMap, simulatedBreakdown]);
+
+  function resetCalculationCockpit(): void {
+    setRange("next6");
+    setBucketScopeValues(DEFAULT_BUCKET_SCOPE.slice());
+    setRevenueBasisMode(methodikCalibrationEnabled ? "calibrated" : "forecast");
+    setQuoteMode("manual");
+    setSafetyMode("basis");
+    setQ4SeasonalityEnabled(true);
+    setCockpitDetailsOpen(false);
+  }
 
   async function commitSimulation(): Promise<void> {
     if (!simulationDraft) return;
@@ -2247,30 +2293,6 @@ export default function DashboardModule(): JSX.Element {
     }, "v2:dashboard:forecast-drift-reviewed");
   }
 
-  async function savePoArrivalDate(poId: string, dateIso: string | null, source: string): Promise<void> {
-    try {
-      await saveWith((current) => {
-        const next = ensureAppStateV2(current);
-        const pos = Array.isArray(next.pos) ? next.pos : [];
-        next.pos = pos.map((entry) => {
-          if (!entry || typeof entry !== "object") return entry;
-          const record = entry as Record<string, unknown>;
-          const recordId = String(record.id || record.poNo || "").trim();
-          if (recordId !== poId) return record;
-          return {
-            ...record,
-            arrivalDate: dateIso || null,
-          };
-        });
-        return next;
-      }, source);
-      messageApi.success(dateIso ? "Wareneingang gespeichert." : "Wareneingang zurückgesetzt.");
-    } catch (saveError) {
-      console.error(saveError);
-      messageApi.error(saveError instanceof Error ? saveError.message : "Wareneingang konnte nicht gespeichert werden.");
-    }
-  }
-
   const executiveFlag = ((state.settings as Record<string, unknown> | undefined)?.featureFlags as Record<string, unknown> | undefined)?.executiveDashboardV2;
   const executiveEnabled = executiveFlag !== false;
 
@@ -2294,18 +2316,8 @@ export default function DashboardModule(): JSX.Element {
           <div>
             <Title level={3}>Dashboard</Title>
             <Paragraph>
-              Executive-Cockpit für Kontostand, Robustheit und Maßnahmenpriorisierung. Nicht robuste Monate sind klar markiert.
+              Berechnungs-Cockpit für Kontostand und Cashflow. Details öffnest du bei Bedarf in den Fach-Tabs.
             </Paragraph>
-          </div>
-          <div className="v2-toolbar-field">
-            <Text>PFO bis</Text>
-            <Select
-              value={resolvedPhantomTargetMonth || undefined}
-              onChange={(value) => setPhantomTargetMonth(String(value || ""))}
-              options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
-              style={{ width: 220, maxWidth: "100%" }}
-              disabled={!planningMonths.length}
-            />
           </div>
           <div className="v2-toolbar-field">
             <Text>Zeitraum</Text>
@@ -2317,102 +2329,26 @@ export default function DashboardModule(): JSX.Element {
             />
           </div>
           <div className="v2-toolbar-field">
-            <Text>Bucket Scope</Text>
-            <Checkbox.Group
-              value={bucketScopeValues}
-              options={DASHBOARD_BUCKET_OPTIONS}
-              onChange={(values) => {
-                const next = (Array.isArray(values) ? values : []).map((entry) => String(entry || ""));
-                if (!next.length) return;
-                setBucketScopeValues(next);
-              }}
+            <Text>PFO bis</Text>
+            <Select
+              value={resolvedPhantomTargetMonth || undefined}
+              onChange={(value) => setPhantomTargetMonth(String(value || ""))}
+              options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
+              style={{ width: 220, maxWidth: "100%" }}
+              disabled={!planningMonths.length}
             />
           </div>
         </div>
         <div className="v2-toolbar">
-          <div className="v2-toolbar-row">
-            <Button onClick={() => navigate("/v2/forecast")}>Zur Absatzprognose</Button>
-            <Button onClick={() => navigate("/v2/inventory/projektion")}>Zur Bestandsprojektion</Button>
-            <Button onClick={() => navigate("/v2/orders/po")}>Zu Bestellungen</Button>
-            <Button onClick={() => navigate("/v2/abschluss/eingaben")}>Zum Abschluss</Button>
-          </div>
           <Text type="secondary">
-            Aktueller Betrachtungszeitraum: {visibleMonths.length} Monat(e). PFO-Ziel: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}.
-            {" "}Bucket-Scope: {bucketScopeValues.join(", ")}.
+            Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate) · PFO bis: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}
           </Text>
+          <div className="v2-toolbar-row">
+            <Button onClick={() => navigate("/v2/abschluss/eingaben")}>Eingaben</Button>
+            <Button onClick={() => navigate("/v2/forecast")}>Forecast</Button>
+            <Button onClick={() => navigate("/v2/products")}>Produkte</Button>
+          </div>
         </div>
-      </Card>
-
-      <Card>
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
-          <Space wrap>
-            <Title level={5} style={{ margin: 0 }}>Rechenbasis</Title>
-          </Space>
-          <Row gutter={[12, 12]}>
-            <Col xs={24} lg={8}>
-              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, height: "100%" }}>
-                <Space wrap style={{ marginBottom: 8 }}>
-                  <Text strong>Methodik (global)</Text>
-                  <Tag color="blue">GLOBAL</Tag>
-                </Space>
-                <div><Text>Forecast: {methodikUseForecast ? "An" : "Aus"}</Text></div>
-                <div><Text>Cash-In Modus: {methodikCashInMode === "basis" ? "Basis" : "Konservativ"}</Text></div>
-                <div><Text>Kalibrierung: {methodikCalibrationEnabled ? `An (${methodikCalibrationHorizonMonths} Monate)` : "Aus"}</Text></div>
-                <div><Text>Q4 ignorieren: {methodikRecommendationIgnoreQ4 ? "An" : "Aus"}</Text></div>
-                <div style={{ marginTop: 8 }}>
-                  <Button size="small" onClick={() => navigate("/v2/methodik")}>Methodik ändern</Button>
-                </div>
-              </div>
-            </Col>
-            <Col xs={24} lg={8}>
-              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, height: "100%" }}>
-                <Space wrap style={{ marginBottom: 8 }}>
-                  <Text strong>Entwurf/Szenario (wirkt erst nach Übernehmen)</Text>
-                  <Tag color={simulationDraft ? "gold" : "default"}>ENTWURF</Tag>
-                </Space>
-                {simulationDraft ? (
-                  <>
-                    <div><Text>Status: ENTWURF - wirkt erst nach Übernehmen</Text></div>
-                    <div>
-                      <Text>Geplante Änderungen: {simulationReviewRows.length}</Text>
-                    </div>
-                    <div style={{ marginTop: 8 }}>
-                      <Space wrap>
-                        <Button size="small" onClick={() => setSimulationReviewOpen(true)}>Review</Button>
-                        <Button size="small" type="primary" onClick={() => setSimulationReviewOpen(true)}>
-                          Übernehmen
-                        </Button>
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setSimAmount(null);
-                            setSimLabel("");
-                            setSimulationReviewOpen(false);
-                          }}
-                        >
-                          Verwerfen
-                        </Button>
-                      </Space>
-                    </div>
-                  </>
-                ) : (
-                  <Text type="secondary">Kein aktiver Entwurf.</Text>
-                )}
-              </div>
-            </Col>
-            <Col xs={24} lg={8}>
-              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, height: "100%" }}>
-                <Space wrap style={{ marginBottom: 8 }}>
-                  <Text strong>Ansicht/Filter (nur Anzeige)</Text>
-                  <Tag color="cyan">NUR ANZEIGE</Tag>
-                </Space>
-                <div><Text>Bucket-Scope: {bucketScopeValues.join(", ")}</Text></div>
-                <div><Text>Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate)</Text></div>
-                <div><Text>Phantom-Horizont: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}</Text></div>
-              </div>
-            </Col>
-          </Row>
-        </Space>
       </Card>
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
@@ -2769,28 +2705,207 @@ export default function DashboardModule(): JSX.Element {
           label: "Kontostand & Cashflow",
           children: (
             <Card className="v2-dashboard-chart-card">
-              <Title level={4}>Kontostand & Cashflow</Title>
+              <div className="v2-calc-cockpit-shell">
+                <div className="v2-calc-cockpit-status">
+                  <div>
+                    <Text strong>Aktive Berechnung</Text>
+                    <Space wrap style={{ marginTop: 6 }}>
+                      <Tag>Scope: {bucketScopeLabel}</Tag>
+                      <Tag>Umsatzbasis: {revenueBasisLabel}</Tag>
+                      <Tag>Auszahlungsquote: {quoteModeLabel}</Tag>
+                      <Tag>Sicherheitsmodus: {safetyModeLabel}</Tag>
+                      {q4ToggleVisible ? <Tag>Q4: {q4StatusLabel}</Tag> : null}
+                    </Space>
+                  </div>
+                  <div className="v2-calc-cockpit-status-right">
+                    <Space wrap>
+                      <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
+                      <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
+                    </Space>
+                    <Space wrap>
+                      <Popover
+                        trigger="click"
+                        open={cockpitDetailsOpen}
+                        onOpenChange={setCockpitDetailsOpen}
+                        placement="bottomRight"
+                        content={(
+                          <div className="v2-calc-cockpit-popover">
+                            <Text strong>Aktive Einstellungen</Text>
+                            <div>Scope: {bucketScopeLabel}</div>
+                            <div>Umsatzbasis: {revenueBasisLabel}</div>
+                            <div>Auszahlungsquote: {quoteModeLabel}</div>
+                            <div>Sicherheitsmodus: {safetyModeLabel}</div>
+                            {q4ToggleVisible ? <div>Q4: {q4StatusLabel}</div> : null}
+                            <Text type="secondary">
+                              Diese Auswahl wirkt direkt auf Umsatz, Cash-In, Netto und Kontostand im Chart.
+                            </Text>
+                            <Space wrap>
+                              <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>Eingaben</Button>
+                              <Button size="small" type="link" onClick={() => navigate("/v2/forecast")}>Forecast</Button>
+                              <Button size="small" type="link" onClick={() => navigate("/v2/products")}>Produkte</Button>
+                            </Space>
+                          </div>
+                        )}
+                      >
+                        <Button size="small">Details</Button>
+                      </Popover>
+                      <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
+                    </Space>
+                  </div>
+                </div>
+
+                <div className="v2-calc-cockpit-modules">
+                  <Card size="small" className="v2-calc-cockpit-module">
+                    <Space size={6}>
+                      <Text strong>Portfolio-Scope</Text>
+                      <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                    <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+                    <div className="v2-calc-cockpit-chip-row">
+                      {DASHBOARD_BUCKET_OPTIONS.map((option) => {
+                        const checked = bucketScopeValues.includes(option.value);
+                        return (
+                          <CheckableTag
+                            key={option.value}
+                            checked={checked}
+                            onChange={(nextChecked) => {
+                              setBucketScopeValues((current) => {
+                                const normalized = Array.from(new Set((current || []).filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry))));
+                                if (nextChecked) return Array.from(new Set([...normalized, option.value]));
+                                const filtered = normalized.filter((entry) => entry !== option.value);
+                                return filtered.length ? filtered : normalized;
+                              });
+                            }}
+                          >
+                            {option.label}
+                          </CheckableTag>
+                        );
+                      })}
+                    </div>
+                    <Space wrap>
+                      <Button
+                        size="small"
+                        type={bucketScopeValues.length === 1 && bucketScopeValues[0] === PORTFOLIO_BUCKET.CORE ? "primary" : "default"}
+                        onClick={() => setBucketScopeValues([PORTFOLIO_BUCKET.CORE])}
+                      >
+                        Nur Kern
+                      </Button>
+                      <Button
+                        size="small"
+                        type={formatBucketScopeLabel(bucketScopeValues) === "Kern+Plan" ? "primary" : "default"}
+                        onClick={() => setBucketScopeValues([PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN])}
+                      >
+                        Kern+Plan
+                      </Button>
+                      <Button
+                        size="small"
+                        type={bucketScopeValues.length === PORTFOLIO_BUCKET_VALUES.length ? "primary" : "default"}
+                        onClick={() => setBucketScopeValues(PORTFOLIO_BUCKET_VALUES.slice())}
+                      >
+                        Alles
+                      </Button>
+                    </Space>
+                    <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
+                  </Card>
+
+                  <Card size="small" className="v2-calc-cockpit-module">
+                    <Space size={6}>
+                      <Text strong>Umsatzbasis</Text>
+                      <Tooltip title="Forecast-Umsatz = Absatzprognose × Verkaufspreis. Kalibrierter Umsatz = Forecast-Umsatz mit Kalibrierfaktor aus Eingaben.">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                    <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+                    <Segmented
+                      block
+                      value={revenueBasisMode}
+                      onChange={(value) => setRevenueBasisMode(String(value) === "calibrated" ? "calibrated" : "forecast")}
+                      options={[
+                        { label: "Forecast-Umsatz", value: "forecast" },
+                        { label: "Kalibrierter Umsatz", value: "calibrated" },
+                      ]}
+                    />
+                    <Text type="secondary">
+                      {revenueBasisMode === "calibrated"
+                        ? `Kalibrierung aktiv (wirkt über ${methodikCalibrationHorizonMonths} Monate).`
+                        : "Kalibrierung aus."}
+                      {" "}
+                      <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>
+                        {revenueBasisMode === "calibrated" ? "Eingaben öffnen" : "In Eingaben aktivieren"}
+                      </Button>
+                    </Text>
+                  </Card>
+
+                  <Card size="small" className="v2-calc-cockpit-module">
+                    <Space size={6}>
+                      <Text strong>Amazon Auszahlung (Cash-In)</Text>
+                      <Tooltip title="Manuell nutzt die Monatsquote aus Eingaben. Empfehlung berechnet die Quote automatisch als Vorschlag je Monat.">
+                        <InfoCircleOutlined />
+                      </Tooltip>
+                    </Space>
+                    <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+                    <Segmented
+                      block
+                      value={quoteMode}
+                      onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
+                      options={[
+                        { label: "Manuell je Monat", value: "manual" },
+                        { label: "Empfehlung", value: "recommendation" },
+                      ]}
+                    />
+                    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                      <Space size={6}>
+                        <Text strong>Sicherheitsmodus</Text>
+                        <Tooltip title="Basis: keine Sicherheitsmarge. Konservativ: reduziert die Quote in zukünftigen Monaten um 1pp pro Monat (max. 5pp).">
+                          <InfoCircleOutlined />
+                        </Tooltip>
+                      </Space>
+                      <Segmented
+                        block
+                        value={safetyMode}
+                        onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
+                        options={[
+                          { label: "Basis", value: "basis" },
+                          { label: "Konservativ", value: "conservative" },
+                        ]}
+                      />
+                    </Space>
+                    {q4ToggleVisible ? (
+                      <div className="v2-calc-cockpit-q4-row">
+                        <Checkbox
+                          checked={q4SeasonalityEnabled}
+                          onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
+                        >
+                          Saisonalität (Q4) berücksichtigen
+                        </Checkbox>
+                        <Tooltip title="Q4 berücksichtigt saisonale Besonderheiten für Oktober bis Dezember. Gilt nur für die Empfehlung.">
+                          <InfoCircleOutlined />
+                        </Tooltip>
+                      </div>
+                    ) : null}
+                    <Text type="secondary">
+                      {quoteMode === "manual"
+                        ? "Verwendet die manuell gepflegte Auszahlungsquote je Monat."
+                        : "Empfehlung wird je Monat automatisch berechnet und direkt im Chart angewendet."}
+                    </Text>
+                  </Card>
+                </div>
+              </div>
+
+              <Title level={4} style={{ marginTop: 16 }}>Kontostand &amp; Cashflow</Title>
               <Space wrap>
                 <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
-                <Tag color="green">Amazon: {formatCurrency(totalAmazonInflow)}</Tag>
-                <Tag color="lime">Sonstige Einzahlungen: {formatCurrency(totalOtherInflow)}</Tag>
                 <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
                 <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-                <Tag color="green">Kern In: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.CORE]?.inflow || 0)}</Tag>
-                <Tag color="red">Kern Out: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.CORE]?.outflow || 0)}</Tag>
-                <Tag color="gold">Plan In: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.PLAN]?.inflow || 0)}</Tag>
-                <Tag color="gold">Plan Out: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.PLAN]?.outflow || 0)}</Tag>
-                <Tag color="blue">Ideen In: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.IDEAS]?.inflow || 0)}</Tag>
-                <Tag color="blue">Ideen Out: {formatCurrency(bucketFlowTotals[PORTFOLIO_BUCKET.IDEAS]?.outflow || 0)}</Tag>
-                {phantomFoSuggestions.length ? (
-                  <Tag color="gold">Phantom-FOs (vorbehaltlich): {phantomFoSuggestions.length}</Tag>
-                ) : null}
+                {phantomFoSuggestions.length ? <Tag color="gold">Phantom-FOs: {phantomFoSuggestions.length}</Tag> : null}
                 {resolvedPhantomTargetMonth ? <Tag color="gold">PFO bis: {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
                 <Tag color={(simulationDraft ? "gold" : "default")}>Simulation: {simulationDraft ? "aktiv" : "aus"}</Tag>
               </Space>
               <div className="v2-dashboard-legend-help">
                 <Text type="secondary" className="v2-dashboard-legend-note">
-                  Legende gruppiert: obere Zeile = Cashflow, untere Zeile = Kontostand.
+                  Die Legende steuert nur die Sichtbarkeit von Serien. Die Berechnung bleibt unverändert.
                 </Text>
                 <Tooltip title="Durchgezogene Linie: belastbarer Kontostand (alle Hard-Checks bestanden).">
                   <Tag className="v2-dashboard-legend-tag">Linie solid = belastbar</Tag>
@@ -2827,7 +2942,7 @@ export default function DashboardModule(): JSX.Element {
                     <Alert type="success" showIcon message="Keine offenen Hard-Blocker im gewählten Zeitraum." />
                   ) : (
                     <div className="v2-dashboard-actions">
-                      {robustness.actions.map((action) => (
+                      {robustness.actions.slice(0, 5).map((action) => (
                         <div key={action.id} className={`v2-dashboard-action-card is-${action.severity}`}>
                           <div>
                             <Text strong>{action.title}</Text>
@@ -2850,6 +2965,14 @@ export default function DashboardModule(): JSX.Element {
                           </div>
                         </div>
                       ))}
+                      {robustness.actions.length > 5 ? (
+                        <Button
+                          size="small"
+                          onClick={() => setOpenSections((current) => normalizeDashboardSectionKeys([...current, "robustness"]))}
+                        >
+                          Weitere Maßnahmen im Robustheits-Tab
+                        </Button>
+                      ) : null}
                     </div>
                   )}
                 </Card>
@@ -2859,7 +2982,7 @@ export default function DashboardModule(): JSX.Element {
                 <Card>
                   <Title level={4}>Forecast Ops</Title>
                   <Paragraph type="secondary">
-                    Monatlicher Import mit Drift-Alarm (A/B Fokus, Profil: {driftSummary.thresholdProfile}).
+                    Kompakter Status für Forecast-Drift und operative Deeplinks.
                   </Paragraph>
                   <Space wrap style={{ marginBottom: 8 }}>
                     <Tag color={driftReviewedForCurrent ? "green" : "gold"}>
@@ -2882,119 +3005,30 @@ export default function DashboardModule(): JSX.Element {
                     <div>Flagged SKU-Monate: <strong>{formatNumber(driftSummary.flaggedMonthCount, 0)}</strong></div>
                     <div>Verglichen am: <strong>{formatIsoDate(driftSummary.comparedAt)}</strong></div>
                   </div>
-                  {driftSummary.topItems.length ? (
-                    <div className="v2-dashboard-drift-list">
-                      {driftSummary.topItems.slice(0, 5).map((item, index) => (
-                        <div key={`${item.sku}-${item.month}-${index}`} className="v2-dashboard-drift-item">
-                          <div>
-                            <Text strong>{item.sku}</Text>
-                            <Text type="secondary"> · {formatMonthLabel(item.month)} · {item.abcClass}</Text>
-                          </div>
-                          <div>
-                            ΔUnits {formatNumber(item.deltaUnits, 0)} · ΔUmsatz {formatCurrency(item.deltaRevenue)} · Δ% {formatPercent(item.deltaPct)}
-                          </div>
-                        </div>
-                      ))}
-                      <Button size="small" onClick={() => navigate("/v2/forecast")}>Zur Forecast-Prüfung</Button>
-                    </div>
-                  ) : (
-                    <Alert type="success" showIcon message="Keine kritischen Drift-Abweichungen im letzten Vergleich." />
-                  )}
+                  <Space wrap>
+                    <Button size="small" onClick={() => navigate("/v2/forecast")}>Forecast öffnen</Button>
+                    <Button size="small" onClick={() => navigate("/v2/inventory/projektion")}>Bestandsprojektion</Button>
+                    <Button size="small" onClick={() => navigate("/v2/orders/po")}>Bestellungen</Button>
+                  </Space>
                 </Card>
               </Col>
 
-              <Col xs={24} xl={24}>
+              <Col xs={24}>
                 <Card>
-                  <Title level={4}>PO Wareneingang bestätigen</Title>
+                  <Title level={4}>Operative Hinweise</Title>
                   <Paragraph type="secondary">
-                    Sichtbar sind POs mit ETA im aktuellen Monat sowie überfällige ETA ohne bestätigten Wareneingang.
+                    Listenlastige Bearbeitung erfolgt in den Fach-Tabs. Hier siehst du nur den Schnellstatus.
                   </Paragraph>
-                  {!poArrivalTasks.length ? (
-                    <Alert type="success" showIcon message="Keine offenen PO-Wareneingänge für den aktuellen Scope." />
-                  ) : (
-                    <div className="v2-table-shell v2-scroll-host">
-                      <table className="v2-stats-table" data-layout="auto">
-                        <thead>
-                          <tr>
-                            <th>PO</th>
-                            <th>Supplier</th>
-                            <th>Alias</th>
-                            <th>Stückzahl</th>
-                            <th>ETA</th>
-                            <th>Status</th>
-                            <th>Aktionen</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {poArrivalTasks.map((task) => {
-                            const draftDate = poArrivalDrafts[task.id] || task.arrivalDate || todayIso;
-                            const dateInputValid = /^\d{4}-\d{2}-\d{2}$/.test(draftDate);
-                            return (
-                              <tr key={task.id}>
-                                <td>{task.poNumber || "PO"}</td>
-                                <td>{task.supplier || "-"}</td>
-                                <td>{task.skuAliases || "-"}</td>
-                                <td>{formatNumber(task.units, 0)}</td>
-                                <td>{formatIsoDate(task.etaDate)}</td>
-                                <td>
-                                  {task.arrivalDate ? (
-                                    <Tag color="green">Angekommen am {formatIsoDate(task.arrivalDate)}</Tag>
-                                  ) : task.isOverdue ? (
-                                    <Tag color="red">Überfällig</Tag>
-                                  ) : (
-                                    <Tag color="gold">Offen</Tag>
-                                  )}
-                                </td>
-                                <td>
-                                  <Space wrap>
-                                    <Button
-                                      size="small"
-                                      onClick={() => { void savePoArrivalDate(task.id, todayIso, "v2:dashboard:po-arrival-today"); }}
-                                      disabled={saving}
-                                    >
-                                      Heute
-                                    </Button>
-                                    <Input
-                                      type="date"
-                                      value={draftDate}
-                                      onChange={(event) => {
-                                        const nextDate = event.target.value || "";
-                                        setPoArrivalDrafts((current) => ({
-                                          ...current,
-                                          [task.id]: nextDate,
-                                        }));
-                                      }}
-                                      style={{ width: 160 }}
-                                    />
-                                    <Button
-                                      size="small"
-                                      onClick={() => {
-                                        if (!dateInputValid) return;
-                                        void savePoArrivalDate(task.id, draftDate, "v2:dashboard:po-arrival-date");
-                                      }}
-                                      disabled={saving || !dateInputValid || draftDate === task.arrivalDate}
-                                    >
-                                      Datum setzen
-                                    </Button>
-                                    {task.arrivalDate ? (
-                                      <Button
-                                        size="small"
-                                        danger
-                                        onClick={() => { void savePoArrivalDate(task.id, null, "v2:dashboard:po-arrival-clear"); }}
-                                        disabled={saving}
-                                      >
-                                        Zurücksetzen
-                                      </Button>
-                                    ) : null}
-                                  </Space>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  <Space wrap>
+                    <Tag color={poArrivalTasks.length ? "gold" : "green"}>
+                      PO Wareneingang offen: {formatNumber(poArrivalTasks.length, 0)}
+                    </Tag>
+                    <Tag color={poArrivalTasks.some((task) => task.isOverdue) ? "red" : "green"}>
+                      Überfällig: {formatNumber(poArrivalTasks.filter((task) => task.isOverdue).length, 0)}
+                    </Tag>
+                    <Button size="small" onClick={() => navigate("/v2/orders/po")}>PO-Tab öffnen</Button>
+                    <Button size="small" onClick={() => navigate("/v2/abschluss/eingaben")}>Eingaben öffnen</Button>
+                  </Space>
                 </Card>
               </Col>
             </Row>
