@@ -42,9 +42,7 @@ import {
 import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
 import { buildReadinessGate } from "../../domain/readinessGate";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
-import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
 import { normalizePortfolioBucket, PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
-import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModuleExpandedCategoryKeys } from "../../state/uiPrefs";
 import { useNavigate } from "react-router-dom";
@@ -119,15 +117,6 @@ interface RuntimeRouteErrorMeta {
 
 const ROUTE_ERROR_STORAGE_KEY = "v2:last-route-error";
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function todayIsoDate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
   { value: "next6", label: "Nächste 6 Monate", count: 6 },
   { value: "next12", label: "Nächste 12 Monate", count: 12 },
@@ -147,12 +136,11 @@ const PNL_GROUP_ORDER: Array<{ key: DashboardPnlRow["group"]; label: string }> =
 const DASHBOARD_SECTION_KEYS = new Set([
   "signals",
   "cashflow",
-  "actions",
   "robustness",
   "pnl",
 ]);
 
-const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["cashflow", "actions"];
+const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["cashflow"];
 
 const DASHBOARD_BUCKET_OPTIONS = [
   { value: PORTFOLIO_BUCKET.CORE, label: "Kernportfolio" },
@@ -661,55 +649,6 @@ function computeFirstNegativeRobustMonth(
   return null;
 }
 
-function normalizeForecastDriftSummary(value: unknown): {
-  comparedAt: string | null;
-  thresholdProfile: string;
-  flaggedSkuCount: number;
-  flaggedABCount: number;
-  flaggedMonthCount: number;
-  topItems: Array<{
-    sku: string;
-    month: string;
-    abcClass: string;
-    deltaPct: number;
-    deltaUnits: number;
-    deltaRevenue: number;
-  }>;
-} {
-  if (!value || typeof value !== "object") {
-    return {
-      comparedAt: null,
-      thresholdProfile: "medium",
-      flaggedSkuCount: 0,
-      flaggedABCount: 0,
-      flaggedMonthCount: 0,
-      topItems: [],
-    };
-  }
-  const raw = value as Record<string, unknown>;
-  const topItemsRaw = Array.isArray(raw.topItems) ? raw.topItems : [];
-  return {
-    comparedAt: typeof raw.comparedAt === "string" ? raw.comparedAt : null,
-    thresholdProfile: String(raw.thresholdProfile || "medium"),
-    flaggedSkuCount: Number(raw.flaggedSkuCount || 0),
-    flaggedABCount: Number(raw.flaggedABCount || 0),
-    flaggedMonthCount: Number(raw.flaggedMonthCount || 0),
-    topItems: topItemsRaw
-      .map((entry) => {
-        const row = entry as Record<string, unknown>;
-        return {
-          sku: String(row.sku || ""),
-          month: String(row.month || ""),
-          abcClass: String(row.abcClass || "C"),
-          deltaPct: Number(row.deltaPct || 0),
-          deltaUnits: Number(row.deltaUnits || 0),
-          deltaRevenue: Number(row.deltaRevenue || 0),
-        };
-      })
-      .filter((entry) => entry.sku && entry.month),
-  };
-}
-
 function normalizeForecastImpactSummary(value: unknown): {
   toVersionId: string | null;
   foConflictsOpen: number;
@@ -768,7 +707,7 @@ function readRuntimeRouteErrorMeta(): RuntimeRouteErrorMeta {
 }
 
 export default function DashboardModule(): JSX.Element {
-  const { state, loading, error, saving, saveWith } = useWorkspaceState();
+  const { state, loading, error } = useWorkspaceState();
   const navigate = useNavigate();
   const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
   const [range, setRange] = useState<DashboardRange>("next6");
@@ -1041,19 +980,6 @@ export default function DashboardModule(): JSX.Element {
     ? impactSummary.foConflictsOpen
     : 0;
   const lastImportAt = typeof forecast.lastImportAt === "string" ? forecast.lastImportAt : null;
-  const driftSummary = normalizeForecastDriftSummary(forecast.lastDriftSummary);
-  const driftReviewedComparedAt = typeof forecast.lastDriftReviewedComparedAt === "string"
-    ? forecast.lastDriftReviewedComparedAt
-    : null;
-  const driftReviewedAt = typeof forecast.lastDriftReviewedAt === "string"
-    ? forecast.lastDriftReviewedAt
-    : null;
-  const driftReviewedForCurrent = Boolean(
-    driftSummary.comparedAt
-    && driftReviewedComparedAt
-    && driftReviewedComparedAt === driftSummary.comparedAt
-    && driftReviewedAt,
-  );
   const importDate = lastImportAt ? new Date(lastImportAt) : null;
   const now = new Date();
   const msPerDay = 24 * 60 * 60 * 1000;
@@ -1186,18 +1112,7 @@ export default function DashboardModule(): JSX.Element {
     return rows;
   }, [selectedMonthData, selectedMonthIsPast, selectedOptionalChecks]);
   const currentMonth = currentMonthKey();
-  const todayIso = todayIsoDate();
   const currentMonthIdx = monthIndex(currentMonth);
-  const actionFocusMonth = useMemo(() => {
-    return robustness.months.find((entry) => !entry.robust)?.month || selectedMonth || visibleMonths[0] || null;
-  }, [robustness.months, selectedMonth, visibleMonths]);
-  const poArrivalTasks = useMemo<PoArrivalTask[]>(() => {
-    return buildPoArrivalTasks({
-      state: stateObject,
-      month: currentMonth,
-      todayIso,
-    });
-  }, [currentMonth, stateObject, todayIso]);
 
   useEffect(() => {
     const refreshRuntimeRouteError = () => setRuntimeRouteError(readRuntimeRouteErrorMeta());
@@ -1807,21 +1722,6 @@ export default function DashboardModule(): JSX.Element {
     }));
   }
 
-  async function markDriftReviewed(): Promise<void> {
-    if (!driftSummary.comparedAt) return;
-    await saveWith((current) => {
-      const next = ensureAppStateV2(current);
-      const stateDraft = next as unknown as Record<string, unknown>;
-      if (!stateDraft.forecast || typeof stateDraft.forecast !== "object") {
-        stateDraft.forecast = {};
-      }
-      const forecastDraft = stateDraft.forecast as Record<string, unknown>;
-      forecastDraft.lastDriftReviewedAt = nowIso();
-      forecastDraft.lastDriftReviewedComparedAt = driftSummary.comparedAt;
-      return next;
-    }, "v2:dashboard:forecast-drift-reviewed");
-  }
-
   const executiveFlag = ((state.settings as Record<string, unknown> | undefined)?.featureFlags as Record<string, unknown> | undefined)?.executiveDashboardV2;
   const executiveEnabled = executiveFlag !== false;
 
@@ -1871,11 +1771,6 @@ export default function DashboardModule(): JSX.Element {
           <Text type="secondary">
             Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate) · PFO bis: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}
           </Text>
-          <div className="v2-toolbar-row">
-            <Button onClick={() => navigate("/v2/abschluss/eingaben")}>Eingaben</Button>
-            <Button onClick={() => navigate("/v2/forecast")}>Forecast</Button>
-            <Button onClick={() => navigate("/v2/products")}>Produkte</Button>
-          </div>
         </div>
       </Card>
 
@@ -2348,119 +2243,6 @@ export default function DashboardModule(): JSX.Element {
               </div>
               <ReactECharts style={{ height: 380 }} option={chartOption} />
             </Card>
-          ),
-        }]}
-      />
-
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
-          key: "actions",
-          label: "Action Center & Forecast Ops",
-          children: (
-            <Row gutter={[12, 12]}>
-              <Col xs={24} xl={14}>
-                <Card>
-                  <Title level={4}>Action Center</Title>
-                  <Paragraph type="secondary">
-                    Priorisierte Maßnahmen, damit der Kontostand wieder belastbar wird.
-                  </Paragraph>
-                  {!robustness.actions.length ? (
-                    <Alert type="success" showIcon message="Keine offenen Hard-Blocker im gewählten Zeitraum." />
-                  ) : (
-                    <div className="v2-dashboard-actions">
-                      {robustness.actions.slice(0, 5).map((action) => (
-                        <div key={action.id} className={`v2-dashboard-action-card is-${action.severity}`}>
-                          <div>
-                            <Text strong>{action.title}</Text>
-                            <div className="v2-dashboard-action-detail">{action.detail}</div>
-                            <div className="v2-dashboard-action-impact">Impact: {action.impact}</div>
-                          </div>
-                          <div className="v2-dashboard-action-meta">
-                            <Tag color={action.severity === "error" ? "red" : "gold"}>{action.count}</Tag>
-                            <Button
-                              size="small"
-                              onClick={() => navigate(resolveDashboardRoute({
-                                route: action.route,
-                                actionId: action.id,
-                                month: actionFocusMonth,
-                                mode: actionFocusMonth ? (robustness.monthMap.get(actionFocusMonth)?.coverage.projectionMode || null) : null,
-                              }))}
-                            >
-                              Öffnen
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                      {robustness.actions.length > 5 ? (
-                        <Button
-                          size="small"
-                          onClick={() => setOpenSections((current) => normalizeDashboardSectionKeys([...current, "robustness"]))}
-                        >
-                          Weitere Maßnahmen im Robustheits-Tab
-                        </Button>
-                      ) : null}
-                    </div>
-                  )}
-                </Card>
-              </Col>
-
-              <Col xs={24} xl={10}>
-                <Card>
-                  <Title level={4}>Forecast Ops</Title>
-                  <Paragraph type="secondary">
-                    Kompakter Status für Forecast-Drift und operative Deeplinks.
-                  </Paragraph>
-                  <Space wrap style={{ marginBottom: 8 }}>
-                    <Tag color={driftReviewedForCurrent ? "green" : "gold"}>
-                      Drift-Review: {driftReviewedForCurrent ? "geprüft" : "offen"}
-                    </Tag>
-                    {driftReviewedAt ? (
-                      <Tag>Geprüft am: {new Date(driftReviewedAt).toLocaleDateString("de-DE")}</Tag>
-                    ) : null}
-                    <Button
-                      size="small"
-                      onClick={() => { void markDriftReviewed(); }}
-                      disabled={!driftSummary.comparedAt || driftReviewedForCurrent || saving}
-                    >
-                      Drift geprüft
-                    </Button>
-                  </Space>
-                  <div className="v2-dashboard-forecast-ops">
-                    <div>Flagged SKUs: <strong>{formatNumber(driftSummary.flaggedSkuCount, 0)}</strong></div>
-                    <div>Flagged A/B: <strong>{formatNumber(driftSummary.flaggedABCount, 0)}</strong></div>
-                    <div>Flagged SKU-Monate: <strong>{formatNumber(driftSummary.flaggedMonthCount, 0)}</strong></div>
-                    <div>Verglichen am: <strong>{formatIsoDate(driftSummary.comparedAt)}</strong></div>
-                  </div>
-                  <Space wrap>
-                    <Button size="small" onClick={() => navigate("/v2/forecast")}>Forecast öffnen</Button>
-                    <Button size="small" onClick={() => navigate("/v2/inventory/projektion")}>Bestandsprojektion</Button>
-                    <Button size="small" onClick={() => navigate("/v2/orders/po")}>Bestellungen</Button>
-                  </Space>
-                </Card>
-              </Col>
-
-              <Col xs={24}>
-                <Card>
-                  <Title level={4}>Operative Hinweise</Title>
-                  <Paragraph type="secondary">
-                    Listenlastige Bearbeitung erfolgt in den Fach-Tabs. Hier siehst du nur den Schnellstatus.
-                  </Paragraph>
-                  <Space wrap>
-                    <Tag color={poArrivalTasks.length ? "gold" : "green"}>
-                      PO Wareneingang offen: {formatNumber(poArrivalTasks.length, 0)}
-                    </Tag>
-                    <Tag color={poArrivalTasks.some((task) => task.isOverdue) ? "red" : "green"}>
-                      Überfällig: {formatNumber(poArrivalTasks.filter((task) => task.isOverdue).length, 0)}
-                    </Tag>
-                    <Button size="small" onClick={() => navigate("/v2/orders/po")}>PO-Tab öffnen</Button>
-                    <Button size="small" onClick={() => navigate("/v2/abschluss/eingaben")}>Eingaben öffnen</Button>
-                  </Space>
-                </Card>
-              </Col>
-            </Row>
           ),
         }]}
       />
