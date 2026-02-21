@@ -1,5 +1,5 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -7,7 +7,6 @@ import {
   Checkbox,
   Collapse,
   Input,
-  InputNumber,
   Popover,
   Radio,
   Select,
@@ -57,6 +56,7 @@ type ProjectionMode = "units" | "doh" | "plan";
 type InventoryView = "snapshot" | "projection" | "both";
 type ProjectionRiskFilter = "all" | "oos" | "under_safety";
 type ProjectionAbcFilter = "all" | "a" | "b" | "ab" | "abc";
+type SnapshotUnitsField = "amazonUnits" | "threePLUnits";
 const PROJECTION_HORIZON_OPTIONS = [6, 12, 18] as const;
 
 export interface InventoryModuleProps {
@@ -199,6 +199,85 @@ function parseUnits(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.round(parsed));
+}
+
+function formatUnitsDraft(value: unknown): string {
+  return String(parseUnits(value));
+}
+
+function sanitizeUnitsDraft(value: string): string {
+  return String(value || "").replace(/[^\d]/g, "");
+}
+
+interface SnapshotUnitsInputProps {
+  sku: string;
+  field: SnapshotUnitsField;
+  value: number;
+  onCommit: (input: { sku: string; field: SnapshotUnitsField; value: number }) => void;
+}
+
+function SnapshotUnitsInput({
+  sku,
+  field,
+  value,
+  onCommit,
+}: SnapshotUnitsInputProps): JSX.Element {
+  const [draft, setDraft] = useState(() => formatUnitsDraft(value));
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (editing) return;
+    setDraft(formatUnitsDraft(value));
+  }, [editing, value]);
+
+  const commit = useCallback(() => {
+    const normalizedCurrent = parseUnits(value);
+    const normalizedNext = parseUnits(draft);
+    if (normalizedNext === normalizedCurrent) {
+      setDraft(String(normalizedCurrent));
+      return;
+    }
+    onCommit({ sku, field, value: normalizedNext });
+    setDraft(String(normalizedNext));
+  }, [draft, field, onCommit, sku, value]);
+
+  return (
+    <Input
+      className="v2-grid-input"
+      value={draft}
+      inputMode="numeric"
+      autoComplete="off"
+      style={{ width: "100%" }}
+      data-snapshot-editor="units"
+      data-snapshot-sku={sku}
+      data-snapshot-field={field}
+      onFocus={() => setEditing(true)}
+      onBlur={() => {
+        setEditing(false);
+        commit();
+      }}
+      onChange={(event) => {
+        setDraft(sanitizeUnitsDraft(event.target.value));
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        commit();
+        const current = event.currentTarget;
+        const allInputs = Array.from(
+          document.querySelectorAll<HTMLInputElement>("input[data-snapshot-editor='units']"),
+        );
+        const currentIndex = allInputs.indexOf(current);
+        const nextInput = currentIndex >= 0 ? allInputs[currentIndex + 1] : null;
+        if (nextInput) {
+          nextInput.focus();
+          nextInput.select();
+        } else {
+          current.blur();
+        }
+      }}
+    />
+  );
 }
 
 function formatInt(value: number | null): string {
@@ -1116,6 +1195,26 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     );
   }
 
+  const commitSnapshotUnits = useCallback((input: {
+    sku: string;
+    field: SnapshotUnitsField;
+    value: number;
+  }): void => {
+    const normalized = parseUnits(input.value);
+    setSnapshotDraft((prev) => {
+      const current = prev[input.sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
+      if (current[input.field] === normalized) return prev;
+      return {
+        ...prev,
+        [input.sku]: {
+          ...current,
+          [input.field]: normalized,
+        },
+      };
+    });
+    setSnapshotDirty(true);
+  }, []);
+
   const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
     {
       header: "Alias",
@@ -1138,23 +1237,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       accessorKey: "amazonUnits",
       meta: { width: 116, align: "right" },
       cell: ({ row }) => (
-        <InputNumber
-          className="v2-grid-input"
+        <SnapshotUnitsInput
+          sku={row.original.sku}
+          field="amazonUnits"
           value={row.original.amazonUnits}
-          min={0}
-          style={{ width: "100%" }}
-          controls={false}
-          onChange={(nextValue) => {
-            const parsed = parseUnits(nextValue);
-            setSnapshotDraft((prev) => ({
-              ...prev,
-              [row.original.sku]: {
-                ...(prev[row.original.sku] || { amazonUnits: 0, threePLUnits: 0, note: "" }),
-                amazonUnits: parsed,
-              },
-            }));
-            setSnapshotDirty(true);
-          }}
+          onCommit={commitSnapshotUnits}
         />
       ),
     },
@@ -1163,23 +1250,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       accessorKey: "threePLUnits",
       meta: { width: 116, align: "right" },
       cell: ({ row }) => (
-        <InputNumber
-          className="v2-grid-input"
+        <SnapshotUnitsInput
+          sku={row.original.sku}
+          field="threePLUnits"
           value={row.original.threePLUnits}
-          min={0}
-          style={{ width: "100%" }}
-          controls={false}
-          onChange={(nextValue) => {
-            const parsed = parseUnits(nextValue);
-            setSnapshotDraft((prev) => ({
-              ...prev,
-              [row.original.sku]: {
-                ...(prev[row.original.sku] || { amazonUnits: 0, threePLUnits: 0, note: "" }),
-                threePLUnits: parsed,
-              },
-            }));
-            setSnapshotDirty(true);
-          }}
+          onCommit={commitSnapshotUnits}
         />
       ),
     },
@@ -1211,7 +1286,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       meta: { width: 108, align: "right" },
       cell: ({ row }) => formatInt(row.original.coverageDays),
     },
-  ], []);
+  ], [commitSnapshotUnits]);
 
   const anchorForecastGapSkus = Array.isArray(projection.anchorForecastGapSkus)
     ? projection.anchorForecastGapSkus as string[]
@@ -1587,7 +1662,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
               <Button onClick={exportSnapshotCsv}>
                 Snapshot CSV
               </Button>
-              {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
+              {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Gespeichert</Tag>}
               <Tag color="blue">{formatMonthEndLabel(selectedMonth, "long")}</Tag>
               {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
             </div>

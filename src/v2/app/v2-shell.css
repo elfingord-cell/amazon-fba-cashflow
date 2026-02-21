@@ -495,8 +495,22 @@
   box-shadow: none;
 }
 
+.v2-shell .v2-grid-input.ant-input {
+  text-align: right;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .v2-shell .v2-grid-input.ant-input-number:hover,
 .v2-shell .v2-grid-input.ant-input-number:focus-within {
+  border-color: rgba(47, 183, 156, 0.48);
+  background: #fff;
+}
+
+.v2-shell .v2-grid-input.ant-input:hover,
+.v2-shell .v2-grid-input.ant-input:focus {
   border-color: rgba(47, 183, 156, 0.48);
   background: #fff;
 }
