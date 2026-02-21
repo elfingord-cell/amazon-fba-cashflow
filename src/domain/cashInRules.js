@@ -335,6 +335,17 @@ function resolveCalibrationCandidate(row, forecastRevenueByMonth) {
   const cutoffDate = row.cutoffDate;
   const revenueToDate = row.revenueToDate;
   const sellerboardMonthEnd = row.sellerboardMonthEnd;
+  const hasCutoff = Boolean(cutoffDate);
+  const hasRevenueToDate = Number.isFinite(revenueToDate) && revenueToDate >= 0;
+  const hasSellerboardMonthEnd = Number.isFinite(sellerboardMonthEnd) && sellerboardMonthEnd >= 0;
+  if (!hasCutoff && !hasRevenueToDate && !hasSellerboardMonthEnd) {
+    return {
+      month,
+      active: false,
+      reason: "no_input",
+      rawForecastRevenue: Number(forecastRevenueByMonth?.[month] || 0),
+    };
+  }
   const rawForecastRevenue = Number(forecastRevenueByMonth?.[month] || 0);
 
   if (!(rawForecastRevenue > 0)) {
@@ -349,7 +360,7 @@ function resolveCalibrationCandidate(row, forecastRevenueByMonth) {
   let expectedRevenue = null;
   let method = null;
 
-  if (Number.isFinite(sellerboardMonthEnd) && sellerboardMonthEnd >= 0) {
+  if (hasSellerboardMonthEnd) {
     expectedRevenue = Number(sellerboardMonthEnd);
     method = "sellerboard";
   } else {
@@ -361,8 +372,6 @@ function resolveCalibrationCandidate(row, forecastRevenueByMonth) {
         rawForecastRevenue,
       };
     }
-    const hasCutoff = Boolean(cutoffDate);
-    const hasRevenueToDate = Number.isFinite(revenueToDate) && revenueToDate >= 0;
     if (!hasCutoff || !hasRevenueToDate) {
       return {
         month,
@@ -424,8 +433,9 @@ export function buildCalibrationProfile(input = {}) {
   const horizonMonths = normalizeCalibrationHorizonMonths(input.horizonMonths, 6);
   const rows = normalizeIncomingRows(input.incomings);
 
-  const candidates = rows
-    .map((row) => resolveCalibrationCandidate(row, forecastRevenueByMonth))
+  const evaluations = rows
+    .map((row) => resolveCalibrationCandidate(row, forecastRevenueByMonth));
+  const candidates = evaluations
     .filter((entry) => entry.active)
     .sort((left, right) => left.month.localeCompare(right.month));
 
@@ -494,6 +504,7 @@ export function buildCalibrationProfile(input = {}) {
   return {
     horizonMonths,
     candidates,
+    evaluations,
     byMonth,
   };
 }

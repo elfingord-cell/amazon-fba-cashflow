@@ -1263,6 +1263,27 @@ export function computeSeries(state) {
     forecastRevenueByMonth: forecastMap,
     horizonMonths: cashInCalibrationHorizonMonths,
   });
+  const calibrationEvaluations = Array.isArray(calibrationProfile.evaluations)
+    ? calibrationProfile.evaluations
+    : [];
+  const calibrationCandidates = Array.isArray(calibrationProfile.candidates)
+    ? calibrationProfile.candidates
+    : [];
+  const calibrationLatestCandidate = calibrationCandidates.length
+    ? calibrationCandidates[calibrationCandidates.length - 1]
+    : null;
+  const calibrationReasonCounts = calibrationEvaluations.reduce((acc, entry) => {
+    if (!entry || typeof entry !== 'object') return acc;
+    const reason = String(entry.reason || '').trim() || 'unknown';
+    acc[reason] = Number(acc[reason] || 0) + 1;
+    return acc;
+  }, {});
+  const calibrationNonDefaultFactorMonthCount = Object.values(calibrationProfile.byMonth || {})
+    .filter((entry) => {
+      const factor = Number(entry?.factor || 1);
+      return Number.isFinite(factor) && Math.abs(factor - 1) > 0.000001;
+    })
+    .length;
   const calibrationApplied = cashInCalibrationEnabled && Object.values(calibrationProfile.byMonth || {})
     .some((entry) => {
       const factor = Number(entry?.factor || 1);
@@ -1816,6 +1837,13 @@ export function computeSeries(state) {
       calibrationEnabled: cashInCalibrationEnabled,
       calibrationApplied,
       calibrationHorizonMonths: cashInCalibrationHorizonMonths,
+      calibrationCandidateCount: calibrationCandidates.length,
+      calibrationLatestCandidateMonth: calibrationLatestCandidate?.month || null,
+      calibrationLatestRawFactor: Number.isFinite(Number(calibrationLatestCandidate?.rawFactor))
+        ? Number(calibrationLatestCandidate?.rawFactor)
+        : null,
+      calibrationNonDefaultFactorMonthCount,
+      calibrationReasonCounts,
       marginBucketsPct: {
         plus1: 1,
         plus2: 2,

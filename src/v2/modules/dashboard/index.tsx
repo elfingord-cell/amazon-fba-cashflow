@@ -86,6 +86,11 @@ interface SeriesResult {
       calibrationEnabled?: boolean;
       calibrationApplied?: boolean;
       calibrationHorizonMonths?: number;
+      calibrationCandidateCount?: number;
+      calibrationLatestCandidateMonth?: string | null;
+      calibrationLatestRawFactor?: number | null;
+      calibrationNonDefaultFactorMonthCount?: number;
+      calibrationReasonCounts?: Record<string, number>;
     };
     actuals?: {
       count?: number;
@@ -205,7 +210,18 @@ function applyDashboardCalculationOverrides(
   if (!next.settings || typeof next.settings !== "object") {
     next.settings = {};
   }
+  if (!next.forecast || typeof next.forecast !== "object") {
+    next.forecast = {};
+  }
   const settings = next.settings as Record<string, unknown>;
+  const forecastState = next.forecast as Record<string, unknown>;
+  if (!forecastState.settings || typeof forecastState.settings !== "object") {
+    forecastState.settings = {};
+  }
+  const forecastSettings = forecastState.settings as Record<string, unknown>;
+
+  // Dashboard cockpit compares forecast-based variants; keep forecast active in simulation.
+  forecastSettings.useForecast = true;
   settings.cashInMode = options.safetyMode === "basis" ? "basis" : "conservative";
   settings.cashInCalibrationEnabled = options.revenueBasisMode === "calibrated";
   settings.cashInRecommendationIgnoreQ4 = !options.q4SeasonalityEnabled;
@@ -851,6 +867,89 @@ export default function DashboardModule(): JSX.Element {
   }, [simulatedBreakdown]);
   const q4ToggleVisible = quoteMode === "recommendation";
   const calibrationApplied = report.kpis?.cashIn?.calibrationApplied === true;
+  const calibrationCandidateCount = Math.max(0, Math.round(Number(report.kpis?.cashIn?.calibrationCandidateCount || 0)));
+  const calibrationNonDefaultFactorMonthCount = Math.max(
+    0,
+    Math.round(Number(report.kpis?.cashIn?.calibrationNonDefaultFactorMonthCount || 0)),
+  );
+  const calibrationLatestCandidateMonth = String(report.kpis?.cashIn?.calibrationLatestCandidateMonth || "").trim() || null;
+  const calibrationLatestRawFactor = Number(report.kpis?.cashIn?.calibrationLatestRawFactor);
+  const calibrationReasonCounts = (
+    report.kpis?.cashIn?.calibrationReasonCounts
+    && typeof report.kpis.cashIn.calibrationReasonCounts === "object"
+  )
+    ? report.kpis.cashIn.calibrationReasonCounts
+    : {} as Record<string, number>;
+  const calibrationDataMonthCount = useMemo(() => {
+    const incomings = Array.isArray((calculationState as Record<string, unknown>).incomings)
+      ? (calculationState as Record<string, unknown>).incomings as Record<string, unknown>[]
+      : [];
+    return incomings.reduce((count, rowRaw) => {
+      const row = (rowRaw && typeof rowRaw === "object") ? rowRaw as Record<string, unknown> : {};
+      const hasSellerboardForecast = Number(row.calibrationSellerboardMonthEndEur) > 0;
+      const hasLinearData = Number(row.calibrationRevenueToDateEur) > 0
+        && String(row.calibrationCutoffDate || "").trim().length > 0;
+      return (hasSellerboardForecast || hasLinearData) ? count + 1 : count;
+    }, 0);
+  }, [calculationState]);
+  const calibrationWarningMessage = useMemo(() => {
+    if (revenueBasisMode !== "calibrated" || calibrationApplied) return null;
+    if (calibrationDataMonthCount <= 0) {
+      return "Keine verwertbaren Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.";
+    }
+
+    if (calibrationCandidateCount <= 0) {
+      const missingForecastCount = Math.max(0, Math.round(Number(calibrationReasonCounts.missing_forecast_revenue || 0)));
+      const missingInputsCount = Math.max(0, Math.round(Number(calibrationReasonCounts.missing_inputs || 0)));
+      const invalidCutoffCount = Math.max(0, Math.round(Number(calibrationReasonCounts.invalid_cutoff_date || 0)));
+      const invalidFactorCount = Math.max(0, Math.round(Number(calibrationReasonCounts.invalid_factor || 0)));
+      const invalidExpectedRevenueCount = Math.max(0, Math.round(Number(calibrationReasonCounts.invalid_expected_revenue || 0)));
+      const parts: string[] = [];
+      if (missingForecastCount > 0) {
+        parts.push(`Forecast-Umsatz fehlt/ist 0 in ${missingForecastCount} Kalibrier-Monat(en)`);
+      }
+      if (missingInputsCount > 0) {
+        parts.push(`Kalibrierdaten unvollständig in ${missingInputsCount} Monat(en)`);
+      }
+      if (invalidCutoffCount > 0) {
+        parts.push(`Cutoff-Datum ungültig in ${invalidCutoffCount} Monat(en)`);
+      }
+      if (invalidFactorCount > 0 || invalidExpectedRevenueCount > 0) {
+        parts.push(`Faktor rechnerisch ungültig in ${invalidFactorCount + invalidExpectedRevenueCount} Monat(en)`);
+      }
+      if (!parts.length) {
+        return "Kalibrierdaten sind vorhanden, aber aktuell im Planungsfenster nicht verwertbar. Das Diagramm bleibt beim Forecast-Umsatz.";
+      }
+      return `Kalibrierdaten sind vorhanden, aber aktuell nicht wirksam: ${parts.join(" · ")}.`;
+    }
+
+    if (calibrationNonDefaultFactorMonthCount <= 0) {
+      if (Number.isFinite(calibrationLatestRawFactor)) {
+        const factorText = Number(calibrationLatestRawFactor).toLocaleString("de-DE", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+        if (Math.abs(calibrationLatestRawFactor - 1) <= 0.000001) {
+          const sourceText = calibrationLatestCandidateMonth ? ` (Quelle ${formatMonthLabel(calibrationLatestCandidateMonth)})` : "";
+          return `Kalibrierung aktiv, aber ohne Effekt: Startfaktor ${factorText}${sourceText}. Das entspricht faktisch 1,00.`;
+        }
+        const sourceText = calibrationLatestCandidateMonth ? ` (${formatMonthLabel(calibrationLatestCandidateMonth)})` : "";
+        return `Kalibrierdaten gefunden (Startfaktor ${factorText}${sourceText}), aber im aktuellen Planungsfenster wirkt der Fade-Out bereits auf ~1,00.`;
+      }
+      return "Kalibrierdaten sind vorhanden, aktuell aber ohne Effekt (Faktor ~1,00 im Planungsfenster).";
+    }
+
+    return "Kalibrierung aktiv, aber der Effekt ist im aktuellen Ausschnitt minimal.";
+  }, [
+    calibrationApplied,
+    calibrationCandidateCount,
+    calibrationDataMonthCount,
+    calibrationLatestCandidateMonth,
+    calibrationLatestRawFactor,
+    calibrationNonDefaultFactorMonthCount,
+    calibrationReasonCounts,
+    revenueBasisMode,
+  ]);
 
   const forecastVersioningSnapshot = useMemo(() => {
     const clone = structuredClone(forecast || {});
@@ -1908,9 +2007,9 @@ export default function DashboardModule(): JSX.Element {
                   {revenueBasisMode === "calibrated" ? "Eingaben öffnen" : "In Eingaben aktivieren"}
                 </Button>
               </Text>
-              {revenueBasisMode === "calibrated" && !calibrationApplied ? (
+              {calibrationWarningMessage ? (
                 <Text type="warning">
-                  Keine wirksamen Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.
+                  {calibrationWarningMessage}
                 </Text>
               ) : null}
             </Card>
