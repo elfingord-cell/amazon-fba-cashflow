@@ -5,10 +5,7 @@ import {
   Button,
   Card,
   Checkbox,
-  Collapse,
-  Col,
   Drawer,
-  Row,
   Segmented,
   Select,
   Space,
@@ -39,7 +36,6 @@ import { ensureForecastVersioningContainers } from "../../domain/forecastVersion
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { normalizePortfolioBucket, PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { useWorkspaceState } from "../../state/workspace";
-import { getModuleExpandedCategoryKeys, hasModuleExpandedCategoryKeys, setModuleExpandedCategoryKeys } from "../../state/uiPrefs";
 import { useNavigate } from "react-router-dom";
 
 const { Paragraph, Text, Title } = Typography;
@@ -108,6 +104,13 @@ interface PnlMatrixRow {
   key: string;
   label: string;
   values: Record<string, number>;
+  rowType?: "group" | "category" | "order" | "payment" | "total";
+  orderType?: "po" | "fo" | "phantom";
+  aliases?: string[];
+  units?: number | null;
+  paymentMix?: { paid: number; open: number; unknown: number };
+  paymentStatus?: "paid" | "open" | "mixed" | "unknown";
+  paymentDueDate?: string | null;
   children?: PnlMatrixRow[];
 }
 
@@ -117,13 +120,6 @@ const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; cou
   { value: "next18", label: "Nächste 18 Monate", count: 18 },
   { value: "all", label: "Alle Monate", count: null },
 ];
-
-const DASHBOARD_SECTION_KEYS = new Set([
-  "cashflow",
-  "pnl",
-]);
-
-const DEFAULT_DASHBOARD_OPEN_SECTIONS = ["cashflow"];
 
 const DASHBOARD_BUCKET_OPTIONS = [
   { value: PORTFOLIO_BUCKET.CORE, label: "Kernportfolio" },
@@ -142,21 +138,6 @@ const COVERAGE_STATUS_UI_META: Record<CoverageStatusKey, {
   partial: { label: "Teilweise", color: "orange", className: "is-partial" },
   insufficient: { label: "Unzureichend", color: "red", className: "is-insufficient" },
 };
-
-function normalizeDashboardSectionKeys(value: readonly string[]): string[] {
-  const next = new Set<string>();
-  value.forEach((entry) => {
-    const key = String(entry || "").trim();
-    if (DASHBOARD_SECTION_KEYS.has(key)) {
-      next.add(key);
-    }
-  });
-  return Array.from(next);
-}
-
-function toActiveKeys(value: string | string[]): string[] {
-  return Array.isArray(value) ? value : value ? [value] : [];
-}
 
 function formatCurrency(value: unknown): string {
   const number = Number(value);
@@ -534,6 +515,92 @@ function splitInflowEntriesByType(
   return totals;
 }
 
+function createMonthValueRecord(months: string[]): Record<string, number> {
+  const values: Record<string, number> = {};
+  months.forEach((month) => {
+    values[month] = 0;
+  });
+  return values;
+}
+
+function sumAbsoluteMonthValues(values: Record<string, number>): number {
+  return Object.values(values).reduce((sum, value) => sum + Math.abs(Number(value || 0)), 0);
+}
+
+function resolvePaymentStatus(input: { paid: number; open: number; unknown: number }): "paid" | "open" | "mixed" | "unknown" {
+  const paid = Number(input.paid || 0);
+  const open = Number(input.open || 0);
+  const unknown = Number(input.unknown || 0);
+  if (paid > 0 && open <= 0 && unknown <= 0) return "paid";
+  if (open > 0 && paid <= 0 && unknown <= 0) return "open";
+  if (unknown > 0 && paid <= 0 && open <= 0) return "unknown";
+  return "mixed";
+}
+
+function collectExpandableRowKeys(rows: PnlMatrixRow[]): string[] {
+  const keys: string[] = [];
+  const walk = (items: PnlMatrixRow[]): void => {
+    items.forEach((row) => {
+      if (!Array.isArray(row.children) || row.children.length === 0) return;
+      keys.push(row.key);
+      walk(row.children);
+    });
+  };
+  walk(rows);
+  return keys;
+}
+
+function buildOrderMetaIndex(state: Record<string, unknown>): Map<string, { aliases: string[]; units: number | null }> {
+  const aliasBySku = new Map<string, string>();
+  const products = Array.isArray(state.products) ? state.products as Record<string, unknown>[] : [];
+  products.forEach((product) => {
+    const sku = String(product.sku || "").trim();
+    if (!sku) return;
+    const alias = String(product.alias || "").trim() || sku;
+    aliasBySku.set(sku, alias);
+  });
+
+  const index = new Map<string, { aliases: string[]; units: number | null }>();
+
+  const collect = (source: "po" | "fo", orderRaw: Record<string, unknown>): void => {
+    const refs = (
+      source === "po"
+        ? [orderRaw.poNo, orderRaw.id]
+        : [orderRaw.foNo, orderRaw.foNumber, orderRaw.id]
+    )
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean);
+    if (!refs.length) return;
+
+    const items = Array.isArray(orderRaw.items) && orderRaw.items.length
+      ? orderRaw.items as Record<string, unknown>[]
+      : [{ sku: orderRaw.sku, units: orderRaw.units }] as Record<string, unknown>[];
+
+    const aliases = new Set<string>();
+    let unitsTotal = 0;
+    items.forEach((item) => {
+      const sku = String(item.sku || "").trim();
+      if (!sku) return;
+      aliases.add(aliasBySku.get(sku) || sku);
+      const units = Number(item.units ?? item.qty ?? item.quantity ?? 0);
+      if (Number.isFinite(units)) unitsTotal += units;
+    });
+
+    const meta = {
+      aliases: Array.from(aliases),
+      units: Number.isFinite(unitsTotal) ? unitsTotal : null,
+    };
+    Array.from(new Set(refs)).forEach((ref) => {
+      index.set(`${source}:${ref}`, meta);
+    });
+  };
+
+  (Array.isArray(state.pos) ? state.pos as Record<string, unknown>[] : []).forEach((order) => collect("po", order));
+  (Array.isArray(state.fos) ? state.fos as Record<string, unknown>[] : []).forEach((order) => collect("fo", order));
+
+  return index;
+}
+
 
 function normalizeForecastImpactSummary(value: unknown): {
   toVersionId: string | null;
@@ -555,7 +622,6 @@ function normalizeForecastImpactSummary(value: unknown): {
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error } = useWorkspaceState();
   const navigate = useNavigate();
-  const hasStoredDashboardSections = hasModuleExpandedCategoryKeys("dashboard");
   const [range, setRange] = useState<DashboardRange>("next6");
   const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
   const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>("forecast");
@@ -566,11 +632,7 @@ export default function DashboardModule(): JSX.Element {
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
-  const [openSections, setOpenSections] = useState<string[]>(() => {
-    const stored = getModuleExpandedCategoryKeys("dashboard");
-    if (!hasStoredDashboardSections) return DEFAULT_DASHBOARD_OPEN_SECTIONS.slice();
-    return normalizeDashboardSectionKeys(stored);
-  });
+  const [expandedPnlRowKeys, setExpandedPnlRowKeys] = useState<string[]>(["inflows", "outflows"]);
 
   const stateObject = state as unknown as Record<string, unknown>;
   const settings = (state.settings && typeof state.settings === "object")
@@ -676,13 +738,6 @@ export default function DashboardModule(): JSX.Element {
     }
   }, [robustness, selectedMonth]);
 
-  useEffect(() => {
-    setModuleExpandedCategoryKeys("dashboard", openSections);
-  }, [openSections]);
-
-  const handleDashboardSectionsChange = (value: string | string[]) => {
-    setOpenSections(normalizeDashboardSectionKeys(toActiveKeys(value)));
-  };
   const toggleBucketScopeValue = useCallback((bucket: string) => {
     if (!PORTFOLIO_BUCKET_VALUES.includes(bucket)) return;
     setBucketScopeValues((current) => {
@@ -1181,10 +1236,160 @@ export default function DashboardModule(): JSX.Element {
     visibleBreakdown,
     visibleMonths,
   ]);
+  const orderMetaByRef = useMemo(
+    () => buildOrderMetaIndex(stateObject),
+    [state.fos, state.pos, state.products, stateObject],
+  );
+  const outflowOrderRowsByCategory = useMemo(() => {
+    type CategoryKey = "outflows-po" | "outflows-fo" | "outflows-phantom-fo";
+    interface PaymentAggregate {
+      key: string;
+      label: string;
+      values: Record<string, number>;
+      paymentDueDate: string | null;
+      paymentMix: { paid: number; open: number; unknown: number };
+    }
+    interface OrderAggregate {
+      key: string;
+      label: string;
+      values: Record<string, number>;
+      aliases: Set<string>;
+      units: number | null;
+      paymentMix: { paid: number; open: number; unknown: number };
+      payments: Map<string, PaymentAggregate>;
+    }
+
+    const categories: Record<CategoryKey, Map<string, OrderAggregate>> = {
+      "outflows-po": new Map(),
+      "outflows-fo": new Map(),
+      "outflows-phantom-fo": new Map(),
+    };
+
+    simulatedBreakdown.forEach((monthRow) => {
+      const month = monthRow.month;
+      const entries = Array.isArray(monthRow.entries) ? monthRow.entries : [];
+      entries.forEach((entryRaw) => {
+        if (!entryRaw || typeof entryRaw !== "object") return;
+        const entry = entryRaw as DashboardEntry;
+        if (!isEntryInBucketScope(entry, bucketScopeSet)) return;
+        if (String(entry.direction || "").toLowerCase() !== "out") return;
+        const amount = Math.abs(Number(entry.amount || 0));
+        if (!Number.isFinite(amount) || amount <= 0) return;
+
+        const source = String(entry.source || "").toLowerCase();
+        if (source !== "po" && source !== "fo") return;
+
+        const sourceNumber = String(entry.sourceNumber || "").trim();
+        const sourceId = String(entry.sourceId || "").trim();
+        const fallbackRef = String(entry.id || entry.label || "").trim();
+        const reference = sourceNumber || sourceId || fallbackRef || "ohne-nummer";
+
+        const meta = (entry.meta && typeof entry.meta === "object")
+          ? entry.meta as Record<string, unknown>
+          : {};
+        const isPhantom = source === "fo" && (
+          entry.provisional === true
+          || meta.phantom === true
+          || (sourceId ? phantomFoIdSet.has(sourceId) : false)
+        );
+        const categoryKey: CategoryKey = source === "po"
+          ? "outflows-po"
+          : (isPhantom ? "outflows-phantom-fo" : "outflows-fo");
+
+        const orderMap = categories[categoryKey];
+        const internalOrderKey = `${source}:${reference}`;
+        let order = orderMap.get(internalOrderKey);
+        if (!order) {
+          const metaByRef = orderMetaByRef.get(`${source}:${reference}`)
+            || (sourceNumber ? orderMetaByRef.get(`${source}:${sourceNumber}`) : undefined)
+            || (sourceId ? orderMetaByRef.get(`${source}:${sourceId}`) : undefined);
+          order = {
+            key: `order:${categoryKey}:${source}:${reference}`,
+            label: `${String(source).toUpperCase()} ${reference}`,
+            values: createMonthValueRecord(visibleMonths),
+            aliases: new Set(metaByRef?.aliases || []),
+            units: metaByRef?.units ?? null,
+            paymentMix: { paid: 0, open: 0, unknown: 0 },
+            payments: new Map(),
+          };
+          orderMap.set(internalOrderKey, order);
+        }
+
+        order.values[month] += -amount;
+        if (entry.paid === true) order.paymentMix.paid += amount;
+        else if (entry.paid === false) order.paymentMix.open += amount;
+        else order.paymentMix.unknown += amount;
+
+        const aliasFromMeta = String(meta.alias || "").trim();
+        if (aliasFromMeta) order.aliases.add(aliasFromMeta);
+        const unitsFromMeta = Number(meta.units ?? meta.qty ?? meta.quantity);
+        if (Number.isFinite(unitsFromMeta) && unitsFromMeta > 0) {
+          const currentUnits = Number(order.units || 0);
+          order.units = Number.isFinite(currentUnits) ? currentUnits + unitsFromMeta : unitsFromMeta;
+        }
+
+        const paymentLabel = String(entry.label || "").trim() || "Zahlung";
+        const paymentDueDate = String(entry.date || "").trim() || null;
+        const paymentState = entry.paid === true ? "paid" : entry.paid === false ? "open" : "unknown";
+        const internalPaymentKey = `${paymentLabel}|${paymentDueDate || ""}|${paymentState}`;
+        let payment = order.payments.get(internalPaymentKey);
+        if (!payment) {
+          payment = {
+            key: `payment:${order.key}:${internalPaymentKey}`,
+            label: paymentLabel,
+            values: createMonthValueRecord(visibleMonths),
+            paymentDueDate,
+            paymentMix: { paid: 0, open: 0, unknown: 0 },
+          };
+          order.payments.set(internalPaymentKey, payment);
+        }
+        payment.values[month] += -amount;
+        if (entry.paid === true) payment.paymentMix.paid += amount;
+        else if (entry.paid === false) payment.paymentMix.open += amount;
+        else payment.paymentMix.unknown += amount;
+      });
+    });
+
+    const toRows = (map: Map<string, OrderAggregate>, orderType: "po" | "fo" | "phantom"): PnlMatrixRow[] => {
+      return Array.from(map.values())
+        .sort((left, right) => sumAbsoluteMonthValues(right.values) - sumAbsoluteMonthValues(left.values))
+        .map((order) => {
+          const paymentRows = Array.from(order.payments.values())
+            .sort((left, right) => sumAbsoluteMonthValues(right.values) - sumAbsoluteMonthValues(left.values))
+            .map((payment) => ({
+              key: payment.key,
+              label: payment.label,
+              values: payment.values,
+              rowType: "payment" as const,
+              paymentStatus: resolvePaymentStatus(payment.paymentMix),
+              paymentDueDate: payment.paymentDueDate,
+            }));
+
+          const units = Number(order.units);
+          return {
+            key: order.key,
+            label: order.label,
+            values: order.values,
+            rowType: "order",
+            orderType,
+            aliases: Array.from(order.aliases),
+            units: Number.isFinite(units) && units > 0 ? units : null,
+            paymentMix: order.paymentMix,
+            children: paymentRows.length ? paymentRows : undefined,
+          };
+        });
+    };
+
+    return {
+      po: toRows(categories["outflows-po"], "po"),
+      fo: toRows(categories["outflows-fo"], "fo"),
+      phantom: toRows(categories["outflows-phantom-fo"], "phantom"),
+    };
+  }, [bucketScopeSet, orderMetaByRef, phantomFoIdSet, simulatedBreakdown, visibleMonths]);
   const pnlMatrixRows = useMemo<PnlMatrixRow[]>(() => {
     const byMonth = new Map(simulatedBreakdown.map((row) => [row.month, row]));
     const values = (resolve: (month: string) => number): Record<string, number> => {
-      const next: Record<string, number> = {};
+      const next = createMonthValueRecord(visibleMonths);
       visibleMonths.forEach((month) => {
         next[month] = Number(resolve(month) || 0);
       });
@@ -1195,26 +1400,31 @@ export default function DashboardModule(): JSX.Element {
       {
         key: "inflows",
         label: "Einnahmen",
+        rowType: "group",
         values: values((month) => inflowSplitByMonth.get(month)?.total || 0),
         children: [
           {
             key: "inflows-amazon-core",
             label: "Amazon Kernprodukte",
+            rowType: "category",
             values: values((month) => inflowSplitByMonth.get(month)?.amazonCore || 0),
           },
           {
             key: "inflows-amazon-plan",
             label: "Amazon geplante Produkte",
+            rowType: "category",
             values: values((month) => inflowSplitByMonth.get(month)?.amazonPlanned || 0),
           },
           {
             key: "inflows-amazon-new",
             label: "Amazon neue Produkte",
+            rowType: "category",
             values: values((month) => inflowSplitByMonth.get(month)?.amazonNew || 0),
           },
           {
             key: "inflows-other",
             label: "Sonstige Einzahlungen",
+            rowType: "category",
             values: values((month) => inflowSplitByMonth.get(month)?.other || 0),
           },
         ],
@@ -1222,31 +1432,40 @@ export default function DashboardModule(): JSX.Element {
       {
         key: "outflows",
         label: "Ausgaben",
+        rowType: "group",
         values: values((month) => -(outflowSplitByMonth.get(month)?.total || 0)),
         children: [
           {
             key: "outflows-po",
             label: "PO",
+            rowType: "category",
             values: values((month) => -(outflowSplitByMonth.get(month)?.po || 0)),
+            children: outflowOrderRowsByCategory.po.length ? outflowOrderRowsByCategory.po : undefined,
           },
           {
             key: "outflows-fo",
             label: "FO",
+            rowType: "category",
             values: values((month) => -(outflowSplitByMonth.get(month)?.fo || 0)),
+            children: outflowOrderRowsByCategory.fo.length ? outflowOrderRowsByCategory.fo : undefined,
           },
           {
             key: "outflows-phantom-fo",
             label: "Phantom FO",
+            rowType: "category",
             values: values((month) => -(outflowSplitByMonth.get(month)?.phantomFo || 0)),
+            children: outflowOrderRowsByCategory.phantom.length ? outflowOrderRowsByCategory.phantom : undefined,
           },
           {
             key: "outflows-fixcost",
             label: "Fixkosten",
+            rowType: "category",
             values: values((month) => -(outflowSplitByMonth.get(month)?.fixcost || 0)),
           },
           {
             key: "outflows-other",
             label: "Sonstige Auszahlungen",
+            rowType: "category",
             values: values((month) => -(outflowSplitByMonth.get(month)?.other || 0)),
           },
         ],
@@ -1254,23 +1473,91 @@ export default function DashboardModule(): JSX.Element {
       {
         key: "net",
         label: "Netto Cashflow",
+        rowType: "total",
         values: values((month) => Number(byMonth.get(month)?.net || 0)),
       },
       {
         key: "closing",
         label: "Kontostand",
+        rowType: "total",
         values: values((month) => Number(byMonth.get(month)?.closing || 0)),
       },
     ];
-  }, [inflowSplitByMonth, outflowSplitByMonth, simulatedBreakdown, visibleMonths]);
+  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, simulatedBreakdown, visibleMonths]);
+  const allExpandablePnlRowKeys = useMemo(
+    () => collectExpandableRowKeys(pnlMatrixRows),
+    [pnlMatrixRows],
+  );
+  useEffect(() => {
+    const validKeys = new Set(allExpandablePnlRowKeys);
+    setExpandedPnlRowKeys((current) => current.filter((key) => validKeys.has(key)));
+  }, [allExpandablePnlRowKeys]);
+  const pnlAllExpanded = useMemo(() => {
+    if (!allExpandablePnlRowKeys.length) return false;
+    const expandedSet = new Set(expandedPnlRowKeys);
+    return allExpandablePnlRowKeys.every((key) => expandedSet.has(key));
+  }, [allExpandablePnlRowKeys, expandedPnlRowKeys]);
+  const togglePnlExpandAll = useCallback(() => {
+    setExpandedPnlRowKeys((current) => {
+      const expandedSet = new Set(current);
+      const currentlyAllExpanded = allExpandablePnlRowKeys.length > 0
+        && allExpandablePnlRowKeys.every((key) => expandedSet.has(key));
+      return currentlyAllExpanded ? [] : allExpandablePnlRowKeys.slice();
+    });
+  }, [allExpandablePnlRowKeys]);
   const pnlMatrixColumns = useMemo<ColumnsType<PnlMatrixRow>>(() => {
     return [{
       title: "Position",
       key: "label",
       dataIndex: "label",
       fixed: "left",
-      width: 260,
+      width: 380,
       render: (_value, row) => {
+        if (row.rowType === "order") {
+          const aliases = Array.isArray(row.aliases) ? row.aliases.filter(Boolean) : [];
+          const aliasSummary = aliases.length > 2
+            ? `${aliases.slice(0, 2).join(", ")} +${aliases.length - 2}`
+            : aliases.join(", ");
+          const mix = row.paymentMix || { paid: 0, open: 0, unknown: 0 };
+          const total = mix.paid + mix.open + mix.unknown;
+          const denominator = total > 0 ? total : 1;
+          const paidWidth = `${Math.max(0, Math.min(100, (mix.paid / denominator) * 100))}%`;
+          const openWidth = `${Math.max(0, Math.min(100, (mix.open / denominator) * 100))}%`;
+          const unknownWidth = `${Math.max(0, Math.min(100, (mix.unknown / denominator) * 100))}%`;
+          return (
+            <div className="v2-dashboard-pnl-label-cell">
+              <Space size={6} wrap>
+                <Text strong>{row.label}</Text>
+                {row.orderType === "phantom" ? <Tag color="gold">Phantom</Tag> : null}
+                {aliasSummary ? <Text type="secondary">Alias: {aliasSummary}</Text> : null}
+                {Number.isFinite(Number(row.units)) && Number(row.units) > 0 ? <Tag>Stk: {formatNumber(row.units, 0)}</Tag> : null}
+              </Space>
+              {total > 0 ? (
+                <div className="v2-dashboard-pnl-paybar" title={`Bezahlt ${formatCurrency(mix.paid)} · Offen ${formatCurrency(mix.open)} · Unklar ${formatCurrency(mix.unknown)}`}>
+                  <span className="is-paid" style={{ width: paidWidth }} />
+                  <span className="is-open" style={{ width: openWidth }} />
+                  <span className="is-unknown" style={{ width: unknownWidth }} />
+                </div>
+              ) : null}
+            </div>
+          );
+        }
+        if (row.rowType === "payment") {
+          const statusLabel = row.paymentStatus === "paid"
+            ? <Tag color="green">Bezahlt</Tag>
+            : row.paymentStatus === "open"
+              ? <Tag color="orange">Offen</Tag>
+              : row.paymentStatus === "mixed"
+                ? <Tag color="blue">Gemischt</Tag>
+                : <Tag>Unklar</Tag>;
+          return (
+            <Space size={6} wrap>
+              <Text>{row.label}</Text>
+              {row.paymentDueDate ? <Text type="secondary">Fällig: {formatIsoDate(row.paymentDueDate)}</Text> : null}
+              {statusLabel}
+            </Space>
+          );
+        }
         const isTotal = row.key === "inflows" || row.key === "outflows" || row.key === "net" || row.key === "closing";
         return <Text strong={isTotal}>{row.label}</Text>;
       },
@@ -1557,190 +1844,179 @@ export default function DashboardModule(): JSX.Element {
         )}
       </Drawer>
 
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
-          key: "cashflow",
-          label: "Kontostand & Cashflow",
-          children: (
-            <Card className="v2-dashboard-chart-card">
-              <div className="v2-calc-cockpit-shell">
-                <div className="v2-calc-cockpit-status">
-                  <Space wrap>
-                    <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
-                    <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
-                  </Space>
-                  <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
-                </div>
+      <Card className="v2-dashboard-chart-card">
+        <Title level={4}>Kontostand & Cashflow</Title>
+        <div className="v2-calc-cockpit-shell">
+          <div className="v2-calc-cockpit-status">
+            <Space wrap>
+              <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
+              <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
+            </Space>
+            <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
+          </div>
 
-                <div className="v2-calc-cockpit-modules">
-                  <Card size="small" className="v2-calc-cockpit-module">
-                    <Space size={6}>
-                      <Text strong>Portfolio-Scope</Text>
-                      <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
-                        <InfoCircleOutlined />
-                      </Tooltip>
-                    </Space>
-                    <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-                    <div className="v2-calc-cockpit-chip-row">
-                      {DASHBOARD_BUCKET_OPTIONS.map((option) => {
-                        const selected = bucketScopeValues.includes(option.value);
-                        return (
-                          <Button
-                            key={option.value}
-                            size="small"
-                            type={selected ? "primary" : "default"}
-                            onClick={() => toggleBucketScopeValue(option.value)}
-                          >
-                            {option.label}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
-                  </Card>
-
-                  <Card size="small" className="v2-calc-cockpit-module">
-                    <Space size={6}>
-                      <Text strong>Umsatzbasis</Text>
-                      <Tooltip title="Forecast-Umsatz = Absatzprognose × Verkaufspreis. Kalibrierter Umsatz = Forecast-Umsatz mit Kalibrierfaktor aus Eingaben.">
-                        <InfoCircleOutlined />
-                      </Tooltip>
-                    </Space>
-                    <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-                    <Segmented
-                      block
-                      value={revenueBasisMode}
-                      onChange={(value) => setRevenueBasisMode(String(value) === "calibrated" ? "calibrated" : "forecast")}
-                      options={[
-                        { label: "Forecast-Umsatz", value: "forecast" },
-                        { label: "Kalibrierter Umsatz", value: "calibrated" },
-                      ]}
-                    />
-                    <Text type="secondary">
-                      {revenueBasisMode === "calibrated"
-                        ? `Kalibrierung aktiv (wirkt über ${methodikCalibrationHorizonMonths} Monate).`
-                        : "Kalibrierung aus."}
-                      {" "}
-                      <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>
-                        {revenueBasisMode === "calibrated" ? "Eingaben öffnen" : "In Eingaben aktivieren"}
-                      </Button>
-                    </Text>
-                    {revenueBasisMode === "calibrated" && !calibrationApplied ? (
-                      <Text type="warning">
-                        Keine wirksamen Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.
-                      </Text>
-                    ) : null}
-                  </Card>
-
-                  <Card size="small" className="v2-calc-cockpit-module">
-                    <Space size={6}>
-                      <Text strong>Amazon Auszahlungsquote</Text>
-                      <Tooltip title="Manuell nutzt die Monatsquote aus Eingaben. Empfehlung berechnet die Quote automatisch als Vorschlag je Monat.">
-                        <InfoCircleOutlined />
-                      </Tooltip>
-                    </Space>
-                    <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-                    <Segmented
-                      block
-                      value={quoteMode}
-                      onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
-                      options={[
-                        { label: "Manuelle Quote", value: "manual" },
-                        { label: "Empfehlung", value: "recommendation" },
-                      ]}
-                    />
-                    <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                      <Space size={6}>
-                        <Text strong>Sicherheitsmodus</Text>
-                        <Tooltip title="Basis: keine Sicherheitsmarge. Konservativ: reduziert die Quote in zukünftigen Monaten um 1pp pro Monat (max. 5pp).">
-                          <InfoCircleOutlined />
-                        </Tooltip>
-                      </Space>
-                      <Segmented
-                        block
-                        value={safetyMode}
-                        onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
-                        options={[
-                          { label: "Basis", value: "basis" },
-                          { label: "Konservativ", value: "conservative" },
-                        ]}
-                      />
-                    </Space>
-                    {q4ToggleVisible ? (
-                      <div className="v2-calc-cockpit-q4-row">
-                        <Checkbox
-                          checked={q4SeasonalityEnabled}
-                          onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
-                        >
-                          Saisonalität (Q4) berücksichtigen
-                        </Checkbox>
-                        <Tooltip title="Q4 berücksichtigt saisonale Besonderheiten für Oktober bis Dezember. Gilt nur für die Empfehlung.">
-                          <InfoCircleOutlined />
-                        </Tooltip>
-                      </div>
-                    ) : null}
-                    <Text type="secondary">
-                      {quoteMode === "manual"
-                        ? "Verwendet die manuell gepflegte Auszahlungsquote je Monat."
-                        : "Empfehlung wird je Monat automatisch berechnet und direkt im Chart angewendet."}
-                    </Text>
-                  </Card>
-                </div>
+          <div className="v2-calc-cockpit-modules">
+            <Card size="small" className="v2-calc-cockpit-module">
+              <Space size={6}>
+                <Text strong>Portfolio-Scope</Text>
+                <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
+                  <InfoCircleOutlined />
+                </Tooltip>
+              </Space>
+              <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+              <div className="v2-calc-cockpit-chip-row">
+                {DASHBOARD_BUCKET_OPTIONS.map((option) => {
+                  const selected = bucketScopeValues.includes(option.value);
+                  return (
+                    <Button
+                      key={option.value}
+                      size="small"
+                      type={selected ? "primary" : "default"}
+                      onClick={() => toggleBucketScopeValue(option.value)}
+                    >
+                      {option.label}
+                    </Button>
+                  );
+                })}
               </div>
-
-              <div className="v2-dashboard-chart-summary">
-                <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
-                <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
-                <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-                {phantomFoSuggestions.length ? <Tag color="gold">PFO: {phantomFoSuggestions.length}</Tag> : null}
-                {resolvedPhantomTargetMonth ? <Tag color="gold">bis {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
-              </div>
-              <Text type="secondary" className="v2-dashboard-chart-hint">
-                Klick auf Monat oder Balken für Details. Legende ist scrollbar.
-              </Text>
-              <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} />
+              <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
             </Card>
-          ),
-        }]}
-      />
 
-      <Collapse
-        className="v2-dashboard-module-collapse"
-        activeKey={openSections}
-        onChange={handleDashboardSectionsChange}
-        items={[{
-          key: "pnl",
-          label: "Monatliche PnL (Matrix)",
-          children: (
-            <Card>
-              <Title level={4}>Monatliche PnL (Matrix)</Title>
-              <Paragraph type="secondary">
-                Zeilen = Einnahmen/Ausgaben-Struktur, Spalten = gewählter Zeitraum. Klappe Einnahmen und Ausgaben für Details auf.
-              </Paragraph>
-              <Table<PnlMatrixRow>
-                className="v2-dashboard-pnl-table"
-                columns={pnlMatrixColumns}
-                dataSource={pnlMatrixRows}
-                pagination={false}
-                size="small"
-                rowKey="key"
-                rowClassName={(row) => {
-                  if (row.key === "net" || row.key === "closing") return "v2-dashboard-pnl-table-row-total";
-                  if (Array.isArray(row.children) && row.children.length) return "v2-dashboard-pnl-table-row-group";
-                  return "v2-dashboard-pnl-table-row-detail";
-                }}
-                expandable={{
-                  defaultExpandAllRows: true,
-                }}
-                scroll={{ x: "max-content" }}
+            <Card size="small" className="v2-calc-cockpit-module">
+              <Space size={6}>
+                <Text strong>Umsatzbasis</Text>
+                <Tooltip title="Forecast-Umsatz = Absatzprognose × Verkaufspreis. Kalibrierter Umsatz = Forecast-Umsatz mit Kalibrierfaktor aus Eingaben.">
+                  <InfoCircleOutlined />
+                </Tooltip>
+              </Space>
+              <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+              <Segmented
+                block
+                value={revenueBasisMode}
+                onChange={(value) => setRevenueBasisMode(String(value) === "calibrated" ? "calibrated" : "forecast")}
+                options={[
+                  { label: "Forecast-Umsatz", value: "forecast" },
+                  { label: "Kalibrierter Umsatz", value: "calibrated" },
+                ]}
               />
+              <Text type="secondary">
+                {revenueBasisMode === "calibrated"
+                  ? `Kalibrierung aktiv (wirkt über ${methodikCalibrationHorizonMonths} Monate).`
+                  : "Kalibrierung aus."}
+                {" "}
+                <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>
+                  {revenueBasisMode === "calibrated" ? "Eingaben öffnen" : "In Eingaben aktivieren"}
+                </Button>
+              </Text>
+              {revenueBasisMode === "calibrated" && !calibrationApplied ? (
+                <Text type="warning">
+                  Keine wirksamen Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.
+                </Text>
+              ) : null}
             </Card>
-          ),
-        }]}
-      />
+
+            <Card size="small" className="v2-calc-cockpit-module">
+              <Space size={6}>
+                <Text strong>Amazon Auszahlungsquote</Text>
+                <Tooltip title="Manuell nutzt die Monatsquote aus Eingaben. Empfehlung berechnet die Quote automatisch als Vorschlag je Monat.">
+                  <InfoCircleOutlined />
+                </Tooltip>
+              </Space>
+              <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+              <Segmented
+                block
+                value={quoteMode}
+                onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
+                options={[
+                  { label: "Manuelle Quote", value: "manual" },
+                  { label: "Empfehlung", value: "recommendation" },
+                ]}
+              />
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Space size={6}>
+                  <Text strong>Sicherheitsmodus</Text>
+                  <Tooltip title="Basis: keine Sicherheitsmarge. Konservativ: reduziert die Quote in zukünftigen Monaten um 1pp pro Monat (max. 5pp).">
+                    <InfoCircleOutlined />
+                  </Tooltip>
+                </Space>
+                <Segmented
+                  block
+                  value={safetyMode}
+                  onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
+                  options={[
+                    { label: "Basis", value: "basis" },
+                    { label: "Konservativ", value: "conservative" },
+                  ]}
+                />
+              </Space>
+              {q4ToggleVisible ? (
+                <div className="v2-calc-cockpit-q4-row">
+                  <Checkbox
+                    checked={q4SeasonalityEnabled}
+                    onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
+                  >
+                    Saisonalität (Q4) berücksichtigen
+                  </Checkbox>
+                  <Tooltip title="Q4 berücksichtigt saisonale Besonderheiten für Oktober bis Dezember. Gilt nur für die Empfehlung.">
+                    <InfoCircleOutlined />
+                  </Tooltip>
+                </div>
+              ) : null}
+              <Text type="secondary">
+                {quoteMode === "manual"
+                  ? "Verwendet die manuell gepflegte Auszahlungsquote je Monat."
+                  : "Empfehlung wird je Monat automatisch berechnet und direkt im Chart angewendet."}
+              </Text>
+            </Card>
+          </div>
+        </div>
+
+        <div className="v2-dashboard-chart-summary">
+          <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
+          <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
+          <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
+          {phantomFoSuggestions.length ? <Tag color="gold">PFO: {phantomFoSuggestions.length}</Tag> : null}
+          {resolvedPhantomTargetMonth ? <Tag color="gold">bis {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
+        </div>
+        <Text type="secondary" className="v2-dashboard-chart-hint">
+          Klick auf Monat oder Balken für Details. Legende ist scrollbar.
+        </Text>
+        <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} />
+      </Card>
+
+      <Card>
+        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+          <div>
+            <Title level={4}>Monatliche PnL (Matrix)</Title>
+            <Paragraph type="secondary">
+              Zeilen = Einnahmen/Ausgaben-Struktur, Spalten = gewählter Zeitraum. Bei PO/FO/Phantom siehst du auf Wunsch die einzelnen Zahlungen.
+            </Paragraph>
+          </div>
+          <Button size="small" onClick={togglePnlExpandAll}>
+            {pnlAllExpanded ? "Alles zuklappen" : "Alles aufklappen"}
+          </Button>
+        </Space>
+        <Table<PnlMatrixRow>
+          className="v2-dashboard-pnl-table"
+          columns={pnlMatrixColumns}
+          dataSource={pnlMatrixRows}
+          pagination={false}
+          size="small"
+          rowKey="key"
+          rowClassName={(row) => {
+            if (row.rowType === "order") return "v2-dashboard-pnl-table-row-order";
+            if (row.rowType === "payment") return "v2-dashboard-pnl-table-row-payment";
+            if (row.key === "net" || row.key === "closing") return "v2-dashboard-pnl-table-row-total";
+            if (Array.isArray(row.children) && row.children.length) return "v2-dashboard-pnl-table-row-group";
+            return "v2-dashboard-pnl-table-row-detail";
+          }}
+          expandable={{
+            expandedRowKeys: expandedPnlRowKeys,
+            onExpandedRowsChange: (keys) => setExpandedPnlRowKeys(keys.map((key) => String(key))),
+          }}
+          scroll={{ x: "max-content" }}
+        />
+      </Card>
     </div>
   );
 }

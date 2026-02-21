@@ -2038,6 +2038,10 @@
   white-space: nowrap;
 }
 
+.v2-dashboard-pnl-table .ant-table-tbody > tr > td:first-child {
+  white-space: normal;
+}
+
 .v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-group > td {
   background: rgba(240, 253, 250, 0.55);
 }
@@ -2049,6 +2053,45 @@
 
 .v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-detail > td:first-child {
   color: #475569;
+}
+
+.v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-order > td {
+  background: rgba(250, 250, 250, 0.82);
+}
+
+.v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-payment > td {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.v2-dashboard-pnl-label-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.v2-dashboard-pnl-paybar {
+  display: flex;
+  width: min(220px, 100%);
+  height: 7px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.v2-dashboard-pnl-paybar > span {
+  height: 100%;
+  display: block;
+}
+
+.v2-dashboard-pnl-paybar > span.is-paid {
+  background: #22c55e;
+}
+
+.v2-dashboard-pnl-paybar > span.is-open {
+  background: #f59e0b;
+}
+
+.v2-dashboard-pnl-paybar > span.is-unknown {
+  background: #94a3b8;
 }
 
 .v2-dashboard-legend-help {
