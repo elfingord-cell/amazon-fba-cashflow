@@ -2,6 +2,7 @@ import {
   BugOutlined,
   CalculatorOutlined,
   DashboardOutlined,
+  ExperimentOutlined,
   FormOutlined,
   InboxOutlined,
   LineChartOutlined,
@@ -23,6 +24,7 @@ function lazyRoute(importer: () => Promise<{ default: ComponentType<any> }>): Co
 }
 
 const DashboardModule = lazyRoute(() => import("../modules/dashboard"));
+const SandboxModule = lazyRoute(() => import("../modules/sandbox"));
 const MethodikModule = lazyRoute(() => import("../modules/methodik"));
 const SollIstModule = lazyRoute(() => import("../modules/soll-ist"));
 const PlanProductsModule = lazyRoute(() => import("../modules/plan-products"));
@@ -65,6 +67,7 @@ export interface V2RouteRedirect {
 
 export const V2_ROUTES: V2RouteItem[] = [
   { key: "dashboard", path: "dashboard", label: "Dashboard", section: "overview", icon: DashboardOutlined, Component: DashboardModule },
+  { key: "sandbox", path: "sandbox", label: "Sandbox", section: "overview", icon: ExperimentOutlined, Component: SandboxModule },
   { key: "methodik", path: "methodik", label: "Methodik & Regeln", section: "overview", icon: CalculatorOutlined, Component: MethodikModule },
   { key: "soll-ist", path: "soll-ist", label: "Soll vs. Ist", section: "overview", icon: CreditCardOutlined, Component: SollIstModule },
   { key: "abc-insights", path: "abc-insights", label: "ABC Insights", section: "overview", icon: PieChartOutlined, Component: AbcInsightsModule },

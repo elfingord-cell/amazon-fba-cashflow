@@ -2049,6 +2049,112 @@
   gap: 8px;
 }
 
+.v2-sandbox-head-note {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 100%;
+}
+
+.v2-sandbox-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.v2-sandbox-control-tile,
+.v2-sandbox-control-actions {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 27, 45, 0.06);
+}
+
+.v2-sandbox-control-actions {
+  align-content: center;
+}
+
+.v2-sandbox-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-sandbox-switch-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.v2-sandbox-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.v2-sandbox-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.v2-sandbox-kpi-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.v2-sandbox-kpi-card-strong {
+  border-color: rgba(15, 27, 45, 0.16);
+}
+
+.v2-sandbox-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.v2-sandbox-table .ant-table-tbody > tr > td {
+  white-space: nowrap;
+}
+
+.v2-sandbox-table .v2-sandbox-col-sandbox {
+  background: rgba(236, 253, 245, 0.62);
+}
+
+.v2-sandbox-table .v2-sandbox-col-delta {
+  background: rgba(248, 250, 252, 0.74);
+}
+
+.v2-sandbox-table .v2-sandbox-col-delta-strong {
+  background: rgba(226, 232, 240, 0.48);
+}
+
+.v2-sandbox-delta-positive {
+  color: #15803d;
+}
+
+.v2-sandbox-delta-negative {
+  color: #b91c1c;
+}
+
+.v2-sandbox-detail-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.v2-sandbox-detail-line {
+  display: grid;
+  gap: 2px;
+}
+
 .v2-dashboard-signal-title {
   display: inline-flex;
   align-items: center;
@@ -2815,6 +2921,18 @@
     grid-template-columns: 1fr 1fr;
   }
 
+  .v2-sandbox-controls-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .v2-sandbox-control-actions {
+    grid-column: 1 / -1;
+  }
+
+  .v2-sandbox-kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .v2-dashboard-signal-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2881,6 +2999,14 @@
 
 @media (max-width: 640px) {
   .v2-calc-cockpit-modules {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-sandbox-controls-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-sandbox-kpi-grid {
     grid-template-columns: 1fr;
   }
 
