@@ -1996,45 +1996,33 @@
 
 .v2-calc-cockpit-shell {
   display: grid;
-  gap: 12px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .v2-calc-cockpit-status {
-  position: sticky;
-  top: 10px;
-  z-index: 9;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
-  border: 1px solid rgba(15, 27, 45, 0.12);
-  border-radius: 12px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(6px);
-}
-
-.v2-calc-cockpit-status-right {
-  display: grid;
-  gap: 8px;
-  justify-items: end;
-}
-
-.v2-calc-cockpit-popover {
-  max-width: 360px;
-  display: grid;
-  gap: 6px;
 }
 
 .v2-calc-cockpit-modules {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
-.v2-calc-cockpit-module .ant-card-body {
+.v2-calc-cockpit-module {
   display: grid;
   gap: 10px;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(248, 250, 252, 0.92);
 }
 
 .v2-calc-cockpit-chip-row {
@@ -2809,11 +2797,7 @@
 @media (max-width: 992px) {
   .v2-calc-cockpit-status {
     flex-direction: column;
-  }
-
-  .v2-calc-cockpit-status-right {
-    width: 100%;
-    justify-items: start;
+    align-items: flex-start;
   }
 
   .v2-calc-cockpit-modules {
@@ -3034,6 +3018,16 @@
   padding-top: 16px;
 }
 
+.v2-shell[data-v2-skin="clean"] .v2-intro-card {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-intro-card .ant-card-body {
+  padding: 0;
+}
+
 .v2-shell[data-v2-skin="clean"] .v2-drawer-brand {
   background: rgba(26, 46, 75, 0.08);
   color: var(--v2-clean-primary);
@@ -3042,11 +3036,22 @@
 .v2-shell[data-v2-skin="clean"] .ant-card {
   border: 1px solid var(--v2-clean-border);
   border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(26, 46, 75, 0.1), 0 1px 2px rgba(26, 46, 75, 0.06);
+  box-shadow: none;
 }
 
 .v2-shell[data-v2-skin="clean"] .ant-card .ant-card-body {
   padding: 14px;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-card .ant-card {
+  border: 0;
+  box-shadow: none;
+  background: #f8fafc;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-calc-cockpit-module {
+  border-color: rgba(26, 46, 75, 0.16);
+  background: #f8fafc;
 }
 
 .v2-shell[data-v2-skin="clean"] .ant-btn {
@@ -3080,9 +3085,9 @@
 }
 
 .v2-shell[data-v2-skin="clean"] .ant-table-wrapper {
-  border: 1px solid var(--v2-clean-border);
-  border-radius: 12px;
-  background: #fff;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .v2-shell[data-v2-skin="clean"] .ant-table-wrapper .ant-table-container {

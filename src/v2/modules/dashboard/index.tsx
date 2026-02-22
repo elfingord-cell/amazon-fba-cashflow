@@ -2001,8 +2001,8 @@ export default function DashboardModule(): JSX.Element {
             <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
           </div>
 
-          <div className="v2-calc-cockpit-modules">
-            <Card size="small" className="v2-calc-cockpit-module">
+          <div className="v2-calc-cockpit-modules" role="group" aria-label="Cockpit-Steuerung">
+            <div className="v2-calc-cockpit-module">
               <Space size={6}>
                 <Text strong>Portfolio-Scope</Text>
                 <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
@@ -2026,9 +2026,9 @@ export default function DashboardModule(): JSX.Element {
                 })}
               </div>
               <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
-            </Card>
+            </div>
 
-            <Card size="small" className="v2-calc-cockpit-module">
+            <div className="v2-calc-cockpit-module">
               <Space size={6}>
                 <Text strong>Umsatzbasis</Text>
                 <Tooltip title="Plan-Umsatz (Hybrid): MANUELL-Monate nutzen deine Overrides, AUTO-Monate kommen aus der Absatzprognose.">
@@ -2078,9 +2078,9 @@ export default function DashboardModule(): JSX.Element {
                   {calibrationWarningMessage}
                 </Text>
               ) : null}
-            </Card>
+            </div>
 
-            <Card size="small" className="v2-calc-cockpit-module">
+            <div className="v2-calc-cockpit-module">
               <Space size={6}>
                 <Text strong>Amazon Auszahlungsquote</Text>
                 <Tooltip title="MANUELL nutzt die Monatsquote aus Cash-in Setup. EMPFOHLEN berechnet die Quote automatisch je Monat.">
@@ -2134,7 +2134,7 @@ export default function DashboardModule(): JSX.Element {
                   ? "Manuelle Monatsquote ist führend; Sicherheitsmodus und Saisonalität sind deaktiviert."
                   : "Empfehlung nutzt L + S[Monat] und optional (Konservativ) einen lernenden Risikoabschlag."}
               </Text>
-            </Card>
+            </div>
           </div>
         </div>
 
