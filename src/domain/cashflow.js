@@ -54,12 +54,6 @@ function normalizeCashInMode(value) {
   return String(value || '').trim().toLowerCase() === 'basis' ? 'basis' : 'conservative';
 }
 
-function marginBucketPctByHorizon(horizonMonths) {
-  const horizon = Math.max(0, Math.round(Number(horizonMonths || 0)));
-  if (horizon <= 0) return 0;
-  return Math.min(5, horizon);
-}
-
 function formatTooltipCurrency(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '0 €';
@@ -80,6 +74,59 @@ function formatTooltipPercent(value, digits = 0) {
   });
 }
 
+function normalizeRecommendationMode(value) {
+  return String(value || '').trim().toLowerCase() === 'basis' ? 'basis' : 'conservative';
+}
+
+function recommendationModeLabel(value) {
+  return normalizeRecommendationMode(value) === 'basis'
+    ? 'Empfohlen (Basis)'
+    : 'Empfohlen (Konservativ)';
+}
+
+function buildRecommendationBreakdown(meta = {}) {
+  const levelPct = Number(meta.recommendationLevelPct);
+  const seasonalityPct = Number(meta.recommendationSeasonalityPct);
+  const riskBasePct = Number(meta.recommendationRiskBasePct);
+  const riskAdjustmentPct = Number(meta.recommendationRiskAdjustmentPct);
+  const monthSamples = Math.max(0, Math.round(Number(meta.recommendationSeasonalitySampleCount || 0)));
+  const seasonalityWeight = Number(meta.recommendationSeasonalityWeight);
+  const horizonMonths = Math.max(0, Math.round(Number(meta.recommendationHorizonMonths || 0)));
+  const capsApplied = Array.isArray(meta.recommendationCapsApplied)
+    ? meta.recommendationCapsApplied.filter(Boolean)
+    : [];
+  const parts = [];
+  if (Number.isFinite(levelPct) || Number.isFinite(seasonalityPct)) {
+    const lText = Number.isFinite(levelPct) ? formatTooltipPercent(levelPct, 1) : '—';
+    const sText = Number.isFinite(seasonalityPct) ? formatTooltipPercent(seasonalityPct, 1) : '—';
+    parts.push(`L: ${lText}% · S: ${sText}%`);
+  }
+  if (Number.isFinite(riskBasePct) || Number.isFinite(riskAdjustmentPct)) {
+    const baseText = Number.isFinite(riskBasePct) ? formatTooltipPercent(riskBasePct, 1) : '0,0';
+    const adjText = Number.isFinite(riskAdjustmentPct) ? formatTooltipPercent(riskAdjustmentPct, 1) : '0,0';
+    parts.push(`RiskBase: ${baseText}pp · R(h=${horizonMonths}): ${adjText}pp`);
+  }
+  if (monthSamples > 0 || Number.isFinite(seasonalityWeight)) {
+    const weightText = Number.isFinite(seasonalityWeight)
+      ? formatTooltipPercent(seasonalityWeight * 100, 0)
+      : '0';
+    parts.push(`n(Monat): ${monthSamples} · Shrinkage: ${weightText}%`);
+  }
+  if (meta.recommendationShrinkageActive === true) {
+    parts.push('Shrinkage aktiv');
+  }
+  if (meta.recommendationLiveSignalUsed === true) {
+    const weightText = Number.isFinite(Number(meta.recommendationLiveSignalWeight))
+      ? formatTooltipPercent(Number(meta.recommendationLiveSignalWeight) * 100, 0)
+      : '0';
+    parts.push(`Live-Signal aktiv (${weightText}% Gewicht)`);
+  }
+  if (capsApplied.length) {
+    parts.push('Grenzwert angewendet');
+  }
+  return parts;
+}
+
 function buildCashInTooltip({
   forecastRevenue,
   calibrationFactorApplied,
@@ -88,20 +135,22 @@ function buildCashInTooltip({
   payoutAmount,
   quoteSource,
   recommendationSourceTag,
-  mode,
-  marginPct,
+  recommendationExplanation,
+  cashInMeta,
 }) {
-  const modeLabel = mode === 'basis' ? 'Basis' : 'Konservativ';
-  const quoteSourceLabel = quoteSource === 'manual' ? 'manuell' : 'Empfehlung';
+  const mode = normalizeRecommendationMode(cashInMeta?.mode);
+  const quoteSourceLabel = quoteSource === 'manual'
+    ? 'Manuell'
+    : recommendationModeLabel(mode);
   const recommendationLabel = recommendationSourceTag === 'IST'
     ? 'IST'
-    : recommendationSourceTag === 'PROGNOSE'
-      ? 'PROGNOSE'
-      : recommendationSourceTag === 'BASELINE_Q4'
-        ? 'BASELINE Q4'
-        : recommendationSourceTag === 'BASELINE_NORMAL'
-          ? 'BASELINE NORMAL'
-          : null;
+    : recommendationSourceTag === 'RECOMMENDED_BASIS'
+      ? 'Empfohlen (Basis)'
+      : recommendationSourceTag === 'RECOMMENDED_CONSERVATIVE'
+        ? 'Empfohlen (Konservativ)'
+        : recommendationSourceTag === 'PROGNOSE'
+          ? 'Live-Signal'
+          : 'Empfehlung';
   const calibrationText = Number.isFinite(calibrationFactorApplied) && Math.abs(Number(calibrationFactorApplied) - 1) > 0.000001
     ? Number(calibrationFactorApplied).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : null;
@@ -109,11 +158,15 @@ function buildCashInTooltip({
     `Forecast-Umsatz: ${formatTooltipCurrency(forecastRevenue)}`,
     `Kalibrierfaktor: ${calibrationText || '1,00'}`,
     `Plan-Umsatz: ${formatTooltipCurrency(planRevenue)}`,
-    `Quote: ${formatTooltipPercent(payoutPct)}% (${quoteSourceLabel}${recommendationLabel && quoteSource !== 'manual' ? `, ${recommendationLabel}` : ''}${marginPct > 0 ? `, ${modeLabel}` : ''})`,
+    `Quote: ${formatTooltipPercent(payoutPct)}% (${quoteSourceLabel}${quoteSource !== 'manual' ? `, ${recommendationLabel}` : ''})`,
     `Auszahlung: ${formatTooltipCurrency(payoutAmount)}`,
   ];
-  if (marginPct > 0) {
-    parts.push(`Sicherheitsmarge: -${formatTooltipPercent(marginPct)}pp`);
+  if (recommendationExplanation && quoteSource !== 'manual') {
+    parts.push(`Warum: ${recommendationExplanation}`);
+  }
+  const recommendationBreakdown = buildRecommendationBreakdown(cashInMeta);
+  if (quoteSource !== 'manual' && recommendationBreakdown.length) {
+    parts.push(...recommendationBreakdown);
   }
   return parts.join(' · ');
 }
@@ -1222,6 +1275,10 @@ export function computeSeries(state) {
   const currentMonth = toMonthKey(today);
   const currentMonthIdx = monthIndex(currentMonth);
   const cashInMode = normalizeCashInMode(s?.settings?.cashInMode);
+  const legacyIgnoreQ4 = s?.settings?.cashInRecommendationIgnoreQ4 === true;
+  const cashInSeasonalityEnabled = s?.settings?.cashInRecommendationSeasonalityEnabled == null
+    ? !legacyIgnoreQ4
+    : s?.settings?.cashInRecommendationSeasonalityEnabled !== false;
   const cashInQuoteMinPct = CASH_IN_QUOTE_MIN_PCT;
   const cashInQuoteMaxPct = CASH_IN_QUOTE_MAX_PCT;
   const actualMap = buildActualMap(s);
@@ -1230,10 +1287,16 @@ export function computeSeries(state) {
     incomings,
     monthlyActuals: s?.monthlyActuals,
     currentMonth,
-    ignoreQ4: s?.settings?.cashInRecommendationIgnoreQ4 === true,
+    mode: cashInMode,
+    seasonalityEnabled: cashInSeasonalityEnabled,
+    ignoreQ4: !cashInSeasonalityEnabled,
     maxMonth: currentMonth,
     baselineNormalPct: s?.settings?.cashInRecommendationBaselineNormalPct,
-    baselineQ4Pct: s?.settings?.cashInRecommendationBaselineQ4Pct,
+    learningState: s?.settings?.cashInLearning,
+    now: today instanceof Date ? today : new Date(today),
+    nowIso: today instanceof Date && !Number.isNaN(today.getTime())
+      ? today.toISOString()
+      : new Date().toISOString(),
     minSamples: 4,
   });
   const recommendationMedianRaw = parsePayoutPctInput(payoutRecommendation.observedNormalMedianPct);
@@ -1244,11 +1307,10 @@ export function computeSeries(state) {
   const recommendationBaselineNormalPct = Number.isFinite(recommendationBaselineNormalRaw)
     ? clampPct(recommendationBaselineNormalRaw, cashInQuoteMinPct, cashInQuoteMaxPct)
     : 51;
-  const recommendationBaselineQ4Raw = parsePayoutPctInput(payoutRecommendation.baselineQ4Pct);
-  const recommendationBaselineQ4Pct = Number.isFinite(recommendationBaselineQ4Raw)
-    ? clampPct(recommendationBaselineQ4Raw, cashInQuoteMinPct, cashInQuoteMaxPct)
-    : recommendationBaselineNormalPct;
-  const cashInFallbackUsed = 'baseline_manual';
+  const recommendationLearningState = payoutRecommendation.learningStateNext
+    || payoutRecommendation.learningState
+    || null;
+  const cashInFallbackUsed = 'learning_model';
   const cashInCalibrationEnabled = s?.settings?.cashInCalibrationEnabled !== false;
   const cashInCalibrationHorizonMonths = normalizeCalibrationHorizonMonths(
     s?.settings?.cashInCalibrationHorizonMonths,
@@ -1303,7 +1365,11 @@ export function computeSeries(state) {
       ? parsePayoutPctInput(incoming.payoutPct)
       : null;
     const recommendationByMonth = payoutRecommendation.byMonth?.[m] || null;
-    const recommendationSourceTag = String(recommendationByMonth?.sourceTag || 'BASELINE_NORMAL');
+    const recommendationMode = normalizeRecommendationMode(recommendationByMonth?.mode || cashInMode);
+    const recommendationSourceTag = String(
+      recommendationByMonth?.sourceTag
+      || (recommendationMode === 'basis' ? 'RECOMMENDED_BASIS' : 'RECOMMENDED_CONSERVATIVE'),
+    );
     const recommendationExplanation = String(recommendationByMonth?.explanation || '').trim() || null;
     const recommendationQuoteRaw = parsePayoutPctInput(recommendationByMonth?.quotePct);
     const recommendationQuotePct = Number.isFinite(recommendationQuoteRaw)
@@ -1340,26 +1406,44 @@ export function computeSeries(state) {
     const monthIdx = monthIndex(m);
     const horizonFromCurrentMonth = (monthIdx != null && currentMonthIdx != null) ? (monthIdx - currentMonthIdx) : 0;
     const isFutureMonth = horizonFromCurrentMonth > 0;
-    const marginPct = (isFutureMonth && cashInMode === 'conservative')
-      ? marginBucketPctByHorizon(horizonFromCurrentMonth)
-      : 0;
-    const payoutPctRaw = isFutureMonth ? (basePayoutPct - marginPct) : basePayoutPct;
-    const payoutPct = clampPct(payoutPctRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
+    const payoutPct = clampPct(basePayoutPct, cashInQuoteMinPct, cashInQuoteMaxPct);
     const planRevenueAfterCalibration = forecastEnabled ? calibratedPlanRevenue : revenue;
     const forecastRevenueForTooltip = forecastEnabled ? forecastRevenueRaw : revenue;
+    const recommendationCapsApplied = Array.isArray(recommendationByMonth?.capsApplied)
+      ? recommendationByMonth.capsApplied.filter(Boolean)
+      : [];
+    const quoteLabel = quoteSource === 'manual'
+      ? 'Manuell'
+      : recommendationModeLabel(recommendationMode);
     appliedPayoutPctByMonth[m] = payoutPct;
     cashInMetaByMonth[m] = {
-      mode: cashInMode,
+      mode: recommendationMode,
       calibrationEnabled: cashInCalibrationEnabled,
       isFutureMonth,
       horizonFromCurrentMonth,
-      marginPct,
       recommendationQuotePct,
       recommendationSourceTag,
       recommendationExplanation,
+      recommendationLevelPct: Number(recommendationByMonth?.levelPct),
+      recommendationSeasonalityPct: Number(recommendationByMonth?.seasonalityPct),
+      recommendationSeasonalityRawPct: Number(recommendationByMonth?.seasonalityRawPct),
+      recommendationSeasonalityPriorPct: Number(recommendationByMonth?.seasonalityPriorPct),
+      recommendationSeasonalityWeight: Number(recommendationByMonth?.seasonalityWeight),
+      recommendationSeasonalitySampleCount: Number(recommendationByMonth?.seasonalitySampleCount),
+      recommendationShrinkageActive: recommendationByMonth?.shrinkageActive === true,
+      recommendationRiskBasePct: Number(recommendationByMonth?.riskBasePct),
+      recommendationRiskAdjustmentPct: Number(recommendationByMonth?.riskAdjustmentPct),
+      recommendationHorizonMonths: Number(recommendationByMonth?.horizonMonths),
+      recommendationCapsApplied,
+      recommendationCapApplied: recommendationByMonth?.capApplied === true || recommendationCapsApplied.length > 0,
+      recommendationLiveSignalUsed: recommendationByMonth?.liveSignalUsed === true,
+      recommendationLiveSignalWeight: Number(recommendationByMonth?.liveSignalWeight),
+      recommendationLiveSignalQuotePct: Number(recommendationByMonth?.liveSignalQuotePct),
+      recommendationSeasonalityEnabled: recommendationByMonth?.seasonalityEnabled !== false && cashInSeasonalityEnabled,
       payoutPct,
       manualPayoutPct,
       quoteSource,
+      quoteLabel,
       revenueSource,
       appliedRevenue: revenue,
       forecastRevenueRaw,
@@ -1382,8 +1466,8 @@ export function computeSeries(state) {
         payoutAmount: amt,
         quoteSource,
         recommendationSourceTag,
-        mode: cashInMode,
-        marginPct,
+        recommendationExplanation,
+        cashInMeta: cashInMetaByMonth[m],
       });
       pushEntry(m, baseEntry({
         id: `sales-${m}`,
@@ -1422,8 +1506,8 @@ export function computeSeries(state) {
           payoutAmount: liveAmt,
           quoteSource,
           recommendationSourceTag,
-          mode: cashInMode,
-          marginPct,
+          recommendationExplanation,
+          cashInMeta: cashInMetaByMonth[m],
         });
         pushEntry(m, baseEntry({
           id: `sales-live-${bucketName}-${m}`,
@@ -1465,8 +1549,8 @@ export function computeSeries(state) {
           payoutAmount: planAmt,
           quoteSource,
           recommendationSourceTag,
-          mode: cashInMode,
-          marginPct,
+          recommendationExplanation,
+          cashInMeta: cashInMetaByMonth[m],
         });
         pushEntry(m, baseEntry({
           id: `sales-plan-${bucketName}-${m}`,
@@ -1811,21 +1895,21 @@ export function computeSeries(state) {
     actuals: {},
     cashIn: {
       mode: cashInMode,
-      basisMethod: 'baseline',
+      basisMethod: 'learning',
       basisQuotePct: recommendationBaselineNormalPct,
       istMonthsCount: payoutRecommendation.sampleCount,
       hasIstData: payoutRecommendation.sampleCount > 0,
       fallbackUsed: cashInFallbackUsed,
       quoteMinPct: cashInQuoteMinPct,
       quoteMaxPct: cashInQuoteMaxPct,
+      recommendationMode: payoutRecommendation.mode || cashInMode,
+      recommendationSeasonalityEnabled: payoutRecommendation.seasonalityEnabled !== false,
       recommendationMedianPct,
       recommendationSampleCount: payoutRecommendation.sampleCount,
       recommendationUsedMonths: payoutRecommendation.usedMonths,
       recommendationUncertain: payoutRecommendation.uncertain,
       recommendationIgnoreQ4: payoutRecommendation.ignoreQ4,
       recommendationBaselineNormalPct,
-      recommendationBaselineQ4Pct,
-      recommendationBaselineQ4SuggestedPct: payoutRecommendation.baselineQ4SuggestedPct,
       recommendationObservedNormalMedianPct: payoutRecommendation.observedNormalMedianPct,
       recommendationObservedNormalAveragePct: payoutRecommendation.observedNormalAveragePct,
       recommendationObservedNormalSampleCount: payoutRecommendation.observedNormalSampleCount,
@@ -1834,6 +1918,9 @@ export function computeSeries(state) {
       recommendationObservedNormalWithForecastSampleCount: payoutRecommendation.observedNormalWithForecastSampleCount,
       recommendationCurrentMonthForecastQuotePct: payoutRecommendation.currentMonthForecastQuotePct,
       recommendationCurrentMonth: payoutRecommendation.currentMonth,
+      recommendationRiskBasePct: Number(payoutRecommendation.riskBasePct || 0),
+      recommendationLevelPct: Number(payoutRecommendation.levelPct || recommendationBaselineNormalPct),
+      recommendationLearningState,
       calibrationEnabled: cashInCalibrationEnabled,
       calibrationApplied,
       calibrationHorizonMonths: cashInCalibrationHorizonMonths,
@@ -1844,13 +1931,6 @@ export function computeSeries(state) {
         : null,
       calibrationNonDefaultFactorMonthCount,
       calibrationReasonCounts,
-      marginBucketsPct: {
-        plus1: 1,
-        plus2: 2,
-        plus3: 3,
-        plus4: 4,
-        plus5plus: 5,
-      },
     },
   };
 

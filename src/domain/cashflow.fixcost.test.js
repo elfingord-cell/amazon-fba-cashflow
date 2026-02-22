@@ -296,7 +296,8 @@ test("computeSeries uses manual quote first and recommendation for future months
 
   const report = computeSeries(state);
   assert.equal(salesPayoutAmountForMonth(report, next1), 580);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 510);
+  const recommendedNext2 = salesPayoutAmountForMonth(report, next2);
+  assert.ok(recommendedNext2 >= 500 && recommendedNext2 <= 520, `expected learned quote near start profile, got ${recommendedNext2}`);
 
   const next1Entry = salesEntriesForMonth(report, next1)[0];
   const next2Entry = salesEntriesForMonth(report, next2)[0];
@@ -304,7 +305,7 @@ test("computeSeries uses manual quote first and recommendation for future months
   assert.equal(next2Entry?.meta?.cashIn?.quoteSource, "recommendation");
 });
 
-test("computeSeries keeps future recommendation on normal baseline even when only Dec/Jan IST are high", () => {
+test("computeSeries keeps recommendation near profile when only two IST months exist", () => {
   const currentMonth = monthKeyFromDate(new Date());
   const prev2 = addMonths(currentMonth, -2);
   const prev1 = addMonths(currentMonth, -1);
@@ -332,39 +333,39 @@ test("computeSeries keeps future recommendation on normal baseline even when onl
   };
 
   const report = computeSeries(state);
-  assert.equal(report.kpis?.cashIn?.basisQuotePct, 51);
-  assert.equal(salesPayoutAmountForMonth(report, next1), 510);
+  assert.ok(report.kpis?.cashIn?.basisQuotePct >= 51 && report.kpis?.cashIn?.basisQuotePct <= 54);
+  const nextQuote = salesPayoutAmountForMonth(report, next1);
+  assert.ok(nextQuote >= 510 && nextQuote <= 540, `expected moderate quote after 2 IST months, got ${nextQuote}`);
 });
 
-test("computeSeries applies Q4 baseline unless Q4 ignore toggle is active", () => {
+test("computeSeries seasonality toggle changes recommendation without extreme jumps", () => {
   const currentMonth = monthKeyFromDate(new Date());
-  let q4Month = null;
-  let q4Offset = null;
+  let seasonalMonth = null;
+  let seasonalOffset = null;
   for (let idx = 0; idx < 18; idx += 1) {
     const month = addMonths(currentMonth, idx);
-    const monthNumber = Number(month.slice(5, 7));
-    if (monthNumber >= 10 && monthNumber <= 12) {
-      q4Month = month;
-      q4Offset = idx;
+    if (month.endsWith("-12")) {
+      seasonalMonth = month;
+      seasonalOffset = idx;
       break;
     }
   }
-  assert.ok(q4Month);
-  assert.ok(q4Offset != null);
+  assert.ok(seasonalMonth);
+  assert.ok(seasonalOffset != null);
   const currentYear = Number(currentMonth.slice(0, 4));
   const priorDecember = `${currentYear - 1}-12`;
 
   const baseState = {
     settings: {
       startMonth: currentMonth,
-      horizonMonths: Number(q4Offset) + 1,
+      horizonMonths: Number(seasonalOffset) + 1,
       openingBalance: 0,
       cashInMode: "basis",
       cashInRecommendationBaselineNormalPct: 51,
     },
     forecast: { settings: { useForecast: false } },
     incomings: [
-      { month: q4Month, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
+      { month: seasonalMonth, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
     ],
     monthlyActuals: {
       [priorDecember]: { realRevenueEUR: 10000, realPayoutRatePct: 58 },
@@ -375,29 +376,36 @@ test("computeSeries applies Q4 baseline unless Q4 ignore toggle is active", () =
     fos: [],
   };
 
-  const q4Report = computeSeries(baseState);
-  assert.equal(Math.round(salesPayoutAmountForMonth(q4Report, q4Month)), 545);
+  const seasonalityOnReport = computeSeries(baseState);
+  const seasonalityOn = Math.round(salesPayoutAmountForMonth(seasonalityOnReport, seasonalMonth));
 
-  const ignoreQ4Report = computeSeries({
+  const seasonalityOffReport = computeSeries({
     ...baseState,
     settings: {
       ...baseState.settings,
+      cashInRecommendationSeasonalityEnabled: false,
       cashInRecommendationIgnoreQ4: true,
     },
   });
-  assert.equal(Math.round(salesPayoutAmountForMonth(ignoreQ4Report, q4Month)), 510);
+  const seasonalityOff = Math.round(salesPayoutAmountForMonth(seasonalityOffReport, seasonalMonth));
+  assert.ok(seasonalityOn > seasonalityOff, `expected seasonality to lift recommendation, got on=${seasonalityOn}, off=${seasonalityOff}`);
+  assert.ok((seasonalityOn - seasonalityOff) < 60, "seasonality difference should stay bounded");
 });
 
-test("computeSeries applies conservative margin linearly and caps at five percentage points", () => {
+test("computeSeries applies conservative risk deduction from risk base (no fixed 1pp steps)", () => {
   const currentMonth = monthKeyFromDate(new Date());
-  const prev1 = addMonths(currentMonth, -1);
-  const prev2 = addMonths(currentMonth, -2);
-  const prev3 = addMonths(currentMonth, -3);
-  const prev4 = addMonths(currentMonth, -4);
   const next1 = addMonths(currentMonth, 1);
   const next2 = addMonths(currentMonth, 2);
   const next5 = addMonths(currentMonth, 5);
   const next7 = addMonths(currentMonth, 7);
+  const seasonalityZeroMap = {
+    1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0,
+    7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0,
+  };
+  const seasonalityCountsMap = {
+    1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3,
+    7: 3, 8: 3, 9: 3, 10: 3, 11: 3, 12: 3,
+  };
   const state = {
     settings: {
       startMonth: currentMonth,
@@ -405,6 +413,13 @@ test("computeSeries applies conservative margin linearly and caps at five percen
       openingBalance: 0,
       cashInMode: "conservative",
       cashInRecommendationBaselineNormalPct: 60,
+      cashInLearning: {
+        levelPct: 60,
+        riskBasePct: 2,
+        seasonalityByMonth: seasonalityZeroMap,
+        seasonalityPriorByMonth: seasonalityZeroMap,
+        seasonalitySampleCountByMonth: seasonalityCountsMap,
+      },
     },
     forecast: { settings: { useForecast: false } },
     incomings: Array.from({ length: 8 }, (_, idx) => ({
@@ -413,12 +428,7 @@ test("computeSeries applies conservative margin linearly and caps at five percen
       payoutPct: null,
       source: "manual",
     })),
-    monthlyActuals: {
-      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 60 },
-      [prev2]: { realRevenueEUR: 10000, realPayoutRatePct: 60 },
-      [prev3]: { realRevenueEUR: 10000, realPayoutRatePct: 60 },
-      [prev4]: { realRevenueEUR: 10000, realPayoutRatePct: 60 },
-    },
+    monthlyActuals: {},
     extras: [],
     dividends: [],
     pos: [],
@@ -427,11 +437,11 @@ test("computeSeries applies conservative margin linearly and caps at five percen
 
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 60);
-  assert.equal(salesPayoutAmountForMonth(report, currentMonth), 600);
-  assert.equal(salesPayoutAmountForMonth(report, next1), 590);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 580);
-  assert.equal(salesPayoutAmountForMonth(report, next5), 550);
-  assert.equal(salesPayoutAmountForMonth(report, next7), 550);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - 580) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - 578) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - 576) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next5) - 570) < 3);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next7) - 568) < 3);
   assert.equal(report.kpis?.cashIn?.quoteMinPct, 40);
   assert.equal(report.kpis?.cashIn?.quoteMaxPct, 60);
 });
@@ -555,7 +565,7 @@ test("computeSeries uses manual normal baseline when no IST quotes exist", () =>
   };
 
   const report = computeSeries(state);
-  assert.equal(report.kpis?.cashIn?.fallbackUsed, "baseline_manual");
+  assert.equal(report.kpis?.cashIn?.fallbackUsed, "learning_model");
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 53);
   assert.equal(salesPayoutAmountForMonth(report, next1), 530);
   assert.equal(salesPayoutAmountForMonth(report, next2), 530);

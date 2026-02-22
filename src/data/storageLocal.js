@@ -33,8 +33,10 @@ const defaults = {
     cashInCalibrationEnabled: true,
     cashInCalibrationHorizonMonths: 6,
     cashInRecommendationIgnoreQ4: false,
+    cashInRecommendationSeasonalityEnabled: true,
     cashInRecommendationBaselineNormalPct: 51,
     cashInRecommendationBaselineQ4Pct: null,
+    cashInLearning: null,
     openingBalance: "50.000,00",
     fxRate: "1,08",
     fxFeePct: "0,5",
@@ -238,6 +240,11 @@ function ensureGlobalSettings(state) {
     ? calibrationHorizon
     : defaults.settings.cashInCalibrationHorizonMonths;
   settings.cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+  if (settings.cashInRecommendationSeasonalityEnabled == null) {
+    settings.cashInRecommendationSeasonalityEnabled = settings.cashInRecommendationIgnoreQ4 !== true;
+  } else {
+    settings.cashInRecommendationSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled !== false;
+  }
   const baselineNormalRaw = parseNumber(
     settings.cashInRecommendationBaselineNormalPct ?? defaults.settings.cashInRecommendationBaselineNormalPct,
   );
@@ -254,6 +261,9 @@ function ensureGlobalSettings(state) {
     settings.cashInRecommendationBaselineQ4Pct = Number.isFinite(baselineQ4Raw)
       ? Math.min(60, Math.max(40, Number(baselineQ4Raw)))
       : null;
+  }
+  if (settings.cashInLearning == null || typeof settings.cashInLearning !== "object") {
+    settings.cashInLearning = null;
   }
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.robustnessLookaheadDaysNonDdp = Math.max(

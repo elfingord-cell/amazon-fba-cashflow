@@ -61,10 +61,11 @@ export default function MethodikModule(): JSX.Element {
     settings.cashInCalibrationHorizonMonths,
     6,
   );
-  const cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+  const cashInRecommendationSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
+    ? settings.cashInRecommendationIgnoreQ4 !== true
+    : settings.cashInRecommendationSeasonalityEnabled !== false;
   const cashInRecommendationBaselineNormalPct = normalizePayoutInput(settings.cashInRecommendationBaselineNormalPct)
     ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
-  const cashInRecommendationBaselineQ4Pct = normalizePayoutInput(settings.cashInRecommendationBaselineQ4Pct);
 
   const statusLine = useMemo(() => {
     const modeLabel = cashInMode === "basis" ? "Basis" : "Konservativ";
@@ -72,13 +73,13 @@ export default function MethodikModule(): JSX.Element {
       `Forecast: ${boolLabel(useForecast)}`,
       `Cash-In Modus: ${modeLabel}`,
       `Kalibrierung: ${boolLabel(cashInCalibrationEnabled)}${cashInCalibrationEnabled ? ` (${cashInCalibrationHorizonMonths} Monate)` : ""}`,
-      `Q4 ignorieren: ${boolLabel(cashInRecommendationIgnoreQ4)}`,
+      `Saisonalität: ${boolLabel(cashInRecommendationSeasonalityEnabled)}`,
     ].join(" · ");
   }, [
     cashInCalibrationEnabled,
     cashInCalibrationHorizonMonths,
     cashInMode,
-    cashInRecommendationIgnoreQ4,
+    cashInRecommendationSeasonalityEnabled,
     useForecast,
   ]);
 
@@ -158,7 +159,7 @@ export default function MethodikModule(): JSX.Element {
             <Col xs={24} md={12} xl={6}><Tag color={useForecast ? "green" : "default"}>Forecast: {boolLabel(useForecast)}</Tag></Col>
             <Col xs={24} md={12} xl={6}><Tag>Cash-In: {cashInMode === "basis" ? "Basis" : "Konservativ"}</Tag></Col>
             <Col xs={24} md={12} xl={6}><Tag>Kalibrierung: {boolLabel(cashInCalibrationEnabled)}{cashInCalibrationEnabled ? ` (${cashInCalibrationHorizonMonths} M)` : ""}</Tag></Col>
-            <Col xs={24} md={12} xl={6}><Tag>Q4 ignorieren: {boolLabel(cashInRecommendationIgnoreQ4)}</Tag></Col>
+            <Col xs={24} md={12} xl={6}><Tag>Saisonalität: {boolLabel(cashInRecommendationSeasonalityEnabled)}</Tag></Col>
           </Row>
         </Space>
       </Card>
@@ -192,7 +193,7 @@ export default function MethodikModule(): JSX.Element {
             <Space wrap style={{ marginBottom: 8 }}>
               <Title level={5} style={{ margin: 0 }}>B) Cash-In Modus</Title>
               <Tag color="blue">GLOBAL</Tag>
-              <Tooltip title="Konservativ: Abzug 1pp je Zukunftsmonat (max 5pp). Die finale Quote bleibt im Band 40..60%.">
+              <Tooltip title="Basis: L + S[Monat]. Konservativ: L + S[Monat] minus lernender Risikoabschlag R(h) aus RiskBase.">
                 <Tag icon={<InfoCircleOutlined />}>Hilfe</Tag>
               </Tooltip>
             </Space>
@@ -264,24 +265,28 @@ export default function MethodikModule(): JSX.Element {
         <Col xs={24} xl={12}>
           <Card>
             <Space wrap style={{ marginBottom: 8 }}>
-              <Title level={5} style={{ margin: 0 }}>D) Empfehlung-Regeln (Erweitert)</Title>
+              <Title level={5} style={{ margin: 0 }}>D) Empfehlung-Regeln (Lernend)</Title>
               <Tag color="blue">GLOBAL</Tag>
             </Space>
             <Space direction="vertical" size={8} style={{ width: "100%" }}>
               <Checkbox
-                checked={cashInRecommendationIgnoreQ4}
+                checked={cashInRecommendationSeasonalityEnabled}
                 onChange={(event) => {
+                  const nextEnabled = event.target.checked;
                   void updateMethodikSettings(
-                    { cashInRecommendationIgnoreQ4: event.target.checked },
-                    `v2:methodik:recommendation-ignore-q4:${event.target.checked ? "on" : "off"}`,
+                    {
+                      cashInRecommendationSeasonalityEnabled: nextEnabled,
+                      cashInRecommendationIgnoreQ4: !nextEnabled,
+                    },
+                    `v2:methodik:recommendation-seasonality:${nextEnabled ? "on" : "off"}`,
                   );
                 }}
               >
-                Q4 bei Empfehlung ignorieren
+                Saisonalität in Empfehlung aktivieren
               </Checkbox>
               <Space wrap>
                 <Space align="center">
-                  <Text>Baseline Normal %</Text>
+                  <Text>Startniveau L (%)</Text>
                   <DeNumberInput
                     value={cashInRecommendationBaselineNormalPct}
                     mode="percent"
@@ -299,44 +304,10 @@ export default function MethodikModule(): JSX.Element {
                     }}
                   />
                 </Space>
-                <Space align="center">
-                  <Text>Baseline Q4 %</Text>
-                  <DeNumberInput
-                    value={cashInRecommendationBaselineQ4Pct ?? undefined}
-                    mode="percent"
-                    min={CASH_IN_QUOTE_MIN_PCT}
-                    max={CASH_IN_QUOTE_MAX_PCT}
-                    step={0.1}
-                    style={{ width: 128 }}
-                    onChange={(value) => {
-                      if (value == null || String(value).trim() === "") {
-                        void updateMethodikSettings(
-                          { cashInRecommendationBaselineQ4Pct: null },
-                          "v2:methodik:recommendation-baseline-q4:auto",
-                        );
-                        return;
-                      }
-                      const parsed = normalizePayoutInput(value);
-                      if (!Number.isFinite(parsed as number)) return;
-                      void updateMethodikSettings(
-                        { cashInRecommendationBaselineQ4Pct: parsed },
-                        "v2:methodik:recommendation-baseline-q4",
-                      );
-                    }}
-                  />
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      void updateMethodikSettings(
-                        { cashInRecommendationBaselineQ4Pct: null },
-                        "v2:methodik:recommendation-baseline-q4:auto",
-                      );
-                    }}
-                  >
-                    Auto
-                  </Button>
-                </Space>
               </Space>
+              <Text type="secondary">
+                Für ein robustes Startprofil (historische Quoten) bitte in den Eingaben den Import im Cash-In-Block nutzen.
+              </Text>
             </Space>
           </Card>
         </Col>

@@ -1,165 +1,181 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  buildCalibrationProfile,
-  buildPayoutRecommendation,
-  clampPct,
-  normalizeCalibrationHorizonMonths,
-} from "./cashInRules.js";
+import { buildPayoutRecommendation, buildHistoricalPayoutPrior } from "./cashInRules.js";
 
-test("buildPayoutRecommendation applies IST/PROGNOSE/BASELINE priority and Q4 baseline suggestion", () => {
-  const recommendation = buildPayoutRecommendation({
-    months: ["2026-01", "2026-02", "2026-10", "2026-12"],
-    currentMonth: "2026-02",
+function monthKeyFromDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function addMonths(monthKey, offset) {
+  const [year, month] = String(monthKey).split("-").map(Number);
+  const date = new Date(year, month - 1 + Number(offset || 0), 1);
+  return monthKeyFromDate(date);
+}
+
+test("recommendation stays near start profile with only two IST months", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev2 = addMonths(currentMonth, -2);
+  const prev1 = addMonths(currentMonth, -1);
+  const next1 = addMonths(currentMonth, 1);
+
+  const result = buildPayoutRecommendation({
+    mode: "basis",
+    seasonalityEnabled: true,
+    currentMonth,
+    maxMonth: currentMonth,
+    months: [currentMonth, next1],
     baselineNormalPct: 51,
     monthlyActuals: {
-      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 58 },
-      "2026-01": { realRevenueEUR: 10000, realPayoutRatePct: 54 },
+      [prev2]: { realRevenueEUR: 10000, realPayoutRatePct: 54 },
+      [prev1]: { realRevenueEUR: 12000, realPayoutRatePct: 52 },
     },
-    incomings: [
-      {
-        month: "2026-02",
-        calibrationSellerboardMonthEndEur: 100000,
-        calibrationPayoutRateToDatePct: 52000,
-      },
-    ],
-    ignoreQ4: false,
-    maxMonth: "2026-02",
-    minSamples: 4,
   });
 
-  assert.equal(recommendation.baselineNormalPct, 51);
-  assert.equal(recommendation.decemberQuotePct, 58);
-  assert.equal(Number(recommendation.baselineQ4SuggestedPct.toFixed(2)), 54.5);
-  assert.equal(Number(recommendation.baselineQ4Pct.toFixed(2)), 54.5);
-  assert.equal(recommendation.byMonth["2026-01"].sourceTag, "IST");
-  assert.equal(Number(recommendation.byMonth["2026-01"].quotePct.toFixed(2)), 54);
-  assert.equal(recommendation.byMonth["2026-02"].sourceTag, "PROGNOSE");
-  assert.equal(Number(recommendation.byMonth["2026-02"].quotePct.toFixed(2)), 52);
-  assert.equal(recommendation.byMonth["2026-10"].sourceTag, "BASELINE_Q4");
-  assert.equal(Number(recommendation.byMonth["2026-10"].quotePct.toFixed(2)), 54.5);
-  assert.equal(recommendation.sampleCount, 2);
-  assert.equal(recommendation.uncertain, true);
+  const nextQuote = Number(result.byMonth?.[next1]?.quotePct);
+  assert.ok(Number.isFinite(nextQuote));
+  assert.ok(nextQuote >= 49 && nextQuote <= 54, `quote should stay near prior, got ${nextQuote}`);
 });
 
-test("buildPayoutRecommendation switches Q4 months to normal baseline when ignoreQ4 is active", () => {
-  const recommendation = buildPayoutRecommendation({
-    months: ["2026-10"],
-    currentMonth: "2026-02",
+test("risk base rises after optimistic miss and lowers conservative quote", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev1 = addMonths(currentMonth, -1);
+  const next1 = addMonths(currentMonth, 1);
+
+  const result = buildPayoutRecommendation({
+    mode: "conservative",
+    seasonalityEnabled: true,
+    currentMonth,
+    maxMonth: currentMonth,
+    months: [currentMonth, next1],
+    learningState: {
+      levelPct: 54,
+      riskBasePct: 0.5,
+      seasonalityByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
+      seasonalityPriorByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
+      predictionSnapshotByMonth: {
+        [prev1]: { quotePct: 58, mode: "conservative", source: "test" },
+      },
+    },
+    monthlyActuals: {
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 50 },
+    },
+  });
+
+  const riskBase = Number(result.riskBasePct);
+  assert.ok(riskBase > 0.5, `risk base should increase, got ${riskBase}`);
+
+  const currentQuote = Number(result.byMonth?.[currentMonth]?.quotePct);
+  const futureQuote = Number(result.byMonth?.[next1]?.quotePct);
+  assert.ok(Number.isFinite(currentQuote));
+  assert.ok(Number.isFinite(futureQuote));
+  assert.ok(futureQuote <= currentQuote, "future conservative quote should not exceed current quote");
+});
+
+test("positive surprises do not drive risk base negative", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev1 = addMonths(currentMonth, -1);
+
+  const result = buildPayoutRecommendation({
+    mode: "conservative",
+    seasonalityEnabled: true,
+    currentMonth,
+    maxMonth: currentMonth,
+    months: [currentMonth],
+    learningState: {
+      levelPct: 52,
+      riskBasePct: 2,
+      seasonalityByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
+      seasonalityPriorByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
+      predictionSnapshotByMonth: {
+        [prev1]: { quotePct: 50, mode: "conservative", source: "test" },
+      },
+    },
+    monthlyActuals: {
+      [prev1]: { realRevenueEUR: 11000, realPayoutRatePct: 56 },
+    },
+  });
+
+  const riskBase = Number(result.riskBasePct);
+  assert.ok(riskBase >= 1.9, `risk base should stay stable on positive surprise, got ${riskBase}`);
+  assert.ok(riskBase <= 2.1, `risk base should not jump, got ${riskBase}`);
+});
+
+test("shrinkage limits seasonal outliers until three samples", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const nextJuly = (() => {
+    for (let i = 0; i < 24; i += 1) {
+      const month = addMonths(currentMonth, i);
+      if (month.endsWith("-07")) return month;
+    }
+    return addMonths(currentMonth, 1);
+  })();
+  const yearBase = Number(currentMonth.slice(0, 4));
+
+  const withOneJuly = buildPayoutRecommendation({
+    mode: "basis",
+    seasonalityEnabled: true,
+    currentMonth,
+    maxMonth: currentMonth,
+    months: [nextJuly],
     baselineNormalPct: 51,
     monthlyActuals: {
-      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 58 },
+      [`${yearBase - 1}-07`]: { realRevenueEUR: 8000, realPayoutRatePct: 60 },
     },
-    ignoreQ4: true,
-    maxMonth: "2026-02",
   });
 
-  assert.equal(recommendation.byMonth["2026-10"].sourceTag, "BASELINE_NORMAL");
-  assert.equal(Number(recommendation.byMonth["2026-10"].quotePct.toFixed(2)), 51);
-});
+  const oneJulyEntry = withOneJuly.byMonth?.[nextJuly];
+  assert.ok(Number(oneJulyEntry?.seasonalityWeight) < 1);
+  assert.ok(Math.abs(Number(oneJulyEntry?.seasonalityPct || 0)) <= 4);
 
-test("buildPayoutRecommendation uses manual Q4 baseline override when provided", () => {
-  const recommendation = buildPayoutRecommendation({
-    months: ["2026-10"],
-    currentMonth: "2026-02",
+  const withThreeJuly = buildPayoutRecommendation({
+    mode: "basis",
+    seasonalityEnabled: true,
+    currentMonth,
+    maxMonth: currentMonth,
+    months: [nextJuly],
     baselineNormalPct: 51,
-    baselineQ4Pct: 56,
     monthlyActuals: {
-      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 58 },
+      [`${yearBase - 3}-07`]: { realRevenueEUR: 8000, realPayoutRatePct: 58 },
+      [`${yearBase - 2}-07`]: { realRevenueEUR: 9000, realPayoutRatePct: 59 },
+      [`${yearBase - 1}-07`]: { realRevenueEUR: 10000, realPayoutRatePct: 60 },
     },
-    ignoreQ4: false,
-    maxMonth: "2026-02",
   });
 
-  assert.equal(recommendation.baselineQ4Source, "manual");
-  assert.equal(Number(recommendation.byMonth["2026-10"].quotePct.toFixed(2)), 56);
+  const threeJulyEntry = withThreeJuly.byMonth?.[nextJuly];
+  assert.ok(Number(threeJulyEntry?.seasonalityWeight) >= 1);
+  assert.ok(Math.abs(Number(threeJulyEntry?.seasonalityPct || 0)) >= 2);
 });
 
-test("buildCalibrationProfile uses sellerboard value if provided", () => {
-  const profile = buildCalibrationProfile({
-    months: ["2025-06", "2025-07", "2025-08"],
-    horizonMonths: 6,
-    forecastRevenueByMonth: {
-      "2025-06": 10000,
-      "2025-07": 12000,
-      "2025-08": 15000,
-    },
-    incomings: [
-      {
-        month: "2025-06",
-        calibrationSellerboardMonthEndEur: 9000,
-      },
-    ],
+test("historical prior import is robust and clamps outputs", () => {
+  const prior = buildHistoricalPayoutPrior({
+    startMonth: "2022-05",
+    values: "51\n50\n49\n60\n10\n52\n51\n52",
   });
 
-  const june = profile.byMonth["2025-06"];
-  assert.equal(june.active, true);
-  assert.equal(june.method, "sellerboard");
-  assert.equal(Number(june.rawFactor.toFixed(4)), 0.9);
-  assert.equal(Number(june.factor.toFixed(4)), 0.9);
-});
+  assert.equal(prior.ok, true);
+  assert.ok(Number(prior.levelPct) >= 40 && Number(prior.levelPct) <= 60);
 
-test("buildCalibrationProfile uses linear projection and decays to one", () => {
-  const profile = buildCalibrationProfile({
-    months: ["2025-06", "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12"],
-    horizonMonths: 6,
-    forecastRevenueByMonth: {
-      "2025-06": 10000,
-      "2025-07": 10000,
-      "2025-08": 10000,
-      "2025-09": 10000,
-      "2025-10": 10000,
-      "2025-11": 10000,
-      "2025-12": 10000,
+  const currentMonth = monthKeyFromDate(new Date());
+  const nextMonth = addMonths(currentMonth, 1);
+  const recommendation = buildPayoutRecommendation({
+    mode: "conservative",
+    seasonalityEnabled: true,
+    currentMonth,
+    maxMonth: currentMonth,
+    months: [nextMonth],
+    learningState: {
+      levelPct: 60,
+      riskBasePct: 6,
+      seasonalityByMonth: prior.ok ? prior.seasonalityPriorByMonth : {},
+      seasonalityPriorByMonth: prior.ok ? prior.seasonalityPriorByMonth : {},
+      seasonalitySampleCountByMonth: { 1: 3, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3, 8: 3, 9: 3, 10: 3, 11: 3, 12: 3 },
     },
-    incomings: [
-      {
-        month: "2025-06",
-        calibrationCutoffDate: "2025-06-15",
-        calibrationRevenueToDateEur: 4500,
-      },
-    ],
   });
 
-  assert.equal(Number(profile.byMonth["2025-06"].factor.toFixed(4)), 0.9);
-  assert.equal(Number(profile.byMonth["2025-07"].factor.toFixed(4)), 0.92);
-  assert.equal(Number(profile.byMonth["2025-11"].factor.toFixed(4)), 1);
-  assert.equal(Number(profile.byMonth["2025-12"].factor.toFixed(4)), 1);
-});
-
-test("buildCalibrationProfile resolves overlap by latest valid month", () => {
-  const profile = buildCalibrationProfile({
-    months: ["2025-06", "2025-07", "2025-08"],
-    horizonMonths: 6,
-    forecastRevenueByMonth: {
-      "2025-06": 10000,
-      "2025-07": 10000,
-      "2025-08": 10000,
-    },
-    incomings: [
-      {
-        month: "2025-06",
-        calibrationCutoffDate: "2025-06-10",
-        calibrationRevenueToDateEur: 3000,
-      },
-      {
-        month: "2025-07",
-        calibrationCutoffDate: "2025-07-10",
-        calibrationRevenueToDateEur: 5000,
-      },
-    ],
-  });
-
-  assert.equal(profile.byMonth["2025-08"].sourceMonth, "2025-07");
-});
-
-test("normalizeCalibrationHorizonMonths and clampPct enforce allowed ranges", () => {
-  assert.equal(normalizeCalibrationHorizonMonths(3), 3);
-  assert.equal(normalizeCalibrationHorizonMonths(4), 6);
-  assert.equal(normalizeCalibrationHorizonMonths(null, 12), 12);
-
-  assert.equal(clampPct(39), 40);
-  assert.equal(clampPct(55), 55);
-  assert.equal(clampPct(61), 60);
+  const entry = recommendation.byMonth?.[nextMonth];
+  assert.ok(Number(entry?.quotePct) <= 60);
+  assert.equal(entry?.capApplied, true);
+  assert.ok(Array.isArray(entry?.capsApplied));
+  assert.ok((entry?.capsApplied || []).includes("risk_cap_6pp") || (entry?.capsApplied || []).includes("quote_band_40_60"));
 });

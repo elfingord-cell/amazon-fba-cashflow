@@ -224,6 +224,7 @@ function applyDashboardCalculationOverrides(
   forecastSettings.useForecast = true;
   settings.cashInMode = options.safetyMode === "basis" ? "basis" : "conservative";
   settings.cashInCalibrationEnabled = options.revenueBasisMode === "calibrated";
+  settings.cashInRecommendationSeasonalityEnabled = options.q4SeasonalityEnabled;
   settings.cashInRecommendationIgnoreQ4 = !options.q4SeasonalityEnabled;
   if (options.quoteMode === "recommendation" && Array.isArray(next.incomings)) {
     next.incomings = (next.incomings as unknown[]).map((entry) => {
@@ -659,16 +660,18 @@ export default function DashboardModule(): JSX.Element {
     : {};
   const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const methodikCalibrationHorizonMonths = Math.max(1, Math.round(Number(settings.cashInCalibrationHorizonMonths || 6)));
-  const methodikRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+  const methodikSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
+    ? settings.cashInRecommendationIgnoreQ4 !== true
+    : settings.cashInRecommendationSeasonalityEnabled !== false;
   useEffect(() => {
     if (cockpitDefaultsApplied) return;
     setRevenueBasisMode(methodikCalibrationEnabled ? "calibrated" : "forecast");
-    setQ4SeasonalityEnabled(!methodikRecommendationIgnoreQ4);
+    setQ4SeasonalityEnabled(methodikSeasonalityEnabled);
     setCockpitDefaultsApplied(true);
   }, [
     cockpitDefaultsApplied,
     methodikCalibrationEnabled,
-    methodikRecommendationIgnoreQ4,
+    methodikSeasonalityEnabled,
   ]);
   const planningMonths = useMemo(
     () => resolvePlanningMonthsFromState(stateObject, 18),
@@ -865,7 +868,7 @@ export default function DashboardModule(): JSX.Element {
     if (!simulatedBreakdown.length) return null;
     return Math.min(...simulatedBreakdown.map((row) => Number(row.closing || 0)));
   }, [simulatedBreakdown]);
-  const q4ToggleVisible = quoteMode === "recommendation";
+  const q4ToggleVisible = true;
   const calibrationApplied = report.kpis?.cashIn?.calibrationApplied === true;
   const calibrationCandidateCount = Math.max(0, Math.round(Number(report.kpis?.cashIn?.calibrationCandidateCount || 0)));
   const calibrationNonDefaultFactorMonthCount = Math.max(
@@ -2034,13 +2037,14 @@ export default function DashboardModule(): JSX.Element {
               <Space direction="vertical" size={6} style={{ width: "100%" }}>
                 <Space size={6}>
                   <Text strong>Sicherheitsmodus</Text>
-                  <Tooltip title="Basis: keine Sicherheitsmarge. Konservativ: reduziert die Quote in zukünftigen Monaten um 1pp pro Monat (max. 5pp).">
+                  <Tooltip title="Basis: nur L+S. Konservativ: L+S minus lernender Risikoabschlag R(h) aus RiskBase (mit Horizon-Skalierung).">
                     <InfoCircleOutlined />
                   </Tooltip>
                 </Space>
                 <Segmented
                   block
                   value={safetyMode}
+                  disabled={quoteMode === "manual"}
                   onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
                   options={[
                     { label: "Basis", value: "basis" },
@@ -2052,19 +2056,20 @@ export default function DashboardModule(): JSX.Element {
                 <div className="v2-calc-cockpit-q4-row">
                   <Checkbox
                     checked={q4SeasonalityEnabled}
+                    disabled={quoteMode === "manual"}
                     onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
                   >
-                    Saisonalität (Q4) berücksichtigen
+                    Saisonalität berücksichtigen
                   </Checkbox>
-                  <Tooltip title="Q4 berücksichtigt saisonale Besonderheiten für Oktober bis Dezember. Gilt nur für die Empfehlung.">
+                  <Tooltip title="Aktiviert die gelernte Monats-Saisonalität S[Monat]. Gilt nur für die Empfehlung.">
                     <InfoCircleOutlined />
                   </Tooltip>
                 </div>
               ) : null}
               <Text type="secondary">
                 {quoteMode === "manual"
-                  ? "Verwendet die manuell gepflegte Auszahlungsquote je Monat."
-                  : "Empfehlung wird je Monat automatisch berechnet und direkt im Chart angewendet."}
+                  ? "Manuelle Monatsquote ist führend; Sicherheitsmodus und Saisonalität sind deaktiviert."
+                  : "Empfehlung nutzt L + S[Monat] und optional (Konservativ) einen lernenden Risikoabschlag."}
               </Text>
             </Card>
           </div>

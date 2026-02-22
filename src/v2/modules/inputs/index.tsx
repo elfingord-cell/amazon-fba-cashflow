@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Input,
+  Modal,
   Space,
   Tag,
   Tooltip,
@@ -16,6 +17,7 @@ import {
   CASH_IN_QUOTE_MAX_PCT,
   CASH_IN_QUOTE_MIN_PCT,
   buildCalibrationProfile,
+  buildHistoricalPayoutPrior,
   computeCalibrationFactor,
   buildPayoutRecommendation,
   clampPct,
@@ -81,6 +83,7 @@ interface InputsDraftSnapshot {
   cashInRecommendationIgnoreQ4: boolean;
   cashInRecommendationBaselineNormalPct: number;
   cashInRecommendationBaselineQ4Pct: number | null;
+  cashInLearning: Record<string, unknown> | null;
   incomings: IncomingDraft[];
   extras: ExtraDraft[];
   dividends: DividendDraft[];
@@ -89,8 +92,25 @@ interface InputsDraftSnapshot {
 
 interface RecommendationByMonthEntry {
   quotePct: number;
-  sourceTag: "IST" | "PROGNOSE" | "BASELINE_NORMAL" | "BASELINE_Q4" | string;
+  sourceTag: "IST" | "RECOMMENDED_BASIS" | "RECOMMENDED_CONSERVATIVE" | "PROGNOSE" | string;
   explanation?: string;
+  mode?: "basis" | "conservative" | string;
+  levelPct?: number;
+  seasonalityPct?: number;
+  seasonalityRawPct?: number;
+  seasonalityPriorPct?: number;
+  seasonalityWeight?: number;
+  seasonalitySampleCount?: number;
+  shrinkageActive?: boolean;
+  riskBasePct?: number;
+  riskAdjustmentPct?: number;
+  horizonMonths?: number;
+  capApplied?: boolean;
+  capsApplied?: string[];
+  liveSignalUsed?: boolean;
+  liveSignalWeight?: number;
+  liveSignalQuotePct?: number;
+  seasonalityEnabled?: boolean;
 }
 
 function isEditableNode(target: EventTarget | null): boolean {
@@ -216,6 +236,11 @@ function formatSignedCurrencyDelta(value: number): string {
   return `${prefix}${formatNumber(value, 2)} EUR`;
 }
 
+function normalizeLearningPayload(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== "object") return null;
+  return JSON.parse(JSON.stringify(input));
+}
+
 function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
   const normalizedBaselineNormal = normalizePayoutInput(snapshot.cashInRecommendationBaselineNormalPct)
     ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
@@ -229,6 +254,7 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
     cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
     cashInRecommendationBaselineNormalPct: normalizedBaselineNormal,
     cashInRecommendationBaselineQ4Pct: normalizedBaselineQ4,
+    cashInLearning: normalizeLearningPayload(snapshot.cashInLearning),
     incomings: sortIncomings(snapshot.incomings).map((row) => ({
       id: String(row.id || ""),
       month: String(row.month || ""),
@@ -284,12 +310,17 @@ export default function InputsModule(): JSX.Element {
     CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
   );
   const [cashInRecommendationBaselineQ4Pct, setCashInRecommendationBaselineQ4Pct] = useState<number | null>(null);
+  const [cashInLearningState, setCashInLearningState] = useState<Record<string, unknown> | null>(null);
   const [incomings, setIncomings] = useState<IncomingDraft[]>([]);
   const [extras, setExtras] = useState<ExtraDraft[]>([]);
   const [dividends, setDividends] = useState<DividendDraft[]>([]);
   const [monthlyActuals, setMonthlyActuals] = useState<MonthlyActualDraft[]>([]);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const [autoSaveHint, setAutoSaveHint] = useState("");
+  const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
+  const [historicalImportStartMonth, setHistoricalImportStartMonth] = useState<string>(currentMonthKey());
+  const [historicalImportValues, setHistoricalImportValues] = useState<string>("");
+  const [historicalImportError, setHistoricalImportError] = useState<string | null>(null);
 
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastSavedHashRef = useRef("");
@@ -333,10 +364,14 @@ export default function InputsModule(): JSX.Element {
     const nextHorizonMonths = Math.max(1, Math.round(Number(settings.horizonMonths || 18) || 18));
     const nextCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
     const nextCalibrationHorizon = normalizeCalibrationHorizonMonths(settings.cashInCalibrationHorizonMonths, 6);
-    const nextIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+    const nextSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
+      ? settings.cashInRecommendationIgnoreQ4 !== true
+      : settings.cashInRecommendationSeasonalityEnabled !== false;
+    const nextIgnoreQ4 = !nextSeasonalityEnabled;
     const nextBaselineNormal = normalizePayoutInput(settings.cashInRecommendationBaselineNormalPct)
       ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
     const nextBaselineQ4 = normalizePayoutInput(settings.cashInRecommendationBaselineQ4Pct);
+    const nextLearningState = normalizeLearningPayload(settings.cashInLearning);
 
     const nextIncomingsRaw = (Array.isArray(state.incomings) ? state.incomings : [])
       .map((entry) => normalizeIncomingRow(entry as Record<string, unknown>, nextStartMonth));
@@ -385,10 +420,12 @@ export default function InputsModule(): JSX.Element {
     setCashInRecommendationIgnoreQ4(nextIgnoreQ4);
     setCashInRecommendationBaselineNormalPct(nextBaselineNormal);
     setCashInRecommendationBaselineQ4Pct(nextBaselineQ4);
+    setCashInLearningState(nextLearningState);
     setIncomings(nextIncomings);
     setExtras(nextExtras);
     setDividends(nextDividends);
     setMonthlyActuals(nextMonthlyActuals);
+    setHistoricalImportStartMonth(nextStartMonth);
 
     lastSavedHashRef.current = normalizeSnapshot({
       openingBalance: nextOpeningBalance,
@@ -399,6 +436,7 @@ export default function InputsModule(): JSX.Element {
       cashInRecommendationIgnoreQ4: nextIgnoreQ4,
       cashInRecommendationBaselineNormalPct: nextBaselineNormal,
       cashInRecommendationBaselineQ4Pct: nextBaselineQ4,
+      cashInLearning: nextLearningState,
       incomings: nextIncomings,
       extras: nextExtras,
       dividends: nextDividends,
@@ -441,17 +479,23 @@ export default function InputsModule(): JSX.Element {
       incomings,
       monthlyActuals: monthlyActualsMap,
       currentMonth: currentMonthKey(),
+      mode: methodikCashInMode,
+      seasonalityEnabled: !cashInRecommendationIgnoreQ4,
       ignoreQ4: cashInRecommendationIgnoreQ4,
       maxMonth: currentMonthKey(),
       baselineNormalPct: cashInRecommendationBaselineNormalPct,
       baselineQ4Pct: cashInRecommendationBaselineQ4Pct,
+      learningState: cashInLearningState,
+      now: new Date(),
       minSamples: 4,
     });
   }, [
     cashInRecommendationBaselineNormalPct,
     cashInRecommendationBaselineQ4Pct,
     cashInRecommendationIgnoreQ4,
+    cashInLearningState,
     incomings,
+    methodikCashInMode,
     monthlyActuals,
     planningMonths,
   ]);
@@ -468,10 +512,11 @@ export default function InputsModule(): JSX.Element {
 
   const recommendationBaselineNormalPct = normalizePayoutInput(payoutRecommendation.baselineNormalPct)
     ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
-  const recommendationBaselineQ4Pct = normalizePayoutInput(payoutRecommendation.baselineQ4Pct)
+  const recommendationLevelPct = normalizePayoutInput(payoutRecommendation.levelPct)
     ?? recommendationBaselineNormalPct;
-  const recommendationBaselineQ4SuggestedPct = normalizePayoutInput(payoutRecommendation.baselineQ4SuggestedPct)
-    ?? recommendationBaselineNormalPct;
+  const recommendationRiskBasePct = Number.isFinite(Number(payoutRecommendation.riskBasePct))
+    ? Number(payoutRecommendation.riskBasePct)
+    : 0;
   const recommendationCurrentMonthForecastQuotePct = normalizePayoutInput(payoutRecommendation.currentMonthForecastQuotePct);
   const recommendationObservedNormalSampleCount = Math.max(0, Math.round(Number(payoutRecommendation.observedNormalSampleCount || 0)));
   const recommendationObservedNormalMedianPct = normalizePayoutInput(payoutRecommendation.observedNormalMedianPct);
@@ -492,14 +537,21 @@ export default function InputsModule(): JSX.Element {
     ? recommendationUsedMonths.map((month) => formatMonthLabel(month)).join(", ")
     : "keine";
   const recommendationInfoTooltip = [
-    `Normal Baseline (manuell): ${formatNumber(recommendationBaselineNormalPct, 1)}%`,
-    `Q4 Baseline (aktiv): ${formatNumber(recommendationBaselineQ4Pct, 1)}%`,
-    `Q4 Vorschlag: ${formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%`,
-    `Observed IST normal (n=${recommendationObservedNormalSampleCount}): Median ${formatNumber(recommendationObservedNormalMedianPct, 1)}%, Ø ${formatNumber(recommendationObservedNormalAveragePct, 1)}%`,
-    `Observed normal inkl. Prognose (n=${recommendationObservedNormalWithForecastSampleCount}): Median ${formatNumber(recommendationObservedNormalWithForecastMedianPct, 1)}%, Ø ${formatNumber(recommendationObservedNormalWithForecastAveragePct, 1)}%`,
+    `Level L: ${formatNumber(recommendationLevelPct, 1)}%`,
+    `RiskBase: ${formatNumber(recommendationRiskBasePct, 2)}pp`,
+    `Observed IST (n=${recommendationObservedNormalSampleCount}): Median ${formatNumber(recommendationObservedNormalMedianPct, 1)}%, Ø ${formatNumber(recommendationObservedNormalAveragePct, 1)}%`,
+    `Modellpunkte (n=${recommendationObservedNormalWithForecastSampleCount}): Median ${formatNumber(recommendationObservedNormalWithForecastMedianPct, 1)}%, Ø ${formatNumber(recommendationObservedNormalWithForecastAveragePct, 1)}%`,
     `Genutzte IST-Monate: ${recommendationUsedMonthsText}`,
-    `Q4 ignorieren: ${cashInRecommendationIgnoreQ4 ? "ja" : "nein"}`,
+    `Saisonalität: ${cashInRecommendationIgnoreQ4 ? "aus" : "an"}`,
   ].join(" | ");
+  const historicalImportSampleCount = (
+    cashInLearningState
+    && typeof cashInLearningState === "object"
+    && cashInLearningState.historicalImport
+    && typeof cashInLearningState.historicalImport === "object"
+  )
+    ? Math.max(0, Math.round(Number((cashInLearningState.historicalImport as Record<string, unknown>).sampleCount || 0)))
+    : 0;
 
   const currentMonthValue = currentMonthKey();
   const currentMonthInPlanning = planningMonths.includes(currentMonthValue);
@@ -640,8 +692,48 @@ export default function InputsModule(): JSX.Element {
     });
   }
 
+  function applyHistoricalPriorImport(): void {
+    const prior = buildHistoricalPayoutPrior({
+      startMonth: historicalImportStartMonth,
+      values: historicalImportValues,
+    });
+    if (!prior.ok) {
+      setHistoricalImportError(prior.error || "Historische Quoten konnten nicht importiert werden.");
+      return;
+    }
+    const zeroedMonthCounts: Record<string, number> = {};
+    for (let slot = 1; slot <= 12; slot += 1) {
+      zeroedMonthCounts[String(slot)] = 0;
+    }
+    const nextLearningState = {
+      version: 1,
+      levelPct: Number(prior.levelPct || CASH_IN_BASELINE_NORMAL_DEFAULT_PCT),
+      seasonalityByMonth: prior.seasonalityPriorByMonth,
+      seasonalityPriorByMonth: prior.seasonalityPriorByMonth,
+      seasonalitySampleCountByMonth: zeroedMonthCounts,
+      riskBasePct: 0,
+      positiveErrorCount: 0,
+      predictionSnapshotByMonth: {},
+      historicalImport: {
+        ...prior,
+        createdAt: new Date().toISOString(),
+      },
+    } as Record<string, unknown>;
+    setCashInLearningState(normalizeLearningPayload(nextLearningState));
+    setCashInRecommendationBaselineNormalPct(Number(prior.levelPct || CASH_IN_BASELINE_NORMAL_DEFAULT_PCT));
+    setCashInRecommendationBaselineQ4Pct(null);
+    setHistoricalImportError(null);
+    setHistoricalImportOpen(false);
+    setAutoSaveHint("Historisches Startprofil übernommen");
+  }
+
   async function saveDraft(source: string): Promise<void> {
     const normalizedIncomings = syncIncomingsToWindow(incomings, startMonth, horizonMonths);
+    const learningStateForSave = normalizeLearningPayload(
+      payoutRecommendation.learningStateNext
+      || payoutRecommendation.learningState
+      || cashInLearningState,
+    );
     const snapshot: InputsDraftSnapshot = {
       openingBalance,
       startMonth,
@@ -651,6 +743,7 @@ export default function InputsModule(): JSX.Element {
       cashInRecommendationIgnoreQ4,
       cashInRecommendationBaselineNormalPct,
       cashInRecommendationBaselineQ4Pct,
+      cashInLearning: learningStateForSave,
       incomings: normalizedIncomings,
       extras,
       dividends,
@@ -673,9 +766,11 @@ export default function InputsModule(): JSX.Element {
         cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
         cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
         cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
+        cashInRecommendationSeasonalityEnabled: snapshot.cashInRecommendationIgnoreQ4 !== true,
         cashInRecommendationBaselineNormalPct: normalizePayoutInput(snapshot.cashInRecommendationBaselineNormalPct)
           ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
         cashInRecommendationBaselineQ4Pct: normalizePayoutInput(snapshot.cashInRecommendationBaselineQ4Pct),
+        cashInLearning: normalizeLearningPayload(snapshot.cashInLearning),
         lastUpdatedAt: new Date().toISOString(),
       };
 
@@ -725,6 +820,7 @@ export default function InputsModule(): JSX.Element {
       return next;
     }, source);
 
+    setCashInLearningState(learningStateForSave);
     lastSavedHashRef.current = hash;
     setHasPendingChanges(false);
     setAutoSaveHint(`Gespeichert: ${new Date().toLocaleTimeString("de-DE")}`);
@@ -759,6 +855,7 @@ export default function InputsModule(): JSX.Element {
       cashInRecommendationIgnoreQ4,
       cashInRecommendationBaselineNormalPct,
       cashInRecommendationBaselineQ4Pct,
+      cashInLearning: cashInLearningState,
       incomings,
       extras,
       dividends,
@@ -778,6 +875,7 @@ export default function InputsModule(): JSX.Element {
     cashInRecommendationIgnoreQ4,
     cashInRecommendationBaselineNormalPct,
     cashInRecommendationBaselineQ4Pct,
+    cashInLearningState,
     incomings,
     extras,
     dividends,
@@ -822,7 +920,7 @@ export default function InputsModule(): JSX.Element {
             <Tag>Forecast im Cashflow: {methodikUseForecast ? "Ja" : "Nein"}</Tag>
             <Tag>Cash-In Modus: {methodikCashInMode === "basis" ? "Basis" : "Konservativ"}</Tag>
             <Tag>Kalibrierung: {cashInCalibrationEnabled ? `An (${cashInCalibrationHorizonMonths} Monate)` : "Aus"}</Tag>
-            <Tag>Q4 ignorieren: {cashInRecommendationIgnoreQ4 ? "An" : "Aus"}</Tag>
+            <Tag>Saisonalität: {cashInRecommendationIgnoreQ4 ? "Aus" : "An"}</Tag>
           </Space>
           <Button size="small" onClick={() => navigate("/v2/methodik")}>
             In Methodik &amp; Regeln bearbeiten
@@ -939,7 +1037,7 @@ export default function InputsModule(): JSX.Element {
               <div>
                 <Text type="secondary">
                   Prognose-Quote aktueller Monat: {formatNumber(recommendationCurrentMonthForecastQuotePct, 1)}%
-                  {" "}(wird als Datenpunkt fuer Baseline-Info genutzt)
+                  {" "}(schwaches Live-Signal ab Tag 10)
                 </Text>
               </div>
             ) : null}
@@ -956,11 +1054,16 @@ export default function InputsModule(): JSX.Element {
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
           <Title level={5} style={{ margin: 0 }}>Umsaetze x Payout</Title>
           <Space wrap>
-            <Tag>Baseline Normal: {formatNumber(cashInRecommendationBaselineNormalPct, 1)}%</Tag>
-            <Tag>Baseline Q4: {formatNumber(cashInRecommendationBaselineQ4Pct ?? recommendationBaselineQ4Pct, 1)}%</Tag>
-            <Tag>Q4 ignorieren: {cashInRecommendationIgnoreQ4 ? "Ja" : "Nein"}</Tag>
-            <Tooltip title="Q4 Vorschlag: Normal + 0,5 * (Dez - Normal).">
-              <Tag>Auto-Vorschlag: {formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%</Tag>
+            <Tag>Level L: {formatNumber(recommendationLevelPct, 1)}%</Tag>
+            <Tag>RiskBase: {formatNumber(recommendationRiskBasePct, 2)}pp</Tag>
+            <Tag>Saisonalität: {cashInRecommendationIgnoreQ4 ? "Aus" : "An"}</Tag>
+            {historicalImportSampleCount > 0 ? (
+              <Tag color="blue">Historisches Startprofil: n={historicalImportSampleCount}</Tag>
+            ) : null}
+            <Tooltip title="Einmal-Import historischer Monatsquoten als robustes Startprofil für L und Saisonalität.">
+              <Button size="small" onClick={() => setHistoricalImportOpen(true)}>
+                Historische Quoten importieren
+              </Button>
             </Tooltip>
             <Button size="small" onClick={() => navigate("/v2/methodik")}>
               Methodik (global) ändern
@@ -1025,7 +1128,7 @@ export default function InputsModule(): JSX.Element {
           </Tooltip>
           <Tooltip title={recommendationInfoTooltip}>
             <Tag>
-              Baseline N/Q4: {formatNumber(recommendationBaselineNormalPct, 1)}% / {formatNumber(recommendationBaselineQ4Pct, 1)}%
+              Empfehlung: L {formatNumber(recommendationLevelPct, 1)}% · RiskBase {formatNumber(recommendationRiskBasePct, 2)}pp
             </Tag>
           </Tooltip>
           {Number.isFinite(recommendationCurrentMonthForecastQuotePct as number) ? (
@@ -1049,7 +1152,7 @@ export default function InputsModule(): JSX.Element {
                 <th style={{ width: 90 }}>Faktor</th>
                 <th style={{ width: 180 }}>Umsatz kalibriert (EUR)</th>
                 <th style={{ width: 180 }}>Auszahlungsquote (manuell) %</th>
-                <th style={{ width: 170 }}>Empfehlung %</th>
+                <th style={{ width: 220 }}>Verwendete Quote %</th>
                 <th style={{ width: 190 }}>Payout EUR (aktiv)</th>
                 <th style={{ width: 190 }}>Payout kalibriert (EUR)</th>
                 <th style={{ width: 240 }}>Status</th>
@@ -1059,47 +1162,78 @@ export default function InputsModule(): JSX.Element {
             <tbody>
               {sortIncomings(incomings).map((row) => {
                 const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
-                const recommendationSourceTag = String(recommendationEntry?.sourceTag || "BASELINE_NORMAL");
+                const recommendationSourceTag = String(
+                  recommendationEntry?.sourceTag
+                  || (methodikCashInMode === "basis" ? "RECOMMENDED_BASIS" : "RECOMMENDED_CONSERVATIVE"),
+                );
+                const recommendationMode = String(recommendationEntry?.mode || methodikCashInMode).trim().toLowerCase() === "basis"
+                  ? "basis"
+                  : "conservative";
                 const recommendationQuoteRaw = Number(recommendationEntry?.quotePct);
                 const recommendation = Number.isFinite(recommendationQuoteRaw)
                   ? clampPct(recommendationQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
                   : null;
                 const recommendationSourceLabel = recommendationSourceTag === "IST"
                   ? "IST"
-                  : recommendationSourceTag === "PROGNOSE"
-                    ? "PROGNOSE"
-                    : recommendationSourceTag === "BASELINE_Q4"
-                      ? "BASELINE Q4"
-                      : "BASELINE";
+                  : recommendationSourceTag === "RECOMMENDED_BASIS"
+                    ? "Empfohlen (Basis)"
+                    : recommendationSourceTag === "RECOMMENDED_CONSERVATIVE"
+                      ? "Empfohlen (Konservativ)"
+                      : recommendationSourceTag === "PROGNOSE"
+                        ? "Live-Signal"
+                        : "Empfehlung";
                 const recommendationBadgeColor = recommendationSourceTag === "IST"
                   ? "green"
-                  : recommendationSourceTag === "PROGNOSE"
-                    ? "purple"
+                  : recommendationMode === "conservative"
+                    ? "volcano"
                     : "blue";
-                const recommendationFormula = recommendationSourceTag === "BASELINE_Q4"
-                  ? `Q4 Baseline: ${formatNumber(recommendationBaselineQ4Pct, 1)}% (Vorschlag ${formatNumber(recommendationBaselineQ4SuggestedPct, 1)}%)`
-                  : recommendationSourceTag === "BASELINE_NORMAL"
-                    ? `Normal Baseline: ${formatNumber(recommendationBaselineNormalPct, 1)}%`
-                    : recommendationSourceTag === "PROGNOSE"
-                      ? "PROGNOSE = Auszahlung Monatsende / Umsatzprognose Monatsende"
-                      : "IST = Monats-Istwerte";
+                const recommendationCapsApplied = Array.isArray(recommendationEntry?.capsApplied)
+                  ? recommendationEntry?.capsApplied.filter(Boolean)
+                  : [];
                 const recommendationTooltip = [
                   `Quelle: ${recommendationSourceLabel}`,
                   recommendationEntry?.explanation ? String(recommendationEntry.explanation) : null,
-                  recommendationFormula,
-                  `Q4 ignorieren: ${cashInRecommendationIgnoreQ4 ? "ja" : "nein"}`,
+                  Number.isFinite(Number(recommendationEntry?.levelPct))
+                    ? `L: ${formatNumber(recommendationEntry?.levelPct, 1)}%`
+                    : null,
+                  Number.isFinite(Number(recommendationEntry?.seasonalityPct))
+                    ? `S: ${formatNumber(recommendationEntry?.seasonalityPct, 1)}% (n=${Math.max(0, Math.round(Number(recommendationEntry?.seasonalitySampleCount || 0)))})`
+                    : null,
+                  recommendationMode === "conservative"
+                    ? `RiskBase: ${formatNumber(recommendationEntry?.riskBasePct, 2)}pp · R(h=${Math.max(0, Math.round(Number(recommendationEntry?.horizonMonths || 0)))}): ${formatNumber(recommendationEntry?.riskAdjustmentPct, 2)}pp`
+                    : null,
+                  recommendationEntry?.shrinkageActive === true ? "Shrinkage aktiv" : null,
+                  recommendationEntry?.liveSignalUsed === true
+                    ? `Live-Signal: ${formatNumber(Number(recommendationEntry?.liveSignalWeight || 0) * 100, 0)}% Gewicht`
+                    : null,
+                  recommendationCapsApplied.length ? "Grenzwert angewendet" : null,
+                  `Saisonalität: ${cashInRecommendationIgnoreQ4 ? "aus" : "an"}`,
                 ]
                   .filter(Boolean)
                   .join(" | ");
                 const manualPayout = normalizePayoutInput(row.payoutPct);
+                const hasManualPayout = Number.isFinite(manualPayout as number);
                 const payoutPctForCalc = Number.isFinite(manualPayout as number)
                   ? Number(manualPayout)
                   : (Number.isFinite(recommendation as number) ? Number(recommendation) : null);
                 const payoutDelta = Number.isFinite(recommendation)
-                  && Number.isFinite(manualPayout as number)
+                  && hasManualPayout
                   ? Number(manualPayout) - Number(recommendation)
                   : null;
                 const shouldWarnDelta = Number.isFinite(payoutDelta as number) && Math.abs(Number(payoutDelta)) >= PAYOUT_DELTA_WARNING_PCT;
+                const effectiveQuoteLabel = hasManualPayout
+                  ? "Manuell"
+                  : recommendationMode === "basis"
+                    ? "Empfohlen (Basis)"
+                    : "Empfohlen (Konservativ)";
+                const effectiveQuoteColor = hasManualPayout
+                  ? "blue"
+                  : recommendationMode === "basis"
+                    ? "green"
+                    : "volcano";
+                const effectiveQuoteTooltip = hasManualPayout
+                  ? "Manuell gesetzte Monatsquote ist führend."
+                  : recommendationTooltip;
                 const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
                 const calibrationByMonth = currentMonthCalibrationProfile.byMonth?.[row.month] || null;
                 const factor = Number(calibrationByMonth?.factor || 1);
@@ -1195,15 +1329,20 @@ export default function InputsModule(): JSX.Element {
                       </div>
                     </td>
                     <td>
-                      {Number.isFinite(recommendation)
+                      {Number.isFinite(payoutPctForCalc as number)
                         ? (
                           <div>
-                            <Tooltip title={recommendationTooltip}>
-                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <span>{formatNumber(recommendation, 2)}</span>
-                                <Tag color={recommendationBadgeColor} style={{ marginRight: 0 }}>
-                                  {recommendationSourceLabel}
+                            <Tooltip title={effectiveQuoteTooltip}>
+                              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                <span>{formatNumber(payoutPctForCalc, 2)}</span>
+                                <Tag color={effectiveQuoteColor} style={{ marginRight: 0 }}>
+                                  {effectiveQuoteLabel}
                                 </Tag>
+                                {!hasManualPayout && Number.isFinite(recommendation as number) ? (
+                                  <Tag color={recommendationBadgeColor} style={{ marginRight: 0 }}>
+                                    {recommendationSourceLabel}
+                                  </Tag>
+                                ) : null}
                               </div>
                             </Tooltip>
                             {shouldWarnDelta ? <Tag color="orange">Delta {formatSignedDelta(Number(payoutDelta))}</Tag> : null}
@@ -1561,6 +1700,41 @@ export default function InputsModule(): JSX.Element {
           </div>
         </Space>
       </Card>
+
+      <Modal
+        open={historicalImportOpen}
+        title="Historische Auszahlungsquoten importieren"
+        okText="Startprofil übernehmen"
+        onOk={applyHistoricalPriorImport}
+        onCancel={() => {
+          setHistoricalImportOpen(false);
+          setHistoricalImportError(null);
+        }}
+      >
+        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+          <Text type="secondary">
+            Einmaliger Import als Startprofil. Echte IST-Monate überschreiben das Profil schrittweise.
+          </Text>
+          <div>
+            <Text>Startmonat</Text>
+            <Input
+              type="month"
+              value={historicalImportStartMonth}
+              onChange={(event) => setHistoricalImportStartMonth(normalizeMonth(event.target.value, currentMonthKey()))}
+            />
+          </div>
+          <div>
+            <Text>Monatsquoten (%)</Text>
+            <Input.TextArea
+              rows={8}
+              value={historicalImportValues}
+              onChange={(event) => setHistoricalImportValues(event.target.value)}
+              placeholder={"z. B.\n50,8\n51,2\n49,9\n..."}
+            />
+          </div>
+          {historicalImportError ? <Alert type="error" showIcon message={historicalImportError} /> : null}
+        </Space>
+      </Modal>
     </div>
   );
 }
