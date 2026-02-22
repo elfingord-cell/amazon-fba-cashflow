@@ -306,7 +306,7 @@ export default function MethodikModule(): JSX.Element {
                 </Space>
               </Space>
               <Text type="secondary">
-                Für ein robustes Startprofil (historische Quoten) bitte in den Eingaben den Import im Cash-In-Block nutzen.
+                Für ein robustes Startprofil (historische Quoten) bitte im Cash-in Setup den Import im Cash-In-Block nutzen.
               </Text>
             </Space>
           </Card>

@@ -192,9 +192,9 @@ function buildCashInTooltip({
       `C_live: ${formatTooltipFactor(cLive, 3)} · W_time: ${formatTooltipFactor(wTime, 3)} · W_h: ${formatTooltipFactor(wH, 3)} · W_eff: ${formatTooltipFactor(wEff, 3)} · d: ${dayOfMonth}`,
     );
     if (cashInMeta?.calibrationLiveAnchorEnabled === true && Number.isFinite(wEff) && wEff > 0) {
-      parts.push(`Live-Anker wirkt wegen Tag ${dayOfMonth} und Horizont h=${Math.max(0, Math.round(Number(cashInMeta?.calibrationHorizonOffset || 0)))} mit Gewicht ${formatTooltipFactor(wEff, 3)}.`);
+      parts.push(`Kalibrierung mit Tagesgewicht aktiv (Tag ${dayOfMonth}, h=${Math.max(0, Math.round(Number(cashInMeta?.calibrationHorizonOffset || 0)))}, Gewicht ${formatTooltipFactor(wEff, 3)}).`);
     } else {
-      parts.push(`Kein aktiver Live-Anker; Faktor folgt Bias B mit Sicherheitsabschlag über R.`);
+      parts.push("Kein zusätzlicher Tagesfaktor aktiv; Kalibrierung folgt dem gelernten Profil.");
     }
   } else {
     parts.push('Kalibrierung deaktiviert (K = 1,00).');

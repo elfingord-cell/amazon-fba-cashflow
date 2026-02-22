@@ -3,15 +3,12 @@ import {
   Alert,
   Button,
   Card,
-  Input,
   Modal,
-  Select,
   Space,
   Tag,
   Tooltip,
   Typography,
 } from "antd";
-import { useNavigate } from "react-router-dom";
 import { parseDeNumber } from "../../../lib/dataHealth.js";
 import {
   CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
@@ -155,6 +152,20 @@ function normalizeIncomingRow(entry: Record<string, unknown>, fallbackMonth: str
   };
 }
 
+function createIncomingRow(month: string): IncomingDraft {
+  return {
+    id: randomId("inc"),
+    month,
+    revenueEur: null,
+    payoutPct: null,
+    source: "forecast",
+    calibrationCutoffDate: null,
+    calibrationRevenueToDateEur: null,
+    calibrationPayoutRateToDatePct: null,
+    calibrationSellerboardMonthEndEur: null,
+  };
+}
+
 function sortIncomings(rows: IncomingDraft[]): IncomingDraft[] {
   return rows
     .slice()
@@ -168,20 +179,23 @@ function syncIncomingsToWindow(rows: IncomingDraft[], startMonth: string, horizo
 
   sortIncomings(rows).forEach((row) => {
     if (!monthSet.has(row.month)) return;
-      byMonth.set(row.month, {
-        ...row,
-        id: row.id || randomId("inc"),
-        source: row.source === "forecast" ? "forecast" : "manual",
-        revenueEur: toNumber(row.revenueEur),
-        payoutPct: toNumber(row.payoutPct),
-        calibrationCutoffDate: row.calibrationCutoffDate ? String(row.calibrationCutoffDate) : null,
-        calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
-        calibrationPayoutRateToDatePct: toNumber(row.calibrationPayoutRateToDatePct),
-        calibrationSellerboardMonthEndEur: toNumber(row.calibrationSellerboardMonthEndEur),
-      });
+    byMonth.set(row.month, {
+      ...row,
+      id: row.id || randomId("inc"),
+      source: row.source === "forecast" ? "forecast" : "manual",
+      revenueEur: toNumber(row.revenueEur),
+      payoutPct: toNumber(row.payoutPct),
+      calibrationCutoffDate: row.calibrationCutoffDate ? String(row.calibrationCutoffDate) : null,
+      calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
+      calibrationPayoutRateToDatePct: toNumber(row.calibrationPayoutRateToDatePct),
+      calibrationSellerboardMonthEndEur: toNumber(row.calibrationSellerboardMonthEndEur),
     });
+  });
 
-  return sortIncomings(Array.from(byMonth.values()));
+  const filledRows = months.map((month) => {
+    return byMonth.get(month) || createIncomingRow(month);
+  });
+  return sortIncomings(filledRows);
 }
 
 function formatNumber(value: unknown, digits = 2): string {
@@ -223,8 +237,8 @@ function buildCalibrationMonthTooltip(
   const d = Math.max(1, Math.round(Number(entry?.dayOfMonth || 1)));
   const wEff = Number(entry?.wEff || 0);
   const explanation = entry?.liveAnchorEnabled === true && wEff > 0
-    ? `Live-Anker wirkt wegen Tag ${d} und Horizont h=${h} mit Gewicht ${formatFactor(wEff)}.`
-    : "Kein aktiver Live-Anker; Faktor folgt dem gelernten Bias.";
+    ? `Kalibrierung mit Tagesgewicht aktiv (Tag ${d}, h=${h}, Gewicht ${formatFactor(wEff)}).`
+    : "Kalibrierung nutzt aktuell nur das gelernte Profil.";
   const selectedFactor = mode === "conservative"
     ? Number(entry?.factorConservative || 1)
     : Number(entry?.factorBasis || 1);
@@ -320,7 +334,6 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
 
 export default function InputsModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
-  const navigate = useNavigate();
 
   const [openingBalance, setOpeningBalance] = useState<number>(0);
   const [startMonth, setStartMonth] = useState<string>(currentMonthKey());
@@ -359,10 +372,6 @@ export default function InputsModule(): JSX.Element {
   const forecastState = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
     : {};
-  const forecastSettings = (forecastState.settings && typeof forecastState.settings === "object")
-    ? forecastState.settings as Record<string, unknown>
-    : {};
-  const methodikUseForecast = forecastSettings.useForecast === true;
   const methodikCashInMode = String(settingsState.cashInMode || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
 
   const forecastRevenueByMonth = useMemo(() => {
@@ -937,6 +946,72 @@ export default function InputsModule(): JSX.Element {
     monthlyActuals,
   ]);
 
+  const incomingRows = useMemo(() => {
+    return syncIncomingsToWindow(incomings, startMonth, horizonMonths);
+  }, [horizonMonths, incomings, startMonth]);
+
+  function hasManualRevenueOverride(row: IncomingDraft): boolean {
+    const manualRevenue = toNumber(row.revenueEur);
+    return row.source === "manual" && Number.isFinite(manualRevenue as number);
+  }
+
+  function updateIncomingMonth(month: string, updater: (row: IncomingDraft) => IncomingDraft): void {
+    setIncomings((prev) => {
+      const rows = syncIncomingsToWindow(prev, startMonth, horizonMonths);
+      const index = rows.findIndex((row) => row.month === month);
+      if (index >= 0) {
+        rows[index] = updater({ ...rows[index] });
+      } else {
+        rows.push(updater(createIncomingRow(month)));
+      }
+      return sortIncomings(rows);
+    });
+  }
+
+  function resetRevenueOverrideForMonth(month: string): void {
+    updateIncomingMonth(month, (row) => ({
+      ...row,
+      source: "forecast",
+      revenueEur: null,
+    }));
+  }
+
+  function applyForecastToAutoMonths(): void {
+    setIncomings((prev) => {
+      const rows = syncIncomingsToWindow(prev, startMonth, horizonMonths);
+      return sortIncomings(rows.map((row) => (
+        hasManualRevenueOverride(row)
+          ? row
+          : {
+            ...row,
+            source: "forecast",
+            revenueEur: null,
+          }
+      )));
+    });
+    setAutoSaveHint("Forecast in AUTO-Monate übernommen");
+  }
+
+  function resetAllRevenueOverrides(): void {
+    Modal.confirm({
+      title: "Alle Umsatz-Overrides zurücksetzen?",
+      content: "Bist du sicher? Alle MANUELL-Monate werden auf AUTO zurückgesetzt.",
+      okText: "Zurücksetzen",
+      cancelText: "Abbrechen",
+      onOk: () => {
+        setIncomings((prev) => {
+          const rows = syncIncomingsToWindow(prev, startMonth, horizonMonths);
+          return sortIncomings(rows.map((row) => ({
+            ...row,
+            source: "forecast",
+            revenueEur: null,
+          })));
+        });
+        setAutoSaveHint("Alle Umsatz-Overrides zurückgesetzt");
+      },
+    });
+  }
+
   return (
     <div
       className="v2-page"
@@ -949,9 +1024,9 @@ export default function InputsModule(): JSX.Element {
       <Card className="v2-intro-card">
         <div className="v2-page-head">
           <div>
-            <Title level={3}>Eingaben</Title>
+            <Title level={3}>Cash-in Setup</Title>
             <Paragraph>
-              Opening Balance, Monats-Horizont, Umsaetze, Extras, Dividenden und Monats-Istwerte.
+              Plan-Umsatz (Hybrid): Monatlich manuell überschreiben oder automatisch aus der Absatzprognose übernehmen.
             </Paragraph>
           </div>
         </div>
@@ -965,290 +1040,53 @@ export default function InputsModule(): JSX.Element {
         </div>
       </Card>
 
-      <Card>
-        <Space direction="vertical" size={8} style={{ width: "100%" }}>
-          <Space wrap>
-            <Text strong>Methodik (global)</Text>
-            <Tag color="blue">GLOBAL</Tag>
-          </Space>
-          <Space wrap>
-            <Tag>Forecast im Cashflow: {methodikUseForecast ? "Ja" : "Nein"}</Tag>
-            <Tag>Cash-In Modus: {methodikCashInMode === "basis" ? "Basis" : "Konservativ"}</Tag>
-            <Tag>Kalibrierung: {cashInCalibrationEnabled ? "An" : "Aus"}</Tag>
-            <Tag>Kalibrier-Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
-            <Tag>Live-Einfluss: h ≤ 3</Tag>
-            <Tag>Saisonalität: {cashInRecommendationIgnoreQ4 ? "Aus" : "An"}</Tag>
-          </Space>
-          <Button size="small" onClick={() => navigate("/v2/methodik")}>
-            In Methodik &amp; Regeln bearbeiten
-          </Button>
-        </Space>
-      </Card>
-
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <Title level={5}>Umsatz-Kalibrierung</Title>
-        <div
-          style={{
-            padding: 12,
-            border: "1px solid #d9d9d9",
-            borderRadius: 8,
-            background: "#fafafa",
-          }}
-        >
-          <Space style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }} wrap>
-            <Title level={5} style={{ margin: 0 }}>
-              Aktueller Monat: {formatMonthLabel(currentMonthValue)}
-            </Title>
-            {!currentMonthInPlanning ? <Tag color="orange">Aktueller Monat liegt ausserhalb des Planungshorizonts</Tag> : null}
-          </Space>
-          <Space wrap style={{ marginBottom: 8 }}>
-            <Tag color={cashInCalibrationEnabled ? "green" : "default"}>
-              Umsatzkalibrierung {cashInCalibrationEnabled ? "aktiv" : "aus"}
-            </Tag>
-            <Tag>Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
-            <Tag>Live-Einfluss: h ≤ 3</Tag>
-            <Select
-              value={cashInCalibrationMode}
-              style={{ width: 210 }}
-              options={[
-                { value: "basis", label: "Kalibriert (Basis)" },
-                { value: "conservative", label: "Kalibriert (Konservativ)" },
-              ]}
-              onChange={(value) => {
-                setCashInCalibrationMode(
-                  normalizeRevenueCalibrationMode(value) as "basis" | "conservative",
-                );
-              }}
-            />
-            <Button size="small" onClick={() => navigate("/v2/methodik")}>
-              Methodik (global) ändern
-            </Button>
-            <Tooltip title="Live-Anker: Umsatzprognose bis Monatsende / Forecast-Umsatz. Wirkung ab Tag 10, bis Tag 20 linear steigend, nach h=3 auslaufend.">
-              <Tag>Info</Tag>
-            </Tooltip>
-          </Space>
-          <Text type="secondary">
-            Bias B und Risk R lernen monatlich aus IST vs. Forecast-Lock; der Live-Anker steuert untermonatlich.
-          </Text>
-          <Space wrap align="start" style={{ marginTop: 8 }}>
-            <div>
-              <Text>Umsatzprognose bis Monatsende (EUR)</Text>
-              <DeNumberInput
-                value={currentCalibrationRevenueForecast ?? undefined}
-                mode="decimal"
-                min={0}
-                step={100}
-                style={{ width: 240 }}
-                onChange={(value) => {
-                  const parsed = normalizeNonNegativeInput(value);
-                  if (parsed == null && value != null && String(value).trim() !== "") return;
-                  setCurrentMonthCalibrationPatch({
-                    calibrationSellerboardMonthEndEur: parsed,
-                  });
-                }}
-                disabled={!currentMonthInPlanning}
-              />
-            </div>
-            <div>
-              <Text>Auszahlung bis Monatsende Prognose (EUR)</Text>
-              <DeNumberInput
-                value={currentCalibrationPayoutForecast ?? undefined}
-                mode="decimal"
-                min={0}
-                step={100}
-                style={{ width: 260 }}
-                onChange={(value) => {
-                  const parsed = normalizeNonNegativeInput(value);
-                  if (parsed == null && value != null && String(value).trim() !== "") return;
-                  setCurrentMonthCalibrationPatch({
-                    calibrationPayoutRateToDatePct: parsed,
-                  });
-                }}
-                disabled={!currentMonthInPlanning}
-              />
-            </div>
-            <div>
-              <Text>Kalibrierfaktor {formatMonthLabel(currentMonthValue)}</Text>
-              <div style={{ minWidth: 180, paddingTop: 6 }}>
-                <Tooltip title={currentMonthCalibrationTooltip}>
-                  <Text strong>{formatFactor(currentMonthAppliedFactor)}</Text>
-                </Tooltip>
-              </div>
-            </div>
-          </Space>
-          <div style={{ marginTop: 8 }}>
-            <Text>
-              Kalibrierfaktor aktueller Monat ({formatMonthLabel(currentMonthValue)}):{" "}
-              <Text strong>{formatFactor(currentMonthAppliedFactor)}</Text>
-            </Text>
-            <div>
-              <Text type="secondary">
-                K_basis: {formatFactor(currentMonthFactorBasis)} · K_cons: {formatFactor(currentMonthFactorConservative)}
-              </Text>
-            </div>
-            <div>
-              <Text type="secondary">
-                Forecast Umsatz ({formatMonthLabel(currentMonthValue)}): {formatNumber(currentMonthForecastRevenue, 2)} EUR
-              </Text>
-            </div>
-            <div>
-              <Text type="secondary">
-                Kalibrierter Umsatz: {formatNumber(currentMonthCalibratedRevenue, 2)} EUR
-              </Text>
-            </div>
-            <div>
-              <Text type="secondary">
-                Kalibrierter Payout (aus Quote): {formatNumber(currentMonthCalibratedPayout, 2)} EUR
-              </Text>
-            </div>
-            <div>
-              <Text type="secondary">
-                Auszahlung Monatsende Prognose (manuell): {formatNumber(currentCalibrationPayoutForecast, 2)} EUR
-              </Text>
-            </div>
-            {Number.isFinite(recommendationCurrentMonthForecastQuotePct as number) ? (
-              <div>
-                <Text type="secondary">
-                  Prognose-Quote aktueller Monat: {formatNumber(recommendationCurrentMonthForecastQuotePct, 1)}%
-                  {" "}(schwaches Live-Signal ab Tag 10)
-                </Text>
-              </div>
-            ) : null}
-            {currentMonthCalibrationUnusual ? (
-              <Tag color="warning" style={{ marginTop: 6 }}>
-                Ungewoehnlicher Faktor ({formatFactor(currentMonthCalibrationRawFactor)})
-              </Tag>
-            ) : null}
-          </div>
-        </div>
-      </Card>
-
-      <Card>
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
-          <Title level={5} style={{ margin: 0 }}>Umsaetze x Payout</Title>
+          <Title level={5} style={{ margin: 0 }}>Monatstabelle: Umsatz / Auszahlung / Quote</Title>
           <Space wrap>
-            <Tag>Level L: {formatNumber(recommendationLevelPct, 1)}%</Tag>
-            <Tag>RiskBase: {formatNumber(recommendationRiskBasePct, 2)}pp</Tag>
-            <Tag>Saisonalität: {cashInRecommendationIgnoreQ4 ? "Aus" : "An"}</Tag>
-            {historicalImportSampleCount > 0 ? (
-              <Tag color="blue">Historisches Startprofil: n={historicalImportSampleCount}</Tag>
-            ) : null}
-            <Tooltip title="Einmal-Import historischer Monatsquoten als robustes Startprofil für L und Saisonalität.">
-              <Button size="small" onClick={() => setHistoricalImportOpen(true)}>
-                Historische Quoten importieren
+            <Tooltip title="Füllt nur Monate ohne Umsatz-Override (AUTO).">
+              <Button size="small" onClick={applyForecastToAutoMonths}>
+                Forecast in leere Monate übernehmen
               </Button>
             </Tooltip>
-            <Button size="small" onClick={() => navigate("/v2/methodik")}>
-              Methodik (global) ändern
-            </Button>
-            <Button
-              onClick={() => {
-                setIncomings((prev) => {
-                  const sorted = sortIncomings(prev);
-                  const lastMonth = sorted.length
-                    ? sorted[sorted.length - 1].month
-                    : addMonths(startMonth || currentMonthKey(), Math.max(0, Math.round(horizonMonths || 1) - 1));
-                  const nextMonth = addMonths(lastMonth, 1);
-                  if (sorted.some((entry) => entry.month === nextMonth)) return sorted;
-                  const lastPayout = sorted
-                    .slice()
-                    .reverse()
-                    .find((entry) => Number.isFinite(normalizePayoutInput(entry.payoutPct) as number))
-                    ?.payoutPct;
-                  const recommendedPayout = normalizePayoutInput(
-                    payoutRecommendation.byMonth?.[nextMonth]?.quotePct,
-                  );
-                  return sortIncomings([
-                    ...sorted,
-                    {
-                      id: randomId("inc"),
-                      month: nextMonth,
-                      revenueEur: 0,
-                      payoutPct: Number.isFinite(recommendedPayout as number)
-                        ? recommendedPayout
-                        : (normalizePayoutInput(lastPayout) ?? null),
-                      source: "manual",
-                      calibrationCutoffDate: null,
-                      calibrationRevenueToDateEur: null,
-                      calibrationPayoutRateToDatePct: null,
-                      calibrationSellerboardMonthEndEur: null,
-                    },
-                  ]);
-                });
-                setHorizonMonths((prev) => Math.max(1, Math.round(Number(prev || 1))) + 1);
-              }}
-            >
-              Naechsten Monat anhaengen
+            <Button size="small" danger onClick={resetAllRevenueOverrides}>
+              Alle Monats-Overrides zurücksetzen
             </Button>
           </Space>
         </Space>
-        <Space style={{ marginBottom: 8 }} wrap>
-          <Text type="secondary">
-            Die Umsatzzeilen sind strikt auf den Planungszeitraum ({startMonth} + {horizonMonths} Monate) synchronisiert.
-          </Text>
-          <Tag color={cashInCalibrationEnabled ? "green" : "default"}>
-            {cashInCalibrationEnabled ? "Umsatzkalibrierung aktiv" : "Umsatzkalibrierung aus"}
-          </Tag>
+        <Space style={{ marginTop: 10, marginBottom: 12 }} wrap>
+          <Text strong>Kalibrierung</Text>
+          <Tooltip title="Kalibrierung wirkt nur auf automatische Monate. Manuelle Monatswerte bleiben unverändert.">
+            <Tag>Info</Tag>
+          </Tooltip>
+          <Button
+            size="small"
+            type={cashInCalibrationEnabled ? "primary" : "default"}
+            onClick={() => setCashInCalibrationEnabled((prev) => !prev)}
+          >
+            {cashInCalibrationEnabled ? "AN" : "AUS"}
+          </Button>
           <Tag>Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
-          <Tag>Live-Einfluss: h ≤ 3</Tag>
-          <Tooltip title="Vergleich über den gesamten Planungshorizont: Kalibrierung aktiv vs. neutral (Faktor 1,00).">
-            <Tag color={calibrationImpact.revenueDelta <= 0 ? "orange" : "green"}>
-              Impact Umsatz: {formatSignedCurrencyDelta(calibrationImpact.revenueDelta)}
-            </Tag>
-          </Tooltip>
-          <Tooltip title="Vergleich über den gesamten Planungshorizont: Kalibrierung aktiv vs. neutral (Faktor 1,00).">
-            <Tag color={calibrationImpact.payoutDelta <= 0 ? "orange" : "green"}>
-              Impact Auszahlung: {formatSignedCurrencyDelta(calibrationImpact.payoutDelta)}
-            </Tag>
-          </Tooltip>
-          <Tooltip title={recommendationInfoTooltip}>
-            <Tag>
-              Empfehlung: L {formatNumber(recommendationLevelPct, 1)}% · RiskBase {formatNumber(recommendationRiskBasePct, 2)}pp
-            </Tag>
-          </Tooltip>
-          {Number.isFinite(recommendationCurrentMonthForecastQuotePct as number) ? (
-            <Tag color="blue">
-              Prognose-Quote aktuell: {formatNumber(recommendationCurrentMonthForecastQuotePct, 1)}%
-            </Tag>
-          ) : null}
-          <Tag>Aktive Kalibrier-Monate: {calibrationImpact.affectedMonths}</Tag>
-          {payoutRecommendation.uncertain ? (
-            <Tag color="orange">
-              Empfehlung unsicher ({payoutRecommendation.sampleCount} Ist-Monate)
-            </Tag>
-          ) : null}
+          <Text type="secondary">Planungsfenster: {startMonth} + {horizonMonths} Monate</Text>
         </Space>
         <StatsTableShell>
-          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1720 }}>
+          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1360 }}>
             <thead>
               <tr>
                 <th style={{ width: 130 }}>Monat</th>
-                <th style={{ width: 220 }}>Forecast Umsatz (roh) / Manuell</th>
-                <th style={{ width: 90 }}>Faktor</th>
-                <th style={{ width: 210 }}>
-                  {cashInCalibrationMode === "conservative"
-                    ? "Kalibrierter Umsatz (Konservativ)"
-                    : "Kalibrierter Umsatz (Basis)"}
-                  {" "}EUR
-                </th>
-                <th style={{ width: 180 }}>Auszahlungsquote (manuell) %</th>
-                <th style={{ width: 220 }}>Verwendete Quote %</th>
-                <th style={{ width: 190 }}>Payout EUR (aktiv)</th>
-                <th style={{ width: 190 }}>Payout kalibriert (EUR)</th>
-                <th style={{ width: 240 }}>Status</th>
-                <th style={{ width: 60 }} />
+                <th style={{ width: 340 }}>Plan-Umsatz (EUR)</th>
+                <th style={{ width: 220 }}>Auszahlungsquote (%)</th>
+                <th style={{ width: 250 }}>Verwendete Quote (%)</th>
+                <th style={{ width: 220 }}>Einzahlungen (EUR)</th>
+                <th style={{ width: 140 }}>Aktion</th>
               </tr>
             </thead>
             <tbody>
-              {sortIncomings(incomings).map((row) => {
+              {incomingRows.map((row) => {
                 const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
-                const recommendationSourceTag = String(
-                  recommendationEntry?.sourceTag
-                  || (methodikCashInMode === "basis" ? "RECOMMENDED_BASIS" : "RECOMMENDED_CONSERVATIVE"),
-                );
                 const recommendationMode = String(recommendationEntry?.mode || methodikCashInMode).trim().toLowerCase() === "basis"
                   ? "basis"
                   : "conservative";
@@ -1256,6 +1094,10 @@ export default function InputsModule(): JSX.Element {
                 const recommendation = Number.isFinite(recommendationQuoteRaw)
                   ? clampPct(recommendationQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
                   : null;
+                const recommendationSourceTag = String(
+                  recommendationEntry?.sourceTag
+                  || (recommendationMode === "basis" ? "RECOMMENDED_BASIS" : "RECOMMENDED_CONSERVATIVE"),
+                );
                 const recommendationSourceLabel = recommendationSourceTag === "IST"
                   ? "IST"
                   : recommendationSourceTag === "RECOMMENDED_BASIS"
@@ -1263,33 +1105,11 @@ export default function InputsModule(): JSX.Element {
                     : recommendationSourceTag === "RECOMMENDED_CONSERVATIVE"
                       ? "Empfohlen (Konservativ)"
                       : recommendationSourceTag === "PROGNOSE"
-                        ? "Live-Signal"
+                        ? "Signal"
                         : "Empfehlung";
-                const recommendationBadgeColor = recommendationSourceTag === "IST"
-                  ? "green"
-                  : recommendationMode === "conservative"
-                    ? "volcano"
-                    : "blue";
-                const recommendationCapsApplied = Array.isArray(recommendationEntry?.capsApplied)
-                  ? recommendationEntry?.capsApplied.filter(Boolean)
-                  : [];
                 const recommendationTooltip = [
                   `Quelle: ${recommendationSourceLabel}`,
                   recommendationEntry?.explanation ? String(recommendationEntry.explanation) : null,
-                  Number.isFinite(Number(recommendationEntry?.levelPct))
-                    ? `L: ${formatNumber(recommendationEntry?.levelPct, 1)}%`
-                    : null,
-                  Number.isFinite(Number(recommendationEntry?.seasonalityPct))
-                    ? `S: ${formatNumber(recommendationEntry?.seasonalityPct, 1)}% (n=${Math.max(0, Math.round(Number(recommendationEntry?.seasonalitySampleCount || 0)))})`
-                    : null,
-                  recommendationMode === "conservative"
-                    ? `RiskBase: ${formatNumber(recommendationEntry?.riskBasePct, 2)}pp · R(h=${Math.max(0, Math.round(Number(recommendationEntry?.horizonMonths || 0)))}): ${formatNumber(recommendationEntry?.riskAdjustmentPct, 2)}pp`
-                    : null,
-                  recommendationEntry?.shrinkageActive === true ? "Shrinkage aktiv" : null,
-                  recommendationEntry?.liveSignalUsed === true
-                    ? `Live-Signal: ${formatNumber(Number(recommendationEntry?.liveSignalWeight || 0) * 100, 0)}% Gewicht`
-                    : null,
-                  recommendationCapsApplied.length ? "Grenzwert angewendet" : null,
                   `Saisonalität: ${cashInRecommendationIgnoreQ4 ? "aus" : "an"}`,
                 ]
                   .filter(Boolean)
@@ -1299,24 +1119,6 @@ export default function InputsModule(): JSX.Element {
                 const payoutPctForCalc = Number.isFinite(manualPayout as number)
                   ? Number(manualPayout)
                   : (Number.isFinite(recommendation as number) ? Number(recommendation) : null);
-                const payoutDelta = Number.isFinite(recommendation)
-                  && hasManualPayout
-                  ? Number(manualPayout) - Number(recommendation)
-                  : null;
-                const shouldWarnDelta = Number.isFinite(payoutDelta as number) && Math.abs(Number(payoutDelta)) >= PAYOUT_DELTA_WARNING_PCT;
-                const effectiveQuoteLabel = hasManualPayout
-                  ? "Manuell"
-                  : recommendationMode === "basis"
-                    ? "Empfohlen (Basis)"
-                    : "Empfohlen (Konservativ)";
-                const effectiveQuoteColor = hasManualPayout
-                  ? "blue"
-                  : recommendationMode === "basis"
-                    ? "green"
-                    : "volcano";
-                const effectiveQuoteTooltip = hasManualPayout
-                  ? "Manuell gesetzte Monatsquote ist führend."
-                  : recommendationTooltip;
                 const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
                 const calibrationByMonth = (revenueCalibrationProfile.byMonth?.[row.month] || null) as Record<string, unknown> | null;
                 const factorBasis = Number(calibrationByMonth?.factorBasis || 1);
@@ -1330,70 +1132,68 @@ export default function InputsModule(): JSX.Element {
                 const calibratedRevenue = cashInCalibrationMode === "conservative"
                   ? calibratedRevenueConservative
                   : calibratedRevenueBasis;
-                const calibrationActiveForRow = cashInCalibrationEnabled && Math.abs(factorApplied - 1) > 0.000001;
-                const forecastMissing = row.source === "forecast" && (!Number.isFinite(forecastRevenue) || forecastRevenue <= 0);
                 const manualRevenue = toNumber(row.revenueEur);
-                const isManualRevenueOverride = row.source === "manual" && Number.isFinite(forecastRevenue) && forecastRevenue > 0;
-                const manualPayoutEur = Number.isFinite(payoutPctForCalc as number) && Number.isFinite(manualRevenue as number)
-                  ? Number(manualRevenue) * (Number(payoutPctForCalc) / 100)
+                const isManualRevenueOverride = hasManualRevenueOverride(row);
+                const autoRevenue = cashInCalibrationEnabled ? calibratedRevenue : forecastRevenue;
+                const planRevenue = isManualRevenueOverride
+                  ? Number(manualRevenue)
+                  : autoRevenue;
+                const effectivePayout = Number.isFinite(payoutPctForCalc as number)
+                  ? planRevenue * (Number(payoutPctForCalc) / 100)
                   : null;
-                const forecastPayout = Number.isFinite(payoutPctForCalc as number)
-                  ? forecastRevenue * (Number(payoutPctForCalc) / 100)
-                  : null;
-                const calibratedPayout = Number.isFinite(payoutPctForCalc as number)
-                  ? calibratedRevenue * (Number(payoutPctForCalc) / 100)
-                  : null;
-                const effectivePayout = isManualRevenueOverride
-                  ? manualPayoutEur
-                  : (cashInCalibrationEnabled ? calibratedPayout : forecastPayout);
-                const factorTooltip = !cashInCalibrationEnabled
-                  ? "Kalibrierung ist deaktiviert. Faktor = 1,00."
-                  : calibrationByMonth
-                    ? buildCalibrationMonthTooltip(calibrationByMonth, cashInCalibrationMode)
-                    : "Keine Kalibrierdaten für diesen Monat verfügbar.";
+                const revenueSourceLabel = isManualRevenueOverride
+                  ? "MANUELL"
+                  : (cashInCalibrationEnabled ? "AUTO (kalibriert)" : "AUTO");
+                const revenueSourceTooltip = isManualRevenueOverride
+                  ? "Dieser Monatswert wurde von dir überschrieben."
+                  : (cashInCalibrationEnabled
+                    ? "Dieser Monatswert kommt aus der Absatzprognose und wird mit Kalibrierung angepasst."
+                    : "Dieser Monatswert kommt aus der Absatzprognose.");
+                const quoteSourceLabel = hasManualPayout ? "MANUELL" : "EMPFOHLEN";
+                const quoteSourceTooltip = hasManualPayout
+                  ? "Diese Monatsquote wurde von dir überschrieben."
+                  : "Diese Monatsquote wird automatisch empfohlen.";
 
                 return (
-                  <tr key={row.id}>
+                  <tr key={row.month}>
                     <td>
                       <Text strong>{formatMonthLabel(row.month)}</Text>
                       <div><Text type="secondary">{row.month}</Text></div>
                     </td>
                     <td>
-                      <div
-                        data-field-key={`inputs.incomings.${row.id}.revenueEur`}
-                        style={isManualRevenueOverride ? {
-                          border: "1px solid #faad14",
-                          borderRadius: 8,
-                          padding: 6,
-                        } : undefined}
-                      >
+                      <div data-field-key={`inputs.incomings.${row.id}.revenueEur`}>
                         <DeNumberInput
-                          value={row.revenueEur ?? undefined}
+                          value={planRevenue}
                           mode="decimal"
                           min={0}
                           step={100}
                           style={{ width: "100%" }}
                           onChange={(value) => {
-                            setIncomings((prev) => prev.map((entry) => {
-                              if (entry.id !== row.id) return entry;
-                              return {
-                                ...entry,
-                                revenueEur: toNumber(value),
-                                source: "manual",
-                              };
+                            const parsed = toNumber(value);
+                            updateIncomingMonth(row.month, (current) => ({
+                              ...current,
+                              revenueEur: Number.isFinite(parsed as number) ? Number(parsed) : null,
+                              source: Number.isFinite(parsed as number) ? "manual" : "forecast",
                             }));
                           }}
                         />
-                        {isManualRevenueOverride ? <Text type="warning">manuell ueberschrieben</Text> : null}
-                        <div><Text type="secondary">Forecast: {formatNumber(forecastRevenue, 2)} EUR</Text></div>
+                        <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <Tooltip title={revenueSourceTooltip}>
+                            <Tag color={isManualRevenueOverride ? "orange" : "blue"} style={{ marginRight: 0 }}>
+                              {revenueSourceLabel}
+                            </Tag>
+                          </Tooltip>
+                          <Text type="secondary">
+                            Forecast roh: {formatNumber(forecastRevenue, 2)} EUR
+                          </Text>
+                          {cashInCalibrationEnabled ? (
+                            <Text type="secondary">
+                              Forecast kalibriert: {formatNumber(calibratedRevenue, 2)} EUR
+                            </Text>
+                          ) : null}
+                        </div>
                       </div>
                     </td>
-                    <td>
-                      <Tooltip title={factorTooltip}>
-                        <Text strong>{formatFactor(factorApplied)}</Text>
-                      </Tooltip>
-                    </td>
-                    <td>{formatNumber(calibratedRevenue, 2)}</td>
                     <td>
                       <div data-field-key={`inputs.incomings.${row.id}.payoutPct`}>
                         <DeNumberInput
@@ -1404,69 +1204,50 @@ export default function InputsModule(): JSX.Element {
                           step={0.1}
                           style={{ width: "100%" }}
                           onChange={(value) => {
-                            setIncomings((prev) => prev.map((entry) => (
-                              entry.id === row.id
-                                ? { ...entry, payoutPct: normalizePayoutInput(value) }
-                                : entry
-                            )));
+                            updateIncomingMonth(row.month, (current) => ({
+                              ...current,
+                              payoutPct: normalizePayoutInput(value),
+                            }));
                           }}
                         />
+                        <div style={{ marginTop: 6 }}>
+                          <Tooltip title={quoteSourceTooltip}>
+                            <Tag color={hasManualPayout ? "orange" : "green"} style={{ marginRight: 0 }}>
+                              {quoteSourceLabel}
+                            </Tag>
+                          </Tooltip>
+                        </div>
                       </div>
                     </td>
                     <td>
                       {Number.isFinite(payoutPctForCalc as number)
                         ? (
                           <div>
-                            <Tooltip title={effectiveQuoteTooltip}>
+                            <Tooltip title={hasManualPayout ? quoteSourceTooltip : recommendationTooltip}>
                               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                                 <span>{formatNumber(payoutPctForCalc, 2)}</span>
-                                <Tag color={effectiveQuoteColor} style={{ marginRight: 0 }}>
-                                  {effectiveQuoteLabel}
-                                </Tag>
-                                {!hasManualPayout && Number.isFinite(recommendation as number) ? (
-                                  <Tag color={recommendationBadgeColor} style={{ marginRight: 0 }}>
+                                {!hasManualPayout ? (
+                                  <Tag color={recommendationMode === "conservative" ? "volcano" : "blue"} style={{ marginRight: 0 }}>
                                     {recommendationSourceLabel}
                                   </Tag>
                                 ) : null}
                               </div>
                             </Tooltip>
-                            {shouldWarnDelta ? <Tag color="orange">Delta {formatSignedDelta(Number(payoutDelta))}</Tag> : null}
                           </div>
                         )
                         : <Text type="secondary">—</Text>}
                     </td>
                     <td>
-                      <div>
-                        <Text strong>{formatNumber(effectivePayout, 2)}</Text>
-                        {isManualRevenueOverride ? (
-                          <div><Text type="secondary">Forecast kalibriert: {formatNumber(calibratedPayout, 2)} EUR</Text></div>
-                        ) : cashInCalibrationEnabled ? (
-                          <div><Text type="secondary">Forecast: {formatNumber(forecastPayout, 2)} EUR</Text></div>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td>{formatNumber(calibratedPayout, 2)}</td>
-                    <td>
-                      <div style={{ minWidth: 170 }}>
-                        {cashInCalibrationEnabled ? (
-                          <Tag color={cashInCalibrationMode === "conservative" ? "volcano" : "green"}>
-                            {cashInCalibrationMode === "basis" ? "Modus Basis" : "Modus Konservativ"}
-                          </Tag>
-                        ) : null}
-                        {row.source === "forecast" ? <Tag color="blue">Forecast übertragen</Tag> : null}
-                        {isManualRevenueOverride ? <Tag color="orange">Manuell ueberschrieben</Tag> : null}
-                        {calibrationActiveForRow ? <Tag color="orange">Kalibriert</Tag> : null}
-                        {forecastMissing ? <div><Text type="warning">Kein Forecast-Umsatz vorhanden</Text></div> : null}
-                      </div>
+                      <Text strong>{formatNumber(effectivePayout, 2)}</Text>
                     </td>
                     <td>
                       <Button
-                        danger
-                        onClick={() => {
-                          setIncomings((prev) => prev.filter((entry) => entry.id !== row.id));
-                        }}
+                        size="small"
+                        type="text"
+                        disabled={!isManualRevenueOverride}
+                        onClick={() => resetRevenueOverrideForMonth(row.month)}
                       >
-                        X
+                        ↺ Reset
                       </Button>
                     </td>
                   </tr>
@@ -1476,355 +1257,6 @@ export default function InputsModule(): JSX.Element {
           </table>
         </StatsTableShell>
       </Card>
-
-      <Card>
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Title level={5} style={{ margin: 0 }}>Extras</Title>
-          <Button
-            onClick={() => {
-              setExtras((prev) => [...prev, {
-                id: randomId("extra"),
-                date: `${currentMonthKey()}-15`,
-                label: "Extra",
-                amountEur: 0,
-              }]);
-            }}
-          >
-            Extra
-          </Button>
-        </Space>
-        <StatsTableShell>
-          <table className="v2-stats-table">
-            <thead>
-              <tr>
-                <th>Datum</th>
-                <th>Label</th>
-                <th>Betrag EUR</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {extras.map((row) => (
-                <tr key={row.id}>
-                  <td>
-                    <div data-field-key={`inputs.extras.${row.id}.date`}>
-                      <Input
-                        type="date"
-                        value={row.date}
-                        onChange={(event) => {
-                          setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, date: event.target.value } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.extras.${row.id}.label`}>
-                      <Input
-                        value={row.label}
-                        onChange={(event) => {
-                          setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, label: event.target.value } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.extras.${row.id}.amountEur`}>
-                      <DeNumberInput
-                        value={row.amountEur ?? undefined}
-                        mode="decimal"
-                        style={{ width: "100%" }}
-                        step={10}
-                        onChange={(value) => {
-                          setExtras((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, amountEur: toNumber(value) } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <Button
-                      danger
-                      onClick={() => {
-                        setExtras((prev) => prev.filter((entry) => entry.id !== row.id));
-                      }}
-                    >
-                      X
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StatsTableShell>
-      </Card>
-
-      <Card>
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Title level={5} style={{ margin: 0 }}>Dividenden</Title>
-          <Button
-            onClick={() => {
-              setDividends((prev) => [...prev, {
-                id: randomId("div"),
-                month: currentMonthKey(),
-                label: "Dividende",
-                amountEur: 0,
-              }]);
-            }}
-          >
-            Dividende
-          </Button>
-        </Space>
-        <StatsTableShell>
-          <table className="v2-stats-table">
-            <thead>
-              <tr>
-                <th>Monat</th>
-                <th>Label</th>
-                <th>Betrag EUR</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {dividends.map((row) => (
-                <tr key={row.id}>
-                  <td>
-                    <div data-field-key={`inputs.dividends.${row.id}.month`}>
-                      <Input
-                        type="month"
-                        value={row.month}
-                        onChange={(event) => {
-                          setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, month: normalizeMonth(event.target.value, row.month) } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.dividends.${row.id}.label`}>
-                      <Input
-                        value={row.label}
-                        onChange={(event) => {
-                          setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, label: event.target.value } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.dividends.${row.id}.amountEur`}>
-                      <DeNumberInput
-                        value={row.amountEur ?? undefined}
-                        mode="decimal"
-                        style={{ width: "100%" }}
-                        step={10}
-                        onChange={(value) => {
-                          setDividends((prev) => prev.map((entry) => entry.id === row.id ? { ...entry, amountEur: toNumber(value) } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <Button
-                      danger
-                      onClick={() => {
-                        setDividends((prev) => prev.filter((entry) => entry.id !== row.id));
-                      }}
-                    >
-                      X
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StatsTableShell>
-      </Card>
-
-      <Card>
-        <Space style={{ width: "100%", justifyContent: "space-between" }}>
-          <Title level={5} style={{ margin: 0 }}>Monats-Istwerte (Monatsende)</Title>
-          <Button
-            onClick={() => {
-              setMonthlyActuals((prev) => [
-                ...prev,
-                {
-                  month: currentMonthKey(),
-                  realRevenueEUR: 0,
-                  realPayoutRatePct: 0,
-                  realClosingBalanceEUR: 0,
-                },
-              ]);
-            }}
-          >
-            Ist-Monat
-          </Button>
-        </Space>
-        <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 12 }}>
-          Diese Werte gelten je Monat zum Monatsende und setzen den Kontostand ab diesem Monat als neue Baseline.
-        </Paragraph>
-        <StatsTableShell>
-          <table className="v2-stats-table">
-            <thead>
-              <tr>
-                <th>Monat</th>
-                <th>Realer Umsatz EUR</th>
-                <th>Reale Auszahlungsquote %</th>
-                <th>Realer Kontostand Monatsende EUR</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {monthlyActuals.map((row, index) => (
-                <tr key={`${row.month}-${index}`}>
-                  <td>
-                    <div data-field-key={`inputs.monthlyActuals.${index}.month`}>
-                      <Input
-                        type="month"
-                        value={row.month}
-                        onChange={(event) => {
-                          const value = normalizeMonth(event.target.value, row.month);
-                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, month: value } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.monthlyActuals.${index}.realRevenueEUR`}>
-                      <DeNumberInput
-                        value={row.realRevenueEUR ?? undefined}
-                        mode="decimal"
-                        style={{ width: "100%" }}
-                        onChange={(value) => {
-                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realRevenueEUR: toNumber(value) } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.monthlyActuals.${index}.realPayoutRatePct`}>
-                      <DeNumberInput
-                        value={row.realPayoutRatePct ?? undefined}
-                        mode="percent"
-                        style={{ width: "100%" }}
-                        onChange={(value) => {
-                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realPayoutRatePct: toNumber(value) } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <div data-field-key={`inputs.monthlyActuals.${index}.realClosingBalanceEUR`}>
-                      <DeNumberInput
-                        value={row.realClosingBalanceEUR ?? undefined}
-                        mode="decimal"
-                        style={{ width: "100%" }}
-                        onChange={(value) => {
-                          setMonthlyActuals((prev) => prev.map((entry, idx) => idx === index ? { ...entry, realClosingBalanceEUR: toNumber(value) } : entry));
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <Button
-                      danger
-                      onClick={() => {
-                        setMonthlyActuals((prev) => prev.filter((_, idx) => idx !== index));
-                      }}
-                    >
-                      X
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </StatsTableShell>
-      </Card>
-
-      <Card>
-        <Title level={5}>Basis-Parameter</Title>
-        <Space wrap align="start">
-          <div>
-            <Text>Opening Balance (EUR)</Text>
-            <div data-field-key="inputs.openingBalance">
-              <DeNumberInput
-                value={openingBalance}
-                onChange={(value) => {
-                  setOpeningBalance(Number(toNumber(value) || 0));
-                }}
-                style={{ width: 190 }}
-                mode="decimal"
-                min={0}
-                step={100}
-              />
-            </div>
-          </div>
-          <div>
-            <Text>Startmonat</Text>
-            <div data-field-key="inputs.startMonth">
-              <Input
-                type="month"
-                value={startMonth}
-                onChange={(event) => {
-                  const nextStartMonth = normalizeMonth(event.target.value, startMonth);
-                  setStartMonth(nextStartMonth);
-                  setIncomings((prev) => syncIncomingsToWindow(prev, nextStartMonth, horizonMonths));
-                }}
-                style={{ width: 170 }}
-              />
-            </div>
-          </div>
-          <div>
-            <Text>Horizont (Monate)</Text>
-            <div data-field-key="inputs.horizonMonths">
-              <DeNumberInput
-                value={horizonMonths}
-                onChange={(value) => {
-                  const nextHorizon = Math.max(1, Number(toNumber(value) || 1));
-                  setHorizonMonths(nextHorizon);
-                  setIncomings((prev) => syncIncomingsToWindow(prev, startMonth, nextHorizon));
-                }}
-                mode="int"
-                min={1}
-                max={48}
-                style={{ width: 160 }}
-              />
-            </div>
-          </div>
-        </Space>
-      </Card>
-
-      <Modal
-        open={historicalImportOpen}
-        title="Historische Auszahlungsquoten importieren"
-        okText="Startprofil übernehmen"
-        onOk={applyHistoricalPriorImport}
-        onCancel={() => {
-          setHistoricalImportOpen(false);
-          setHistoricalImportError(null);
-        }}
-      >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
-          <Text type="secondary">
-            Einmaliger Import als Startprofil. Echte IST-Monate überschreiben das Profil schrittweise.
-          </Text>
-          <div>
-            <Text>Startmonat</Text>
-            <Input
-              type="month"
-              value={historicalImportStartMonth}
-              onChange={(event) => setHistoricalImportStartMonth(normalizeMonth(event.target.value, currentMonthKey()))}
-            />
-          </div>
-          <div>
-            <Text>Monatsquoten (%)</Text>
-            <Input.TextArea
-              rows={8}
-              value={historicalImportValues}
-              onChange={(event) => setHistoricalImportValues(event.target.value)}
-              placeholder={"z. B.\n50,8\n51,2\n49,9\n..."}
-            />
-          </div>
-          {historicalImportError ? <Alert type="error" showIcon message={historicalImportError} /> : null}
-        </Space>
-      </Modal>
     </div>
   );
 }

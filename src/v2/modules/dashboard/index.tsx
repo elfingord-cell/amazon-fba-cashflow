@@ -9,6 +9,7 @@ import {
   Segmented,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -42,7 +43,7 @@ const { Paragraph, Text, Title } = Typography;
 
 type DashboardRange = "next6" | "next12" | "next18" | "all";
 
-type RevenueBasisMode = "forecast" | "calibrated";
+type RevenueBasisMode = "hybrid" | "forecast_direct";
 type CashInQuoteMode = "manual" | "recommendation";
 type CashInSafetyMode = "basis" | "conservative";
 type InventoryRiskFilterParam = "all" | "oos" | "under_safety";
@@ -203,6 +204,7 @@ function applyDashboardCalculationOverrides(
     quoteMode: CashInQuoteMode;
     safetyMode: CashInSafetyMode;
     revenueBasisMode: RevenueBasisMode;
+    calibrationEnabled: boolean;
     q4SeasonalityEnabled: boolean;
   },
 ): Record<string, unknown> {
@@ -223,9 +225,20 @@ function applyDashboardCalculationOverrides(
   // Dashboard cockpit compares forecast-based variants; keep forecast active in simulation.
   forecastSettings.useForecast = true;
   settings.cashInMode = options.safetyMode === "basis" ? "basis" : "conservative";
-  settings.cashInCalibrationEnabled = options.revenueBasisMode === "calibrated";
+  settings.cashInCalibrationEnabled = options.calibrationEnabled;
+  settings.cashInRevenueBasisMode = options.revenueBasisMode;
   settings.cashInRecommendationSeasonalityEnabled = options.q4SeasonalityEnabled;
   settings.cashInRecommendationIgnoreQ4 = !options.q4SeasonalityEnabled;
+  if (options.revenueBasisMode === "forecast_direct" && Array.isArray(next.incomings)) {
+    next.incomings = (next.incomings as unknown[]).map((entry) => {
+      if (!entry || typeof entry !== "object") return entry;
+      return {
+        ...(entry as Record<string, unknown>),
+        source: "forecast",
+        revenueEur: null,
+      };
+    });
+  }
   if (options.quoteMode === "recommendation" && Array.isArray(next.incomings)) {
     next.incomings = (next.incomings as unknown[]).map((entry) => {
       if (!entry || typeof entry !== "object") return entry;
@@ -637,11 +650,12 @@ function normalizeForecastImpactSummary(value: unknown): {
 }
 
 export default function DashboardModule(): JSX.Element {
-  const { state, loading, error } = useWorkspaceState();
+  const { state, loading, error, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
   const [range, setRange] = useState<DashboardRange>("next6");
   const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
-  const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>("forecast");
+  const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>("hybrid");
+  const [calibrationEnabled, setCalibrationEnabled] = useState<boolean>(true);
   const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
   const [safetyMode, setSafetyMode] = useState<CashInSafetyMode>("basis");
   const [q4SeasonalityEnabled, setQ4SeasonalityEnabled] = useState<boolean>(true);
@@ -659,20 +673,39 @@ export default function DashboardModule(): JSX.Element {
     ? state.forecast as Record<string, unknown>
     : {};
   const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
-  const methodikCalibrationHorizonMonths = 3;
+  const methodikRevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
+    ? "forecast_direct"
+    : "hybrid";
   const methodikSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
     ? settings.cashInRecommendationIgnoreQ4 !== true
     : settings.cashInRecommendationSeasonalityEnabled !== false;
   useEffect(() => {
     if (cockpitDefaultsApplied) return;
-    setRevenueBasisMode(methodikCalibrationEnabled ? "calibrated" : "forecast");
+    setRevenueBasisMode(methodikRevenueBasisMode);
+    setCalibrationEnabled(methodikCalibrationEnabled);
     setQ4SeasonalityEnabled(methodikSeasonalityEnabled);
     setCockpitDefaultsApplied(true);
   }, [
     cockpitDefaultsApplied,
     methodikCalibrationEnabled,
+    methodikRevenueBasisMode,
     methodikSeasonalityEnabled,
   ]);
+  const persistDashboardCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
+    await saveWith((current) => {
+      const next = structuredClone(current);
+      if (!next.settings || typeof next.settings !== "object") {
+        next.settings = {};
+      }
+      const settingsState = next.settings as Record<string, unknown>;
+      next.settings = {
+        ...settingsState,
+        ...patch,
+        lastUpdatedAt: new Date().toISOString(),
+      };
+      return next;
+    }, "v2:dashboard:cashin-cockpit");
+  }, [saveWith]);
   const planningMonths = useMemo(
     () => resolvePlanningMonthsFromState(stateObject, 18),
     [state.settings],
@@ -702,9 +735,10 @@ export default function DashboardModule(): JSX.Element {
       quoteMode,
       safetyMode,
       revenueBasisMode,
+      calibrationEnabled,
       q4SeasonalityEnabled,
     }),
-    [planningState, q4SeasonalityEnabled, quoteMode, revenueBasisMode, safetyMode],
+    [calibrationEnabled, planningState, q4SeasonalityEnabled, quoteMode, revenueBasisMode, safetyMode],
   );
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
@@ -868,7 +902,7 @@ export default function DashboardModule(): JSX.Element {
     if (!simulatedBreakdown.length) return null;
     return Math.min(...simulatedBreakdown.map((row) => Number(row.closing || 0)));
   }, [simulatedBreakdown]);
-  const q4ToggleVisible = true;
+  const q4ToggleVisible = quoteMode === "recommendation";
   const calibrationApplied = report.kpis?.cashIn?.calibrationApplied === true;
   const calibrationCandidateCount = Math.max(0, Math.round(Number(report.kpis?.cashIn?.calibrationCandidateCount || 0)));
   const calibrationNonDefaultFactorMonthCount = Math.max(
@@ -896,7 +930,7 @@ export default function DashboardModule(): JSX.Element {
     }, 0);
   }, [calculationState]);
   const calibrationWarningMessage = useMemo(() => {
-    if (revenueBasisMode !== "calibrated" || calibrationApplied) return null;
+    if (!calibrationEnabled || calibrationApplied) return null;
     if (calibrationDataMonthCount <= 0) {
       return "Keine verwertbaren Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.";
     }
@@ -951,7 +985,7 @@ export default function DashboardModule(): JSX.Element {
     calibrationLatestRawFactor,
     calibrationNonDefaultFactorMonthCount,
     calibrationReasonCounts,
-    revenueBasisMode,
+    calibrationEnabled,
   ]);
 
   const forecastVersioningSnapshot = useMemo(() => {
@@ -1684,10 +1718,11 @@ export default function DashboardModule(): JSX.Element {
   function resetCalculationCockpit(): void {
     setRange("next6");
     setBucketScopeValues(DEFAULT_BUCKET_SCOPE.slice());
-    setRevenueBasisMode(methodikCalibrationEnabled ? "calibrated" : "forecast");
+    setRevenueBasisMode(methodikRevenueBasisMode);
+    setCalibrationEnabled(methodikCalibrationEnabled);
     setQuoteMode("manual");
     setSafetyMode("basis");
-    setQ4SeasonalityEnabled(true);
+    setQ4SeasonalityEnabled(methodikSeasonalityEnabled);
   }
 
   function openBlockerTarget(blocker: RobustMonthBlocker): void {
@@ -1987,7 +2022,7 @@ export default function DashboardModule(): JSX.Element {
             <Card size="small" className="v2-calc-cockpit-module">
               <Space size={6}>
                 <Text strong>Umsatzbasis</Text>
-                <Tooltip title="Forecast-Umsatz = Absatzprognose × Verkaufspreis. Kalibrierter Umsatz = Forecast-Umsatz mit Kalibrierfaktor aus Eingaben.">
+                <Tooltip title="Plan-Umsatz (Hybrid): MANUELL-Monate nutzen deine Overrides, AUTO-Monate kommen aus der Absatzprognose.">
                   <InfoCircleOutlined />
                 </Tooltip>
               </Space>
@@ -1995,21 +2030,40 @@ export default function DashboardModule(): JSX.Element {
               <Segmented
                 block
                 value={revenueBasisMode}
-                onChange={(value) => setRevenueBasisMode(String(value) === "calibrated" ? "calibrated" : "forecast")}
+                onChange={(value) => {
+                  const nextMode = String(value) === "forecast_direct" ? "forecast_direct" : "hybrid";
+                  setRevenueBasisMode(nextMode);
+                  void persistDashboardCashInSettings({
+                    cashInRevenueBasisMode: nextMode,
+                  }).catch(() => {});
+                }}
                 options={[
-                  { label: "Forecast-Umsatz", value: "forecast" },
-                  { label: "Kalibrierter Umsatz", value: "calibrated" },
+                  { label: "Plan-Umsatz (Hybrid)", value: "hybrid" },
+                  { label: "Forecast-Umsatz (direkt)", value: "forecast_direct" },
                 ]}
               />
-              <Text type="secondary">
-                {revenueBasisMode === "calibrated"
-                  ? `Kalibrierung aktiv (wirkt über ${methodikCalibrationHorizonMonths} Monate).`
-                  : "Kalibrierung aus."}
-                {" "}
+              <Space size={8} align="center" wrap>
+                <Text strong>Kalibrierung</Text>
+                <Switch
+                  size="small"
+                  checked={calibrationEnabled}
+                  onChange={(checked) => {
+                    setCalibrationEnabled(checked);
+                    void persistDashboardCashInSettings({
+                      cashInCalibrationEnabled: checked,
+                    }).catch(() => {});
+                  }}
+                />
+                <Tooltip title="Kalibrierung wirkt nur auf automatische Monate. Manuelle Monatswerte bleiben unverändert.">
+                  <InfoCircleOutlined />
+                </Tooltip>
                 <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>
-                  {revenueBasisMode === "calibrated" ? "Eingaben öffnen" : "In Eingaben aktivieren"}
+                  Cash-in Setup öffnen
                 </Button>
-              </Text>
+              </Space>
+              {revenueBasisMode === "forecast_direct" ? (
+                <Text type="secondary">Referenzmodus: manuelle Umsatz-Overrides werden ignoriert.</Text>
+              ) : null}
               {calibrationWarningMessage ? (
                 <Text type="warning">
                   {calibrationWarningMessage}
@@ -2020,7 +2074,7 @@ export default function DashboardModule(): JSX.Element {
             <Card size="small" className="v2-calc-cockpit-module">
               <Space size={6}>
                 <Text strong>Amazon Auszahlungsquote</Text>
-                <Tooltip title="Manuell nutzt die Monatsquote aus Eingaben. Empfehlung berechnet die Quote automatisch als Vorschlag je Monat.">
+                <Tooltip title="MANUELL nutzt die Monatsquote aus Cash-in Setup. EMPFOHLEN berechnet die Quote automatisch je Monat.">
                   <InfoCircleOutlined />
                 </Tooltip>
               </Space>
@@ -2030,8 +2084,8 @@ export default function DashboardModule(): JSX.Element {
                 value={quoteMode}
                 onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
                 options={[
-                  { label: "Manuelle Quote", value: "manual" },
-                  { label: "Empfehlung", value: "recommendation" },
+                  { label: "MANUELL", value: "manual" },
+                  { label: "EMPFOHLEN", value: "recommendation" },
                 ]}
               />
               <Space direction="vertical" size={6} style={{ width: "100%" }}>

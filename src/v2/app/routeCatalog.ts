@@ -112,7 +112,7 @@ export const V2_ROUTES: V2RouteItem[] = [
   {
     key: "closing-inputs",
     path: "abschluss/eingaben",
-    label: "Eingaben",
+    label: "Cash-in Setup",
     section: "finance",
     icon: FormOutlined,
     Component: InputsModule,

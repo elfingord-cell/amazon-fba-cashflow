@@ -1731,7 +1731,7 @@ export default function ForecastModule(): JSX.Element {
       </Modal>
 
       <Modal
-        title="Umsatz in Eingaben übertragen"
+        title="Umsatz in Cash-in Setup übertragen"
         open={transferOpen}
         onCancel={() => setTransferOpen(false)}
         onOk={() => { void transferRevenueToInputs(); }}

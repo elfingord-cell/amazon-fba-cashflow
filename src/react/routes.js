@@ -38,7 +38,7 @@ export const MENU_SECTIONS = [
       { key: "#po", label: "Bestellungen (PO)", icon: "po" },
       { key: "#suppliers", label: "Suppliers", icon: "suppliers" },
       { key: "#settings", label: "Settings", icon: "settings" },
-      { key: "#eingaben", label: "Eingaben", icon: "inputs" },
+      { key: "#eingaben", label: "Cash-in Setup", icon: "inputs" },
       { key: "#fixkosten", label: "Fixkosten", icon: "fixed" },
       { key: "#ust", label: "USt-Vorschau", icon: "tax" },
     ],

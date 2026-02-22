@@ -535,7 +535,7 @@ export default function SollIstModule(): JSX.Element {
           type="warning"
           showIcon
           message="Noch keine Ist-Daten vorhanden"
-          description="Bitte zuerst Monats-Istwerte in 'Abschluss > Eingaben' pflegen."
+          description="Bitte zuerst Monats-Istwerte in 'Abschluss > Cash-in Setup' pflegen."
         />
       </div>
     );

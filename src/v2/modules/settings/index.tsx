@@ -56,6 +56,9 @@ const SKU_PLANNING_ABC_OPTIONS = [
 ];
 
 interface SettingsDraft {
+  openingBalance: number;
+  startMonth: string;
+  horizonMonths: number;
   air: number;
   rail: number;
   sea: number;
@@ -157,6 +160,11 @@ function deriveEurUsdRate(fxRate: number | null): number | null {
   return 1 / safeFxRate;
 }
 
+function defaultStartMonth(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
   const transport = (state.transportLeadTimesDays || {}) as Record<string, unknown>;
   const cny = (state.cny || {}) as Record<string, unknown>;
@@ -188,7 +196,12 @@ function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
   const poDutyDue = readPo("duty", "ETA", fallbackPoLagDays);
   const poEustDue = readPo("eust", "ETA", fallbackPoLagDays);
   const poVatRefundDue = readPo("vatRefund", "ETA", 0);
+  const startMonthRaw = String(state.startMonth || "").trim();
+  const startMonth = /^\d{4}-\d{2}$/.test(startMonthRaw) ? startMonthRaw : defaultStartMonth();
   return {
+    openingBalance: Math.max(0, toNumber(state.openingBalance, 0)),
+    startMonth,
+    horizonMonths: Math.max(1, Math.round(toNumber(state.horizonMonths, 18))),
     air: Math.max(0, toNumber(transport.air, 10)),
     rail: Math.max(0, toNumber(transport.rail, 25)),
     sea: Math.max(0, toNumber(transport.sea, 45)),
@@ -243,6 +256,9 @@ function randomId(prefix: string): string {
 
 function normalizeDraft(values: SettingsDraft): string {
   return JSON.stringify({
+    openingBalance: Number(values.openingBalance || 0),
+    startMonth: String(values.startMonth || ""),
+    horizonMonths: Math.max(1, Math.round(Number(values.horizonMonths || 1))),
     air: Number(values.air || 0),
     rail: Number(values.rail || 0),
     sea: Number(values.sea || 0),
@@ -438,6 +454,11 @@ export default function SettingsModule(): JSX.Element {
       const baseSettings = (next.settings || {}) as Record<string, unknown>;
       next.settings = {
         ...baseSettings,
+        openingBalance: Math.max(0, Number(values.openingBalance || 0)),
+        startMonth: /^\d{4}-\d{2}$/.test(String(values.startMonth || ""))
+          ? String(values.startMonth)
+          : defaultStartMonth(),
+        horizonMonths: Math.max(1, Math.round(Number(values.horizonMonths || 1))),
         transportLeadTimesDays: {
           ...(baseSettings.transportLeadTimesDays as Record<string, unknown> || {}),
           air: Math.max(0, Math.round(values.air)),
@@ -702,6 +723,25 @@ export default function SettingsModule(): JSX.Element {
             scheduleAutoSave(120);
           }}
         >
+          <Title level={5} style={{ marginTop: 4 }}>Cashflow Basis</Title>
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item label="Opening Balance (EUR)" name="openingBalance" rules={[{ required: true }]}>
+                <DeNumberInput mode="decimal" min={0} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="Startmonat" name="startMonth" rules={[{ required: true }]}>
+                <Input type="month" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item label="Horizont (Monate)" name="horizonMonths" rules={[{ required: true }]}>
+                <DeNumberInput mode="int" min={1} max={48} />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Row gutter={16}>
             <Col xs={24} md={8}>
               <Form.Item label="Air (Tage)" name="air" rules={[{ required: true }]}>
