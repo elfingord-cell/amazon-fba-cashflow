@@ -104,6 +104,7 @@ interface ProductDraft {
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
   moqUnits: number | null;
+  unitsPerCarton: number | null;
   safetyStockDohOverride: number | null;
   foCoverageDohOverride: number | null;
   moqOverrideUnits: number | null;
@@ -135,6 +136,7 @@ const PRODUCT_FIELD_LABELS: Partial<Record<keyof ProductDraft, string>> = {
   avgSellingPriceGrossEUR: "Verkaufspreis (EUR)",
   sellerboardMarginPct: "Marge %",
   moqUnits: "MOQ Units",
+  unitsPerCarton: "Units pro Karton",
   landedUnitCostEur: "Einstand (EUR)",
   logisticsPerUnitEur: "Shipping (EUR/Stk)",
   productionLeadTimeDaysDefault: "Production Lead Time",
@@ -275,6 +277,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
       : templateSource
   ) as Record<string, unknown>;
   const launchCostsRaw = Array.isArray(row?.raw.launchCosts) ? row?.raw.launchCosts : [];
+  const unitsPerCartonRaw = asNumber(row?.raw.unitsPerCarton);
   return {
     id: row?.id,
     sku: row?.sku || "",
@@ -300,6 +303,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
     avgSellingPriceGrossEUR: row?.avgSellingPriceGrossEUR ?? null,
     sellerboardMarginPct: row?.sellerboardMarginPct ?? null,
     moqUnits: row?.moqUnits ?? null,
+    unitsPerCarton: unitsPerCartonRaw != null && unitsPerCartonRaw > 0 ? Math.round(unitsPerCartonRaw) : null,
     safetyStockDohOverride: asNumber(row?.raw.safetyStockDohOverride),
     foCoverageDohOverride: asNumber(row?.raw.foCoverageDohOverride),
     moqOverrideUnits: asNumber(row?.raw.moqOverrideUnits),
@@ -725,6 +729,7 @@ export default function ProductsModule(): JSX.Element {
       supplierId: current.supplierId || baseRaw.supplierId || "",
       categoryId: current.categoryId ?? baseRaw.categoryId ?? null,
       moqUnits: current.moqUnits ?? baseRaw.moqUnits ?? null,
+      unitsPerCarton: current.unitsPerCarton ?? baseRaw.unitsPerCarton ?? null,
       moqOverrideUnits: current.moqOverrideUnits ?? baseRaw.moqOverrideUnits ?? null,
       safetyStockDohOverride: current.safetyStockDohOverride ?? baseRaw.safetyStockDohOverride ?? null,
       foCoverageDohOverride: current.foCoverageDohOverride ?? baseRaw.foCoverageDohOverride ?? null,
@@ -1261,6 +1266,9 @@ export default function ProductsModule(): JSX.Element {
         avgSellingPriceGrossEUR: values.avgSellingPriceGrossEUR,
         sellerboardMarginPct: grossMargin,
         moqUnits: values.moqUnits,
+        unitsPerCarton: Number.isFinite(Number(values.unitsPerCarton))
+          ? Math.max(1, Math.round(Number(values.unitsPerCarton)))
+          : null,
         safetyStockDohOverride: values.safetyStockDohOverride,
         foCoverageDohOverride: values.foCoverageDohOverride,
         moqOverrideUnits: values.moqOverrideUnits,
@@ -1993,6 +2001,14 @@ export default function ProductsModule(): JSX.Element {
                         extra={<span className="v2-field-meta">Nur fuer dieses Produkt. Leer = Defaultkette.</span>}
                       >
                         <DeNumberInput mode="int" min={0} />
+                      </Form.Item>
+                      <Form.Item
+                        name="unitsPerCarton"
+                        label={labelWithReset("Units pro Karton", "unitsPerCarton")}
+                        style={{ flex: 1 }}
+                        extra={<span className="v2-field-meta">Optional. Leer = keine Kartonrundung in Empfehlungen.</span>}
+                      >
+                        <DeNumberInput mode="int" min={1} />
                       </Form.Item>
                       <Form.Item
                         name="safetyStockDohOverride"

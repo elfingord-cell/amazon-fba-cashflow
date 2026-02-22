@@ -72,6 +72,8 @@ interface SettingsDraft {
   robustnessLookaheadDaysDdp: number;
   foCoverageDohDefault: number;
   moqDefaultUnits: number;
+  foRecommendationRoundupCartonBlock: number;
+  foRecommendationRoundupMaxPct: number;
   skuPlanningHorizonMonths: number;
   skuPlanningAbcFilter: "abc" | "ab" | "a";
   skuPlanningMaxPhantomSuggestionsPerSku: number;
@@ -203,6 +205,8 @@ function settingsDraftFromState(state: Record<string, unknown>): SettingsDraft {
     robustnessLookaheadDaysDdp: Math.max(1, toNumber(state.robustnessLookaheadDaysDdp, 35)),
     foCoverageDohDefault: Math.max(0, toNumber(state.foCoverageDohDefault, 90)),
     moqDefaultUnits: Math.max(0, Math.round(toNumber(state.moqDefaultUnits, 500))),
+    foRecommendationRoundupCartonBlock: Math.max(1, Math.round(toNumber(state.foRecommendationRoundupCartonBlock, 10))),
+    foRecommendationRoundupMaxPct: Math.max(0, toNumber(state.foRecommendationRoundupMaxPct, 10)),
     skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(state.skuPlanningHorizonMonths, 12),
     skuPlanningAbcFilter: normalizeSkuPlanningAbcFilter(state.skuPlanningAbcFilter, "abc"),
     skuPlanningMaxPhantomSuggestionsPerSku: Math.max(1, Math.round(toNumber(state.skuPlanningMaxPhantomSuggestionsPerSku, 3))),
@@ -255,6 +259,8 @@ function normalizeDraft(values: SettingsDraft): string {
     robustnessLookaheadDaysDdp: Number(values.robustnessLookaheadDaysDdp || 0),
     foCoverageDohDefault: Number(values.foCoverageDohDefault || 0),
     moqDefaultUnits: Number(values.moqDefaultUnits || 0),
+    foRecommendationRoundupCartonBlock: Number(values.foRecommendationRoundupCartonBlock || 0),
+    foRecommendationRoundupMaxPct: Number(values.foRecommendationRoundupMaxPct || 0),
     skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(values.skuPlanningHorizonMonths, 12),
     skuPlanningAbcFilter: normalizeSkuPlanningAbcFilter(values.skuPlanningAbcFilter, "abc"),
     skuPlanningMaxPhantomSuggestionsPerSku: Math.max(1, Math.round(toNumber(values.skuPlanningMaxPhantomSuggestionsPerSku, 3))),
@@ -451,6 +457,8 @@ export default function SettingsModule(): JSX.Element {
         robustnessLookaheadDaysDdp: Math.max(1, Math.round(values.robustnessLookaheadDaysDdp)),
         foCoverageDohDefault: Math.max(0, Math.round(values.foCoverageDohDefault)),
         moqDefaultUnits: Math.max(0, Math.round(values.moqDefaultUnits)),
+        foRecommendationRoundupCartonBlock: Math.max(1, Math.round(values.foRecommendationRoundupCartonBlock)),
+        foRecommendationRoundupMaxPct: Math.max(0, Number(values.foRecommendationRoundupMaxPct || 0)),
         skuPlanningHorizonMonths: normalizeSkuPlanningHorizon(values.skuPlanningHorizonMonths, 12),
         skuPlanningAbcFilter: normalizeSkuPlanningAbcFilter(values.skuPlanningAbcFilter, "abc"),
         skuPlanningMaxPhantomSuggestionsPerSku: Math.max(1, Math.round(toNumber(values.skuPlanningMaxPhantomSuggestionsPerSku, 3))),
@@ -770,6 +778,35 @@ export default function SettingsModule(): JSX.Element {
             <Col xs={24} md={8}>
               <Form.Item label="Default Production Lead Time (Tage)" name="defaultProductionLeadTimeDays">
                 <DeNumberInput mode="int" min={0} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} md={8}>
+              <Form.Item
+                label="Roundup Karton-Block"
+                name="foRecommendationRoundupCartonBlock"
+                extra="Zusatz-Aufrundung in Kartonschritten (z.B. 10 Kartons)."
+              >
+                <DeNumberInput mode="int" min={1} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item
+                label="Roundup Max %"
+                name="foRecommendationRoundupMaxPct"
+                extra="Zusatz-Aufrundung nur, wenn der relative Aufschlag <= diesem Wert ist."
+              >
+                <DeNumberInput mode="decimal" min={0} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={8}>
+              <Form.Item
+                label="Info"
+                extra="Roundup wirkt zusaetzlich zur Rundung auf volle Kartons (SKU Units pro Karton)."
+              >
+                <Input value="Kartonpflicht + Block/%-Regel" readOnly />
               </Form.Item>
             </Col>
           </Row>

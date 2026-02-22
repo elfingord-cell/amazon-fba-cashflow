@@ -17,7 +17,9 @@ import {
   BankOutlined,
   LoginOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
   MenuOutlined,
+  MenuUnfoldOutlined,
   RollbackOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -40,6 +42,9 @@ import { loadState } from "../../data/storageLocal.js";
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
+const V2_SIDER_WIDTH = 290;
+const V2_SIDER_COLLAPSED_WIDTH = 84;
+const V2_SIDEBAR_COLLAPSED_STORAGE_KEY = "v2.sidebar-collapsed";
 
 interface AuthFormValues {
   email: string;
@@ -59,6 +64,24 @@ interface RouteErrorBoundaryState {
 }
 
 const ROUTE_ERROR_STORAGE_KEY = "v2:last-route-error";
+
+function readV2SidebarCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(V2_SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeV2SidebarCollapsed(next: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(V2_SIDEBAR_COLLAPSED_STORAGE_KEY, next ? "true" : "false");
+  } catch {
+    // ignore localStorage write errors
+  }
+}
 
 function saveRouteRuntimeError(payload: {
   routeKey: string;
@@ -250,6 +273,7 @@ function V2Layout(): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const syncSession = useSyncSession();
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState<boolean>(() => readV2SidebarCollapsed());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
@@ -327,6 +351,7 @@ function V2Layout(): JSX.Element {
         key: route.key,
         icon: <Icon />,
         label: route.label,
+        title: route.label,
       });
     });
 
@@ -389,6 +414,10 @@ function V2Layout(): JSX.Element {
     ownDisplayName,
   ]);
 
+  useEffect(() => {
+    writeV2SidebarCollapsed(desktopSidebarCollapsed);
+  }, [desktopSidebarCollapsed]);
+
   async function handleAuthSubmit(mode: "login" | "register"): Promise<void> {
     try {
       const values = await authForm.validateFields();
@@ -430,13 +459,31 @@ function V2Layout(): JSX.Element {
   return (
     <Layout className="v2-shell">
       {isDesktop ? (
-        <Sider width={290} className="v2-sider">
-          <div className="v2-brand">
-            <BankOutlined />
-            <span>FBA Cashflow V2</span>
+        <Sider
+          width={V2_SIDER_WIDTH}
+          collapsedWidth={V2_SIDER_COLLAPSED_WIDTH}
+          collapsed={desktopSidebarCollapsed}
+          trigger={null}
+          className={`v2-sider${desktopSidebarCollapsed ? " is-collapsed" : ""}`}
+        >
+          <div className="v2-brand-wrap">
+            <div className="v2-brand">
+              <BankOutlined />
+              <span className="v2-brand-text">FBA Cashflow V2</span>
+            </div>
+            <Button
+              type="text"
+              className="v2-sider-collapse-toggle"
+              icon={desktopSidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              aria-label={desktopSidebarCollapsed ? "Sidebar erweitern" : "Sidebar minimieren"}
+              aria-expanded={!desktopSidebarCollapsed}
+              onClick={() => setDesktopSidebarCollapsed((value) => !value)}
+            />
           </div>
           <Menu
             mode="inline"
+            inlineCollapsed={desktopSidebarCollapsed}
+            className="v2-side-menu"
             selectedKeys={[activeKey]}
             items={menuItems as never}
             onClick={({ key }) => {

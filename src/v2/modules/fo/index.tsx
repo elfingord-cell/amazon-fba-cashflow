@@ -2239,7 +2239,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 <>
                   <Text>Baseline: {String(liveRecommendation.baselineMonth || "—")}</Text>
                   <Text>Status: {String(liveRecommendation.status || "—")}</Text>
-                  <Text type="secondary">Empfehlung basiert auf Forecast + Coverage DOH + MOQ.</Text>
+                  <Text type="secondary">Empfehlung basiert auf Forecast + Coverage DOH + MOQ + Karton-Logik.</Text>
                   <Text>
                     Reichweite-Bedarf ({formatNumber(liveRecommendation.coverageDaysForOrder, 0)} Tage): {formatNumber(liveRecommendation.coverageDemandUnits, 0)}
                   </Text>
@@ -2286,7 +2286,27 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                   </Text>
                   {liveRecommendation.moqApplied ? (
                     <Text type="warning">
-                      MOQ-Aufrundung: {formatNumber(liveRecommendation.recommendedUnitsRaw, 0)} → {formatNumber(liveRecommendation.recommendedUnits, 0)}
+                      MOQ-Aufrundung: {formatNumber(liveRecommendation.recommendedUnitsRaw, 0)} → {formatNumber(liveRecommendation.unitsAfterMoq, 0)}
+                    </Text>
+                  ) : null}
+                  {Number(liveRecommendation.unitsPerCarton || 0) > 1 ? (
+                    <Text type="secondary">
+                      Kartonbasis: {formatNumber(liveRecommendation.unitsPerCarton, 0)} Units/Karton
+                      {Number(liveRecommendation.recommendedCartons || 0) > 0
+                        ? ` · ${formatNumber(liveRecommendation.recommendedCartons, 0)} Kartons`
+                        : ""}
+                    </Text>
+                  ) : null}
+                  {liveRecommendation.cartonRoundingApplied ? (
+                    <Text type="secondary">
+                      Karton-Aufrundung: {formatNumber(liveRecommendation.unitsAfterMoq, 0)} → {formatNumber(liveRecommendation.unitsAfterCartonRounding, 0)}
+                    </Text>
+                  ) : null}
+                  {liveRecommendation.blockRoundupApplied ? (
+                    <Text type="warning">
+                      Block-Roundup ({formatNumber(liveRecommendation.roundupCartonBlock, 0)} Kartons, max {formatNumber(liveRecommendation.roundupMaxPct, 2)}%):
+                      {" "}
+                      {formatNumber(liveRecommendation.unitsAfterCartonRounding, 0)} → {formatNumber(liveRecommendation.recommendedUnits, 0)}
                     </Text>
                   ) : null}
                   <Text>

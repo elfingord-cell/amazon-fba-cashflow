@@ -8,6 +8,8 @@ import {
   DashboardOutlined,
   DeploymentUnitOutlined,
   DollarOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   FormOutlined,
   InboxOutlined,
   LineChartOutlined,
@@ -40,6 +42,9 @@ import { antdTheme } from "./theme.js";
 const { Header, Content, Sider } = Layout;
 
 const STATE_KEY = "amazon_fba_cashflow_v1";
+const APP_SIDER_WIDTH = 280;
+const APP_SIDER_COLLAPSED_WIDTH = 84;
+const LEGACY_SIDEBAR_COLLAPSED_STORAGE_KEY = "legacy.sidebar-collapsed";
 const MENU_ICON_MAP = {
   dashboard: DashboardOutlined,
   products: TagsOutlined,
@@ -78,9 +83,28 @@ function toMenuItems() {
 }
 const MENU_ITEMS = toMenuItems();
 
+function readLegacySidebarCollapsed() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeLegacySidebarCollapsed(next) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LEGACY_SIDEBAR_COLLAPSED_STORAGE_KEY, next ? "true" : "false");
+  } catch {
+    // ignore localStorage write errors
+  }
+}
+
 export function AppShell() {
   const dbSyncEnabled = isDbSyncEnabled();
   const dbConfigured = isSupabaseConfigured();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readLegacySidebarCollapsed());
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [normalizedHash, setNormalizedHash] = useState(() => normalizeHash(window.location.hash));
   const [authEmail, setAuthEmail] = useState("");
@@ -108,6 +132,10 @@ export function AppShell() {
       setNormalizedHash("#dashboard");
     }
   }, []);
+
+  useEffect(() => {
+    writeLegacySidebarCollapsed(sidebarCollapsed);
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -269,8 +297,11 @@ export function AppShell() {
     <ConfigProvider theme={antdTheme}>
       <Layout className="app-shell">
         <Sider
-          className="app-sider"
-          width={280}
+          className={`app-sider${sidebarCollapsed ? " is-collapsed" : ""}`}
+          width={APP_SIDER_WIDTH}
+          collapsedWidth={APP_SIDER_COLLAPSED_WIDTH}
+          collapsed={sidebarCollapsed}
+          trigger={null}
         >
           <div className="sidebar-header app-sidebar-header">
             <div className="app-sidebar-top">
@@ -278,6 +309,15 @@ export function AppShell() {
                 <BankOutlined />
               </span>
               <span className="sidebar-title">FBA Cashflow</span>
+              <button
+                type="button"
+                className="app-sidebar-collapse-toggle"
+                aria-label={sidebarCollapsed ? "Sidebar erweitern" : "Sidebar minimieren"}
+                aria-expanded={!sidebarCollapsed}
+                onClick={() => setSidebarCollapsed((value) => !value)}
+              >
+                {sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              </button>
             </div>
             <button
               className="data-health-badge"
@@ -298,6 +338,7 @@ export function AppShell() {
           <Menu
             mode="inline"
             className="app-menu"
+            inlineCollapsed={sidebarCollapsed}
             selectedKeys={[routeBase]}
             inlineIndent={16}
             items={MENU_ITEMS}

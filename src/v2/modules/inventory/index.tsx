@@ -1186,7 +1186,33 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         ) : null}
         {intent.recommendation?.moqApplied ? (
           <Text type="warning">
-            MOQ angewendet: kalkulatorisch {formatInt(Number(intent.recommendation?.recommendedUnitsRaw || 0))} → MOQ {formatInt(Number(intent.recommendation?.recommendedUnits || 0))}
+            MOQ angewendet: kalkulatorisch {formatInt(Number(intent.recommendation?.recommendedUnitsRaw || 0))} → MOQ {formatInt(Number(intent.recommendation?.unitsAfterMoq || 0))}
+          </Text>
+        ) : null}
+        {Number(intent.recommendation?.unitsPerCarton || 0) > 1 ? (
+          <Text type="secondary">
+            Kartonbasis: {formatInt(Number(intent.recommendation?.unitsPerCarton || 0))} Units/Karton
+            {Number(intent.recommendation?.recommendedCartons || 0) > 0
+              ? ` · ${formatInt(Number(intent.recommendation?.recommendedCartons || 0))} Kartons`
+              : ""}
+          </Text>
+        ) : null}
+        {intent.recommendation?.cartonRoundingApplied ? (
+          <Text type="secondary">
+            Karton-Aufrundung: {formatInt(Number(intent.recommendation?.unitsAfterMoq || 0))} → {formatInt(Number(intent.recommendation?.unitsAfterCartonRounding || 0))}
+          </Text>
+        ) : null}
+        {intent.recommendation?.blockRoundupApplied ? (
+          <Text type="warning">
+            Block-Roundup (
+            {formatInt(Number(intent.recommendation?.roundupCartonBlock || 0))}
+            {" "}
+            Kartons, max
+            {" "}
+            {Number(intent.recommendation?.roundupMaxPct || 0).toLocaleString("de-DE", { maximumFractionDigits: 2 })}
+            %):
+            {" "}
+            {formatInt(Number(intent.recommendation?.unitsAfterCartonRounding || 0))} → {formatInt(Number(intent.recommendation?.recommendedUnits || 0))}
           </Text>
         ) : null}
         <div className="v2-actions-inline">

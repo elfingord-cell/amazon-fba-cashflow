@@ -22,17 +22,73 @@
   flex-direction: column;
 }
 
+.v2-brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 14px 10px;
+}
+
 .v2-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 14px 14px 10px;
+  margin: 0;
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(47, 183, 156, 0.12);
   color: #0f1b2d;
   font-size: 15px;
   font-weight: 700;
+  min-width: 0;
+  flex: 1;
+}
+
+.v2-brand-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-sider-collapse-toggle.ant-btn.ant-btn-text {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  border-radius: 10px;
+  color: #0f766e;
+  background: rgba(47, 183, 156, 0.14);
+}
+
+.v2-sider-collapse-toggle.ant-btn.ant-btn-text:hover,
+.v2-sider-collapse-toggle.ant-btn.ant-btn-text:focus-visible {
+  color: #0f766e;
+  background: rgba(47, 183, 156, 0.24);
+}
+
+.v2-side-menu {
+  border-inline-end: none !important;
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+.v2-sider.is-collapsed .v2-brand-wrap {
+  margin-inline: 10px;
+  justify-content: center;
+}
+
+.v2-sider.is-collapsed .v2-brand {
+  padding: 10px;
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+.v2-sider.is-collapsed .v2-brand-text {
+  display: none;
+}
+
+.v2-sider.is-collapsed .v2-sider-collapse-toggle.ant-btn.ant-btn-text {
+  margin: 0;
 }
 
 .v2-header {

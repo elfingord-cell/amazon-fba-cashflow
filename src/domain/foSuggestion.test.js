@@ -130,3 +130,132 @@ test("coverage-window units are based on target arrival month and respect MOQ fl
   assert.strictEqual(Math.round(breakdownSum), 600);
   assert.strictEqual(Math.round(recommendation.coverageDemandUnits), 600);
 });
+
+test("carton rounding without MOQ rounds up to full cartons", () => {
+  const sku = "SKU-CARTON-1";
+  const projection = buildSkuProjection({
+    sku,
+    baselineMonth: "2025-01",
+    stock0: 50,
+    forecastByMonth: { "2025-02": 300, "2025-03": 181 },
+    inboundByMonth: {},
+    horizonMonths: 4,
+  });
+
+  const recommendation = computeFoRecommendation({
+    sku,
+    baselineMonth: "2025-01",
+    projection,
+    plannedSalesBySku: { [sku]: { "2025-03": 181 } },
+    safetyStockDays: 60,
+    coverageDays: 31,
+    leadTimeDays: 30,
+    requiredArrivalMonth: "2025-03",
+    unitsPerCarton: 4,
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.strictEqual(recommendation.recommendedUnitsRaw, 181);
+  assert.strictEqual(recommendation.moqApplied, false);
+  assert.strictEqual(recommendation.unitsAfterMoq, 181);
+  assert.strictEqual(recommendation.unitsAfterCartonRounding, 184);
+  assert.strictEqual(recommendation.recommendedUnits, 184);
+  assert.strictEqual(recommendation.cartonRoundingApplied, true);
+  assert.strictEqual(recommendation.recommendedCartons, 46);
+});
+
+test("MOQ is applied before carton rounding", () => {
+  const sku = "SKU-CARTON-2";
+  const projection = buildSkuProjection({
+    sku,
+    baselineMonth: "2025-01",
+    stock0: 100,
+    forecastByMonth: { "2025-02": 300, "2025-03": 490 },
+    inboundByMonth: {},
+    horizonMonths: 4,
+  });
+
+  const recommendation = computeFoRecommendation({
+    sku,
+    baselineMonth: "2025-01",
+    projection,
+    plannedSalesBySku: { [sku]: { "2025-03": 490 } },
+    safetyStockDays: 60,
+    coverageDays: 31,
+    leadTimeDays: 30,
+    requiredArrivalMonth: "2025-03",
+    moqUnits: 500,
+    unitsPerCarton: 12,
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.strictEqual(recommendation.recommendedUnitsRaw, 490);
+  assert.strictEqual(recommendation.unitsAfterMoq, 500);
+  assert.strictEqual(recommendation.unitsAfterCartonRounding, 504);
+  assert.strictEqual(recommendation.recommendedUnits, 504);
+  assert.strictEqual(recommendation.moqApplied, true);
+});
+
+test("block roundup applies when lift percent is within threshold", () => {
+  const sku = "SKU-CARTON-3";
+  const projection = buildSkuProjection({
+    sku,
+    baselineMonth: "2025-01",
+    stock0: 50,
+    forecastByMonth: { "2025-02": 300, "2025-03": 181 },
+    inboundByMonth: {},
+    horizonMonths: 4,
+  });
+
+  const recommendation = computeFoRecommendation({
+    sku,
+    baselineMonth: "2025-01",
+    projection,
+    plannedSalesBySku: { [sku]: { "2025-03": 181 } },
+    safetyStockDays: 60,
+    coverageDays: 31,
+    leadTimeDays: 30,
+    requiredArrivalMonth: "2025-03",
+    unitsPerCarton: 4,
+    roundupCartonBlock: 10,
+    roundupMaxPct: 10,
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.strictEqual(recommendation.unitsAfterCartonRounding, 184);
+  assert.strictEqual(recommendation.roundupCandidateUnits, 200);
+  assert.strictEqual(recommendation.blockRoundupApplied, true);
+  assert.strictEqual(recommendation.recommendedUnits, 200);
+});
+
+test("block roundup is skipped when lift percent exceeds threshold", () => {
+  const sku = "SKU-CARTON-4";
+  const projection = buildSkuProjection({
+    sku,
+    baselineMonth: "2025-01",
+    stock0: 50,
+    forecastByMonth: { "2025-02": 300, "2025-03": 181 },
+    inboundByMonth: {},
+    horizonMonths: 4,
+  });
+
+  const recommendation = computeFoRecommendation({
+    sku,
+    baselineMonth: "2025-01",
+    projection,
+    plannedSalesBySku: { [sku]: { "2025-03": 181 } },
+    safetyStockDays: 60,
+    coverageDays: 31,
+    leadTimeDays: 30,
+    requiredArrivalMonth: "2025-03",
+    unitsPerCarton: 4,
+    roundupCartonBlock: 10,
+    roundupMaxPct: 5,
+  });
+
+  assert.strictEqual(recommendation.status, "ok");
+  assert.strictEqual(recommendation.unitsAfterCartonRounding, 184);
+  assert.strictEqual(recommendation.roundupCandidateUnits, 200);
+  assert.strictEqual(recommendation.blockRoundupApplied, false);
+  assert.strictEqual(recommendation.recommendedUnits, 184);
+});

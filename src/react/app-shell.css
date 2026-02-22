@@ -28,6 +28,28 @@
   gap: 10px;
 }
 
+.app-sidebar-collapse-toggle {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(47, 183, 156, 0.14);
+  color: #0f766e;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.app-sidebar-collapse-toggle:hover,
+.app-sidebar-collapse-toggle:focus-visible {
+  background: rgba(47, 183, 156, 0.24);
+  color: #0f766e;
+  outline: none;
+}
+
 .app-brand-mark {
   width: 34px;
   height: 34px;
@@ -64,6 +86,26 @@
 
 .app-menu .ant-menu-item {
   font-weight: 500;
+}
+
+.app-sider.is-collapsed .app-sidebar-header {
+  padding-inline: 10px;
+  align-items: center;
+}
+
+.app-sider.is-collapsed .app-sidebar-top {
+  width: 100%;
+  justify-content: center;
+}
+
+.app-sider.is-collapsed .app-sidebar-header .sidebar-title,
+.app-sider.is-collapsed .app-sidebar-header .data-health-badge,
+.app-sider.is-collapsed .app-sidebar-header .sidebar-status {
+  display: none;
+}
+
+.app-sider.is-collapsed .app-sidebar-collapse-toggle {
+  margin-left: 0;
 }
 
 .app-header {

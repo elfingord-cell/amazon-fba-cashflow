@@ -1175,6 +1175,12 @@ export function computeFoRecommendationForSku(input: {
     ?? asPositiveNumber(input.product?.moqUnits)
     ?? asPositiveNumber(input.settings?.moqDefaultUnits)
     ?? 0;
+  const unitsPerCarton = asPositiveNumber(input.product?.unitsPerCarton) ?? null;
+  const roundupCartonBlock = asPositiveNumber(input.settings?.foRecommendationRoundupCartonBlock) ?? 10;
+  const roundupMaxPctRaw = Number(input.settings?.foRecommendationRoundupMaxPct);
+  const roundupMaxPct = Number.isFinite(roundupMaxPctRaw)
+    ? Math.max(0, roundupMaxPctRaw)
+    : 10;
   const stock0 = context.closingStockBySku?.[sku]?.[context.baselineMonth] ?? 0;
   const projection = buildSkuProjection({
     sku,
@@ -1196,6 +1202,9 @@ export function computeFoRecommendationForSku(input: {
     cnyPeriod: input.settings?.cny,
     inboundWithoutEtaCount: context.inboundWithoutEtaCount,
     moqUnits,
+    unitsPerCarton,
+    roundupCartonBlock,
+    roundupMaxPct,
     requiredArrivalMonth: input.requiredArrivalMonth,
   }) as Record<string, unknown>;
 }

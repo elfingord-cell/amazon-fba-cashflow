@@ -64,6 +64,8 @@ const defaults = {
     robustnessLookaheadDaysDdp: 35,
     foCoverageDohDefault: 90,
     moqDefaultUnits: 500,
+    foRecommendationRoundupCartonBlock: 10,
+    foRecommendationRoundupMaxPct: 10,
     skuPlanningHorizonMonths: 12,
     skuPlanningAbcFilter: "abc",
     skuPlanningMaxPhantomSuggestionsPerSku: 3,
@@ -264,6 +266,17 @@ function ensureGlobalSettings(state) {
   );
   settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
   settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
+  settings.foRecommendationRoundupCartonBlock = Math.max(
+    1,
+    Math.round(Number(
+      settings.foRecommendationRoundupCartonBlock
+      ?? defaults.settings.foRecommendationRoundupCartonBlock,
+    ) || defaults.settings.foRecommendationRoundupCartonBlock),
+  );
+  settings.foRecommendationRoundupMaxPct = Math.max(
+    0,
+    Number(settings.foRecommendationRoundupMaxPct ?? defaults.settings.foRecommendationRoundupMaxPct) || 0,
+  );
   const skuPlanningHorizonMonths = Math.round(Number(settings.skuPlanningHorizonMonths ?? defaults.settings.skuPlanningHorizonMonths) || defaults.settings.skuPlanningHorizonMonths);
   settings.skuPlanningHorizonMonths = [6, 12, 18].includes(skuPlanningHorizonMonths)
     ? skuPlanningHorizonMonths
@@ -851,6 +864,9 @@ function migrateProducts(state) {
         moqUnits: Number.isFinite(Number(prod.moqUnits))
           ? Math.max(0, Math.round(Number(prod.moqUnits)))
           : (Number.isFinite(Number(base.moqUnits)) ? Math.max(0, Math.round(Number(base.moqUnits))) : null),
+        unitsPerCarton: Number.isFinite(Number(prod.unitsPerCarton))
+          ? Math.max(1, Math.round(Number(prod.unitsPerCarton)))
+          : (Number.isFinite(Number(base.unitsPerCarton)) ? Math.max(1, Math.round(Number(base.unitsPerCarton))) : null),
         safetyStockDohOverride: Number.isFinite(Number(prod.safetyStockDohOverride))
           ? Math.max(0, Math.round(Number(prod.safetyStockDohOverride)))
           : (Number.isFinite(Number(base.safetyStockDohOverride)) ? Math.max(0, Math.round(Number(base.safetyStockDohOverride))) : null),
@@ -911,6 +927,7 @@ function migrateProducts(state) {
         avgSellingPriceGrossEUR: null,
         sellerboardMarginPct: null,
         moqUnits: null,
+        unitsPerCarton: null,
         safetyStockDohOverride: null,
         foCoverageDohOverride: null,
         moqOverrideUnits: null,
@@ -1005,6 +1022,7 @@ function normaliseProductInput(input) {
   const productionLeadTimeDaysDefault = parseNumber(input.productionLeadTimeDaysDefault ?? null);
   const moqUnitsRaw = parseNumber(input.moqUnits ?? input.moq ?? null);
   const moqUnits = Number.isFinite(moqUnitsRaw) ? Math.max(0, Math.round(moqUnitsRaw)) : null;
+  const unitsPerCartonRaw = parseNumber(input.unitsPerCarton ?? null);
   const safetyStockDohOverrideRaw = parseNumber(input.safetyStockDohOverride ?? null);
   const foCoverageDohOverrideRaw = parseNumber(input.foCoverageDohOverride ?? null);
   const moqOverrideUnitsRaw = parseNumber(input.moqOverrideUnits ?? null);
@@ -1033,6 +1051,7 @@ function normaliseProductInput(input) {
     returnsRate,
     vatExempt,
     moqUnits,
+    unitsPerCarton: Number.isFinite(unitsPerCartonRaw) ? Math.max(1, Math.round(unitsPerCartonRaw)) : null,
     safetyStockDohOverride: Number.isFinite(safetyStockDohOverrideRaw) ? Math.max(0, Math.round(safetyStockDohOverrideRaw)) : null,
     foCoverageDohOverride: Number.isFinite(foCoverageDohOverrideRaw) ? Math.max(0, Math.round(foCoverageDohOverrideRaw)) : null,
     moqOverrideUnits: Number.isFinite(moqOverrideUnitsRaw) ? Math.max(0, Math.round(moqOverrideUnitsRaw)) : null,
@@ -1385,6 +1404,7 @@ export function upsertProduct(input){
       goodsDescription: normalised.goodsDescription,
       template: normalised.template,
       moqUnits: normalised.moqUnits,
+      unitsPerCarton: normalised.unitsPerCarton,
       safetyStockDohOverride: normalised.safetyStockDohOverride,
       foCoverageDohOverride: normalised.foCoverageDohOverride,
       moqOverrideUnits: normalised.moqOverrideUnits,
@@ -1412,6 +1432,7 @@ export function upsertProduct(input){
     target.goodsDescription = normalised.goodsDescription;
     target.template = normalised.template;
     target.moqUnits = normalised.moqUnits;
+    target.unitsPerCarton = normalised.unitsPerCarton;
     target.safetyStockDohOverride = normalised.safetyStockDohOverride;
     target.foCoverageDohOverride = normalised.foCoverageDohOverride;
     target.moqOverrideUnits = normalised.moqOverrideUnits;
