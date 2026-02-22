@@ -5,6 +5,7 @@ import ReactECharts from "echarts-for-react";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { DataTable } from "../../components/DataTable";
 import { useWorkspaceState } from "../../state/workspace";
+import { v2AbcChartColors } from "../../app/chartPalette";
 
 const { Paragraph, Text, Title } = Typography;
 const ABC_THRESHOLDS = { A: 0.8, B: 0.95 } as const;
@@ -344,12 +345,12 @@ export default function AbcInsightsModule(): JSX.Element {
           symbol: "circle",
           symbolSize: 5,
           data: cumulative,
-          lineStyle: { width: 2, color: "#2563eb" },
-          itemStyle: { color: "#2563eb" },
-          areaStyle: { color: "rgba(37, 99, 235, 0.12)" },
+          lineStyle: { width: 2, color: v2AbcChartColors.paretoLine },
+          itemStyle: { color: v2AbcChartColors.paretoLine },
+          areaStyle: { color: v2AbcChartColors.paretoArea },
           markLine: {
             symbol: "none",
-            lineStyle: { type: "dashed", color: "rgba(15, 27, 45, 0.42)" },
+            lineStyle: { type: "dashed", color: v2AbcChartColors.thresholdLine },
             label: { formatter: "{b}" },
             data: markLines,
           },

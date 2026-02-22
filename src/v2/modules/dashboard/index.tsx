@@ -5,7 +5,9 @@ import {
   Button,
   Card,
   Checkbox,
+  Col,
   Drawer,
+  Row,
   Segmented,
   Select,
   Space,
@@ -38,6 +40,7 @@ import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/mont
 import { normalizePortfolioBucket, PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
+import { v2ChartPalette, v2DashboardChartColors } from "../../app/chartPalette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -1184,11 +1187,11 @@ export default function DashboardModule(): JSX.Element {
         itemHeight: 8,
         textStyle: {
           fontSize: 12,
-          color: "#334155",
+          color: v2ChartPalette.textStrong,
         },
         pageTextStyle: {
           fontSize: 11,
-          color: "#64748b",
+          color: v2ChartPalette.textMuted,
         },
         data: legendItems,
       },
@@ -1205,11 +1208,11 @@ export default function DashboardModule(): JSX.Element {
         axisLabel: {
           hideOverlap: true,
           fontSize: 12,
-          color: "#475569",
+          color: v2ChartPalette.textMuted,
           margin: 12,
         },
         axisLine: {
-          lineStyle: { color: "rgba(15,27,45,0.24)" },
+          lineStyle: { color: v2ChartPalette.axisLine },
         },
       },
       yAxis: [
@@ -1218,16 +1221,16 @@ export default function DashboardModule(): JSX.Element {
           name: "Cashflow",
           nameTextStyle: {
             fontSize: 12,
-            color: "#475569",
+            color: v2ChartPalette.textMuted,
           },
           axisLabel: {
             formatter: (value: number) => formatSignedCurrency(value),
             fontSize: 12,
-            color: "#475569",
+            color: v2ChartPalette.textMuted,
           },
           splitLine: {
             lineStyle: {
-              color: "rgba(15,27,45,0.10)",
+              color: v2ChartPalette.gridLine,
             },
           },
         },
@@ -1237,12 +1240,12 @@ export default function DashboardModule(): JSX.Element {
           position: "right",
           nameTextStyle: {
             fontSize: 12,
-            color: "#475569",
+            color: v2ChartPalette.textMuted,
           },
           axisLabel: {
             formatter: (value: number) => formatCurrency(value),
             fontSize: 12,
-            color: "#475569",
+            color: v2ChartPalette.textMuted,
           },
           splitLine: {
             show: false,
@@ -1255,56 +1258,56 @@ export default function DashboardModule(): JSX.Element {
           type: "bar",
           stack: "cash",
           data: amazonCoreInflowSeries,
-          itemStyle: { color: "#166534" },
+          itemStyle: { color: v2DashboardChartColors.amazonCore },
         },
         {
           name: amazonPlannedSeriesName,
           type: "bar",
           stack: "cash",
           data: amazonPlannedInflowSeries,
-          itemStyle: { color: "#22c55e" },
+          itemStyle: { color: v2DashboardChartColors.amazonPlanned },
         },
         {
           name: amazonNewSeriesName,
           type: "bar",
           stack: "cash",
           data: amazonNewInflowSeries,
-          itemStyle: { color: "#86efac" },
+          itemStyle: { color: v2DashboardChartColors.amazonNew },
         },
         {
           name: "Sonstige In",
           type: "bar",
           stack: "cash",
           data: otherInflowSeries,
-          itemStyle: { color: "#6ee7b7" },
+          itemStyle: { color: v2DashboardChartColors.otherInflow },
         },
         {
           name: "Fixkosten",
           type: "bar",
           stack: "cash",
           data: fixcostOutflowSeries,
-          itemStyle: { color: "#7f1d1d" },
+          itemStyle: { color: v2DashboardChartColors.fixcost },
         },
         {
           name: "PO",
           type: "bar",
           stack: "cash",
           data: poOutflowSeries,
-          itemStyle: { color: "#e74c3c" },
+          itemStyle: { color: v2DashboardChartColors.po },
         },
         {
           name: "FO",
           type: "bar",
           stack: "cash",
           data: foOutflowSeries,
-          itemStyle: { color: "#f97316" },
+          itemStyle: { color: v2DashboardChartColors.fo },
         },
         {
           name: "Phantom FO",
           type: "bar",
           stack: "cash",
           data: phantomFoOutflowSeries,
-          itemStyle: { color: "#fbbf24" },
+          itemStyle: { color: v2DashboardChartColors.phantomFo },
         },
         {
           name: "Netto",
@@ -1312,8 +1315,8 @@ export default function DashboardModule(): JSX.Element {
           smooth: true,
           showSymbol: false,
           data: simulatedBreakdown.map((row) => Number(row.net || 0)),
-          itemStyle: { color: "#0f1b2d" },
-          lineStyle: { width: 2 },
+          itemStyle: { color: v2DashboardChartColors.net },
+          lineStyle: { width: 2, color: v2DashboardChartColors.net },
         },
         {
           name: "Kontostand belastbar",
@@ -1323,8 +1326,8 @@ export default function DashboardModule(): JSX.Element {
           connectNulls: false,
           showSymbol: false,
           data: robustPositive,
-          lineStyle: { width: 2, color: "#3bc2a7" },
-          itemStyle: { color: "#3bc2a7" },
+          lineStyle: { width: 2, color: v2DashboardChartColors.robustPositive },
+          itemStyle: { color: v2DashboardChartColors.robustPositive },
         },
         {
           name: "Kontostand belastbar (<0)",
@@ -1334,8 +1337,8 @@ export default function DashboardModule(): JSX.Element {
           connectNulls: false,
           showSymbol: false,
           data: robustNegative,
-          lineStyle: { width: 2, color: "#b42318" },
-          itemStyle: { color: "#b42318" },
+          lineStyle: { width: 2, color: v2DashboardChartColors.robustNegative },
+          itemStyle: { color: v2DashboardChartColors.robustNegative },
         },
         {
           name: "Kontostand orientierend",
@@ -1345,8 +1348,8 @@ export default function DashboardModule(): JSX.Element {
           connectNulls: false,
           showSymbol: false,
           data: softPositive,
-          lineStyle: { width: 2, type: "dashed", color: "#94a3b8" },
-          itemStyle: { color: "#94a3b8" },
+          lineStyle: { width: 2, type: "dashed", color: v2DashboardChartColors.softPositive },
+          itemStyle: { color: v2DashboardChartColors.softPositive },
         },
         {
           name: "Kontostand orientierend (<0)",
@@ -1356,8 +1359,8 @@ export default function DashboardModule(): JSX.Element {
           connectNulls: false,
           showSymbol: false,
           data: softNegative,
-          lineStyle: { width: 2, type: "dashed", color: "#c2410c" },
-          itemStyle: { color: "#c2410c" },
+          lineStyle: { width: 2, type: "dashed", color: v2DashboardChartColors.softNegative },
+          itemStyle: { color: v2DashboardChartColors.softNegative },
         },
       ],
     };
@@ -1817,33 +1820,39 @@ export default function DashboardModule(): JSX.Element {
   return (
     <div className="v2-page">
       <Card className="v2-intro-card">
-        <div className="v2-page-head">
-          <div>
-            <Title level={3}>Dashboard</Title>
-            <Paragraph>
-              Berechnungs-Cockpit für Kontostand und Cashflow. Details öffnest du bei Bedarf in den Fach-Tabs.
-            </Paragraph>
-          </div>
-          <div className="v2-toolbar-field">
-            <Text>Zeitraum</Text>
-            <Select
-              value={range}
-              onChange={(value) => setRange(value)}
-              options={DASHBOARD_RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
-              style={{ width: 220, maxWidth: "100%" }}
-            />
-          </div>
-          <div className="v2-toolbar-field">
-            <Text>PFO bis</Text>
-            <Select
-              value={resolvedPhantomTargetMonth || undefined}
-              onChange={(value) => setPhantomTargetMonth(String(value || ""))}
-              options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
-              style={{ width: 220, maxWidth: "100%" }}
-              disabled={!planningMonths.length}
-            />
-          </div>
-        </div>
+        <Row gutter={[10, 10]} className="v2-page-head">
+          <Col xs={24} xl={12}>
+            <div>
+              <Title level={3}>Dashboard</Title>
+              <Paragraph>
+                Berechnungs-Cockpit für Kontostand und Cashflow. Details öffnest du bei Bedarf in den Fach-Tabs.
+              </Paragraph>
+            </div>
+          </Col>
+          <Col xs={24} md={12} xl={6}>
+            <div className="v2-toolbar-field">
+              <Text>Zeitraum</Text>
+              <Select
+                value={range}
+                onChange={(value) => setRange(value)}
+                options={DASHBOARD_RANGE_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
+                style={{ width: 220, maxWidth: "100%" }}
+              />
+            </div>
+          </Col>
+          <Col xs={24} md={12} xl={6}>
+            <div className="v2-toolbar-field">
+              <Text>PFO bis</Text>
+              <Select
+                value={resolvedPhantomTargetMonth || undefined}
+                onChange={(value) => setPhantomTargetMonth(String(value || ""))}
+                options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
+                style={{ width: 220, maxWidth: "100%" }}
+                disabled={!planningMonths.length}
+              />
+            </div>
+          </Col>
+        </Row>
         <div className="v2-toolbar">
           <Text type="secondary">
             Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate) · PFO bis: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}
@@ -1898,7 +1907,7 @@ export default function DashboardModule(): JSX.Element {
                   </Tooltip>
                 </Space>
                 {selectedCriteriaRows.map((criteria) => (
-                  <div key={criteria.key} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10 }}>
+                  <div key={criteria.key} className="v2-dashboard-detail-card">
                     <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
                       <Text strong>{criteriaStateSymbol(criteria.state)} {criteria.label}</Text>
                       {criteria.route ? (
@@ -1939,7 +1948,7 @@ export default function DashboardModule(): JSX.Element {
                     ) : (
                       <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 6 }}>
                         {selectedMonthData.blockers.map((blocker) => (
-                          <div key={blocker.id} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10 }}>
+                          <div key={blocker.id} className="v2-dashboard-detail-card">
                             <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
                               <Tag color="red">Blocker</Tag>
                               <Button size="small" onClick={() => openBlockerTarget(blocker)}>
@@ -1959,7 +1968,7 @@ export default function DashboardModule(): JSX.Element {
                     ) : (
                       <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 6 }}>
                         {selectedCoverageWarnings.map((warning) => (
-                          <div key={warning.id} style={{ border: "1px solid #f0f0f0", borderRadius: 8, padding: 10 }}>
+                          <div key={warning.id} className="v2-dashboard-detail-card">
                             <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
                               <Tag color="gold">Warnung</Tag>
                               <Button size="small" onClick={() => navigate(warning.route)}>

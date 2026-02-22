@@ -39,6 +39,7 @@ import {
 import { applyPresenceHints, attachPresenceFocusTracking } from "../sync/presence";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../domain/collaboration";
 import { loadState } from "../../data/storageLocal.js";
+import { readInitialCleanUiV2Flag, resolveCleanUiV2FlagFromState } from "./cleanUiFlag";
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -286,6 +287,7 @@ function V2Layout(): JSX.Element {
     const settings = (initial?.settings || {}) as Record<string, unknown>;
     return readCollaborationDisplayNames(settings);
   });
+  const [cleanUiEnabled, setCleanUiEnabled] = useState<boolean>(() => readInitialCleanUiV2Flag());
   const screens = Grid.useBreakpoint();
   const isDesktop = Boolean(screens.lg);
   const isMobile = !isDesktop;
@@ -369,6 +371,7 @@ function V2Layout(): JSX.Element {
       const detail = (custom?.detail || {}) as Record<string, unknown>;
       const settings = (detail.settings || {}) as Record<string, unknown>;
       setDisplayNameMap(readCollaborationDisplayNames(settings));
+      setCleanUiEnabled(resolveCleanUiV2FlagFromState(detail));
     };
     window.addEventListener("v2:workspace-state-snapshot", onSnapshot as EventListener);
     return () => {
@@ -457,7 +460,7 @@ function V2Layout(): JSX.Element {
   const showAccessGate = syncSession.requiresAuth || (syncSession.isAuthenticated && !syncSession.hasWorkspaceAccess);
 
   return (
-    <Layout className="v2-shell">
+    <Layout className="v2-shell" data-v2-skin={cleanUiEnabled ? "clean" : "base"}>
       {isDesktop ? (
         <Sider
           width={V2_SIDER_WIDTH}

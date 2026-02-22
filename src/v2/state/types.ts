@@ -10,6 +10,15 @@ export interface LegacyMeta {
   }>;
 }
 
+export interface AppFeatureFlagsV2 extends UnknownRecord {
+  cleanUiV2?: boolean;
+  executiveDashboardV2?: boolean;
+}
+
+export interface AppSettingsV2 extends UnknownRecord {
+  featureFlags?: AppFeatureFlagsV2;
+}
+
 export interface ForecastDriftTopItem {
   sku: string;
   month: string;
@@ -119,7 +128,7 @@ export interface PoRecordV2 extends UnknownRecord {
 export interface AppStateV2 extends UnknownRecord {
   schemaVersion: 2;
   legacyMeta: LegacyMeta;
-  settings?: UnknownRecord;
+  settings?: AppSettingsV2;
   products?: UnknownRecord[];
   planProducts?: UnknownRecord[];
   planProductMappings?: UnknownRecord[];

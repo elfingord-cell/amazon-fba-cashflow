@@ -48,6 +48,7 @@ import {
 import { useSyncSession } from "../../sync/session";
 import { useModalCollaboration } from "../../sync/modalCollaboration";
 import { useLocation } from "react-router-dom";
+import { v2ProductsChartColors } from "../../app/chartPalette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -836,7 +837,10 @@ export default function ProductsModule(): JSX.Element {
       xAxis: {
         type: "category",
         data: xLabels,
-        axisLine: { show: true },
+        axisLine: {
+          show: true,
+          lineStyle: { color: v2ProductsChartColors.seasonalityLine },
+        },
         },
         yAxis: {
         type: "value",
@@ -859,7 +863,8 @@ export default function ProductsModule(): JSX.Element {
           smooth: true,
           showSymbol: true,
           symbolSize: 6,
-          lineStyle: { width: 2 },
+          lineStyle: { width: 2, color: v2ProductsChartColors.seasonalityLine },
+          itemStyle: { color: v2ProductsChartColors.seasonalityPoint },
         },
       ],
     };

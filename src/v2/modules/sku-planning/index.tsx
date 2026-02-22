@@ -27,6 +27,7 @@ import { buildPhantomFoSuggestions, type PhantomFoSuggestion } from "../../domai
 import { addMonths, currentMonthKey, formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
 import { getActiveForecastLabel } from "../../domain/forecastVersioning";
 import { useWorkspaceState } from "../../state/workspace";
+import { v2ChartPalette, v2SkuPlanningChartColors } from "../../app/chartPalette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -907,7 +908,7 @@ export default function SkuPlanningModule(): JSX.Element {
           name: "Plan-Absatz",
           type: "bar",
           yAxisIndex: 1,
-          itemStyle: { color: "#64748b", opacity: 0.26 },
+          itemStyle: { color: v2SkuPlanningChartColors.demandBar, opacity: 0.26 },
           emphasis: { itemStyle: { opacity: 0.35 } },
           data: demandSeries,
         },
@@ -917,7 +918,7 @@ export default function SkuPlanningModule(): JSX.Element {
           smooth: false,
           symbol: "none",
           lineStyle: { opacity: 0 },
-          areaStyle: { color: "rgba(245, 158, 11, 0.12)" },
+          areaStyle: { color: v2SkuPlanningChartColors.safetyArea },
           data: safetySeries,
         },
         {
@@ -925,7 +926,7 @@ export default function SkuPlanningModule(): JSX.Element {
           type: "line",
           smooth: false,
           symbol: "none",
-          lineStyle: { width: 1, type: "dashed", color: "#f59e0b" },
+          lineStyle: { width: 1, type: "dashed", color: v2SkuPlanningChartColors.safetyLine },
           data: safetySeries,
         },
         {
@@ -934,11 +935,11 @@ export default function SkuPlanningModule(): JSX.Element {
           smooth: true,
           symbol: "circle",
           symbolSize: 6,
-          lineStyle: { width: 2, color: "#2563eb" },
-          itemStyle: { color: "#2563eb" },
+          lineStyle: { width: 2, color: v2SkuPlanningChartColors.baseInventory },
+          itemStyle: { color: v2SkuPlanningChartColors.baseInventory },
           markLine: {
             symbol: "none",
-            lineStyle: { type: "dotted", color: "#ef4444" },
+            lineStyle: { type: "dotted", color: v2SkuPlanningChartColors.oosLine },
             data: [{ yAxis: 0, name: "OOS" }],
           },
           data: inventorySeries,
@@ -949,8 +950,8 @@ export default function SkuPlanningModule(): JSX.Element {
           smooth: true,
           symbol: "diamond",
           symbolSize: 6,
-          lineStyle: { width: 2, color: "#ea580c" },
-          itemStyle: { color: "#ea580c" },
+          lineStyle: { width: 2, color: v2SkuPlanningChartColors.simulationInventory },
+          itemStyle: { color: v2SkuPlanningChartColors.simulationInventory },
           data: simulationSeries,
         }] : []),
         {
@@ -958,7 +959,7 @@ export default function SkuPlanningModule(): JSX.Element {
           type: "scatter",
           symbol: "circle",
           symbolSize: 11,
-          itemStyle: { color: "#0f766e", borderColor: "#134e4a", borderWidth: 1 },
+          itemStyle: { color: v2SkuPlanningChartColors.markerPo, borderColor: v2ChartPalette.markerPoBorder, borderWidth: 1 },
           tooltip: { show: false },
           data: markerPoints.po,
         },
@@ -967,7 +968,7 @@ export default function SkuPlanningModule(): JSX.Element {
           type: "scatter",
           symbol: "diamond",
           symbolSize: 11,
-          itemStyle: { color: "#16a34a", borderColor: "#166534", borderWidth: 1 },
+          itemStyle: { color: v2SkuPlanningChartColors.markerFo, borderColor: v2ChartPalette.markerFoBorder, borderWidth: 1 },
           tooltip: { show: false },
           data: markerPoints.fo,
         },
@@ -976,7 +977,7 @@ export default function SkuPlanningModule(): JSX.Element {
           type: "scatter",
           symbol: "triangle",
           symbolSize: 13,
-          itemStyle: { color: "#f97316", borderColor: "#9a3412", borderWidth: 1 },
+          itemStyle: { color: v2SkuPlanningChartColors.markerPhantom, borderColor: v2ChartPalette.markerPhantomBorder, borderWidth: 1 },
           tooltip: { show: false },
           data: markerPoints.phantom,
         }] : []),

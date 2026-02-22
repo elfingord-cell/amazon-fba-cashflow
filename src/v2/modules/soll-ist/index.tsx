@@ -7,6 +7,7 @@ import { DataTable } from "../../components/DataTable";
 import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
+import { v2SollIstChartColors } from "../../app/chartPalette";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -311,8 +312,8 @@ export default function SollIstModule(): JSX.Element {
           itemStyle: {
             color: (params: { dataIndex: number; value: number }) => {
               const isProvisional = firstProvisionalIndex >= 0 && params.dataIndex >= firstProvisionalIndex;
-              if (isProvisional) return "rgba(245, 158, 11, 0.65)";
-              return params.value < 0 ? "#dc2626" : "#16a34a";
+              if (isProvisional) return v2SollIstChartColors.provisionalOverlay;
+              return params.value < 0 ? v2SollIstChartColors.negative : v2SollIstChartColors.positive;
             },
           },
         },
@@ -321,19 +322,19 @@ export default function SollIstModule(): JSX.Element {
           type: "line",
           smooth: true,
           data: visibleRows.map((row) => asNumber(row.plannedClosing)),
-          lineStyle: { width: 2, type: "dashed", color: "#0f172a" },
-          itemStyle: { color: "#0f172a" },
+          lineStyle: { width: 2, type: "dashed", color: v2SollIstChartColors.plannedClosing },
+          itemStyle: { color: v2SollIstChartColors.plannedClosing },
         },
         {
           name: "Kontostand Ist",
           type: "line",
           smooth: true,
           data: visibleRows.map((row) => asNumber(row.actualClosing)),
-          lineStyle: { width: 2, color: "#0ea5e9" },
-          itemStyle: { color: "#0ea5e9" },
+          lineStyle: { width: 2, color: v2SollIstChartColors.actualClosing },
+          itemStyle: { color: v2SollIstChartColors.actualClosing },
           markArea: firstProvisionalIndex >= 0
             ? {
-              itemStyle: { color: "rgba(251, 191, 36, 0.12)" },
+              itemStyle: { color: v2SollIstChartColors.provisionalArea },
               data: [[
                 { xAxis: xAxisLabels[firstProvisionalIndex] },
                 { xAxis: xAxisLabels[xAxisLabels.length - 1] },
@@ -379,13 +380,13 @@ export default function SollIstModule(): JSX.Element {
           name: "Umsatz Soll",
           type: "bar",
           data: visibleRows.map((row) => asNumber(row.plannedRevenue)),
-          itemStyle: { color: "#94a3b8" },
+          itemStyle: { color: v2SollIstChartColors.plannedRevenue },
         },
         {
           name: "Umsatz Ist",
           type: "bar",
           data: visibleRows.map((row) => asNumber(row.actualRevenue)),
-          itemStyle: { color: "#0ea5e9" },
+          itemStyle: { color: v2SollIstChartColors.actualRevenue },
         },
         {
           name: "Payout-Quote Soll",
@@ -393,8 +394,8 @@ export default function SollIstModule(): JSX.Element {
           yAxisIndex: 1,
           smooth: true,
           data: visibleRows.map((row) => asNumber(row.plannedPayoutRatePct)),
-          lineStyle: { width: 2, type: "dashed", color: "#64748b" },
-          itemStyle: { color: "#64748b" },
+          lineStyle: { width: 2, type: "dashed", color: v2SollIstChartColors.plannedPayoutRate },
+          itemStyle: { color: v2SollIstChartColors.plannedPayoutRate },
         },
         {
           name: "Payout-Quote Ist",
@@ -402,8 +403,8 @@ export default function SollIstModule(): JSX.Element {
           yAxisIndex: 1,
           smooth: true,
           data: visibleRows.map((row) => asNumber(row.actualPayoutRatePct)),
-          lineStyle: { width: 2, color: "#f97316" },
-          itemStyle: { color: "#f97316" },
+          lineStyle: { width: 2, color: v2SollIstChartColors.actualPayoutRate },
+          itemStyle: { color: v2SollIstChartColors.actualPayoutRate },
         },
       ],
     };
@@ -438,8 +439,8 @@ export default function SollIstModule(): JSX.Element {
           itemStyle: {
             color: (params: { dataIndex: number; value: number }) => {
               const item = selectedDrivers[params.dataIndex];
-              if (item?.kind === "total") return "#0f172a";
-              return params.value < 0 ? "#dc2626" : "#16a34a";
+              if (item?.kind === "total") return v2SollIstChartColors.totalDriver;
+              return params.value < 0 ? v2SollIstChartColors.negative : v2SollIstChartColors.positive;
             },
           },
         },

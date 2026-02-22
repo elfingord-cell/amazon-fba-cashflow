@@ -187,50 +187,50 @@
   border-radius: 14px;
 }
 
-.v2-shell .ant-card {
+.v2-shell[data-v2-skin="base"] .ant-card {
   border-radius: var(--radius-lg, 16px);
   border-color: rgba(15, 27, 45, 0.08);
 }
 
-.v2-shell .ant-card .ant-card-body {
+.v2-shell[data-v2-skin="base"] .ant-card .ant-card-body {
   padding: 12px 14px;
 }
 
-.v2-shell .ant-btn {
+.v2-shell[data-v2-skin="base"] .ant-btn {
   height: var(--control-height-md, 36px);
   border-radius: 10px;
   padding-inline: 12px;
 }
 
-.v2-shell .ant-btn.ant-btn-sm {
+.v2-shell[data-v2-skin="base"] .ant-btn.ant-btn-sm {
   height: var(--control-height-sm, 30px);
   padding-inline: 10px;
 }
 
-.v2-shell .ant-btn-link {
+.v2-shell[data-v2-skin="base"] .ant-btn-link {
   height: var(--control-height-sm, 28px);
   padding-inline: 6px;
 }
 
-.v2-shell .ant-input,
-.v2-shell .ant-input-affix-wrapper,
-.v2-shell .ant-select-selector,
-.v2-shell .ant-picker {
+.v2-shell[data-v2-skin="base"] .ant-input,
+.v2-shell[data-v2-skin="base"] .ant-input-affix-wrapper,
+.v2-shell[data-v2-skin="base"] .ant-select-selector,
+.v2-shell[data-v2-skin="base"] .ant-picker {
   min-height: var(--control-height-md, 34px) !important;
   border-radius: 10px !important;
 }
 
-.v2-shell .ant-input-number {
+.v2-shell[data-v2-skin="base"] .ant-input-number {
   width: 100%;
   min-height: var(--control-height-md, 34px) !important;
   border-radius: 10px !important;
 }
 
-.v2-shell .ant-input-number .ant-input-number-input-wrap {
+.v2-shell[data-v2-skin="base"] .ant-input-number .ant-input-number-input-wrap {
   height: calc(var(--control-height-md, 34px) - 2px);
 }
 
-.v2-shell .ant-input-number .ant-input-number-input {
+.v2-shell[data-v2-skin="base"] .ant-input-number .ant-input-number-input {
   width: 100%;
   height: 100% !important;
   border: 0 !important;
@@ -240,8 +240,8 @@
   padding: 0 10px !important;
 }
 
-.v2-shell .ant-input-number .ant-input-number-input:focus,
-.v2-shell .ant-input-number .ant-input-number-input:focus-visible {
+.v2-shell[data-v2-skin="base"] .ant-input-number .ant-input-number-input:focus,
+.v2-shell[data-v2-skin="base"] .ant-input-number .ant-input-number-input:focus-visible {
   box-shadow: none !important;
   outline: none !important;
 }
@@ -270,18 +270,18 @@
   outline: none !important;
 }
 
-.v2-shell .ant-select-selection-item,
-.v2-shell .ant-select-selection-placeholder {
+.v2-shell[data-v2-skin="base"] .ant-select-selection-item,
+.v2-shell[data-v2-skin="base"] .ant-select-selection-placeholder {
   line-height: calc(var(--control-height-md, 34px) - 2px) !important;
 }
 
-.v2-shell .ant-checkbox-inner {
+.v2-shell[data-v2-skin="base"] .ant-checkbox-inner {
   width: 15px;
   height: 15px;
   border-radius: 4px;
 }
 
-.v2-shell .ant-table-wrapper {
+.v2-shell[data-v2-skin="base"] .ant-table-wrapper {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -292,20 +292,20 @@
   background: #fff;
 }
 
-.v2-shell .ant-table-wrapper .ant-spin-nested-loading,
-.v2-shell .ant-table-wrapper .ant-spin-container,
-.v2-shell .ant-table-wrapper .ant-table,
-.v2-shell .ant-table-wrapper .ant-table-container {
+.v2-shell[data-v2-skin="base"] .ant-table-wrapper .ant-spin-nested-loading,
+.v2-shell[data-v2-skin="base"] .ant-table-wrapper .ant-spin-container,
+.v2-shell[data-v2-skin="base"] .ant-table-wrapper .ant-table,
+.v2-shell[data-v2-skin="base"] .ant-table-wrapper .ant-table-container {
   max-width: 100%;
   min-width: 0;
 }
 
-.v2-shell .ant-table-wrapper .ant-table-container {
+.v2-shell[data-v2-skin="base"] .ant-table-wrapper .ant-table-container {
   border: 0 !important;
   border-radius: 0 !important;
 }
 
-.v2-shell .ant-table-content {
+.v2-shell[data-v2-skin="base"] .ant-table-content {
   width: 100%;
   max-width: 100%;
   overflow-x: auto !important;
@@ -313,25 +313,25 @@
   scrollbar-gutter: stable;
 }
 
-.v2-shell .ant-table-content::-webkit-scrollbar {
+.v2-shell[data-v2-skin="base"] .ant-table-content::-webkit-scrollbar {
   height: 8px;
 }
 
-.v2-shell .ant-table-content::-webkit-scrollbar-track {
+.v2-shell[data-v2-skin="base"] .ant-table-content::-webkit-scrollbar-track {
   background: var(--scrollbar-track, rgba(15, 23, 42, 0.1));
   border-radius: 999px;
 }
 
-.v2-shell .ant-table-content::-webkit-scrollbar-thumb {
+.v2-shell[data-v2-skin="base"] .ant-table-content::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb, #9aa4b2);
   border-radius: 999px;
 }
 
-.v2-shell .ant-table-content::-webkit-scrollbar-thumb:hover {
+.v2-shell[data-v2-skin="base"] .ant-table-content::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover, #7f8a99);
 }
 
-.v2-shell .ant-table-thead > tr > th {
+.v2-shell[data-v2-skin="base"] .ant-table-thead > tr > th {
   background: var(--table-header-bg, #f3f7fa);
   color: var(--table-header-text, #4b5563);
   font-size: 12px;
@@ -341,7 +341,7 @@
   white-space: nowrap;
 }
 
-.v2-shell .ant-table-tbody > tr > td {
+.v2-shell[data-v2-skin="base"] .ant-table-tbody > tr > td {
   padding: var(--table-row-padding-y, 7px) var(--table-row-padding-x, 10px);
   height: var(--table-row-height, 38px);
   font-size: 13px;
@@ -2084,6 +2084,12 @@
   font-size: 12px;
 }
 
+.v2-dashboard-detail-card {
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  border-radius: 10px;
+  padding: 10px;
+}
+
 .v2-dashboard-pnl-table .ant-table-thead > tr > th {
   white-space: nowrap;
   background: rgba(241, 245, 249, 0.82);
@@ -2943,4 +2949,170 @@
     min-width: 100%;
     width: 100%;
   }
+}
+
+.v2-shell[data-v2-skin="clean"] {
+  --v2-clean-primary: #1a2e4b;
+  --v2-clean-accent: #c5a059;
+  --v2-clean-surface: #ffffff;
+  --v2-clean-layout: #f2f4f7;
+  --v2-clean-border: #d1d5db;
+  --v2-clean-muted: #6b7280;
+  --v2-table-border: rgba(26, 46, 75, 0.16);
+  --v2-table-radius: 12px;
+  --table-header-bg: #f8fafc;
+  --table-header-text: #6b7280;
+  background: var(--v2-clean-layout);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-sider {
+  border-right-color: var(--v2-clean-border);
+  box-shadow: none;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-brand {
+  border: 1px solid var(--v2-clean-border);
+  background: var(--v2-clean-surface);
+  color: var(--v2-clean-primary);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-sider-collapse-toggle.ant-btn.ant-btn-text {
+  color: var(--v2-clean-primary);
+  background: rgba(26, 46, 75, 0.08);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-sider-collapse-toggle.ant-btn.ant-btn-text:hover,
+.v2-shell[data-v2-skin="clean"] .v2-sider-collapse-toggle.ant-btn.ant-btn-text:focus-visible {
+  color: var(--v2-clean-primary);
+  background: rgba(26, 46, 75, 0.14);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-side-menu .ant-menu-item-group-title {
+  color: var(--v2-clean-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-side-menu .ant-menu-item-selected {
+  background: var(--v2-clean-primary) !important;
+  color: #fff !important;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-side-menu .ant-menu-item-selected .ant-menu-item-icon {
+  color: var(--v2-clean-accent) !important;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-side-menu .ant-menu-item:hover:not(.ant-menu-item-selected) {
+  background: rgba(26, 46, 75, 0.08) !important;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-header {
+  border-bottom-color: var(--v2-clean-border);
+  background: #f8fafc !important;
+  min-height: 50px;
+  padding: 6px 16px !important;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-header-main,
+.v2-shell[data-v2-skin="clean"] .v2-header-meta {
+  min-height: auto;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-header-meta .ant-tag {
+  margin-inline-end: 0;
+  border-radius: 999px;
+  border: 1px solid var(--v2-clean-border);
+  background: #fff;
+  color: var(--v2-clean-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-content {
+  padding-top: 16px;
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-drawer-brand {
+  background: rgba(26, 46, 75, 0.08);
+  color: var(--v2-clean-primary);
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-card {
+  border: 1px solid var(--v2-clean-border);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(26, 46, 75, 0.1), 0 1px 2px rgba(26, 46, 75, 0.06);
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-card .ant-card-body {
+  padding: 14px;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-btn {
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-btn-default {
+  border-color: var(--v2-clean-border);
+  color: var(--v2-clean-primary);
+  background: #fff;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-btn-primary {
+  background: var(--v2-clean-primary);
+  border-color: var(--v2-clean-primary);
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-btn-primary:hover {
+  background: #223b5f;
+  border-color: #223b5f;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-input,
+.v2-shell[data-v2-skin="clean"] .ant-input-affix-wrapper,
+.v2-shell[data-v2-skin="clean"] .ant-input-number,
+.v2-shell[data-v2-skin="clean"] .ant-select-selector,
+.v2-shell[data-v2-skin="clean"] .ant-picker {
+  border-radius: 10px !important;
+  border-color: var(--v2-clean-border) !important;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-table-wrapper {
+  border: 1px solid var(--v2-clean-border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-table-wrapper .ant-table-container {
+  border: 0 !important;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-table-thead > tr > th {
+  background: #f8fafc;
+  color: var(--v2-clean-muted);
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-table-tbody > tr:hover > td {
+  background: rgba(26, 46, 75, 0.03);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-dashboard-chart-summary .ant-tag {
+  margin-inline-end: 0;
+  border: 1px solid var(--v2-clean-border);
+  background: #fff;
+  color: var(--v2-clean-primary);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-dashboard-chart-hint,
+.v2-shell[data-v2-skin="clean"] .v2-dashboard-action-impact,
+.v2-shell[data-v2-skin="clean"] .v2-dashboard-robust-item-meta {
+  color: var(--v2-clean-muted);
+}
+
+.v2-shell[data-v2-skin="clean"] .v2-scroll-host::-webkit-scrollbar-thumb,
+.v2-shell[data-v2-skin="clean"] .v2-stats-table-wrap::-webkit-scrollbar-thumb,
+.v2-shell[data-v2-skin="clean"] .ant-table-content::-webkit-scrollbar-thumb {
+  background: #9ca3af;
 }
