@@ -659,7 +659,7 @@ export default function DashboardModule(): JSX.Element {
     ? state.forecast as Record<string, unknown>
     : {};
   const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
-  const methodikCalibrationHorizonMonths = Math.max(1, Math.round(Number(settings.cashInCalibrationHorizonMonths || 6)));
+  const methodikCalibrationHorizonMonths = 3;
   const methodikSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
     ? settings.cashInRecommendationIgnoreQ4 !== true
     : settings.cashInRecommendationSeasonalityEnabled !== false;

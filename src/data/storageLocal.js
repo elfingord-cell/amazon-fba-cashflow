@@ -6,6 +6,12 @@ import {
   normalizePortfolioBucket,
   PORTFOLIO_BUCKET,
 } from "../domain/portfolioBuckets.js";
+import {
+  REVENUE_CALIBRATION_DEFAULT_BIAS,
+  REVENUE_CALIBRATION_DEFAULT_RISK,
+  normalizeRevenueCalibrationMode,
+  normalizeRevenueCalibrationState,
+} from "../domain/cashInRules.js";
 
 export const STORAGE_KEY = "amazon_fba_cashflow_v1";
 export const LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
@@ -32,11 +38,18 @@ const defaults = {
     cashInMode: "conservative",
     cashInCalibrationEnabled: true,
     cashInCalibrationHorizonMonths: 6,
+    cashInCalibrationMode: "basis",
     cashInRecommendationIgnoreQ4: false,
     cashInRecommendationSeasonalityEnabled: true,
     cashInRecommendationBaselineNormalPct: 51,
     cashInRecommendationBaselineQ4Pct: null,
     cashInLearning: null,
+    revenueCalibration: {
+      biasB: REVENUE_CALIBRATION_DEFAULT_BIAS,
+      riskR: REVENUE_CALIBRATION_DEFAULT_RISK,
+      lastUpdatedAt: null,
+      forecastLock: {},
+    },
     openingBalance: "50.000,00",
     fxRate: "1,08",
     fxFeePct: "0,5",
@@ -239,6 +252,9 @@ function ensureGlobalSettings(state) {
   settings.cashInCalibrationHorizonMonths = [3, 6, 12].includes(calibrationHorizon)
     ? calibrationHorizon
     : defaults.settings.cashInCalibrationHorizonMonths;
+  settings.cashInCalibrationMode = normalizeRevenueCalibrationMode(
+    settings.cashInCalibrationMode ?? defaults.settings.cashInCalibrationMode,
+  );
   settings.cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
   if (settings.cashInRecommendationSeasonalityEnabled == null) {
     settings.cashInRecommendationSeasonalityEnabled = settings.cashInRecommendationIgnoreQ4 !== true;
@@ -265,6 +281,9 @@ function ensureGlobalSettings(state) {
   if (settings.cashInLearning == null || typeof settings.cashInLearning !== "object") {
     settings.cashInLearning = null;
   }
+  settings.revenueCalibration = normalizeRevenueCalibrationState(
+    settings.revenueCalibration ?? defaults.settings.revenueCalibration,
+  );
   settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
   settings.robustnessLookaheadDaysNonDdp = Math.max(
     1,

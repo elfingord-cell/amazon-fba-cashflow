@@ -5,6 +5,7 @@ import {
   Card,
   Input,
   Modal,
+  Select,
   Space,
   Tag,
   Tooltip,
@@ -18,10 +19,10 @@ import {
   CASH_IN_QUOTE_MIN_PCT,
   buildCalibrationProfile,
   buildHistoricalPayoutPrior,
-  computeCalibrationFactor,
   buildPayoutRecommendation,
   clampPct,
   normalizeCalibrationHorizonMonths,
+  normalizeRevenueCalibrationMode,
   parsePayoutPctInput,
 } from "../../../domain/cashInRules.js";
 import { addMonths, currentMonthKey, formatMonthLabel, monthRange } from "../../domain/months";
@@ -80,6 +81,7 @@ interface InputsDraftSnapshot {
   horizonMonths: number;
   cashInCalibrationEnabled: boolean;
   cashInCalibrationHorizonMonths: number;
+  cashInCalibrationMode: "basis" | "conservative";
   cashInRecommendationIgnoreQ4: boolean;
   cashInRecommendationBaselineNormalPct: number;
   cashInRecommendationBaselineQ4Pct: number | null;
@@ -212,16 +214,35 @@ function normalizeNonNegativeInput(value: unknown): number | null {
   return Math.max(0, Number(parsed));
 }
 
-function buildCalibrationDecayTooltip(sourceMonth: string, rawFactor: number, horizonMonths: number): string {
-  const horizon = Math.max(1, Math.round(Number(horizonMonths || 1)));
-  const segments: string[] = [];
-  for (let offset = 0; offset < horizon; offset += 1) {
-    const month = addMonths(sourceMonth, offset);
-    const factor = computeCalibrationFactor(rawFactor, horizon, offset);
-    segments.push(`${formatMonthLabel(month)}: ${formatFactor(factor)}`);
-  }
-  segments.push(`ab ${formatMonthLabel(addMonths(sourceMonth, horizon))}: 1,00`);
-  return segments.join(" · ");
+function buildCalibrationMonthTooltip(
+  entry: Record<string, unknown> | null | undefined,
+  mode: "basis" | "conservative",
+): string {
+  const month = String(entry?.month || "");
+  const h = Math.max(0, Math.round(Number(entry?.horizonOffset || 0)));
+  const d = Math.max(1, Math.round(Number(entry?.dayOfMonth || 1)));
+  const wEff = Number(entry?.wEff || 0);
+  const explanation = entry?.liveAnchorEnabled === true && wEff > 0
+    ? `Live-Anker wirkt wegen Tag ${d} und Horizont h=${h} mit Gewicht ${formatFactor(wEff)}.`
+    : "Kein aktiver Live-Anker; Faktor folgt dem gelernten Bias.";
+  const selectedFactor = mode === "conservative"
+    ? Number(entry?.factorConservative || 1)
+    : Number(entry?.factorBasis || 1);
+  return [
+    month ? `Monat: ${formatMonthLabel(month)}` : null,
+    `F_h: ${formatNumber(entry?.rawForecastRevenue, 2)} EUR`,
+    `K (${mode === "conservative" ? "Konservativ" : "Basis"}): ${formatFactor(selectedFactor)}`,
+    `K_basis: ${formatFactor(entry?.factorBasis)}`,
+    `K_cons: ${formatFactor(entry?.factorConservative)}`,
+    `B: ${formatFactor(entry?.biasB)}`,
+    `R: ${formatFactor(entry?.riskR)}`,
+    `C_live: ${formatFactor(entry?.cLive)}`,
+    `W_time: ${formatFactor(entry?.wTime)}`,
+    `W_h: ${formatFactor(entry?.wH)}`,
+    `W_eff: ${formatFactor(wEff)}`,
+    `d: ${d}`,
+    explanation,
+  ].filter(Boolean).join(" | ");
 }
 
 function formatSignedDelta(value: number): string {
@@ -251,6 +272,7 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
     horizonMonths: Math.max(1, Math.round(Number(snapshot.horizonMonths || 1))),
     cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
     cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
+    cashInCalibrationMode: normalizeRevenueCalibrationMode(snapshot.cashInCalibrationMode),
     cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
     cashInRecommendationBaselineNormalPct: normalizedBaselineNormal,
     cashInRecommendationBaselineQ4Pct: normalizedBaselineQ4,
@@ -305,6 +327,7 @@ export default function InputsModule(): JSX.Element {
   const [horizonMonths, setHorizonMonths] = useState<number>(18);
   const [cashInCalibrationEnabled, setCashInCalibrationEnabled] = useState<boolean>(true);
   const [cashInCalibrationHorizonMonths, setCashInCalibrationHorizonMonths] = useState<number>(6);
+  const [cashInCalibrationMode, setCashInCalibrationMode] = useState<"basis" | "conservative">("basis");
   const [cashInRecommendationIgnoreQ4, setCashInRecommendationIgnoreQ4] = useState<boolean>(false);
   const [cashInRecommendationBaselineNormalPct, setCashInRecommendationBaselineNormalPct] = useState<number>(
     CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
@@ -364,6 +387,7 @@ export default function InputsModule(): JSX.Element {
     const nextHorizonMonths = Math.max(1, Math.round(Number(settings.horizonMonths || 18) || 18));
     const nextCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
     const nextCalibrationHorizon = normalizeCalibrationHorizonMonths(settings.cashInCalibrationHorizonMonths, 6);
+    const nextCalibrationMode = normalizeRevenueCalibrationMode(settings.cashInCalibrationMode) as "basis" | "conservative";
     const nextSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
       ? settings.cashInRecommendationIgnoreQ4 !== true
       : settings.cashInRecommendationSeasonalityEnabled !== false;
@@ -417,6 +441,7 @@ export default function InputsModule(): JSX.Element {
     setHorizonMonths(nextHorizonMonths);
     setCashInCalibrationEnabled(nextCalibrationEnabled);
     setCashInCalibrationHorizonMonths(nextCalibrationHorizon);
+    setCashInCalibrationMode(nextCalibrationMode);
     setCashInRecommendationIgnoreQ4(nextIgnoreQ4);
     setCashInRecommendationBaselineNormalPct(nextBaselineNormal);
     setCashInRecommendationBaselineQ4Pct(nextBaselineQ4);
@@ -433,6 +458,7 @@ export default function InputsModule(): JSX.Element {
       horizonMonths: nextHorizonMonths,
       cashInCalibrationEnabled: nextCalibrationEnabled,
       cashInCalibrationHorizonMonths: nextCalibrationHorizon,
+      cashInCalibrationMode: nextCalibrationMode,
       cashInRecommendationIgnoreQ4: nextIgnoreQ4,
       cashInRecommendationBaselineNormalPct: nextBaselineNormal,
       cashInRecommendationBaselineQ4Pct: nextBaselineQ4,
@@ -462,8 +488,8 @@ export default function InputsModule(): JSX.Element {
     return object;
   }, [forecastRevenueByMonth, planningMonths]);
 
-  const payoutRecommendation = useMemo(() => {
-    const monthlyActualsMap: Record<string, { realRevenueEUR?: number; realPayoutRatePct?: number }> = {};
+  const monthlyActualsMap = useMemo(() => {
+    const map: Record<string, { realRevenueEUR?: number; realPayoutRatePct?: number }> = {};
     monthlyActuals.forEach((row) => {
       if (!isMonthKey(row.month)) return;
       const revenue = toNumber(row.realRevenueEUR);
@@ -472,8 +498,12 @@ export default function InputsModule(): JSX.Element {
       if (Number.isFinite(revenue as number)) monthlyEntry.realRevenueEUR = Number(revenue);
       if (Number.isFinite(payoutPct as number)) monthlyEntry.realPayoutRatePct = Number(payoutPct);
       if (!Object.keys(monthlyEntry).length) return;
-      monthlyActualsMap[row.month] = monthlyEntry;
+      map[row.month] = monthlyEntry;
     });
+    return map;
+  }, [monthlyActuals]);
+
+  const payoutRecommendation = useMemo(() => {
     return buildPayoutRecommendation({
       months: planningMonths,
       incomings,
@@ -496,7 +526,7 @@ export default function InputsModule(): JSX.Element {
     cashInLearningState,
     incomings,
     methodikCashInMode,
-    monthlyActuals,
+    monthlyActualsMap,
     planningMonths,
   ]);
 
@@ -565,28 +595,41 @@ export default function InputsModule(): JSX.Element {
   const currentCalibrationRevenueForecast = toNumber(currentMonthIncoming?.calibrationSellerboardMonthEndEur);
   const currentCalibrationPayoutForecast = toNumber(currentMonthIncoming?.calibrationPayoutRateToDatePct);
 
-  const currentMonthCalibrationProfile = useMemo(() => {
-    const calibrationRow = cashInCalibrationEnabled && currentMonthIncoming
-      ? [currentMonthIncoming]
-      : [];
+  const revenueCalibrationProfile = useMemo(() => {
     return buildCalibrationProfile({
-      incomings: calibrationRow,
+      incomings,
       months: planningMonths,
       forecastRevenueByMonth: forecastRevenueByMonthObject,
-      horizonMonths: cashInCalibrationHorizonMonths,
+      mode: cashInCalibrationMode,
+      currentMonth: currentMonthValue,
+      now: new Date(),
+      monthlyActuals: monthlyActualsMap,
+      learningState: settingsState.revenueCalibration,
+      sourceForecastVersionId: forecastState.activeVersionId,
     });
   }, [
-    cashInCalibrationEnabled,
-    cashInCalibrationHorizonMonths,
-    currentMonthIncoming,
+    cashInCalibrationMode,
+    currentMonthValue,
     forecastRevenueByMonthObject,
+    forecastState.activeVersionId,
+    incomings,
+    monthlyActualsMap,
     planningMonths,
+    settingsState.revenueCalibration,
   ]);
-  const currentMonthCalibrationCandidate = currentMonthCalibrationProfile.candidates.find(
+  const currentMonthCalibrationCandidate = revenueCalibrationProfile.candidates.find(
     (candidate) => candidate.month === currentMonthValue,
   ) || null;
-  const currentMonthCalibrationRawFactor = Number(currentMonthCalibrationCandidate?.rawFactor);
-  const currentMonthAppliedFactor = Number(currentMonthCalibrationProfile.byMonth?.[currentMonthValue]?.factor || 1);
+  const currentMonthCalibrationRawFactor = Number(
+    currentMonthCalibrationCandidate?.rawFactor
+    ?? revenueCalibrationProfile.byMonth?.[currentMonthValue]?.cLiveRaw,
+  );
+  const currentMonthCalibrationEntry = revenueCalibrationProfile.byMonth?.[currentMonthValue] as Record<string, unknown> | undefined;
+  const currentMonthAppliedFactor = cashInCalibrationEnabled
+    ? Number(currentMonthCalibrationEntry?.factor || 1)
+    : 1;
+  const currentMonthFactorBasis = Number(currentMonthCalibrationEntry?.factorBasis || 1);
+  const currentMonthFactorConservative = Number(currentMonthCalibrationEntry?.factorConservative || 1);
   const currentMonthCalibratedRevenue = currentMonthForecastRevenue
     * (Number.isFinite(currentMonthAppliedFactor) ? currentMonthAppliedFactor : 1);
   const currentMonthPayoutPct = useMemo(() => {
@@ -602,14 +645,10 @@ export default function InputsModule(): JSX.Element {
     : null;
   const currentMonthCalibrationUnusual = Number.isFinite(currentMonthCalibrationRawFactor)
     && (currentMonthCalibrationRawFactor > 1.25 || currentMonthCalibrationRawFactor < 0.5);
-  const currentMonthCalibrationTooltip = Number.isFinite(currentMonthCalibrationRawFactor) && cashInCalibrationEnabled
-    ? [
-      "Kalibrierung ueber Umsatzprognose Monatsende.",
-      `Startfaktor ${currentMonthValue}: ${formatFactor(currentMonthCalibrationRawFactor)}`,
-      `Fade-Out über ${cashInCalibrationHorizonMonths} Monate: ${buildCalibrationDecayTooltip(currentMonthValue, currentMonthCalibrationRawFactor, cashInCalibrationHorizonMonths)}`,
-    ].join(" | ")
+  const currentMonthCalibrationTooltip = currentMonthCalibrationEntry && cashInCalibrationEnabled
+    ? buildCalibrationMonthTooltip(currentMonthCalibrationEntry, cashInCalibrationMode)
     : cashInCalibrationEnabled
-      ? "Kalibrierfaktor wird berechnet, sobald die Umsatzprognose Monatsende im aktuellen Monat gesetzt ist und Forecast-Umsatz > 0 ist."
+      ? "Kalibrierfaktor wird berechnet, sobald die Umsatzprognose bis Monatsende im aktuellen Monat gesetzt ist und Forecast-Umsatz > 0 ist."
       : "Kalibrierung ist deaktiviert.";
 
   const calibrationImpact = useMemo(() => {
@@ -623,7 +662,7 @@ export default function InputsModule(): JSX.Element {
       const month = String(row.month || "");
       const forecastRevenue = Number(forecastRevenueByMonth.get(month) || 0);
       const factor = cashInCalibrationEnabled
-        ? Number(currentMonthCalibrationProfile.byMonth?.[month]?.factor || 1)
+        ? Number(revenueCalibrationProfile.byMonth?.[month]?.factor || 1)
         : 1;
       const factorApplied = Number.isFinite(factor) ? factor : 1;
 
@@ -658,7 +697,7 @@ export default function InputsModule(): JSX.Element {
     };
   }, [
     cashInCalibrationEnabled,
-    currentMonthCalibrationProfile.byMonth,
+    revenueCalibrationProfile.byMonth,
     forecastRevenueByMonth,
     incomings,
     payoutRecommendationByMonth,
@@ -734,12 +773,24 @@ export default function InputsModule(): JSX.Element {
       || payoutRecommendation.learningState
       || cashInLearningState,
     );
+    const revenueCalibrationStateForSave = (
+      revenueCalibrationProfile.learningStateNext
+      && typeof revenueCalibrationProfile.learningStateNext === "object"
+    )
+      ? JSON.parse(JSON.stringify(revenueCalibrationProfile.learningStateNext))
+      : (
+        settingsState.revenueCalibration
+        && typeof settingsState.revenueCalibration === "object"
+      )
+        ? JSON.parse(JSON.stringify(settingsState.revenueCalibration))
+        : null;
     const snapshot: InputsDraftSnapshot = {
       openingBalance,
       startMonth,
       horizonMonths,
       cashInCalibrationEnabled,
       cashInCalibrationHorizonMonths,
+      cashInCalibrationMode,
       cashInRecommendationIgnoreQ4,
       cashInRecommendationBaselineNormalPct,
       cashInRecommendationBaselineQ4Pct,
@@ -765,12 +816,14 @@ export default function InputsModule(): JSX.Element {
         horizonMonths: Math.max(1, Math.round(snapshot.horizonMonths || 1)),
         cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
         cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
+        cashInCalibrationMode: normalizeRevenueCalibrationMode(snapshot.cashInCalibrationMode),
         cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
         cashInRecommendationSeasonalityEnabled: snapshot.cashInRecommendationIgnoreQ4 !== true,
         cashInRecommendationBaselineNormalPct: normalizePayoutInput(snapshot.cashInRecommendationBaselineNormalPct)
           ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT,
         cashInRecommendationBaselineQ4Pct: normalizePayoutInput(snapshot.cashInRecommendationBaselineQ4Pct),
         cashInLearning: normalizeLearningPayload(snapshot.cashInLearning),
+        revenueCalibration: revenueCalibrationStateForSave,
         lastUpdatedAt: new Date().toISOString(),
       };
 
@@ -852,6 +905,7 @@ export default function InputsModule(): JSX.Element {
       horizonMonths,
       cashInCalibrationEnabled,
       cashInCalibrationHorizonMonths,
+      cashInCalibrationMode,
       cashInRecommendationIgnoreQ4,
       cashInRecommendationBaselineNormalPct,
       cashInRecommendationBaselineQ4Pct,
@@ -872,6 +926,7 @@ export default function InputsModule(): JSX.Element {
     horizonMonths,
     cashInCalibrationEnabled,
     cashInCalibrationHorizonMonths,
+    cashInCalibrationMode,
     cashInRecommendationIgnoreQ4,
     cashInRecommendationBaselineNormalPct,
     cashInRecommendationBaselineQ4Pct,
@@ -919,7 +974,9 @@ export default function InputsModule(): JSX.Element {
           <Space wrap>
             <Tag>Forecast im Cashflow: {methodikUseForecast ? "Ja" : "Nein"}</Tag>
             <Tag>Cash-In Modus: {methodikCashInMode === "basis" ? "Basis" : "Konservativ"}</Tag>
-            <Tag>Kalibrierung: {cashInCalibrationEnabled ? `An (${cashInCalibrationHorizonMonths} Monate)` : "Aus"}</Tag>
+            <Tag>Kalibrierung: {cashInCalibrationEnabled ? "An" : "Aus"}</Tag>
+            <Tag>Kalibrier-Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
+            <Tag>Live-Einfluss: h ≤ 3</Tag>
             <Tag>Saisonalität: {cashInRecommendationIgnoreQ4 ? "Aus" : "An"}</Tag>
           </Space>
           <Button size="small" onClick={() => navigate("/v2/methodik")}>
@@ -951,16 +1008,30 @@ export default function InputsModule(): JSX.Element {
             <Tag color={cashInCalibrationEnabled ? "green" : "default"}>
               Umsatzkalibrierung {cashInCalibrationEnabled ? "aktiv" : "aus"}
             </Tag>
-            <Tag>Wirkt über: {cashInCalibrationHorizonMonths} Monate</Tag>
+            <Tag>Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
+            <Tag>Live-Einfluss: h ≤ 3</Tag>
+            <Select
+              value={cashInCalibrationMode}
+              style={{ width: 210 }}
+              options={[
+                { value: "basis", label: "Kalibriert (Basis)" },
+                { value: "conservative", label: "Kalibriert (Konservativ)" },
+              ]}
+              onChange={(value) => {
+                setCashInCalibrationMode(
+                  normalizeRevenueCalibrationMode(value) as "basis" | "conservative",
+                );
+              }}
+            />
             <Button size="small" onClick={() => navigate("/v2/methodik")}>
               Methodik (global) ändern
             </Button>
-            <Tooltip title="Faktor wird aus Sellerboard-Umsatzprognose Monatsende / Forecast-Umsatz berechnet und läuft linear bis 1,00 aus.">
+            <Tooltip title="Live-Anker: Umsatzprognose bis Monatsende / Forecast-Umsatz. Wirkung ab Tag 10, bis Tag 20 linear steigend, nach h=3 auslaufend.">
               <Tag>Info</Tag>
             </Tooltip>
           </Space>
           <Text type="secondary">
-            Faktor läuft linear auf 1,00 aus.
+            Bias B und Risk R lernen monatlich aus IST vs. Forecast-Lock; der Live-Anker steuert untermonatlich.
           </Text>
           <Space wrap align="start" style={{ marginTop: 8 }}>
             <div>
@@ -1013,6 +1084,11 @@ export default function InputsModule(): JSX.Element {
               Kalibrierfaktor aktueller Monat ({formatMonthLabel(currentMonthValue)}):{" "}
               <Text strong>{formatFactor(currentMonthAppliedFactor)}</Text>
             </Text>
+            <div>
+              <Text type="secondary">
+                K_basis: {formatFactor(currentMonthFactorBasis)} · K_cons: {formatFactor(currentMonthFactorConservative)}
+              </Text>
+            </div>
             <div>
               <Text type="secondary">
                 Forecast Umsatz ({formatMonthLabel(currentMonthValue)}): {formatNumber(currentMonthForecastRevenue, 2)} EUR
@@ -1116,6 +1192,8 @@ export default function InputsModule(): JSX.Element {
           <Tag color={cashInCalibrationEnabled ? "green" : "default"}>
             {cashInCalibrationEnabled ? "Umsatzkalibrierung aktiv" : "Umsatzkalibrierung aus"}
           </Tag>
+          <Tag>Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
+          <Tag>Live-Einfluss: h ≤ 3</Tag>
           <Tooltip title="Vergleich über den gesamten Planungshorizont: Kalibrierung aktiv vs. neutral (Faktor 1,00).">
             <Tag color={calibrationImpact.revenueDelta <= 0 ? "orange" : "green"}>
               Impact Umsatz: {formatSignedCurrencyDelta(calibrationImpact.revenueDelta)}
@@ -1148,9 +1226,14 @@ export default function InputsModule(): JSX.Element {
             <thead>
               <tr>
                 <th style={{ width: 130 }}>Monat</th>
-                <th style={{ width: 200 }}>Umsatz EUR</th>
+                <th style={{ width: 220 }}>Forecast Umsatz (roh) / Manuell</th>
                 <th style={{ width: 90 }}>Faktor</th>
-                <th style={{ width: 180 }}>Umsatz kalibriert (EUR)</th>
+                <th style={{ width: 210 }}>
+                  {cashInCalibrationMode === "conservative"
+                    ? "Kalibrierter Umsatz (Konservativ)"
+                    : "Kalibrierter Umsatz (Basis)"}
+                  {" "}EUR
+                </th>
                 <th style={{ width: 180 }}>Auszahlungsquote (manuell) %</th>
                 <th style={{ width: 220 }}>Verwendete Quote %</th>
                 <th style={{ width: 190 }}>Payout EUR (aktiv)</th>
@@ -1235,12 +1318,18 @@ export default function InputsModule(): JSX.Element {
                   ? "Manuell gesetzte Monatsquote ist führend."
                   : recommendationTooltip;
                 const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
-                const calibrationByMonth = currentMonthCalibrationProfile.byMonth?.[row.month] || null;
-                const factor = Number(calibrationByMonth?.factor || 1);
-                const factorApplied = Number.isFinite(factor) ? factor : 1;
-                const calibratedRevenue = forecastRevenue * factorApplied;
-                const calibrationMethod = String(calibrationByMonth?.method || "").toLowerCase();
-                const calibrationSourceMonth = String(calibrationByMonth?.sourceMonth || "").trim();
+                const calibrationByMonth = (revenueCalibrationProfile.byMonth?.[row.month] || null) as Record<string, unknown> | null;
+                const factorBasis = Number(calibrationByMonth?.factorBasis || 1);
+                const factorConservative = Number(calibrationByMonth?.factorConservative || 1);
+                const selectedFactorRaw = cashInCalibrationMode === "conservative" ? factorConservative : factorBasis;
+                const factorApplied = cashInCalibrationEnabled && Number.isFinite(selectedFactorRaw)
+                  ? selectedFactorRaw
+                  : 1;
+                const calibratedRevenueBasis = forecastRevenue * (Number.isFinite(factorBasis) ? factorBasis : 1);
+                const calibratedRevenueConservative = forecastRevenue * (Number.isFinite(factorConservative) ? factorConservative : 1);
+                const calibratedRevenue = cashInCalibrationMode === "conservative"
+                  ? calibratedRevenueConservative
+                  : calibratedRevenueBasis;
                 const calibrationActiveForRow = cashInCalibrationEnabled && Math.abs(factorApplied - 1) > 0.000001;
                 const forecastMissing = row.source === "forecast" && (!Number.isFinite(forecastRevenue) || forecastRevenue <= 0);
                 const manualRevenue = toNumber(row.revenueEur);
@@ -1259,13 +1348,9 @@ export default function InputsModule(): JSX.Element {
                   : (cashInCalibrationEnabled ? calibratedPayout : forecastPayout);
                 const factorTooltip = !cashInCalibrationEnabled
                   ? "Kalibrierung ist deaktiviert. Faktor = 1,00."
-                  : calibrationActiveForRow
-                    ? [
-                      calibrationSourceMonth ? `Quelle: ${formatMonthLabel(calibrationSourceMonth)}` : null,
-                      calibrationMethod === "linear" ? "Methode: lineare Hochrechnung" : null,
-                      `Angewendet: ${formatFactor(factorApplied)}`,
-                    ].filter(Boolean).join(" | ")
-                    : "Keine aktive Kalibrierung in diesem Monat (Faktor 1,00).";
+                  : calibrationByMonth
+                    ? buildCalibrationMonthTooltip(calibrationByMonth, cashInCalibrationMode)
+                    : "Keine Kalibrierdaten für diesen Monat verfügbar.";
 
                 return (
                   <tr key={row.id}>
@@ -1363,6 +1448,11 @@ export default function InputsModule(): JSX.Element {
                     <td>{formatNumber(calibratedPayout, 2)}</td>
                     <td>
                       <div style={{ minWidth: 170 }}>
+                        {cashInCalibrationEnabled ? (
+                          <Tag color={cashInCalibrationMode === "conservative" ? "volcano" : "green"}>
+                            {cashInCalibrationMode === "basis" ? "Modus Basis" : "Modus Konservativ"}
+                          </Tag>
+                        ) : null}
                         {row.source === "forecast" ? <Tag color="blue">Forecast übertragen</Tag> : null}
                         {isManualRevenueOverride ? <Tag color="orange">Manuell ueberschrieben</Tag> : null}
                         {calibrationActiveForRow ? <Tag color="orange">Kalibriert</Tag> : null}

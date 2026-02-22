@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildPayoutRecommendation, buildHistoricalPayoutPrior } from "./cashInRules.js";
+import {
+  buildCalibrationProfile,
+  buildPayoutRecommendation,
+  buildHistoricalPayoutPrior,
+  learnRevenueCalibrationState,
+} from "./cashInRules.js";
 
 function monthKeyFromDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -11,6 +16,10 @@ function addMonths(monthKey, offset) {
   const [year, month] = String(monthKey).split("-").map(Number);
   const date = new Date(year, month - 1 + Number(offset || 0), 1);
   return monthKeyFromDate(date);
+}
+
+function near(actual, expected, epsilon = 0.0001) {
+  assert.ok(Math.abs(Number(actual) - Number(expected)) <= epsilon, `expected ${actual} to be near ${expected}`);
 }
 
 test("recommendation stays near start profile with only two IST months", () => {
@@ -178,4 +187,140 @@ test("historical prior import is robust and clamps outputs", () => {
   assert.equal(entry?.capApplied, true);
   assert.ok(Array.isArray(entry?.capsApplied));
   assert.ok((entry?.capsApplied || []).includes("risk_cap_6pp") || (entry?.capsApplied || []).includes("quote_band_40_60"));
+});
+
+test("revenue calibration follows day-weighted live anchor (Tag 5/15/25)", () => {
+  const currentMonth = "2026-02";
+  const nextMonth = "2026-03";
+  const sharedInput = {
+    months: [currentMonth, nextMonth],
+    currentMonth,
+    mode: "basis",
+    learningState: {
+      biasB: 0.9,
+      riskR: 0.05,
+      forecastLock: {},
+    },
+    monthlyActuals: {},
+    incomings: [
+      {
+        month: currentMonth,
+        calibrationSellerboardMonthEndEur: 68000,
+      },
+    ],
+    forecastRevenueByMonth: {
+      [currentMonth]: 80000,
+      [nextMonth]: 100000,
+    },
+  };
+
+  const day5 = buildCalibrationProfile({
+    ...sharedInput,
+    now: new Date(2026, 1, 5, 10, 0, 0),
+  });
+  const day15 = buildCalibrationProfile({
+    ...sharedInput,
+    now: new Date(2026, 1, 15, 10, 0, 0),
+  });
+  const day25 = buildCalibrationProfile({
+    ...sharedInput,
+    now: new Date(2026, 1, 25, 10, 0, 0),
+  });
+
+  const entry5 = day5.byMonth[nextMonth];
+  const entry15 = day15.byMonth[nextMonth];
+  const entry25 = day25.byMonth[nextMonth];
+
+  near(entry5.wTime, 0);
+  near(entry5.wH, 2 / 3);
+  near(entry5.wEff, 0);
+  near(entry5.signal, 0.9);
+  near(entry5.factorBasis, 0.9);
+  near(entry5.factorConservative, 0.845);
+  near(entry5.calibratedRevenueBasis, 90000);
+  near(entry5.calibratedRevenueConservative, 84500);
+
+  near(entry15.wTime, 0.5);
+  near(entry15.wEff, 1 / 3);
+  near(entry15.signal, 0.8833333333);
+  near(entry15.factorConservative, 0.8283333333);
+
+  near(entry25.wTime, 1);
+  near(entry25.wEff, 2 / 3);
+  near(entry25.signal, 0.8666666667);
+  near(entry25.factorConservative, 0.8116666667);
+});
+
+test("revenue calibration falls back to bias when live anchor cannot be used", () => {
+  const currentMonth = "2026-02";
+  const nextMonth = "2026-03";
+
+  const missingForecast = buildCalibrationProfile({
+    months: [currentMonth, nextMonth],
+    currentMonth,
+    mode: "basis",
+    now: new Date(2026, 1, 25, 10, 0, 0),
+    learningState: { biasB: 0.9, riskR: 0.05, forecastLock: {} },
+    monthlyActuals: {},
+    incomings: [{ month: currentMonth, calibrationSellerboardMonthEndEur: 68000 }],
+    forecastRevenueByMonth: { [currentMonth]: 0, [nextMonth]: 100000 },
+  });
+  near(missingForecast.byMonth[nextMonth].wEff, 0);
+  near(missingForecast.byMonth[nextMonth].factorBasis, 0.9);
+
+  const missingLive = buildCalibrationProfile({
+    months: [currentMonth, nextMonth],
+    currentMonth,
+    mode: "basis",
+    now: new Date(2026, 1, 25, 10, 0, 0),
+    learningState: { biasB: 0.9, riskR: 0.05, forecastLock: {} },
+    monthlyActuals: {},
+    incomings: [{ month: currentMonth, calibrationSellerboardMonthEndEur: null }],
+    forecastRevenueByMonth: { [currentMonth]: 80000, [nextMonth]: 100000 },
+  });
+  near(missingLive.byMonth[nextMonth].wEff, 0);
+  near(missingLive.byMonth[nextMonth].factorBasis, 0.9);
+});
+
+test("revenue calibration clamps extreme live factor before blending", () => {
+  const profile = buildCalibrationProfile({
+    months: ["2026-02", "2026-03"],
+    currentMonth: "2026-02",
+    mode: "basis",
+    now: new Date(2026, 1, 25, 10, 0, 0),
+    learningState: { biasB: 0.9, riskR: 0.05, forecastLock: {} },
+    monthlyActuals: {},
+    incomings: [{ month: "2026-02", calibrationSellerboardMonthEndEur: 200000 }],
+    forecastRevenueByMonth: { "2026-02": 80000, "2026-03": 100000 },
+  });
+
+  near(profile.liveAnchor.cLiveRaw, 2.5);
+  near(profile.liveAnchor.cLive, 1.2);
+  near(profile.byMonth["2026-03"].factorBasis, 1.05);
+});
+
+test("revenue calibration learning updates bias/risk and creates monthly lock", () => {
+  const learning = learnRevenueCalibrationState({
+    currentMonth: "2026-02",
+    now: new Date(2026, 1, 28, 12, 0, 0),
+    learningState: {
+      biasB: 1,
+      riskR: 0.05,
+      forecastLock: {},
+    },
+    monthlyActuals: {
+      "2026-01": { realRevenueEUR: 70000 },
+    },
+    forecastRevenueByMonth: {
+      "2026-01": 80000,
+    },
+    sourceForecastVersionId: "fv-1",
+  });
+
+  const lock = learning.state.forecastLock["2026-01"];
+  assert.ok(lock);
+  near(lock.forecastRevenueLockedEUR, 80000);
+  assert.equal(lock.sourceForecastVersionId, "fv-1");
+  near(learning.state.biasB, 0.975);
+  near(learning.state.riskR, 0.06875);
 });

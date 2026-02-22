@@ -18,7 +18,7 @@ import {
   buildCalibrationProfile,
   buildPayoutRecommendation,
   clampPct,
-  normalizeCalibrationHorizonMonths,
+  normalizeRevenueCalibrationMode,
   parsePayoutPctInput,
 } from "./cashInRules.js";
 
@@ -68,6 +68,15 @@ function formatTooltipCurrency(value) {
 function formatTooltipPercent(value, digits = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '0';
+  return numeric.toLocaleString('de-DE', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatTooltipFactor(value, digits = 3) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '—';
   return numeric.toLocaleString('de-DE', {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
@@ -151,16 +160,45 @@ function buildCashInTooltip({
         : recommendationSourceTag === 'PROGNOSE'
           ? 'Live-Signal'
           : 'Empfehlung';
+  const calibrationMode = normalizeRevenueCalibrationMode(cashInMeta?.calibrationMode);
+  const calibrationModeLabel = calibrationMode === 'conservative' ? 'Konservativ' : 'Basis';
   const calibrationText = Number.isFinite(calibrationFactorApplied) && Math.abs(Number(calibrationFactorApplied) - 1) > 0.000001
     ? Number(calibrationFactorApplied).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : null;
   const parts = [
     `Forecast-Umsatz: ${formatTooltipCurrency(forecastRevenue)}`,
-    `Kalibrierfaktor: ${calibrationText || '1,00'}`,
+    `Kalibrierfaktor K (${calibrationModeLabel}): ${calibrationText || '1,00'}`,
     `Plan-Umsatz: ${formatTooltipCurrency(planRevenue)}`,
     `Quote: ${formatTooltipPercent(payoutPct)}% (${quoteSourceLabel}${quoteSource !== 'manual' ? `, ${recommendationLabel}` : ''})`,
     `Auszahlung: ${formatTooltipCurrency(payoutAmount)}`,
   ];
+  if (cashInMeta?.calibrationEnabled !== false) {
+    const factorBasis = Number(cashInMeta?.calibrationFactorBasis);
+    const factorConservative = Number(cashInMeta?.calibrationFactorConservative);
+    if (Number.isFinite(factorBasis) || Number.isFinite(factorConservative)) {
+      parts.push(`K_basis: ${formatTooltipFactor(factorBasis, 3)} · K_cons: ${formatTooltipFactor(factorConservative, 3)}`);
+    }
+    const biasB = Number(cashInMeta?.calibrationBiasB);
+    const riskR = Number(cashInMeta?.calibrationRiskR);
+    if (Number.isFinite(biasB) || Number.isFinite(riskR)) {
+      parts.push(`B: ${formatTooltipFactor(biasB, 3)} · R: ${formatTooltipFactor(riskR, 3)}`);
+    }
+    const cLive = Number(cashInMeta?.calibrationLiveFactorClamped);
+    const wTime = Number(cashInMeta?.calibrationWeightTime);
+    const wH = Number(cashInMeta?.calibrationWeightH);
+    const wEff = Number(cashInMeta?.calibrationWeightEffective);
+    const dayOfMonth = Math.max(1, Math.round(Number(cashInMeta?.calibrationDayOfMonth || 1)));
+    parts.push(
+      `C_live: ${formatTooltipFactor(cLive, 3)} · W_time: ${formatTooltipFactor(wTime, 3)} · W_h: ${formatTooltipFactor(wH, 3)} · W_eff: ${formatTooltipFactor(wEff, 3)} · d: ${dayOfMonth}`,
+    );
+    if (cashInMeta?.calibrationLiveAnchorEnabled === true && Number.isFinite(wEff) && wEff > 0) {
+      parts.push(`Live-Anker wirkt wegen Tag ${dayOfMonth} und Horizont h=${Math.max(0, Math.round(Number(cashInMeta?.calibrationHorizonOffset || 0)))} mit Gewicht ${formatTooltipFactor(wEff, 3)}.`);
+    } else {
+      parts.push(`Kein aktiver Live-Anker; Faktor folgt Bias B mit Sicherheitsabschlag über R.`);
+    }
+  } else {
+    parts.push('Kalibrierung deaktiviert (K = 1,00).');
+  }
   if (recommendationExplanation && quoteSource !== 'manual') {
     parts.push(`Warum: ${recommendationExplanation}`);
   }
@@ -1312,19 +1350,22 @@ export function computeSeries(state) {
     || null;
   const cashInFallbackUsed = 'learning_model';
   const cashInCalibrationEnabled = s?.settings?.cashInCalibrationEnabled !== false;
-  const cashInCalibrationHorizonMonths = normalizeCalibrationHorizonMonths(
-    s?.settings?.cashInCalibrationHorizonMonths,
-    6,
-  );
-  const calibrationRows = cashInCalibrationEnabled
-    ? incomings
-    : [];
+  const cashInCalibrationMode = normalizeRevenueCalibrationMode(s?.settings?.cashInCalibrationMode);
   const calibrationProfile = buildCalibrationProfile({
-    incomings: calibrationRows,
+    incomings,
     months: Object.keys(bucket),
     forecastRevenueByMonth: forecastMap,
-    horizonMonths: cashInCalibrationHorizonMonths,
+    mode: cashInCalibrationMode,
+    currentMonth,
+    now: today,
+    monthlyActuals: s?.monthlyActuals,
+    learningState: s?.settings?.revenueCalibration,
+    sourceForecastVersionId: s?.forecast?.activeVersionId || null,
   });
+  const cashInCalibrationHorizonMonths = Math.max(
+    1,
+    Math.round(Number(calibrationProfile.horizonMonths || 3)),
+  );
   const calibrationEvaluations = Array.isArray(calibrationProfile.evaluations)
     ? calibrationProfile.evaluations
     : [];
@@ -1346,11 +1387,7 @@ export function computeSeries(state) {
       return Number.isFinite(factor) && Math.abs(factor - 1) > 0.000001;
     })
     .length;
-  const calibrationApplied = cashInCalibrationEnabled && Object.values(calibrationProfile.byMonth || {})
-    .some((entry) => {
-      const factor = Number(entry?.factor || 1);
-      return Number.isFinite(factor) && Math.abs(factor - 1) > 0.000001;
-    });
+  const calibrationApplied = cashInCalibrationEnabled && calibrationNonDefaultFactorMonthCount > 0;
   const appliedPayoutPctByMonth = {};
   const cashInMetaByMonth = {};
 
@@ -1380,13 +1417,36 @@ export function computeSeries(state) {
     const basePayoutPct = clampPct(basePayoutPctRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
     const calibration = calibrationProfile.byMonth?.[m] || {
       factor: 1,
+      factorBasis: 1,
+      factorConservative: 1,
       active: false,
       sourceMonth: null,
       method: null,
+      horizonOffset: 0,
+      signal: null,
+      biasB: Number(calibrationProfile.biasB || 1),
+      riskR: Number(calibrationProfile.riskR || 0),
+      cLiveRaw: null,
+      cLive: null,
+      wTime: 0,
+      wH: 0,
+      wEff: 0,
+      dayOfMonth: today.getDate(),
+      liveAnchorEnabled: false,
     };
     const forecastRevenueRaw = Number(forecastMap[m] || 0);
-    const calibrationFactorApplied = Number(calibration.factor || 1);
+    const calibrationFactorBasis = Number(calibration.factorBasis || 1);
+    const calibrationFactorConservative = Number(calibration.factorConservative || 1);
+    const calibrationFactorRaw = Number(
+      calibration.factor
+      || (cashInCalibrationMode === 'conservative' ? calibrationFactorConservative : calibrationFactorBasis),
+    );
+    const calibrationFactorApplied = cashInCalibrationEnabled && Number.isFinite(calibrationFactorRaw)
+      ? Number(calibrationFactorRaw)
+      : 1;
     const calibratedPlanRevenue = forecastRevenueRaw * calibrationFactorApplied;
+    const calibratedPlanRevenueBasis = forecastRevenueRaw * calibrationFactorBasis;
+    const calibratedPlanRevenueConservative = forecastRevenueRaw * calibrationFactorConservative;
 
     let revenue = null;
     let revenueSource = null;
@@ -1398,8 +1458,8 @@ export function computeSeries(state) {
       revenue = Number(manualRevenue);
       revenueSource = 'manual_override';
     } else {
-      revenue = Number(calibratedPlanRevenue || 0);
-      revenueSource = 'forecast_calibrated';
+      revenue = Number(cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw);
+      revenueSource = cashInCalibrationEnabled ? 'forecast_calibrated' : 'forecast_raw';
     }
     if (!Number.isFinite(revenue)) return;
 
@@ -1407,7 +1467,9 @@ export function computeSeries(state) {
     const horizonFromCurrentMonth = (monthIdx != null && currentMonthIdx != null) ? (monthIdx - currentMonthIdx) : 0;
     const isFutureMonth = horizonFromCurrentMonth > 0;
     const payoutPct = clampPct(basePayoutPct, cashInQuoteMinPct, cashInQuoteMaxPct);
-    const planRevenueAfterCalibration = forecastEnabled ? calibratedPlanRevenue : revenue;
+    const planRevenueAfterCalibration = forecastEnabled
+      ? (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw)
+      : revenue;
     const forecastRevenueForTooltip = forecastEnabled ? forecastRevenueRaw : revenue;
     const recommendationCapsApplied = Array.isArray(recommendationByMonth?.capsApplied)
       ? recommendationByMonth.capsApplied.filter(Boolean)
@@ -1447,10 +1509,26 @@ export function computeSeries(state) {
       revenueSource,
       appliedRevenue: revenue,
       forecastRevenueRaw,
+      calibrationMode: cashInCalibrationMode,
       calibrationFactorApplied,
+      calibrationFactorBasis,
+      calibrationFactorConservative,
+      calibrationSignal: Number(calibration.signal),
+      calibrationBiasB: Number(calibration.biasB),
+      calibrationRiskR: Number(calibration.riskR),
+      calibrationLiveFactorRaw: Number(calibration.cLiveRaw),
+      calibrationLiveFactorClamped: Number(calibration.cLive),
+      calibrationWeightTime: Number(calibration.wTime),
+      calibrationWeightH: Number(calibration.wH),
+      calibrationWeightEffective: Number(calibration.wEff),
+      calibrationDayOfMonth: Number(calibration.dayOfMonth),
+      calibrationHorizonOffset: Number(calibration.horizonOffset),
+      calibrationLiveAnchorEnabled: calibration.liveAnchorEnabled === true,
       calibrationSourceMonth: calibration.sourceMonth || null,
       calibrationMethod: calibration.method || null,
       planRevenueAfterCalibration,
+      calibratedRevenueBasis: calibratedPlanRevenueBasis,
+      calibratedRevenueConservative: calibratedPlanRevenueConservative,
       fallbackUsed: cashInFallbackUsed,
       quoteMinPct: cashInQuoteMinPct,
       quoteMaxPct: cashInQuoteMaxPct,
@@ -1922,6 +2000,7 @@ export function computeSeries(state) {
       recommendationLevelPct: Number(payoutRecommendation.levelPct || recommendationBaselineNormalPct),
       recommendationLearningState,
       calibrationEnabled: cashInCalibrationEnabled,
+      calibrationMode: cashInCalibrationMode,
       calibrationApplied,
       calibrationHorizonMonths: cashInCalibrationHorizonMonths,
       calibrationCandidateCount: calibrationCandidates.length,
@@ -1931,6 +2010,14 @@ export function computeSeries(state) {
         : null,
       calibrationNonDefaultFactorMonthCount,
       calibrationReasonCounts,
+      calibrationBiasB: Number(calibrationProfile.biasB),
+      calibrationRiskR: Number(calibrationProfile.riskR),
+      calibrationLiveFactorRaw: Number(calibrationProfile.liveAnchor?.cLiveRaw),
+      calibrationLiveFactorClamped: Number(calibrationProfile.liveAnchor?.cLive),
+      calibrationLearningState: calibrationProfile.learningStateNext || null,
+      calibrationLockAddedMonths: Array.isArray(calibrationProfile.learning?.lockAddedMonths)
+        ? calibrationProfile.learning.lockAddedMonths
+        : [],
     },
   };
 

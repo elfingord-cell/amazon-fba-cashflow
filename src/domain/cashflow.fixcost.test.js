@@ -35,6 +35,31 @@ function addMonths(monthKey, offset) {
   return monthKeyFromDate(date);
 }
 
+function withMockedNow(date, callback) {
+  const RealDate = Date;
+  class MockDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(date.getTime());
+        return;
+      }
+      super(...args);
+    }
+
+    static now() {
+      return date.getTime();
+    }
+  }
+  MockDate.parse = RealDate.parse;
+  MockDate.UTC = RealDate.UTC;
+  globalThis.Date = MockDate;
+  try {
+    return callback();
+  } finally {
+    globalThis.Date = RealDate;
+  }
+}
+
 function salesPayoutAmountForMonth(report, month) {
   const row = report.series.find((entry) => entry.month === month);
   if (!row) return 0;
@@ -473,69 +498,88 @@ test("computeSeries enforces final quote band 40..60 for manual values", () => {
   assert.equal(salesPayoutAmountForMonth(report, next1), 400);
 });
 
-test("computeSeries applies calibration decay to forecast revenue and exposes full tooltip/meta", () => {
-  const currentMonth = monthKeyFromDate(new Date());
-  const nextMonth = addMonths(currentMonth, 1);
-  const state = {
-    settings: {
-      startMonth: currentMonth,
-      horizonMonths: 2,
-      openingBalance: 0,
-      cashInMode: "basis",
-      cashInCalibrationHorizonMonths: 6,
-    },
-    forecast: {
-      settings: { useForecast: true },
-      forecastImport: {
-        "SKU-LIVE": {
-          [currentMonth]: { revenueEur: 1000 },
-          [nextMonth]: { revenueEur: 1200 },
+test("computeSeries applies revenue calibration with live anchor, mode switch and transparent tooltip/meta", () => {
+  withMockedNow(new Date(2026, 1, 15, 10, 0, 0), () => {
+    const currentMonth = monthKeyFromDate(new Date());
+    const nextMonth = addMonths(currentMonth, 1);
+    const baseState = {
+      settings: {
+        startMonth: currentMonth,
+        horizonMonths: 2,
+        openingBalance: 0,
+        cashInMode: "basis",
+        cashInCalibrationEnabled: true,
+        cashInCalibrationMode: "basis",
+        revenueCalibration: {
+          biasB: 0.9,
+          riskR: 0.05,
+          forecastLock: {},
         },
       },
-    },
-    incomings: [
-      {
-        month: currentMonth,
-        revenueEur: "0,00",
-        payoutPct: "50",
-        source: "forecast",
-        calibrationCutoffDate: `${currentMonth}-15`,
-        calibrationRevenueToDateEur: 450,
+      forecast: {
+        settings: { useForecast: true },
+        forecastImport: {
+          "SKU-LIVE": {
+            [currentMonth]: { revenueEur: 80000 },
+            [nextMonth]: { revenueEur: 100000 },
+          },
+        },
       },
-      {
-        month: nextMonth,
-        revenueEur: "0,00",
-        payoutPct: "50",
-        source: "forecast",
+      incomings: [
+        {
+          month: currentMonth,
+          payoutPct: "100",
+          source: "forecast",
+          calibrationSellerboardMonthEndEur: 68000,
+        },
+        {
+          month: nextMonth,
+          payoutPct: "100",
+          source: "forecast",
+        },
+      ],
+      monthlyActuals: {},
+      extras: [],
+      dividends: [],
+      pos: [],
+      fos: [],
+    };
+
+    const basisReport = computeSeries(baseState);
+    const basisNextEntry = salesEntriesForMonth(basisReport, nextMonth)[0];
+    assert.ok(basisNextEntry);
+    assert.equal(Math.round(Number(basisNextEntry.meta?.cashIn?.appliedRevenue || 0)), 88333);
+    assert.equal(Math.round(salesPayoutAmountForMonth(basisReport, nextMonth)), 53000);
+    assert.equal(basisNextEntry.meta?.cashIn?.payoutPct, 60);
+
+    const conservativeReport = computeSeries({
+      ...baseState,
+      settings: {
+        ...baseState.settings,
+        cashInCalibrationMode: "conservative",
       },
-    ],
-    monthlyActuals: {},
-    extras: [],
-    dividends: [],
-    pos: [],
-    fos: [],
-  };
+    });
+    const conservativeNextEntry = salesEntriesForMonth(conservativeReport, nextMonth)[0];
+    assert.ok(conservativeNextEntry);
+    assert.equal(Math.round(Number(conservativeNextEntry.meta?.cashIn?.appliedRevenue || 0)), 82833);
+    assert.equal(Math.round(salesPayoutAmountForMonth(conservativeReport, nextMonth)), 49700);
+    assert.equal(conservativeNextEntry.meta?.cashIn?.payoutPct, 60);
 
-  const report = computeSeries(state);
-  const [year, monthNumber] = currentMonth.split("-").map(Number);
-  const monthDays = new Date(year, monthNumber, 0).getDate();
-  const rawFactor = (450 * (monthDays / 15)) / 1000;
-  const nextFactor = rawFactor + (1 - rawFactor) * (1 / (6 - 1));
-  assert.equal(Math.round(salesPayoutAmountForMonth(report, currentMonth)), Math.round(1000 * rawFactor * 0.5));
-  assert.equal(Math.round(salesPayoutAmountForMonth(report, nextMonth)), Math.round(1200 * nextFactor * 0.5));
-
-  const currentEntry = salesEntriesForMonth(report, currentMonth)[0];
-  const nextEntry = salesEntriesForMonth(report, nextMonth)[0];
-  assert.ok(currentEntry);
-  assert.ok(nextEntry);
-  assert.equal(currentEntry.meta?.cashIn?.quoteSource, "manual");
-  assert.equal(currentEntry.meta?.cashIn?.revenueSource, "forecast_calibrated");
-  assert.equal(nextEntry.meta?.cashIn?.calibrationSourceMonth, currentMonth);
-  assert.match(String(currentEntry.tooltip || ""), /Forecast-Umsatz:/);
-  assert.match(String(currentEntry.tooltip || ""), /Kalibrierfaktor:/);
-  assert.match(String(currentEntry.tooltip || ""), /Plan-Umsatz:/);
-  assert.match(String(currentEntry.tooltip || ""), /Quote:/);
-  assert.match(String(currentEntry.tooltip || ""), /Auszahlung:/);
+    const currentEntry = salesEntriesForMonth(conservativeReport, currentMonth)[0];
+    const nextEntry = salesEntriesForMonth(conservativeReport, nextMonth)[0];
+    assert.ok(currentEntry);
+    assert.ok(nextEntry);
+    assert.equal(currentEntry.meta?.cashIn?.quoteSource, "manual");
+    assert.equal(currentEntry.meta?.cashIn?.revenueSource, "forecast_calibrated");
+    assert.equal(nextEntry.meta?.cashIn?.calibrationSourceMonth, currentMonth);
+    assert.equal(nextEntry.meta?.cashIn?.calibrationMode, "conservative");
+    assert.match(String(currentEntry.tooltip || ""), /Forecast-Umsatz:/);
+    assert.match(String(currentEntry.tooltip || ""), /K_basis:/);
+    assert.match(String(currentEntry.tooltip || ""), /K_cons:/);
+    assert.match(String(currentEntry.tooltip || ""), /C_live:/);
+    assert.match(String(currentEntry.tooltip || ""), /W_eff:/);
+    assert.match(String(currentEntry.tooltip || ""), /d:/);
+  });
 });
 
 test("computeSeries uses manual normal baseline when no IST quotes exist", () => {

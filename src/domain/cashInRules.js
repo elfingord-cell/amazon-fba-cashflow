@@ -15,6 +15,19 @@ const CASH_IN_LIVE_SIGNAL_START_DAY = 10;
 const CASH_IN_LIVE_SIGNAL_MIN_WEIGHT = 0.05;
 const CASH_IN_LIVE_SIGNAL_MAX_WEIGHT = 0.20;
 
+export const REVENUE_CALIBRATION_ALPHA = 0.20;
+export const REVENUE_CALIBRATION_GAMMA = 0.25;
+export const REVENUE_CALIBRATION_BIAS_MIN = 0.75;
+export const REVENUE_CALIBRATION_BIAS_MAX = 1.05;
+export const REVENUE_CALIBRATION_CONSERVATIVE_MIN = 0.70;
+export const REVENUE_CALIBRATION_CONSERVATIVE_MAX = 1.00;
+export const REVENUE_CALIBRATION_RISK_MAX = 0.10;
+export const REVENUE_CALIBRATION_DEFAULT_BIAS = 1.00;
+export const REVENUE_CALIBRATION_DEFAULT_RISK = 0.05;
+export const REVENUE_CALIBRATION_LIVE_FACTOR_MIN = 0.60;
+export const REVENUE_CALIBRATION_LIVE_FACTOR_MAX = 1.20;
+export const REVENUE_CALIBRATION_LIVE_HORIZON_MONTHS = 3;
+
 function asFiniteNumber(value) {
   if (value == null) return null;
   if (typeof value === "string" && value.trim() === "") return null;
@@ -30,6 +43,23 @@ export function monthIndex(month) {
   if (!isMonthKey(month)) return null;
   const [year, monthNumber] = String(month).split("-").map(Number);
   return year * 12 + (monthNumber - 1);
+}
+
+function monthKeyFromDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function clampNumber(value, min, max, fallback = min) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+export function normalizeRevenueCalibrationMode(value) {
+  return String(value || "").trim().toLowerCase() === "conservative"
+    ? "conservative"
+    : "basis";
 }
 
 export function normalizeCalibrationHorizonMonths(value, fallback = 6) {
@@ -870,27 +900,6 @@ export function buildPayoutRecommendation(input = {}) {
   };
 }
 
-function daysInMonth(month) {
-  if (!isMonthKey(month)) return null;
-  const [year, monthNumber] = String(month).split("-").map(Number);
-  return new Date(year, monthNumber, 0).getDate();
-}
-
-function parseDayOfMonthFromIso(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim())) return null;
-  const [yearRaw, monthRaw, dayRaw] = String(value).split("-").map(Number);
-  const date = new Date(yearRaw, monthRaw - 1, dayRaw);
-  if (Number.isNaN(date.getTime())) return null;
-  if (date.getFullYear() !== yearRaw) return null;
-  if (date.getMonth() + 1 !== monthRaw) return null;
-  if (date.getDate() !== dayRaw) return null;
-  return dayRaw;
-}
-
-function sameMonth(dateIso, month) {
-  return String(dateIso || "").slice(0, 7) === String(month || "");
-}
-
 function normalizeIncomingRows(rows) {
   if (!Array.isArray(rows)) return [];
   return rows
@@ -898,13 +907,9 @@ function normalizeIncomingRows(rows) {
       const row = entry && typeof entry === "object" ? entry : {};
       const month = isMonthKey(row.month) ? String(row.month) : null;
       if (!month) return null;
-      const cutoffDate = row.calibrationCutoffDate ? String(row.calibrationCutoffDate) : "";
-      const revenueToDate = asFiniteNumber(row.calibrationRevenueToDateEur);
       const sellerboardMonthEnd = asFiniteNumber(row.calibrationSellerboardMonthEndEur);
       return {
         month,
-        cutoffDate,
-        revenueToDate,
         sellerboardMonthEnd,
       };
     })
@@ -912,179 +917,350 @@ function normalizeIncomingRows(rows) {
     .sort((left, right) => left.month.localeCompare(right.month));
 }
 
-function resolveCalibrationCandidate(row, forecastRevenueByMonth) {
-  const month = row.month;
-  const cutoffDate = row.cutoffDate;
-  const revenueToDate = row.revenueToDate;
-  const sellerboardMonthEnd = row.sellerboardMonthEnd;
-  const hasCutoff = Boolean(cutoffDate);
-  const hasRevenueToDate = Number.isFinite(revenueToDate) && revenueToDate >= 0;
-  const hasSellerboardMonthEnd = Number.isFinite(sellerboardMonthEnd) && sellerboardMonthEnd >= 0;
-  if (!hasCutoff && !hasRevenueToDate && !hasSellerboardMonthEnd) {
-    return {
-      month,
-      active: false,
-      reason: "no_input",
-      rawForecastRevenue: Number(forecastRevenueByMonth?.[month] || 0),
+function normalizeForecastRevenueByMonth(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  Object.entries(raw).forEach(([month, value]) => {
+    if (!isMonthKey(month)) return;
+    const revenue = Number(value);
+    out[month] = Number.isFinite(revenue) ? Number(revenue) : 0;
+  });
+  return out;
+}
+
+function normalizeMonthlyActualRevenueByMonth(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  Object.entries(raw).forEach(([month, entry]) => {
+    if (!isMonthKey(month)) return;
+    const row = entry && typeof entry === "object" ? entry : {};
+    const revenue = Number(row.realRevenueEUR);
+    if (!Number.isFinite(revenue)) return;
+    out[month] = Number(revenue);
+  });
+  return out;
+}
+
+function normalizeRevenueCalibrationForecastLock(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  Object.entries(raw).forEach(([month, lockRaw]) => {
+    if (!isMonthKey(month)) return;
+    const lock = lockRaw && typeof lockRaw === "object" ? lockRaw : {};
+    const forecastRevenueLockedEUR = Number(lock.forecastRevenueLockedEUR);
+    if (!Number.isFinite(forecastRevenueLockedEUR)) return;
+    out[month] = {
+      forecastRevenueLockedEUR: Math.max(0, Number(forecastRevenueLockedEUR)),
+      lockedAt: lock.lockedAt ? String(lock.lockedAt) : null,
+      sourceForecastVersionId: lock.sourceForecastVersionId == null
+        ? null
+        : String(lock.sourceForecastVersionId || "").trim() || null,
     };
-  }
-  const rawForecastRevenue = Number(forecastRevenueByMonth?.[month] || 0);
+  });
+  return out;
+}
 
-  if (!(rawForecastRevenue > 0)) {
-    return {
-      month,
-      active: false,
-      reason: "missing_forecast_revenue",
-      rawForecastRevenue,
-    };
-  }
-
-  let expectedRevenue = null;
-  let method = null;
-
-  if (hasSellerboardMonthEnd) {
-    expectedRevenue = Number(sellerboardMonthEnd);
-    method = "sellerboard";
-  } else {
-    if (!Number.isFinite(revenueToDate)) {
-      return {
-        month,
-        active: false,
-        reason: "missing_inputs",
-        rawForecastRevenue,
-      };
-    }
-    if (!hasCutoff || !hasRevenueToDate) {
-      return {
-        month,
-        active: false,
-        reason: "missing_inputs",
-        rawForecastRevenue,
-      };
-    }
-    const dayOfMonth = parseDayOfMonthFromIso(cutoffDate);
-    const monthDays = daysInMonth(month);
-    if (!dayOfMonth || !monthDays || !sameMonth(cutoffDate, month)) {
-      return {
-        month,
-        active: false,
-        reason: "invalid_cutoff_date",
-        rawForecastRevenue,
-      };
-    }
-    expectedRevenue = Number(revenueToDate) * (monthDays / dayOfMonth);
-    method = "linear";
-  }
-
-  if (!(Number.isFinite(expectedRevenue) && expectedRevenue >= 0)) {
-    return {
-      month,
-      active: false,
-      reason: "invalid_expected_revenue",
-      rawForecastRevenue,
-    };
-  }
-
-  const rawFactor = expectedRevenue / rawForecastRevenue;
-  if (!Number.isFinite(rawFactor) || rawFactor <= 0) {
-    return {
-      month,
-      active: false,
-      reason: "invalid_factor",
-      rawForecastRevenue,
-    };
-  }
-
+export function normalizeRevenueCalibrationState(raw) {
+  const source = raw && typeof raw === "object" ? raw : {};
   return {
-    month,
-    active: true,
+    biasB: clampNumber(
+      source.biasB,
+      REVENUE_CALIBRATION_BIAS_MIN,
+      REVENUE_CALIBRATION_BIAS_MAX,
+      REVENUE_CALIBRATION_DEFAULT_BIAS,
+    ),
+    riskR: clampNumber(
+      source.riskR,
+      0,
+      REVENUE_CALIBRATION_RISK_MAX,
+      REVENUE_CALIBRATION_DEFAULT_RISK,
+    ),
+    lastUpdatedAt: source.lastUpdatedAt ? String(source.lastUpdatedAt) : null,
+    forecastLock: normalizeRevenueCalibrationForecastLock(source.forecastLock),
+  };
+}
+
+function computeTimeWeight(dayOfMonth) {
+  const day = Math.max(1, Math.min(31, Math.round(Number(dayOfMonth || 1))));
+  if (day < 10) return 0;
+  if (day <= 20) return (day - 10) / 10;
+  return 1;
+}
+
+function computeLiveAnchor({ incomings, currentMonth, forecastRevenueByMonth }) {
+  const currentForecastRevenue = Number(forecastRevenueByMonth?.[currentMonth] || 0);
+  if (!(Number.isFinite(currentForecastRevenue) && currentForecastRevenue > 0)) {
+    return {
+      enabled: false,
+      reason: "missing_forecast_revenue",
+      f0: currentForecastRevenue,
+      pLive: null,
+      cLiveRaw: null,
+      cLive: null,
+    };
+  }
+  const currentRow = incomings.find((row) => row.month === currentMonth) || null;
+  const pLive = Number(currentRow?.sellerboardMonthEnd);
+  if (!(Number.isFinite(pLive) && pLive > 0)) {
+    return {
+      enabled: false,
+      reason: "missing_inputs",
+      f0: currentForecastRevenue,
+      pLive: null,
+      cLiveRaw: null,
+      cLive: null,
+    };
+  }
+  const cLiveRaw = Number(pLive) / Number(currentForecastRevenue);
+  const cLive = clampNumber(
+    cLiveRaw,
+    REVENUE_CALIBRATION_LIVE_FACTOR_MIN,
+    REVENUE_CALIBRATION_LIVE_FACTOR_MAX,
+    REVENUE_CALIBRATION_DEFAULT_BIAS,
+  );
+  return {
+    enabled: true,
     reason: "ok",
-    method,
-    rawFactor,
-    rawForecastRevenue,
-    expectedRevenue,
+    f0: currentForecastRevenue,
+    pLive: Number(pLive),
+    cLiveRaw,
+    cLive,
+  };
+}
+
+function isPastMonth(month, currentMonth) {
+  if (!isMonthKey(month) || !isMonthKey(currentMonth)) return false;
+  return month < currentMonth;
+}
+
+export function learnRevenueCalibrationState(input = {}) {
+  const now = input.now instanceof Date && !Number.isNaN(input.now.getTime())
+    ? input.now
+    : new Date();
+  const nowIso = input.nowIso && String(input.nowIso).trim()
+    ? String(input.nowIso)
+    : now.toISOString();
+  const currentMonth = isMonthKey(input.currentMonth)
+    ? String(input.currentMonth)
+    : (monthKeyFromDate(now) || "1970-01");
+  const actualRevenueByMonth = normalizeMonthlyActualRevenueByMonth(input.monthlyActuals);
+  const forecastRevenueByMonth = normalizeForecastRevenueByMonth(input.forecastRevenueByMonth);
+  const normalizedState = normalizeRevenueCalibrationState(input.learningState);
+  const nextForecastLock = {
+    ...(normalizedState.forecastLock || {}),
+  };
+  const sourceForecastVersionId = input.sourceForecastVersionId == null
+    ? null
+    : String(input.sourceForecastVersionId || "").trim() || null;
+
+  const lockAddedMonths = [];
+  Object.keys(actualRevenueByMonth)
+    .filter((month) => isPastMonth(month, currentMonth))
+    .sort((left, right) => left.localeCompare(right))
+    .forEach((month) => {
+      if (nextForecastLock[month]) return;
+      const lockedRevenueRaw = Number(forecastRevenueByMonth?.[month] || 0);
+      const lockedRevenue = Number.isFinite(lockedRevenueRaw) ? Math.max(0, lockedRevenueRaw) : 0;
+      nextForecastLock[month] = {
+        forecastRevenueLockedEUR: lockedRevenue,
+        lockedAt: nowIso,
+        sourceForecastVersionId,
+      };
+      lockAddedMonths.push(month);
+    });
+
+  const learnablePoints = Object.keys(actualRevenueByMonth)
+    .filter((month) => isPastMonth(month, currentMonth))
+    .sort((left, right) => left.localeCompare(right))
+    .map((month) => {
+      const actualRevenue = Number(actualRevenueByMonth[month]);
+      const lockedRevenue = Number(nextForecastLock?.[month]?.forecastRevenueLockedEUR);
+      if (!(Number.isFinite(actualRevenue) && Number.isFinite(lockedRevenue) && lockedRevenue > 0)) {
+        return null;
+      }
+      return {
+        month,
+        actualRevenue,
+        lockedRevenue,
+      };
+    })
+    .filter(Boolean);
+
+  let biasB = normalizedState.biasB;
+  let riskR = normalizedState.riskR;
+  const replay = [];
+  if (learnablePoints.length) {
+    biasB = REVENUE_CALIBRATION_DEFAULT_BIAS;
+    riskR = REVENUE_CALIBRATION_DEFAULT_RISK;
+    learnablePoints.forEach((point) => {
+      const accuracy = Number(point.actualRevenue) / Number(point.lockedRevenue);
+      const biasBefore = biasB;
+      const biasAfter = clampNumber(
+        ((1 - REVENUE_CALIBRATION_ALPHA) * biasBefore) + (REVENUE_CALIBRATION_ALPHA * accuracy),
+        REVENUE_CALIBRATION_BIAS_MIN,
+        REVENUE_CALIBRATION_BIAS_MAX,
+        biasBefore,
+      );
+      const optimismGap = Math.max(0, biasBefore - accuracy);
+      const riskAfterRaw = ((1 - REVENUE_CALIBRATION_GAMMA) * riskR) + (REVENUE_CALIBRATION_GAMMA * optimismGap);
+      const riskAfter = clampNumber(
+        riskAfterRaw,
+        0,
+        REVENUE_CALIBRATION_RISK_MAX,
+        riskR,
+      );
+      replay.push({
+        month: point.month,
+        actualRevenue: point.actualRevenue,
+        lockedRevenue: point.lockedRevenue,
+        accuracy,
+        biasBefore,
+        biasAfter,
+        optimismGap,
+        riskBefore: riskR,
+        riskAfter,
+      });
+      biasB = biasAfter;
+      riskR = riskAfter;
+    });
+  }
+
+  const stateNext = {
+    biasB,
+    riskR,
+    lastUpdatedAt: learnablePoints.length ? nowIso : normalizedState.lastUpdatedAt,
+    forecastLock: nextForecastLock,
+  };
+  return {
+    state: stateNext,
+    stateNext,
+    lockAddedMonths,
+    learnableMonthCount: learnablePoints.length,
+    learnableMonths: learnablePoints.map((entry) => entry.month),
+    replay,
   };
 }
 
 export function buildCalibrationProfile(input = {}) {
+  const now = input.now instanceof Date && !Number.isNaN(input.now.getTime())
+    ? input.now
+    : new Date();
+  const dayOfMonth = Math.max(1, Math.min(31, Math.round(Number(now.getDate() || 1))));
   const months = Array.isArray(input.months) ? input.months.filter(isMonthKey) : [];
   const normalizedMonths = months.slice().sort((left, right) => left.localeCompare(right));
-  const forecastRevenueByMonth = input.forecastRevenueByMonth && typeof input.forecastRevenueByMonth === "object"
-    ? input.forecastRevenueByMonth
-    : {};
-  const horizonMonths = normalizeCalibrationHorizonMonths(input.horizonMonths, 6);
-  const rows = normalizeIncomingRows(input.incomings);
+  const currentMonth = isMonthKey(input.currentMonth)
+    ? String(input.currentMonth)
+    : (monthKeyFromDate(now) || normalizedMonths[0] || "1970-01");
+  const mode = normalizeRevenueCalibrationMode(input.mode);
+  const forecastRevenueByMonth = normalizeForecastRevenueByMonth(input.forecastRevenueByMonth);
+  const incomings = normalizeIncomingRows(input.incomings);
 
-  const evaluations = rows
-    .map((row) => resolveCalibrationCandidate(row, forecastRevenueByMonth));
-  const candidates = evaluations
-    .filter((entry) => entry.active)
-    .sort((left, right) => left.month.localeCompare(right.month));
+  const learning = learnRevenueCalibrationState({
+    learningState: input.learningState,
+    forecastRevenueByMonth,
+    monthlyActuals: input.monthlyActuals,
+    currentMonth,
+    sourceForecastVersionId: input.sourceForecastVersionId,
+    now,
+    nowIso: input.nowIso,
+  });
+  const biasB = Number(learning.state?.biasB ?? REVENUE_CALIBRATION_DEFAULT_BIAS);
+  const riskR = Number(learning.state?.riskR ?? REVENUE_CALIBRATION_DEFAULT_RISK);
+  const wTime = computeTimeWeight(dayOfMonth);
+  const liveAnchor = computeLiveAnchor({
+    incomings,
+    currentMonth,
+    forecastRevenueByMonth,
+  });
+  const candidates = liveAnchor.enabled
+    ? [{
+      month: currentMonth,
+      active: true,
+      reason: "ok",
+      method: "live_anchor",
+      rawFactor: liveAnchor.cLiveRaw,
+      rawForecastRevenue: liveAnchor.f0,
+      expectedRevenue: liveAnchor.pLive,
+    }]
+    : [];
+  const evaluations = [{
+    month: currentMonth,
+    active: liveAnchor.enabled,
+    reason: liveAnchor.reason,
+    method: liveAnchor.enabled ? "live_anchor" : null,
+    rawFactor: liveAnchor.cLiveRaw,
+    clampedFactor: liveAnchor.cLive,
+    rawForecastRevenue: liveAnchor.f0,
+    expectedRevenue: liveAnchor.pLive,
+  }];
 
+  const currentMonthIdx = monthIndex(currentMonth);
   const byMonth = {};
-
   normalizedMonths.forEach((month) => {
+    const forecastRevenue = Number(forecastRevenueByMonth?.[month] || 0);
     const monthIdx = monthIndex(month);
-    if (monthIdx == null) {
-      byMonth[month] = {
-        month,
-        active: false,
-        factor: 1,
-        sourceMonth: null,
-        method: null,
-        rawFactor: null,
-        rawForecastRevenue: Number(forecastRevenueByMonth?.[month] || 0),
-        expectedRevenue: null,
-        horizonOffset: null,
-      };
-      return;
-    }
-
-    const eligible = candidates
-      .filter((candidate) => {
-        const sourceIdx = monthIndex(candidate.month);
-        if (sourceIdx == null || sourceIdx > monthIdx) return false;
-        const offset = monthIdx - sourceIdx;
-        if (horizonMonths <= 1) return offset === 0;
-        return offset < horizonMonths;
-      })
-      .sort((left, right) => left.month.localeCompare(right.month));
-
-    const latest = eligible.length ? eligible[eligible.length - 1] : null;
-    if (!latest) {
-      byMonth[month] = {
-        month,
-        active: false,
-        factor: 1,
-        sourceMonth: null,
-        method: null,
-        rawFactor: null,
-        rawForecastRevenue: Number(forecastRevenueByMonth?.[month] || 0),
-        expectedRevenue: null,
-        horizonOffset: null,
-      };
-      return;
-    }
-
-    const sourceIdx = monthIndex(latest.month);
-    const offset = monthIdx - sourceIdx;
-    const factor = computeCalibrationFactor(latest.rawFactor, horizonMonths, offset);
-
+    const horizonOffsetRaw = (monthIdx != null && currentMonthIdx != null)
+      ? (monthIdx - currentMonthIdx)
+      : 0;
+    const horizonOffset = Math.max(0, horizonOffsetRaw);
+    const wH = horizonOffsetRaw < 0
+      ? 0
+      : Math.max(0, 1 - (horizonOffset / REVENUE_CALIBRATION_LIVE_HORIZON_MONTHS));
+    const wEff = liveAnchor.enabled ? (wTime * wH) : 0;
+    const signal = (wEff * Number(liveAnchor.cLive ?? biasB)) + ((1 - wEff) * biasB);
+    const factorBasis = clampNumber(
+      signal,
+      REVENUE_CALIBRATION_BIAS_MIN,
+      REVENUE_CALIBRATION_BIAS_MAX,
+      1,
+    );
+    const riskScale = 1 + (0.1 * Math.min(horizonOffset, 4));
+    const factorConservative = clampNumber(
+      signal - (riskR * riskScale),
+      REVENUE_CALIBRATION_CONSERVATIVE_MIN,
+      REVENUE_CALIBRATION_CONSERVATIVE_MAX,
+      1,
+    );
+    const factorSelected = mode === "conservative" ? factorConservative : factorBasis;
+    const calibratedRevenueBasis = forecastRevenue > 0 ? forecastRevenue * factorBasis : 0;
+    const calibratedRevenueConservative = forecastRevenue > 0 ? forecastRevenue * factorConservative : 0;
     byMonth[month] = {
       month,
-      active: true,
-      factor: Number.isFinite(factor) && factor > 0 ? factor : 1,
-      sourceMonth: latest.month,
-      method: latest.method || null,
-      rawFactor: Number(latest.rawFactor),
-      rawForecastRevenue: Number(forecastRevenueByMonth?.[month] || 0),
-      expectedRevenue: Number(latest.expectedRevenue),
-      horizonOffset: offset,
+      active: Math.abs(factorSelected - 1) > 0.000001,
+      factor: factorSelected,
+      factorBasis,
+      factorConservative,
+      sourceMonth: liveAnchor.enabled ? currentMonth : null,
+      method: liveAnchor.enabled && wEff > 0 ? "live_anchor" : "bias_only",
+      rawFactor: liveAnchor.cLiveRaw,
+      rawForecastRevenue: forecastRevenue,
+      expectedRevenue: liveAnchor.pLive,
+      horizonOffset,
+      dayOfMonth,
+      biasB,
+      riskR,
+      cLiveRaw: liveAnchor.cLiveRaw,
+      cLive: liveAnchor.cLive,
+      wTime,
+      wH,
+      wEff,
+      signal,
+      calibratedRevenueBasis,
+      calibratedRevenueConservative,
+      liveAnchorEnabled: liveAnchor.enabled,
     };
   });
 
   return {
-    horizonMonths,
+    mode,
+    horizonMonths: REVENUE_CALIBRATION_LIVE_HORIZON_MONTHS,
+    currentMonth,
+    dayOfMonth,
+    biasB,
+    riskR,
+    learning,
+    learningStateNext: learning.stateNext,
+    liveAnchor,
     candidates,
     evaluations,
     byMonth,
