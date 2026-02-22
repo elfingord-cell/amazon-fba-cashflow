@@ -794,16 +794,19 @@ export default function DashboardModule(): JSX.Element {
     }
   }, [robustness, selectedMonth]);
 
-  const toggleBucketScopeValue = useCallback((bucket: string) => {
+  const setBucketScopeEnabled = useCallback((bucket: string, enabled: boolean) => {
     if (!PORTFOLIO_BUCKET_VALUES.includes(bucket)) return;
     setBucketScopeValues((current) => {
       const normalized = Array.from(new Set((current || []).filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry))));
       const isSelected = normalized.includes(bucket);
-      if (!isSelected) {
+      if (enabled && !isSelected) {
         return [...normalized, bucket];
       }
-      const filtered = normalized.filter((entry) => entry !== bucket);
-      return filtered.length ? filtered : normalized;
+      if (!enabled && isSelected) {
+        const filtered = normalized.filter((entry) => entry !== bucket);
+        return filtered.length ? filtered : normalized;
+      }
+      return normalized;
     });
   }, []);
   const openMonthDetails = useCallback((month: string) => {
@@ -2008,22 +2011,29 @@ export default function DashboardModule(): JSX.Element {
               </Tooltip>
             </Space>
             <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-            <div className="v2-calc-cockpit-chip-row">
+            <div className="v2-calc-cockpit-toggle-list">
               {DASHBOARD_BUCKET_OPTIONS.map((option) => {
                 const selected = bucketScopeValues.includes(option.value);
+                const disableOff = selected && bucketScopeValues.length <= 1;
                 return (
-                  <Button
-                    key={option.value}
-                    size="small"
-                    type={selected ? "primary" : "default"}
-                    onClick={() => toggleBucketScopeValue(option.value)}
-                  >
-                    {option.label}
-                  </Button>
+                  <div key={option.value} className="v2-calc-cockpit-toggle-row">
+                    <Text>{option.label}</Text>
+                    <Segmented
+                      size="small"
+                      value={selected ? "on" : "off"}
+                      onChange={(value) => setBucketScopeEnabled(option.value, String(value) === "on")}
+                      options={[
+                        { label: "An", value: "on" },
+                        { label: "Aus", value: "off", disabled: disableOff },
+                      ]}
+                    />
+                  </div>
                 );
               })}
             </div>
-            <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
+            <Text type="secondary">
+              Bestimmt nur die aktuelle Berechnung im Dashboard. Mindestens eine Produktgruppe bleibt aktiv.
+            </Text>
           </div>
 
           <div className="v2-calc-cockpit-module">
@@ -2095,13 +2105,13 @@ export default function DashboardModule(): JSX.Element {
                 { label: "EMPFOHLEN", value: "recommendation" },
               ]}
             />
-            <Space direction="vertical" size={6} style={{ width: "100%" }}>
-              <Space size={6}>
-                <Text strong>Sicherheitsmodus</Text>
-                <Tooltip title="Basis: nur L+S. Konservativ: L+S minus lernender Risikoabschlag R(h) aus RiskBase (mit Horizon-Skalierung).">
-                  <InfoCircleOutlined />
-                </Tooltip>
-              </Space>
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Space size={6}>
+                  <Text strong>Sicherheitsmodus</Text>
+                  <Tooltip title="Basis = normale Empfehlungsquote. Konservativ = gleiche Quote mit zusätzlichem Sicherheitsabschlag.">
+                    <InfoCircleOutlined />
+                  </Tooltip>
+                </Space>
               <Segmented
                 block
                 value={safetyMode}
@@ -2122,16 +2132,28 @@ export default function DashboardModule(): JSX.Element {
                 >
                   Saisonalität berücksichtigen
                 </Checkbox>
-                <Tooltip title="Aktiviert die gelernte Monats-Saisonalität S[Monat]. Gilt nur für die Empfehlung.">
+                <Tooltip title="Nutzt den Monatsfaktor (z. B. Q4 stärker). Wirkt nur, wenn 'Empfohlen' aktiv ist.">
                   <InfoCircleOutlined />
                 </Tooltip>
               </div>
             ) : null}
-            <Text type="secondary">
-              {quoteMode === "manual"
-                ? "Manuelle Monatsquote ist führend; Sicherheitsmodus und Saisonalität sind deaktiviert."
-                : "Empfehlung nutzt L + S[Monat] und optional (Konservativ) einen lernenden Risikoabschlag."}
-            </Text>
+            {quoteMode === "manual" ? (
+              <Text type="secondary">
+                Manuelle Monatsquote ist führend. Sicherheitsmodus und Saisonalität sind in diesem Modus aus.
+              </Text>
+            ) : (
+              <Space direction="vertical" size={4}>
+                <Text type="secondary">
+                  Basis: normale Empfehlungsquote. Konservativ: Basis minus Sicherheitsabschlag.
+                </Text>
+                <Text type="secondary">
+                  Beispiel (vereinfacht): 100.000 EUR Umsatz, Basis 20% = 20.000 EUR Auszahlung, Konservativ mit 3% Abschlag = 17.000 EUR.
+                </Text>
+                <Text type="secondary">
+                  Saisonalität verändert die Quote je Monat (z. B. Q4 höher) und gilt nur für die Empfehlung.
+                </Text>
+              </Space>
+            )}
           </div>
         </div>
       </div>
