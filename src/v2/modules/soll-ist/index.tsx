@@ -3,7 +3,7 @@ import { Alert, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Ty
 import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
@@ -648,7 +648,7 @@ export default function SollIstModule(): JSX.Element {
         <Paragraph type="secondary">
           Monat anklicken, um den Treiber- und Detailbereich zu aktualisieren.
         </Paragraph>
-        <TanStackGrid
+        <DataTable
           data={visibleRows}
           columns={comparisonColumns}
           minTableWidth={1240}
@@ -662,6 +662,7 @@ export default function SollIstModule(): JSX.Element {
           Geplante Auszahlungsstruktur im ausgewählten Monat als Kontext für die Soll-vs-Ist-Differenz.
         </Paragraph>
         <Table
+          className="v2-ant-table"
           size="small"
           pagination={false}
           rowKey="key"

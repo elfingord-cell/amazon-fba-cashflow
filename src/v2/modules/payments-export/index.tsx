@@ -11,7 +11,7 @@ import {
   message,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { currentMonthKey, formatMonthLabel } from "../../domain/months";
 import {
   type PaymentExportScope,
@@ -276,7 +276,7 @@ export default function PaymentsExportModule(): JSX.Element {
         <Text type="secondary">
           Paid-Positionen werden mit Ist-Betrag angezeigt; fehlende Ist-Werte sind als Issue markiert.
         </Text>
-        <TanStackGrid
+        <DataTable
           data={rows}
           columns={columns}
           minTableWidth={1600}

@@ -33,6 +33,7 @@ import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { randomId } from "../../domain/orderUtils";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { StatsTableShell } from "../../components/StatsTableShell";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -1039,7 +1040,7 @@ export default function InputsModule(): JSX.Element {
             </Tag>
           ) : null}
         </Space>
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1720 }}>
             <thead>
               <tr>
@@ -1244,7 +1245,7 @@ export default function InputsModule(): JSX.Element {
               })}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Card>
@@ -1263,7 +1264,7 @@ export default function InputsModule(): JSX.Element {
             Extra
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table">
             <thead>
               <tr>
@@ -1324,7 +1325,7 @@ export default function InputsModule(): JSX.Element {
               ))}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Card>
@@ -1343,7 +1344,7 @@ export default function InputsModule(): JSX.Element {
             Dividende
           </Button>
         </Space>
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table">
             <thead>
               <tr>
@@ -1404,7 +1405,7 @@ export default function InputsModule(): JSX.Element {
               ))}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Card>
@@ -1429,7 +1430,7 @@ export default function InputsModule(): JSX.Element {
         <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 12 }}>
           Diese Werte gelten je Monat zum Monatsende und setzen den Kontostand ab diesem Monat als neue Baseline.
         </Paragraph>
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table">
             <thead>
               <tr>
@@ -1505,7 +1506,7 @@ export default function InputsModule(): JSX.Element {
               ))}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Card>

@@ -15,6 +15,7 @@ import {
 } from "antd";
 import { expandFixcostInstances } from "../../../domain/cashflow.js";
 import { randomId } from "../../domain/orderUtils";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 
@@ -536,7 +537,7 @@ export default function FixcostsModule(): JSX.Element {
           <Button onClick={addRow}>Position hinzufuegen</Button>
         </Space>
 
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table v2-fixcost-table">
             <thead>
               <tr>
@@ -676,7 +677,7 @@ export default function FixcostsModule(): JSX.Element {
               })}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Card>
@@ -737,7 +738,7 @@ export default function FixcostsModule(): JSX.Element {
                       Auto-Markierung ignorieren
                     </Button>
                   </Space>
-                  <div className="v2-stats-table-wrap">
+                  <StatsTableShell>
                     <table className="v2-stats-table">
                       <thead>
                         <tr>
@@ -786,7 +787,7 @@ export default function FixcostsModule(): JSX.Element {
                         ))}
                       </tbody>
                     </table>
-                  </div>
+                  </StatsTableShell>
                 </Space>
               ),
             }))}

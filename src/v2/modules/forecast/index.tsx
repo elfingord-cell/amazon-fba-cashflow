@@ -21,7 +21,7 @@ import { parseDeNumber } from "../../../lib/dataHealth.js";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { CASH_IN_QUOTE_MAX_PCT, CASH_IN_QUOTE_MIN_PCT, clampPct, parsePayoutPctInput } from "../../../domain/cashInRules.js";
 import { parseVentoryCsv } from "../../../ui/forecastCsv.js";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
 import { computeForecastDriftSummary } from "../../domain/forecastDrift";
@@ -1471,7 +1471,7 @@ export default function ForecastModule(): JSX.Element {
                 ),
                 children: (
                   <div className="v2-products-grid-host">
-                    <TanStackGrid
+                    <DataTable
                       className="v2-products-grid-wrap"
                       data={group.rows}
                       columns={columns}
@@ -1620,7 +1620,7 @@ export default function ForecastModule(): JSX.Element {
                       ),
                       children: (
                         <div className="v2-products-grid-host">
-                          <TanStackGrid
+                          <DataTable
                             className="v2-products-grid-wrap"
                             data={group.rows}
                             columns={impactSkuColumns}
@@ -1644,7 +1644,7 @@ export default function ForecastModule(): JSX.Element {
                 {!displayedConflictRows.length ? (
                   <Text type="secondary">Keine Konflikte im aktuellen Filter.</Text>
                 ) : (
-                  <TanStackGrid
+                  <DataTable
                     data={displayedConflictRows}
                     columns={impactConflictColumns}
                     minTableWidth={1800}

@@ -3,7 +3,7 @@ import { Alert, Card, Space, Tag, Tooltip, Typography } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Text, Title } = Typography;
@@ -630,7 +630,7 @@ export default function AbcInsightsModule(): JSX.Element {
             <Text type="secondary">{summary.zeroRevenueCount} SKU(s) mit 0 Umsatz im Zeitraum werden ans Tabellenende sortiert.</Text>
           ) : null}
           {visibleRows.length ? (
-            <TanStackGrid data={visibleRows} columns={columns} minTableWidth={1420} tableLayout="fixed" />
+            <DataTable data={visibleRows} columns={columns} minTableWidth={1420} tableLayout="fixed" />
           ) : (
             <Alert
               type="info"

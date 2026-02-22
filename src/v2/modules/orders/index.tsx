@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import FoModule from "../fo";
 import PoModule from "../po";
 import SkuTimelineView from "./SkuTimelineView";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Title } = Typography;
@@ -69,7 +70,7 @@ export default function OrdersModule(): JSX.Element {
             Summe Ist: {paidSum.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
           </Typography.Text>
         </div>
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table" data-layout="auto">
             <thead>
               <tr>
@@ -98,7 +99,7 @@ export default function OrdersModule(): JSX.Element {
               )}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Tabs

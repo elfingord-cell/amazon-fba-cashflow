@@ -91,10 +91,11 @@ export function AppDataTable({
     x: "max-content",
     ...(scrollY ? { y: scrollY } : {}),
   };
+  const mergedClassName = ["v2-ant-table", className].filter(Boolean).join(" ");
 
   return (
     <Table
-      className={className}
+      className={mergedClassName}
       size="middle"
       pagination={false}
       sticky

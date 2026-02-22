@@ -16,7 +16,7 @@ import type { ImportMode } from "../../state/types";
 import type { DryRunBundle, ImportIssue, ImportSectionStats, ImportApplyResult } from "../../migration";
 import { applyDryRunBundle, runLegacyDryRunFromJson } from "../../migration";
 import { useStorageAdapter } from "../../sync/session";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -44,7 +44,7 @@ function statsColumns(): ColumnDef<ImportSectionStats>[] {
 function StatsTable({ rows }: { rows: ImportSectionStats[] }): JSX.Element {
   const columns = useMemo(() => statsColumns(), []);
   return (
-    <TanStackGrid data={rows} columns={columns} minTableWidth={720} tableLayout="auto" />
+    <DataTable data={rows} columns={columns} minTableWidth={720} tableLayout="auto" sorting={false} />
   );
 }
 

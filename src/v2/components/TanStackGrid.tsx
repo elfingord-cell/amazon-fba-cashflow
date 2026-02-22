@@ -19,7 +19,7 @@ interface V2ColumnMeta {
   sortAccessor?: (row: unknown) => unknown;
 }
 
-interface TanStackGridProps<T extends object> {
+export interface TanStackGridProps<T extends object> {
   data: T[];
   columns: ColumnDef<T>[];
   className?: string;
@@ -28,6 +28,7 @@ interface TanStackGridProps<T extends object> {
   minTableWidth?: number;
   tableLayout?: "fixed" | "auto";
   crosshair?: "none" | "matrix";
+  sorting?: boolean;
   onCellHover?: (rowIndex: number | null, colIndex: number | null) => void;
 }
 
@@ -50,9 +51,10 @@ export function TanStackGrid<T extends object>({
   minTableWidth = 640,
   tableLayout = "fixed",
   crosshair = "none",
+  sorting = true,
   onCellHover,
 }: TanStackGridProps<T>): JSX.Element {
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sortingState, setSortingState] = useState<SortingState>([]);
   const [hovered, setHovered] = useState<{ rowIndex: number | null; colIndex: number | null }>({
     rowIndex: null,
     colIndex: null,
@@ -65,20 +67,20 @@ export function TanStackGrid<T extends object>({
       if (!hasAccessor && typeof meta.sortAccessor === "function") {
         (next as { accessorFn?: (row: T) => unknown }).accessorFn = (row: T) => meta.sortAccessor?.(row);
       }
-      if (meta.sortable === false) {
+      if (!sorting || meta.sortable === false) {
         (next as { enableSorting?: boolean }).enableSorting = false;
       }
       return next;
     });
-  }, [columns]);
+  }, [columns, sorting]);
   const crosshairEnabled = crosshair === "matrix";
   const table = useReactTable({
     data,
     columns: stableColumns,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    onSortingChange: setSorting,
-    state: { sorting },
+    getSortedRowModel: sorting ? getSortedRowModel() : undefined,
+    onSortingChange: sorting ? setSortingState : undefined,
+    state: sorting ? { sorting: sortingState } : {},
   });
 
   const baseClassName = className || "v2-stats-table-wrap";

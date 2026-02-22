@@ -484,6 +484,7 @@ export default function PlanProductsModule(): JSX.Element {
 
       <Card>
         <Table
+          className="v2-ant-table"
           rowKey={(row) => String((row as Record<string, unknown>).id || (row as Record<string, unknown>).key || "")}
           size="small"
           pagination={false}
@@ -914,6 +915,7 @@ export default function PlanProductsModule(): JSX.Element {
                 ) : null}
               </Space>
               <Table
+                className="v2-ant-table"
                 size="small"
                 pagination={false}
                 rowKey={(row) => String((row as Record<string, unknown>).month || "")}

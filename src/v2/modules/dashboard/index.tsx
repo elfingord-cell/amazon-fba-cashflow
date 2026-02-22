@@ -2096,7 +2096,7 @@ export default function DashboardModule(): JSX.Element {
           </Button>
         </Space>
         <Table<PnlMatrixRow>
-          className="v2-dashboard-pnl-table"
+          className="v2-ant-table v2-dashboard-pnl-table"
           columns={pnlMatrixColumns}
           dataSource={pnlMatrixRows}
           pagination={false}

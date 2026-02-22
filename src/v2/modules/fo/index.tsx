@@ -16,8 +16,9 @@ import {
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { OrdersGanttTimeline, type OrdersGanttGroup, type OrdersGanttItem } from "../../components/OrdersGanttTimeline";
 import { safeTimelineSpanMs, timelineRangeFromIsoDates, toTimelineMs } from "../../components/ordersTimelineUtils";
@@ -1899,7 +1900,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           <Tag>{mergeSelectedFos.length} ausgewählt</Tag>
         </div>
         {foViewMode === "table" ? (
-          <TanStackGrid
+          <DataTable
             data={rows}
             columns={columns}
             minTableWidth={1400}
@@ -2384,7 +2385,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 style={{ marginTop: 8 }}
                 message="FOs erzeugen nur Plan-Meilensteine. Zahlungen werden ausschließlich in POs bestätigt."
               />
-              <div className="v2-stats-table-wrap" style={{ marginTop: 8 }}>
+              <StatsTableShell style={{ marginTop: 8 }}>
                 <table className="v2-stats-table" data-layout="auto">
                   <thead>
                     <tr>
@@ -2417,7 +2418,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                     )}
                   </tbody>
                 </table>
-              </div>
+              </StatsTableShell>
             </div>
           </Card>
         </Form>
@@ -2527,7 +2528,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             />
           ) : null}
 
-          <div className="v2-stats-table-wrap">
+          <StatsTableShell>
             <table className="v2-stats-table" data-layout="auto">
               <thead>
                 <tr>
@@ -2566,7 +2567,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
                 )}
               </tbody>
             </table>
-          </div>
+          </StatsTableShell>
         </Space>
       </Modal>
     </div>

@@ -1100,7 +1100,7 @@ export default function SkuPlanningModule(): JSX.Element {
               />
             </div>
             <Table<OverviewRow>
-              className="v2-sku-planning-overview"
+              className="v2-ant-table v2-sku-planning-overview"
               rowKey="key"
               size="small"
               pagination={false}

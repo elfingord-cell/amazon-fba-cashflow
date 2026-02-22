@@ -11,6 +11,7 @@ import {
   Typography,
 } from "antd";
 import { computeVatPreview } from "../../../domain/vatPreview.js";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 
@@ -329,6 +330,7 @@ export default function VatModule(): JSX.Element {
 
       <Card>
         <Table
+          className="v2-ant-table"
           size="small"
           pagination={false}
           dataSource={tableData}
@@ -509,7 +511,7 @@ export default function VatModule(): JSX.Element {
           <Space direction="vertical" style={{ width: "100%" }}>
             {detailContent.detail.formula ? <Text type="secondary">{detailContent.detail.formula}</Text> : null}
             {detailContent.detail.notes ? <Text type="secondary">{detailContent.detail.notes}</Text> : null}
-            <div className="v2-stats-table-wrap">
+            <StatsTableShell>
               <table className="v2-stats-table">
                 <thead>
                   <tr>
@@ -530,7 +532,7 @@ export default function VatModule(): JSX.Element {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </StatsTableShell>
             <Tag color="blue">Summe: {formatCurrency(detailContent.detail.total || 0)}</Tag>
           </Space>
         ) : null}

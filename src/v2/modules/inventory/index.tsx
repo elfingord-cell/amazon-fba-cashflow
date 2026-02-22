@@ -24,7 +24,8 @@ import {
   resolveSafetyStockDays,
 } from "../../../domain/inventoryProjection.js";
 import { normalizeIncludeInForecast } from "../../../domain/portfolioBuckets.js";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import {
   addMonths,
@@ -1725,7 +1726,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                   </Space>
                 ),
                 children: (
-                  <TanStackGrid
+                  <DataTable
                     data={group.rows}
                     columns={snapshotColumns}
                     minTableWidth={1000}
@@ -1921,7 +1922,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             {!foWorklist.length ? (
               <Text type="secondary">Keine FO-Empfehlungen im aktuellen Filterumfang.</Text>
             ) : (
-              <div className="v2-table-shell v2-scroll-host">
+              <StatsTableShell>
                 <table className="v2-stats-table" data-layout="auto">
                   <thead>
                     <tr>
@@ -1966,7 +1967,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                     })}
                   </tbody>
                 </table>
-              </div>
+              </StatsTableShell>
             )}
           </div>
 
@@ -2010,7 +2011,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                   </Space>
                 ),
                 children: (
-                  <TanStackGrid
+                  <DataTable
                     data={group.rows}
                     columns={projectionColumns}
                     minTableWidth={Math.max(1080, 760 + (projectionMonthList.length * 118))}

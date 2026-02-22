@@ -13,7 +13,7 @@ import {
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
@@ -305,7 +305,7 @@ export default function SuppliersModule(): JSX.Element {
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
 
       <Card>
-        <TanStackGrid
+        <DataTable
           data={rows}
           columns={tableColumns}
           minTableWidth={1320}

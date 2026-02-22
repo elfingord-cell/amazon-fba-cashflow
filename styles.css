@@ -153,6 +153,22 @@ th,td{padding:var(--table-row-padding-y) var(--table-row-padding-x); border-bott
 thead th{font-size:12px; color:var(--table-header-text); font-weight:600; position:sticky; top:0; z-index:2; background:var(--table-header-bg); text-transform:none; letter-spacing:0}
 tbody tr:hover td{background:#f8fafc}
 td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
+.v2-ant-table.ant-table-wrapper{
+  border:1px solid var(--table-border);
+  border-radius:12px;
+  background:#fff;
+  overflow:hidden;
+}
+.v2-ant-table .ant-table-thead > tr > th{
+  background:var(--table-header-bg);
+  color:var(--table-header-text);
+  font-size:12px;
+  font-weight:600;
+  padding:var(--table-row-padding-y) var(--table-row-padding-x);
+}
+.v2-ant-table .ant-table-tbody > tr > td{
+  padding:var(--table-row-padding-y) var(--table-row-padding-x);
+}
 .ui-table-shell{
   border:1px solid var(--table-border);
   border-radius:12px;

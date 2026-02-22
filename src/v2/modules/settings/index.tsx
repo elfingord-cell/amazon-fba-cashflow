@@ -17,7 +17,7 @@ import {
 import type { ColumnDef } from "@tanstack/react-table";
 import { validateAll } from "../../../lib/dataHealth.js";
 import { DeNumberInput } from "../../components/DeNumberInput";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { useWorkspaceState } from "../../state/workspace";
 import { ensureAppStateV2 } from "../../state/appState";
 import { normalizeEmailKey, readCollaborationDisplayNames } from "../../domain/collaboration";
@@ -977,7 +977,7 @@ export default function SettingsModule(): JSX.Element {
             Speichern
           </Button>
         </Space>
-        <TanStackGrid
+        <DataTable
           data={collaborationNameRows}
           columns={collaborationNameColumns}
           minTableWidth={880}
@@ -998,7 +998,7 @@ export default function SettingsModule(): JSX.Element {
             Hinzufuegen
           </Button>
         </Space>
-        <TanStackGrid data={categoryRows} columns={categoryColumns} />
+        <DataTable data={categoryRows} columns={categoryColumns} />
       </Card>
 
       <Card>

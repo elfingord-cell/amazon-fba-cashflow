@@ -19,8 +19,9 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
 import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
 import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
 import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
@@ -383,7 +384,9 @@ function buildSuggestedInvoiceFilename(input: {
   units: number;
   selectedRows: PoPaymentRow[];
 }): string {
-  const date = String(input.paidDate || "").trim() || "YYYY-MM-DD";
+  const rawDate = String(input.paidDate || "").trim();
+  const dateMatch = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : "DD-MM-YYYY";
   const poNo = String(input.poNo || "").trim() || "PO";
   const alias = String(input.alias || "").trim().replace(/\s+/g, "-").replace(/[\\/:*?"<>|]/g, "-") || "Alias";
   const units = Number.isFinite(Number(input.units)) ? Math.max(0, Math.round(Number(input.units))) : 0;
@@ -2099,7 +2102,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           </Checkbox>
         </div>
         {poViewMode === "table" ? (
-          <TanStackGrid
+          <DataTable
             data={filteredRows}
             columns={columns}
             minTableWidth={1360}
@@ -2748,7 +2751,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                     message="PO zuerst speichern, danach koennen Zahlungen (inkl. Sammelzahlung) verbucht werden."
                   />
                 ) : null}
-                <div className="v2-stats-table-wrap">
+                <StatsTableShell>
                   <table className="v2-stats-table">
                     <thead>
                       <tr>
@@ -2805,7 +2808,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </StatsTableShell>
                 {draftIncomingPaymentRows.length ? (
                   <Space direction="vertical" size={6} style={{ width: "100%", marginTop: 8 }}>
                     <Text strong>Automatische Eingaenge (Info)</Text>
@@ -2814,7 +2817,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                       showIcon
                       message="EUSt-Erstattung wird automatisch verbucht und muss nicht manuell als Zahlung validiert werden."
                     />
-                    <div className="v2-stats-table-wrap">
+                    <StatsTableShell>
                       <table className="v2-stats-table">
                         <thead>
                           <tr>
@@ -2839,7 +2842,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           ))}
                         </tbody>
                       </table>
-                    </div>
+                    </StatsTableShell>
                   </Space>
                 ) : null}
               </Space>

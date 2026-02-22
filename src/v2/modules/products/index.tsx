@@ -18,7 +18,7 @@ import {
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import ReactECharts from "echarts-for-react";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
@@ -1438,7 +1438,7 @@ export default function ProductsModule(): JSX.Element {
               ),
               children: (
                 <div className="v2-products-grid-host">
-                  <TanStackGrid
+                  <DataTable
                     className="v2-products-grid-wrap"
                     data={group.rows}
                     columns={columns}
@@ -2186,6 +2186,7 @@ export default function ProductsModule(): JSX.Element {
                           <Tag color={planVsLiveRows.length >= 12 ? "green" : "gold"}>Monate im Vergleich: {planVsLiveRows.length}</Tag>
                         </Space>
                         <Table
+                          className="v2-ant-table"
                           size="small"
                           pagination={false}
                           rowKey="month"

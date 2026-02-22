@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Button, Card, Checkbox, Input, Space, Tag, Typography, message } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
-import { TanStackGrid } from "../../components/TanStackGrid";
+import { DataTable } from "../../components/DataTable";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { currentMonthKey } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
@@ -331,7 +331,7 @@ export default function AccountingExportModule(): JSX.Element {
       </Card>
 
       <Card title="Warenbestand Preview" loading={loading}>
-        <TanStackGrid
+        <DataTable
           data={(preview.inventoryRows || []) as InventoryRow[]}
           columns={inventoryColumns}
           minTableWidth={980}
@@ -340,7 +340,7 @@ export default function AccountingExportModule(): JSX.Element {
       </Card>
 
       <Card title="Lieferanzahlungen Preview" loading={loading}>
-        <TanStackGrid
+        <DataTable
           data={(preview.deposits || []) as DepositRow[]}
           columns={depositColumns}
           minTableWidth={1180}
@@ -349,7 +349,7 @@ export default function AccountingExportModule(): JSX.Element {
       </Card>
 
       <Card title="Anzahlungen + Wareneingang (PO)" loading={loading}>
-        <TanStackGrid
+        <DataTable
           data={(preview.poLedger || []) as PoLedgerRow[]}
           columns={poLedgerColumns}
           minTableWidth={1600}
@@ -358,7 +358,7 @@ export default function AccountingExportModule(): JSX.Element {
       </Card>
 
       <Card title="Wareneingang Preview" loading={loading}>
-        <TanStackGrid
+        <DataTable
           data={(preview.arrivals || []) as ArrivalRow[]}
           columns={arrivalColumns}
           minTableWidth={1100}
@@ -367,7 +367,7 @@ export default function AccountingExportModule(): JSX.Element {
       </Card>
 
       <Card title="Quality Issues" loading={loading}>
-        <TanStackGrid
+        <DataTable
           data={(preview.quality || []) as QualityRow[]}
           columns={qualityColumns}
           minTableWidth={960}

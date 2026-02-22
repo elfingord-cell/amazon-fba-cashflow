@@ -25,6 +25,7 @@ import {
 } from "../../domain/tableModels";
 import { formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { StatsTableShell } from "../../components/StatsTableShell";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
@@ -1053,7 +1054,7 @@ export default function DividendPlanningModule(): JSX.Element {
         <Text type="secondary">
           Umsatzbasis = Forecast-Units × Ø VK-Preis (brutto). COGS werden primär über Brutto-Marge je Produkt abgeleitet.
         </Text>
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table">
             <thead>
               <tr>
@@ -1072,7 +1073,7 @@ export default function DividendPlanningModule(): JSX.Element {
               ))}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
       </Card>
 
       <Row gutter={[12, 12]}>
@@ -1244,7 +1245,7 @@ export default function DividendPlanningModule(): JSX.Element {
           </Button>
         </div>
 
-        <div className="v2-stats-table-wrap">
+        <StatsTableShell>
           <table className="v2-stats-table">
             <thead>
               <tr>
@@ -1320,7 +1321,7 @@ export default function DividendPlanningModule(): JSX.Element {
               )}
             </tbody>
           </table>
-        </div>
+        </StatsTableShell>
 
         <div className="v2-dividend-calibration-meta">
           <Tag color={calculations.calibrationAvailable ? "green" : "gold"}>
