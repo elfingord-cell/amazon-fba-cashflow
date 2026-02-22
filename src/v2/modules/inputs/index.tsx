@@ -659,6 +659,29 @@ export default function InputsModule(): JSX.Element {
     : cashInCalibrationEnabled
       ? "Kalibrierfaktor wird berechnet, sobald die Umsatzprognose bis Monatsende im aktuellen Monat gesetzt ist und Forecast-Umsatz > 0 ist."
       : "Kalibrierung ist deaktiviert.";
+  const currentMonthProjectedQuotePct = useMemo(() => {
+    const projectedRevenue = Number(currentCalibrationRevenueForecast);
+    const projectedPayout = Number(currentCalibrationPayoutForecast);
+    if (!(Number.isFinite(projectedRevenue) && projectedRevenue > 0)) return null;
+    if (!(Number.isFinite(projectedPayout) && projectedPayout >= 0)) return null;
+    return (projectedPayout / projectedRevenue) * 100;
+  }, [currentCalibrationPayoutForecast, currentCalibrationRevenueForecast]);
+  const currentMonthProjectedRevenueDelta = Number.isFinite(currentCalibrationRevenueForecast)
+    ? Number(currentCalibrationRevenueForecast) - Number(currentMonthForecastRevenue || 0)
+    : null;
+  const currentMonthProjectedRevenueDeltaPct = (
+    Number.isFinite(currentMonthProjectedRevenueDelta)
+    && Number.isFinite(currentMonthForecastRevenue)
+    && Number(currentMonthForecastRevenue) > 0
+  )
+    ? (Number(currentMonthProjectedRevenueDelta) / Number(currentMonthForecastRevenue)) * 100
+    : null;
+  const currentMonthProjectedPayoutDelta = (
+    Number.isFinite(currentCalibrationPayoutForecast)
+    && Number.isFinite(currentMonthCalibratedPayout as number)
+  )
+    ? Number(currentCalibrationPayoutForecast) - Number(currentMonthCalibratedPayout)
+    : null;
 
   const calibrationImpact = useMemo(() => {
     let baseRevenueTotal = 0;
@@ -1042,6 +1065,108 @@ export default function InputsModule(): JSX.Element {
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
+
+      <Card>
+        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+          <Title level={5} style={{ margin: 0 }}>Monatsende-Projektion (aktueller Monat)</Title>
+          <Tag color="blue">{formatMonthLabel(currentMonthValue)} ({currentMonthValue})</Tag>
+        </Space>
+        {!currentMonthInPlanning ? (
+          <Alert
+            style={{ marginTop: 10 }}
+            type="info"
+            showIcon
+            message="Aktueller Monat liegt nicht im Planungsfenster."
+            description="Bitte Startmonat/Horizon anpassen, damit die Monatsende-Projektion gepflegt werden kann."
+          />
+        ) : (
+          <Space direction="vertical" size={10} style={{ width: "100%", marginTop: 10 }}>
+            <Text type="secondary">
+              Diese Werte kannst du täglich aktualisieren. Sie helfen bei der Kalibrierung (Umsatz) und als Signal für die Quote.
+            </Text>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <div>
+                <Text type="secondary">Prognose Umsatz zum Monatsende (EUR)</Text>
+                <div data-field-key={`inputs.incomings.${currentMonthIncoming?.id || "current"}.calibrationSellerboardMonthEndEur`}>
+                  <DeNumberInput
+                    value={currentCalibrationRevenueForecast ?? undefined}
+                    mode="decimal"
+                    min={0}
+                    step={100}
+                    style={{ width: "100%" }}
+                    onChange={(value) => {
+                      setCurrentMonthCalibrationPatch({
+                        calibrationSellerboardMonthEndEur: normalizeNonNegativeInput(value),
+                      });
+                    }}
+                  />
+                </div>
+                <Text type="secondary">
+                  Forecast roh: {formatNumber(currentMonthForecastRevenue, 2)} EUR
+                </Text>
+              </div>
+              <div>
+                <Text type="secondary">Prognose Auszahlung zum Monatsende (EUR)</Text>
+                <div data-field-key={`inputs.incomings.${currentMonthIncoming?.id || "current"}.calibrationPayoutRateToDatePct`}>
+                  <DeNumberInput
+                    value={currentCalibrationPayoutForecast ?? undefined}
+                    mode="decimal"
+                    min={0}
+                    step={100}
+                    style={{ width: "100%" }}
+                    onChange={(value) => {
+                      setCurrentMonthCalibrationPatch({
+                        calibrationPayoutRateToDatePct: normalizeNonNegativeInput(value),
+                      });
+                    }}
+                  />
+                </div>
+                <Text type="secondary">
+                  Abgeleitete Quote: {Number.isFinite(currentMonthProjectedQuotePct as number) ? `${formatNumber(currentMonthProjectedQuotePct, 2)} %` : "—"}
+                </Text>
+              </div>
+              <div>
+                <Text type="secondary">Kalibrierfaktor (Preview)</Text>
+                <div><Text strong>Angewendet: {formatFactor(currentMonthAppliedFactor)}</Text></div>
+                <div><Text type="secondary">Basis: {formatFactor(currentMonthFactorBasis)} · Konservativ: {formatFactor(currentMonthFactorConservative)}</Text></div>
+                <div><Text type="secondary">Forecast kalibriert: {formatNumber(currentMonthCalibratedRevenue, 2)} EUR</Text></div>
+              </div>
+            </div>
+            <Space wrap>
+              <Tag color="default" title="Differenz Monatsende-Projektion Umsatz minus Forecast-Umsatz">
+                Delta Umsatz: {formatSignedCurrencyDelta(Number(currentMonthProjectedRevenueDelta || 0))}
+              </Tag>
+              <Tag color="default">
+                Delta Umsatz (%): {Number.isFinite(currentMonthProjectedRevenueDeltaPct as number) ? `${formatSignedDelta(Number(currentMonthProjectedRevenueDeltaPct))}%` : "—"}
+              </Tag>
+              <Tag color="default" title="Differenz Projektion Auszahlung minus Auszahlung aus kalibriertem Umsatz x verwendeter Quote">
+                Delta Auszahlung: {Number.isFinite(currentMonthProjectedPayoutDelta as number) ? formatSignedCurrencyDelta(Number(currentMonthProjectedPayoutDelta)) : "—"}
+              </Tag>
+              {currentMonthCalibrationUnusual ? <Tag color="warning">Auffälliger Kalibrierfaktor</Tag> : null}
+              <Tooltip title={currentMonthCalibrationTooltip}>
+                <Tag color="blue">Kalibrier-Details</Tag>
+              </Tooltip>
+              <Button
+                size="small"
+                onClick={() => {
+                  setCurrentMonthCalibrationPatch({
+                    calibrationSellerboardMonthEndEur: null,
+                    calibrationPayoutRateToDatePct: null,
+                  });
+                }}
+              >
+                Projektion leeren
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </Card>
 
       <Card>
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>

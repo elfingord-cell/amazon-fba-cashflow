@@ -1,5 +1,5 @@
 import { InfoCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -7,9 +7,11 @@ import {
   Col,
   Drawer,
   Row,
+  Select,
   Segmented,
   Space,
   Switch,
+  Tag,
   Table,
   Tooltip,
   Typography,
@@ -18,7 +20,8 @@ import type { ColumnsType } from "antd/es/table";
 import { useNavigate } from "react-router-dom";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { parsePayoutPctInput } from "../../../domain/cashInRules.js";
-import { formatMonthLabel } from "../../domain/months";
+import { DeNumberInput } from "../../components/DeNumberInput";
+import { currentMonthKey, formatMonthLabel } from "../../domain/months";
 import type { DashboardBreakdownRow, DashboardEntry } from "../../domain/dashboardMaturity";
 import { useWorkspaceState } from "../../state/workspace";
 
@@ -34,6 +37,13 @@ interface SandboxScenario {
   quoteMode: CashInQuoteMode;
   safetyMode: CashInSafetyMode;
   q4SeasonalityEnabled: boolean;
+}
+
+interface SandboxProjectionState {
+  enabled: boolean;
+  month: string | null;
+  projectedRevenueEur: number | null;
+  projectedPayoutEur: number | null;
 }
 
 interface SeriesResult {
@@ -63,6 +73,9 @@ interface SandboxTableRow {
   forecastRevenue: number;
   hybridRevenue: number;
   calibratedRevenue: number;
+  calibrationFactorBase: number;
+  calibrationFactorSandbox: number;
+  deltaCalibrationFactor: number;
   activeRevenueBase: number;
   activeRevenueSandbox: number;
   deltaRevenue: number;
@@ -99,6 +112,12 @@ function toFiniteOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toNonNegativeFiniteOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, parsed);
+}
+
 function formatCurrency(value: unknown): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return "-";
@@ -124,6 +143,26 @@ function formatPercent(value: unknown, digits = 1): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })} %`;
+}
+
+function formatFactor(value: unknown, digits = 2): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "-";
+  return numeric.toLocaleString("de-DE", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatSignedFactor(value: number, digits = 2): string {
+  if (!Number.isFinite(value)) return "-";
+  const text = Math.abs(value).toLocaleString("de-DE", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  if (value > 0) return `+${text}`;
+  if (value < 0) return `−${text}`;
+  return text;
 }
 
 function formatSignedPp(value: number, digits = 1): string {
@@ -226,6 +265,51 @@ function applySandboxCalculationOverrides(
   return next;
 }
 
+function applySandboxProjectionOverrides(
+  targetState: Record<string, unknown>,
+  projection: SandboxProjectionState,
+): void {
+  if (!projection.enabled || !projection.month) return;
+  if (!Array.isArray(targetState.incomings)) {
+    targetState.incomings = [];
+  }
+  const incomings = targetState.incomings as Record<string, unknown>[];
+  const month = String(projection.month || "").trim();
+  if (!month) return;
+
+  const index = incomings.findIndex((row) => String(row?.month || "") === month);
+  const fallbackRow: Record<string, unknown> = {
+    month,
+    source: "forecast",
+    revenueEur: null,
+    payoutPct: null,
+    calibrationCutoffDate: null,
+    calibrationRevenueToDateEur: null,
+    calibrationPayoutRateToDatePct: null,
+    calibrationSellerboardMonthEndEur: null,
+  };
+  const current = index >= 0 && incomings[index] && typeof incomings[index] === "object"
+    ? incomings[index]
+    : fallbackRow;
+  const projectedRevenue = toNonNegativeFiniteOrNull(projection.projectedRevenueEur);
+  const projectedPayout = toNonNegativeFiniteOrNull(projection.projectedPayoutEur);
+  const currentRevenue = toNonNegativeFiniteOrNull((current as Record<string, unknown>).calibrationSellerboardMonthEndEur);
+  const currentPayout = toNonNegativeFiniteOrNull((current as Record<string, unknown>).calibrationPayoutRateToDatePct);
+
+  const patched = {
+    ...current,
+    month,
+    calibrationSellerboardMonthEndEur: projectedRevenue != null ? projectedRevenue : currentRevenue,
+    calibrationPayoutRateToDatePct: projectedPayout != null ? projectedPayout : currentPayout,
+  };
+
+  if (index >= 0) {
+    incomings[index] = patched;
+  } else {
+    incomings.push(patched);
+  }
+}
+
 function buildManualQuoteByMonth(state: Record<string, unknown>): Map<string, number | null> {
   const map = new Map<string, number | null>();
   const incomings = Array.isArray(state.incomings) ? state.incomings as Record<string, unknown>[] : [];
@@ -325,6 +409,10 @@ export default function SandboxModule(): JSX.Element {
   const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>(BASE_CASE_SCENARIO.quoteMode);
   const [q4SeasonalityEnabled, setQ4SeasonalityEnabled] = useState<boolean>(BASE_CASE_SCENARIO.q4SeasonalityEnabled);
   const [conservativeEnabled, setConservativeEnabled] = useState<boolean>(BASE_CASE_SCENARIO.safetyMode === "conservative");
+  const [sandboxProjectionEnabled, setSandboxProjectionEnabled] = useState<boolean>(false);
+  const [sandboxProjectionMonth, setSandboxProjectionMonth] = useState<string>(currentMonthKey());
+  const [sandboxProjectionRevenueEur, setSandboxProjectionRevenueEur] = useState<number | null>(null);
+  const [sandboxProjectionPayoutEur, setSandboxProjectionPayoutEur] = useState<number | null>(null);
   const [detailMonth, setDetailMonth] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState<boolean>(false);
 
@@ -339,33 +427,62 @@ export default function SandboxModule(): JSX.Element {
     safetyMode: conservativeEnabled ? "conservative" : "basis",
   }), [calibrationEnabled, conservativeEnabled, q4SeasonalityEnabled, quoteMode, revenueBasisMode]);
 
+  const sandboxProjection = useMemo<SandboxProjectionState>(() => ({
+    enabled: sandboxProjectionEnabled,
+    month: sandboxProjectionMonth || null,
+    projectedRevenueEur: sandboxProjectionRevenueEur,
+    projectedPayoutEur: sandboxProjectionPayoutEur,
+  }), [
+    sandboxProjectionEnabled,
+    sandboxProjectionMonth,
+    sandboxProjectionPayoutEur,
+    sandboxProjectionRevenueEur,
+  ]);
+
+  const persistedProjectionByMonth = useMemo(() => {
+    const map = new Map<string, { revenue: number | null; payout: number | null }>();
+    const incomings = Array.isArray(stateObject.incomings) ? stateObject.incomings as Record<string, unknown>[] : [];
+    incomings.forEach((incoming) => {
+      const month = String(incoming?.month || "").trim();
+      if (!month) return;
+      map.set(month, {
+        revenue: toFiniteOrNull(incoming.calibrationSellerboardMonthEndEur),
+        payout: toFiniteOrNull(incoming.calibrationPayoutRateToDatePct),
+      });
+    });
+    return map;
+  }, [state.incomings, stateObject.incomings]);
+
   const baseReport = useMemo(
     () => computeSeries(applySandboxCalculationOverrides(stateObject, BASE_CASE_SCENARIO)) as SeriesResult,
     [stateObject],
   );
 
-  const sandboxReport = useMemo(
-    () => computeSeries(applySandboxCalculationOverrides(stateObject, sandboxScenario)) as SeriesResult,
-    [sandboxScenario, stateObject],
-  );
+  const sandboxReport = useMemo(() => {
+    const next = applySandboxCalculationOverrides(stateObject, sandboxScenario);
+    applySandboxProjectionOverrides(next, sandboxProjection);
+    return computeSeries(next) as SeriesResult;
+  }, [sandboxProjection, sandboxScenario, stateObject]);
 
-  const recommendationBasisReport = useMemo(
-    () => computeSeries(applySandboxCalculationOverrides(stateObject, {
+  const recommendationBasisReport = useMemo(() => {
+    const next = applySandboxCalculationOverrides(stateObject, {
       ...sandboxScenario,
       quoteMode: "recommendation",
       safetyMode: "basis",
-    })) as SeriesResult,
-    [sandboxScenario, stateObject],
-  );
+    });
+    applySandboxProjectionOverrides(next, sandboxProjection);
+    return computeSeries(next) as SeriesResult;
+  }, [sandboxProjection, sandboxScenario, stateObject]);
 
-  const recommendationConservativeReport = useMemo(
-    () => computeSeries(applySandboxCalculationOverrides(stateObject, {
+  const recommendationConservativeReport = useMemo(() => {
+    const next = applySandboxCalculationOverrides(stateObject, {
       ...sandboxScenario,
       quoteMode: "recommendation",
       safetyMode: "conservative",
-    })) as SeriesResult,
-    [sandboxScenario, stateObject],
-  );
+    });
+    applySandboxProjectionOverrides(next, sandboxProjection);
+    return computeSeries(next) as SeriesResult;
+  }, [sandboxProjection, sandboxScenario, stateObject]);
 
   const baseByMonth = useMemo(() => buildSnapshotByMonth(baseReport), [baseReport]);
   const sandboxByMonth = useMemo(() => buildSnapshotByMonth(sandboxReport), [sandboxReport]);
@@ -384,6 +501,23 @@ export default function SandboxModule(): JSX.Element {
     ]),
     [baseReport, recommendationBasisReport, recommendationConservativeReport, sandboxReport],
   );
+
+  useEffect(() => {
+    if (!months.length) return;
+    if (months.includes(sandboxProjectionMonth)) return;
+    const currentMonth = currentMonthKey();
+    if (months.includes(currentMonth)) {
+      setSandboxProjectionMonth(currentMonth);
+      return;
+    }
+    setSandboxProjectionMonth(months[0]);
+  }, [months, sandboxProjectionMonth]);
+
+  const projectionRowReference = useMemo(() => {
+    const month = sandboxProjectionMonth;
+    if (!month) return null;
+    return persistedProjectionByMonth.get(month) || null;
+  }, [persistedProjectionByMonth, sandboxProjectionMonth]);
 
   const rows = useMemo<SandboxTableRow[]>(() => {
     return months.map((month) => {
@@ -407,6 +541,8 @@ export default function SandboxModule(): JSX.Element {
 
       const activeRevenueBase = toFinite(baseSnapshot.activeRevenue, 0);
       const activeRevenueSandbox = toFinite(sandboxSnapshot.activeRevenue, 0);
+      const calibrationFactorBase = toFinite(baseSnapshot.calibrationFactorApplied, 1);
+      const calibrationFactorSandbox = toFinite(sandboxSnapshot.calibrationFactorApplied, 1);
       const activeQuoteBase = toFinite(baseSnapshot.activeQuote, 0);
       const activeQuoteSandbox = toFinite(sandboxSnapshot.activeQuote, 0);
       const payoutBase = toFinite(baseSnapshot.activePayout, 0);
@@ -429,6 +565,9 @@ export default function SandboxModule(): JSX.Element {
         forecastRevenue,
         hybridRevenue,
         calibratedRevenue,
+        calibrationFactorBase,
+        calibrationFactorSandbox,
+        deltaCalibrationFactor: calibrationFactorSandbox - calibrationFactorBase,
         activeRevenueBase,
         activeRevenueSandbox,
         deltaRevenue: activeRevenueSandbox - activeRevenueBase,
@@ -458,6 +597,14 @@ export default function SandboxModule(): JSX.Element {
 
   const rowByMonth = useMemo(() => new Map(rows.map((row) => [row.month, row])), [rows]);
   const selectedRow = detailMonth ? rowByMonth.get(detailMonth) || null : null;
+  const projectionReferenceRow = sandboxProjectionMonth ? rowByMonth.get(sandboxProjectionMonth) || null : null;
+  const sandboxProjectionQuotePct = useMemo(() => {
+    const revenue = Number(sandboxProjectionRevenueEur);
+    const payout = Number(sandboxProjectionPayoutEur);
+    if (!(Number.isFinite(revenue) && revenue > 0)) return null;
+    if (!(Number.isFinite(payout) && payout >= 0)) return null;
+    return (payout / revenue) * 100;
+  }, [sandboxProjectionPayoutEur, sandboxProjectionRevenueEur]);
 
   const summary = useMemo(() => {
     const monthCount = rows.length || 1;
@@ -510,6 +657,34 @@ export default function SandboxModule(): JSX.Element {
             render: (value: number) => formatCurrency(value),
           },
           {
+            title: "K (Base Case)",
+            dataIndex: "calibrationFactorBase",
+            key: "calibrationFactorBase",
+            width: 116,
+            align: "right",
+            render: (value: number) => formatFactor(value, 2),
+          },
+          {
+            title: "K (Sandbox)",
+            dataIndex: "calibrationFactorSandbox",
+            key: "calibrationFactorSandbox",
+            width: 116,
+            align: "right",
+            className: "v2-sandbox-col-sandbox",
+            render: (value: number) => formatFactor(value, 2),
+          },
+          {
+            title: "Δ K",
+            dataIndex: "deltaCalibrationFactor",
+            key: "deltaCalibrationFactor",
+            width: 96,
+            align: "right",
+            className: "v2-sandbox-col-delta",
+            render: (value: number) => (
+              <span className={deltaClassName(value)}>{formatSignedFactor(value, 2)}</span>
+            ),
+          },
+          {
             title: "Umsatz aktiv (Base Case)",
             dataIndex: "activeRevenueBase",
             key: "activeRevenueBase",
@@ -548,6 +723,8 @@ export default function SandboxModule(): JSX.Element {
             key: "manualQuote",
             width: 124,
             align: "right",
+            className: "v2-sandbox-block-start",
+            onHeaderCell: () => ({ className: "v2-sandbox-block-start" }),
             render: (value: number | null) => value == null ? "-" : formatPercent(value),
           },
           {
@@ -605,6 +782,8 @@ export default function SandboxModule(): JSX.Element {
             key: "payoutBase",
             width: 172,
             align: "right",
+            className: "v2-sandbox-block-start",
+            onHeaderCell: () => ({ className: "v2-sandbox-block-start" }),
             render: (value: number) => formatCurrency(value),
           },
           {
@@ -656,6 +835,9 @@ export default function SandboxModule(): JSX.Element {
     setQuoteMode(BASE_CASE_SCENARIO.quoteMode);
     setQ4SeasonalityEnabled(BASE_CASE_SCENARIO.q4SeasonalityEnabled);
     setConservativeEnabled(BASE_CASE_SCENARIO.safetyMode === "conservative");
+    setSandboxProjectionEnabled(false);
+    setSandboxProjectionRevenueEur(null);
+    setSandboxProjectionPayoutEur(null);
   }
 
   const sandboxModeText = describeSandboxMode(sandboxScenario);
@@ -768,6 +950,82 @@ export default function SandboxModule(): JSX.Element {
       </Card>
 
       <Card>
+        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+          <Title level={5} style={{ margin: 0 }}>Monatsende-Projektion (nur Sandbox)</Title>
+          <Switch
+            checked={sandboxProjectionEnabled}
+            onChange={(checked) => setSandboxProjectionEnabled(checked)}
+            checkedChildren="AN"
+            unCheckedChildren="AUS"
+          />
+        </Space>
+        <Text type="secondary">
+          Lokaler Override nur für diese Sandbox-Ansicht. Keine Speicherung in globalen Einstellungen.
+        </Text>
+        <div className="v2-sandbox-projection-grid">
+          <div>
+            <Text type="secondary">Monat</Text>
+            <Select
+              value={sandboxProjectionMonth || undefined}
+              options={months.map((month) => ({ value: month, label: `${formatMonthLabel(month)} (${month})` }))}
+              onChange={(value) => setSandboxProjectionMonth(String(value || ""))}
+              disabled={!months.length}
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div>
+            <Text type="secondary">Projektion Umsatz Monatsende (EUR)</Text>
+            <DeNumberInput
+              value={sandboxProjectionRevenueEur ?? undefined}
+              mode="decimal"
+              min={0}
+              step={100}
+              style={{ width: "100%" }}
+              onChange={(value) => setSandboxProjectionRevenueEur(toNonNegativeFiniteOrNull(value))}
+            />
+          </div>
+          <div>
+            <Text type="secondary">Projektion Auszahlung Monatsende (EUR)</Text>
+            <DeNumberInput
+              value={sandboxProjectionPayoutEur ?? undefined}
+              mode="decimal"
+              min={0}
+              step={100}
+              style={{ width: "100%" }}
+              onChange={(value) => setSandboxProjectionPayoutEur(toNonNegativeFiniteOrNull(value))}
+            />
+          </div>
+        </div>
+        <Space wrap style={{ marginTop: 10 }}>
+          <Tag color="default">
+            Quote aus Projektion: {Number.isFinite(sandboxProjectionQuotePct as number) ? formatPercent(sandboxProjectionQuotePct) : "-"}
+          </Tag>
+          <Tag color="default">
+            Forecast-Umsatz (gewählter Monat): {formatCurrency(projectionReferenceRow?.forecastRevenue || 0)}
+          </Tag>
+          <Button
+            size="small"
+            onClick={() => {
+              setSandboxProjectionRevenueEur(projectionRowReference?.revenue ?? null);
+              setSandboxProjectionPayoutEur(projectionRowReference?.payout ?? null);
+            }}
+            disabled={!sandboxProjectionMonth}
+          >
+            Werte aus Cash-in Setup laden
+          </Button>
+          <Button
+            size="small"
+            onClick={() => {
+              setSandboxProjectionRevenueEur(null);
+              setSandboxProjectionPayoutEur(null);
+            }}
+          >
+            Projektion leeren
+          </Button>
+        </Space>
+      </Card>
+
+      <Card>
         <div className="v2-sandbox-summary-head">
           <Text strong>Aktueller Modus:</Text>
           <Text>{sandboxModeText}</Text>
@@ -804,7 +1062,7 @@ export default function SandboxModule(): JSX.Element {
           pagination={false}
           size="small"
           rowKey="key"
-          scroll={{ x: 2800, y: 560 }}
+          scroll={{ x: 3400, y: 560 }}
           sticky
         />
       </Card>
