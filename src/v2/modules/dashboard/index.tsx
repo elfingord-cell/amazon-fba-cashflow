@@ -1990,154 +1990,154 @@ export default function DashboardModule(): JSX.Element {
         )}
       </Drawer>
 
-      <Card className="v2-dashboard-chart-card">
-        <Title level={4}>Kontostand & Cashflow</Title>
-        <div className="v2-calc-cockpit-shell">
-          <div className="v2-calc-cockpit-status">
-            <Space wrap>
-              <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
-              <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
-            </Space>
-            <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
-          </div>
-
-          <div className="v2-calc-cockpit-modules" role="group" aria-label="Cockpit-Steuerung">
-            <div className="v2-calc-cockpit-module">
-              <Space size={6}>
-                <Text strong>Portfolio-Scope</Text>
-                <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
-                  <InfoCircleOutlined />
-                </Tooltip>
-              </Space>
-              <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-              <div className="v2-calc-cockpit-chip-row">
-                {DASHBOARD_BUCKET_OPTIONS.map((option) => {
-                  const selected = bucketScopeValues.includes(option.value);
-                  return (
-                    <Button
-                      key={option.value}
-                      size="small"
-                      type={selected ? "primary" : "default"}
-                      onClick={() => toggleBucketScopeValue(option.value)}
-                    >
-                      {option.label}
-                    </Button>
-                  );
-                })}
-              </div>
-              <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
-            </div>
-
-            <div className="v2-calc-cockpit-module">
-              <Space size={6}>
-                <Text strong>Umsatzbasis</Text>
-                <Tooltip title="Plan-Umsatz (Hybrid): MANUELL-Monate nutzen deine Overrides, AUTO-Monate kommen aus der Absatzprognose.">
-                  <InfoCircleOutlined />
-                </Tooltip>
-              </Space>
-              <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-              <Segmented
-                block
-                value={revenueBasisMode}
-                onChange={(value) => {
-                  const nextMode = String(value) === "forecast_direct" ? "forecast_direct" : "hybrid";
-                  setRevenueBasisMode(nextMode);
-                  void persistDashboardCashInSettings({
-                    cashInRevenueBasisMode: nextMode,
-                  }).catch(() => {});
-                }}
-                options={[
-                  { label: "Plan-Umsatz (Hybrid)", value: "hybrid" },
-                  { label: "Forecast-Umsatz (direkt)", value: "forecast_direct" },
-                ]}
-              />
-              <Space size={8} align="center" wrap>
-                <Text strong>Kalibrierung</Text>
-                <Switch
-                  size="small"
-                  checked={calibrationEnabled}
-                  onChange={(checked) => {
-                    setCalibrationEnabled(checked);
-                    void persistDashboardCashInSettings({
-                      cashInCalibrationEnabled: checked,
-                    }).catch(() => {});
-                  }}
-                />
-                <Tooltip title="Kalibrierung wirkt nur auf automatische Monate. Manuelle Monatswerte bleiben unverändert.">
-                  <InfoCircleOutlined />
-                </Tooltip>
-                <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>
-                  Cash-in Setup öffnen
-                </Button>
-              </Space>
-              {revenueBasisMode === "forecast_direct" ? (
-                <Text type="secondary">Referenzmodus: manuelle Umsatz-Overrides werden ignoriert.</Text>
-              ) : null}
-              {calibrationWarningMessage ? (
-                <Text type="warning">
-                  {calibrationWarningMessage}
-                </Text>
-              ) : null}
-            </div>
-
-            <div className="v2-calc-cockpit-module">
-              <Space size={6}>
-                <Text strong>Amazon Auszahlungsquote</Text>
-                <Tooltip title="MANUELL nutzt die Monatsquote aus Cash-in Setup. EMPFOHLEN berechnet die Quote automatisch je Monat.">
-                  <InfoCircleOutlined />
-                </Tooltip>
-              </Space>
-              <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
-              <Segmented
-                block
-                value={quoteMode}
-                onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
-                options={[
-                  { label: "MANUELL", value: "manual" },
-                  { label: "EMPFOHLEN", value: "recommendation" },
-                ]}
-              />
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Space size={6}>
-                  <Text strong>Sicherheitsmodus</Text>
-                  <Tooltip title="Basis: nur L+S. Konservativ: L+S minus lernender Risikoabschlag R(h) aus RiskBase (mit Horizon-Skalierung).">
-                    <InfoCircleOutlined />
-                  </Tooltip>
-                </Space>
-                <Segmented
-                  block
-                  value={safetyMode}
-                  disabled={quoteMode === "manual"}
-                  onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
-                  options={[
-                    { label: "Basis", value: "basis" },
-                    { label: "Konservativ", value: "conservative" },
-                  ]}
-                />
-              </Space>
-              {q4ToggleVisible ? (
-                <div className="v2-calc-cockpit-q4-row">
-                  <Checkbox
-                    checked={q4SeasonalityEnabled}
-                    disabled={quoteMode === "manual"}
-                    onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
-                  >
-                    Saisonalität berücksichtigen
-                  </Checkbox>
-                  <Tooltip title="Aktiviert die gelernte Monats-Saisonalität S[Monat]. Gilt nur für die Empfehlung.">
-                    <InfoCircleOutlined />
-                  </Tooltip>
-                </div>
-              ) : null}
-              <Text type="secondary">
-                {quoteMode === "manual"
-                  ? "Manuelle Monatsquote ist führend; Sicherheitsmodus und Saisonalität sind deaktiviert."
-                  : "Empfehlung nutzt L + S[Monat] und optional (Konservativ) einen lernenden Risikoabschlag."}
-              </Text>
-            </div>
-          </div>
+      <div className="v2-calc-cockpit-shell">
+        <div className="v2-calc-cockpit-status">
+          <Space wrap>
+            <Text type="secondary">Min. Kontostand: <strong>{formatCurrency(minClosing)}</strong></Text>
+            <Text type="secondary">Summe Netto: <strong>{formatCurrency(totalNet)}</strong></Text>
+          </Space>
+          <Button size="small" onClick={resetCalculationCockpit}>Zurücksetzen</Button>
         </div>
 
+        <div className="v2-calc-cockpit-modules" role="group" aria-label="Cockpit-Steuerung">
+          <div className="v2-calc-cockpit-module">
+            <Space size={6}>
+              <Text strong>Portfolio-Scope</Text>
+              <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
+                <InfoCircleOutlined />
+              </Tooltip>
+            </Space>
+            <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+            <div className="v2-calc-cockpit-chip-row">
+              {DASHBOARD_BUCKET_OPTIONS.map((option) => {
+                const selected = bucketScopeValues.includes(option.value);
+                return (
+                  <Button
+                    key={option.value}
+                    size="small"
+                    type={selected ? "primary" : "default"}
+                    onClick={() => toggleBucketScopeValue(option.value)}
+                  >
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </div>
+            <Text type="secondary">Bestimmt nur die aktuelle Berechnung im Dashboard.</Text>
+          </div>
+
+          <div className="v2-calc-cockpit-module">
+            <Space size={6}>
+              <Text strong>Umsatzbasis</Text>
+              <Tooltip title="Plan-Umsatz (Hybrid): MANUELL-Monate nutzen deine Overrides, AUTO-Monate kommen aus der Absatzprognose.">
+                <InfoCircleOutlined />
+              </Tooltip>
+            </Space>
+            <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+            <Segmented
+              block
+              value={revenueBasisMode}
+              onChange={(value) => {
+                const nextMode = String(value) === "forecast_direct" ? "forecast_direct" : "hybrid";
+                setRevenueBasisMode(nextMode);
+                void persistDashboardCashInSettings({
+                  cashInRevenueBasisMode: nextMode,
+                }).catch(() => {});
+              }}
+              options={[
+                { label: "Plan-Umsatz (Hybrid)", value: "hybrid" },
+                { label: "Forecast-Umsatz (direkt)", value: "forecast_direct" },
+              ]}
+            />
+            <Space size={8} align="center" wrap>
+              <Text strong>Kalibrierung</Text>
+              <Switch
+                size="small"
+                checked={calibrationEnabled}
+                onChange={(checked) => {
+                  setCalibrationEnabled(checked);
+                  void persistDashboardCashInSettings({
+                    cashInCalibrationEnabled: checked,
+                  }).catch(() => {});
+                }}
+              />
+              <Tooltip title="Kalibrierung wirkt nur auf automatische Monate. Manuelle Monatswerte bleiben unverändert.">
+                <InfoCircleOutlined />
+              </Tooltip>
+              <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>
+                Cash-in Setup öffnen
+              </Button>
+            </Space>
+            {revenueBasisMode === "forecast_direct" ? (
+              <Text type="secondary">Referenzmodus: manuelle Umsatz-Overrides werden ignoriert.</Text>
+            ) : null}
+            {calibrationWarningMessage ? (
+              <Text type="warning">
+                {calibrationWarningMessage}
+              </Text>
+            ) : null}
+          </div>
+
+          <div className="v2-calc-cockpit-module">
+            <Space size={6}>
+              <Text strong>Amazon Auszahlungsquote</Text>
+              <Tooltip title="MANUELL nutzt die Monatsquote aus Cash-in Setup. EMPFOHLEN berechnet die Quote automatisch je Monat.">
+                <InfoCircleOutlined />
+              </Tooltip>
+            </Space>
+            <div><Text type="secondary">Wirkt auf Kontostand &amp; PnL</Text></div>
+            <Segmented
+              block
+              value={quoteMode}
+              onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
+              options={[
+                { label: "MANUELL", value: "manual" },
+                { label: "EMPFOHLEN", value: "recommendation" },
+              ]}
+            />
+            <Space direction="vertical" size={6} style={{ width: "100%" }}>
+              <Space size={6}>
+                <Text strong>Sicherheitsmodus</Text>
+                <Tooltip title="Basis: nur L+S. Konservativ: L+S minus lernender Risikoabschlag R(h) aus RiskBase (mit Horizon-Skalierung).">
+                  <InfoCircleOutlined />
+                </Tooltip>
+              </Space>
+              <Segmented
+                block
+                value={safetyMode}
+                disabled={quoteMode === "manual"}
+                onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
+                options={[
+                  { label: "Basis", value: "basis" },
+                  { label: "Konservativ", value: "conservative" },
+                ]}
+              />
+            </Space>
+            {q4ToggleVisible ? (
+              <div className="v2-calc-cockpit-q4-row">
+                <Checkbox
+                  checked={q4SeasonalityEnabled}
+                  disabled={quoteMode === "manual"}
+                  onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
+                >
+                  Saisonalität berücksichtigen
+                </Checkbox>
+                <Tooltip title="Aktiviert die gelernte Monats-Saisonalität S[Monat]. Gilt nur für die Empfehlung.">
+                  <InfoCircleOutlined />
+                </Tooltip>
+              </div>
+            ) : null}
+            <Text type="secondary">
+              {quoteMode === "manual"
+                ? "Manuelle Monatsquote ist führend; Sicherheitsmodus und Saisonalität sind deaktiviert."
+                : "Empfehlung nutzt L + S[Monat] und optional (Konservativ) einen lernenden Risikoabschlag."}
+            </Text>
+          </div>
+        </div>
+      </div>
+
+      <Card className="v2-dashboard-chart-card">
+        <Title level={4}>Kontostand & Cashflow</Title>
         <div className="v2-dashboard-chart-summary">
           <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
           <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
