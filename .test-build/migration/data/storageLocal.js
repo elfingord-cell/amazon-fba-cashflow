@@ -32,6 +32,7 @@ exports.getRecentProducts = getRecentProducts;
 // FBA-CF-0027 — Local Storage Layer (schlank, mit Listenern)
 const dataHealth_js_1 = require("../lib/dataHealth.js");
 const portfolioBuckets_js_1 = require("../domain/portfolioBuckets.js");
+const cashInRules_js_1 = require("../domain/cashInRules.js");
 exports.STORAGE_KEY = "amazon_fba_cashflow_v1";
 exports.LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
 const CURRENCIES = ["EUR", "USD", "CNY"];
@@ -51,12 +52,21 @@ const defaults = {
     settings: {
         startMonth: "2025-02",
         horizonMonths: 18,
-        cashInMode: "conservative",
+        cashInMode: "basis",
         cashInCalibrationEnabled: true,
         cashInCalibrationHorizonMonths: 6,
+        cashInCalibrationMode: "basis",
         cashInRecommendationIgnoreQ4: false,
+        cashInRecommendationSeasonalityEnabled: true,
         cashInRecommendationBaselineNormalPct: 51,
         cashInRecommendationBaselineQ4Pct: null,
+        cashInLearning: null,
+        revenueCalibration: {
+            biasB: cashInRules_js_1.REVENUE_CALIBRATION_DEFAULT_BIAS,
+            riskR: cashInRules_js_1.REVENUE_CALIBRATION_DEFAULT_RISK,
+            lastUpdatedAt: null,
+            forecastLock: {},
+        },
         openingBalance: "50.000,00",
         fxRate: "1,08",
         fxFeePct: "0,5",
@@ -86,6 +96,8 @@ const defaults = {
         robustnessLookaheadDaysDdp: 35,
         foCoverageDohDefault: 90,
         moqDefaultUnits: 500,
+        foRecommendationRoundupCartonBlock: 10,
+        foRecommendationRoundupMaxPct: 10,
         skuPlanningHorizonMonths: 12,
         skuPlanningAbcFilter: "abc",
         skuPlanningMaxPhantomSuggestionsPerSku: 3,
@@ -255,14 +267,21 @@ function ensureGlobalSettings(state) {
     settings.defaultBufferDays = Math.max(0, Number(settings.defaultBufferDays ?? defaults.settings.defaultBufferDays) || 0);
     settings.defaultCurrency = String(settings.defaultCurrency || defaults.settings.defaultCurrency || "EUR");
     settings.defaultDdp = settings.defaultDdp === true;
-    const cashInMode = String(settings.cashInMode || defaults.settings.cashInMode || "conservative").trim().toLowerCase();
-    settings.cashInMode = cashInMode === "basis" ? "basis" : "conservative";
+    const cashInMode = String(settings.cashInMode || defaults.settings.cashInMode || "basis").trim().toLowerCase();
+    settings.cashInMode = cashInMode === "conservative" ? "conservative" : "basis";
     settings.cashInCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
     const calibrationHorizon = Math.round(Number(settings.cashInCalibrationHorizonMonths ?? defaults.settings.cashInCalibrationHorizonMonths) || defaults.settings.cashInCalibrationHorizonMonths);
     settings.cashInCalibrationHorizonMonths = [3, 6, 12].includes(calibrationHorizon)
         ? calibrationHorizon
         : defaults.settings.cashInCalibrationHorizonMonths;
+    settings.cashInCalibrationMode = (0, cashInRules_js_1.normalizeRevenueCalibrationMode)(settings.cashInCalibrationMode ?? defaults.settings.cashInCalibrationMode);
     settings.cashInRecommendationIgnoreQ4 = settings.cashInRecommendationIgnoreQ4 === true;
+    if (settings.cashInRecommendationSeasonalityEnabled == null) {
+        settings.cashInRecommendationSeasonalityEnabled = settings.cashInRecommendationIgnoreQ4 !== true;
+    }
+    else {
+        settings.cashInRecommendationSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled !== false;
+    }
     const baselineNormalRaw = parseNumber(settings.cashInRecommendationBaselineNormalPct ?? defaults.settings.cashInRecommendationBaselineNormalPct);
     settings.cashInRecommendationBaselineNormalPct = Number.isFinite(baselineNormalRaw)
         ? Math.min(60, Math.max(40, Number(baselineNormalRaw)))
@@ -277,11 +296,18 @@ function ensureGlobalSettings(state) {
             ? Math.min(60, Math.max(40, Number(baselineQ4Raw)))
             : null;
     }
+    if (settings.cashInLearning == null || typeof settings.cashInLearning !== "object") {
+        settings.cashInLearning = null;
+    }
+    settings.revenueCalibration = (0, cashInRules_js_1.normalizeRevenueCalibrationState)(settings.revenueCalibration ?? defaults.settings.revenueCalibration);
     settings.safetyStockDohDefault = Math.max(0, Number(settings.safetyStockDohDefault ?? defaults.settings.safetyStockDohDefault) || 0);
     settings.robustnessLookaheadDaysNonDdp = Math.max(1, Math.round(Number(settings.robustnessLookaheadDaysNonDdp ?? defaults.settings.robustnessLookaheadDaysNonDdp) || defaults.settings.robustnessLookaheadDaysNonDdp));
     settings.robustnessLookaheadDaysDdp = Math.max(1, Math.round(Number(settings.robustnessLookaheadDaysDdp ?? defaults.settings.robustnessLookaheadDaysDdp) || defaults.settings.robustnessLookaheadDaysDdp));
     settings.foCoverageDohDefault = Math.max(0, Number(settings.foCoverageDohDefault ?? defaults.settings.foCoverageDohDefault) || 0);
     settings.moqDefaultUnits = Math.max(0, Math.round(Number(settings.moqDefaultUnits ?? defaults.settings.moqDefaultUnits) || 0));
+    settings.foRecommendationRoundupCartonBlock = Math.max(1, Math.round(Number(settings.foRecommendationRoundupCartonBlock
+        ?? defaults.settings.foRecommendationRoundupCartonBlock) || defaults.settings.foRecommendationRoundupCartonBlock));
+    settings.foRecommendationRoundupMaxPct = Math.max(0, Number(settings.foRecommendationRoundupMaxPct ?? defaults.settings.foRecommendationRoundupMaxPct) || 0);
     const skuPlanningHorizonMonths = Math.round(Number(settings.skuPlanningHorizonMonths ?? defaults.settings.skuPlanningHorizonMonths) || defaults.settings.skuPlanningHorizonMonths);
     settings.skuPlanningHorizonMonths = [6, 12, 18].includes(skuPlanningHorizonMonths)
         ? skuPlanningHorizonMonths
@@ -906,6 +932,9 @@ function migrateProducts(state) {
             moqUnits: Number.isFinite(Number(prod.moqUnits))
                 ? Math.max(0, Math.round(Number(prod.moqUnits)))
                 : (Number.isFinite(Number(base.moqUnits)) ? Math.max(0, Math.round(Number(base.moqUnits))) : null),
+            unitsPerCarton: Number.isFinite(Number(prod.unitsPerCarton))
+                ? Math.max(1, Math.round(Number(prod.unitsPerCarton)))
+                : (Number.isFinite(Number(base.unitsPerCarton)) ? Math.max(1, Math.round(Number(base.unitsPerCarton))) : null),
             safetyStockDohOverride: Number.isFinite(Number(prod.safetyStockDohOverride))
                 ? Math.max(0, Math.round(Number(prod.safetyStockDohOverride)))
                 : (Number.isFinite(Number(base.safetyStockDohOverride)) ? Math.max(0, Math.round(Number(base.safetyStockDohOverride))) : null),
@@ -967,6 +996,7 @@ function migrateProducts(state) {
                 avgSellingPriceGrossEUR: null,
                 sellerboardMarginPct: null,
                 moqUnits: null,
+                unitsPerCarton: null,
                 safetyStockDohOverride: null,
                 foCoverageDohOverride: null,
                 moqOverrideUnits: null,
@@ -1061,6 +1091,7 @@ function normaliseProductInput(input) {
     const productionLeadTimeDaysDefault = parseNumber(input.productionLeadTimeDaysDefault ?? null);
     const moqUnitsRaw = parseNumber(input.moqUnits ?? input.moq ?? null);
     const moqUnits = Number.isFinite(moqUnitsRaw) ? Math.max(0, Math.round(moqUnitsRaw)) : null;
+    const unitsPerCartonRaw = parseNumber(input.unitsPerCarton ?? null);
     const safetyStockDohOverrideRaw = parseNumber(input.safetyStockDohOverride ?? null);
     const foCoverageDohOverrideRaw = parseNumber(input.foCoverageDohOverride ?? null);
     const moqOverrideUnitsRaw = parseNumber(input.moqOverrideUnits ?? null);
@@ -1089,6 +1120,7 @@ function normaliseProductInput(input) {
         returnsRate,
         vatExempt,
         moqUnits,
+        unitsPerCarton: Number.isFinite(unitsPerCartonRaw) ? Math.max(1, Math.round(unitsPerCartonRaw)) : null,
         safetyStockDohOverride: Number.isFinite(safetyStockDohOverrideRaw) ? Math.max(0, Math.round(safetyStockDohOverrideRaw)) : null,
         foCoverageDohOverride: Number.isFinite(foCoverageDohOverrideRaw) ? Math.max(0, Math.round(foCoverageDohOverrideRaw)) : null,
         moqOverrideUnits: Number.isFinite(moqOverrideUnitsRaw) ? Math.max(0, Math.round(moqOverrideUnitsRaw)) : null,
@@ -1440,6 +1472,7 @@ function upsertProduct(input) {
             goodsDescription: normalised.goodsDescription,
             template: normalised.template,
             moqUnits: normalised.moqUnits,
+            unitsPerCarton: normalised.unitsPerCarton,
             safetyStockDohOverride: normalised.safetyStockDohOverride,
             foCoverageDohOverride: normalised.foCoverageDohOverride,
             moqOverrideUnits: normalised.moqOverrideUnits,
@@ -1468,6 +1501,7 @@ function upsertProduct(input) {
         target.goodsDescription = normalised.goodsDescription;
         target.template = normalised.template;
         target.moqUnits = normalised.moqUnits;
+        target.unitsPerCarton = normalised.unitsPerCarton;
         target.safetyStockDohOverride = normalised.safetyStockDohOverride;
         target.foCoverageDohOverride = normalised.foCoverageDohOverride;
         target.moqOverrideUnits = normalised.moqOverrideUnits;

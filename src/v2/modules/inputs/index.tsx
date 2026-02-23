@@ -91,9 +91,9 @@ interface InputsDraftSnapshot {
 
 interface RecommendationByMonthEntry {
   quotePct: number;
-  sourceTag: "IST" | "RECOMMENDED_BASIS" | "RECOMMENDED_CONSERVATIVE" | "PROGNOSE" | string;
+  sourceTag: "IST" | "RECOMMENDED_PLAN" | "RECOMMENDED_BASIS" | "RECOMMENDED_CONSERVATIVE" | "PROGNOSE" | string;
   explanation?: string;
-  mode?: "basis" | "conservative" | string;
+  mode?: "plan" | "basis" | "conservative" | "ist" | string;
   levelPct?: number;
   seasonalityPct?: number;
   seasonalityRawPct?: number;
@@ -372,8 +372,6 @@ export default function InputsModule(): JSX.Element {
   const forecastState = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
     : {};
-  const methodikCashInMode = String(settingsState.cashInMode || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
-
   const forecastRevenueByMonth = useMemo(() => {
     const stateObject = state as unknown as Record<string, unknown>;
     const categoriesById = buildCategoryLabelMap(stateObject);
@@ -518,7 +516,7 @@ export default function InputsModule(): JSX.Element {
       incomings,
       monthlyActuals: monthlyActualsMap,
       currentMonth: currentMonthKey(),
-      mode: methodikCashInMode,
+      mode: "plan",
       seasonalityEnabled: !cashInRecommendationIgnoreQ4,
       ignoreQ4: cashInRecommendationIgnoreQ4,
       maxMonth: currentMonthKey(),
@@ -534,7 +532,6 @@ export default function InputsModule(): JSX.Element {
     cashInRecommendationIgnoreQ4,
     cashInLearningState,
     incomings,
-    methodikCashInMode,
     monthlyActualsMap,
     planningMonths,
   ]);
@@ -1212,30 +1209,31 @@ export default function InputsModule(): JSX.Element {
             <tbody>
               {incomingRows.map((row) => {
                 const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
-                const recommendationMode = String(recommendationEntry?.mode || methodikCashInMode).trim().toLowerCase() === "basis"
-                  ? "basis"
-                  : "conservative";
+                const recommendationModeRaw = String(recommendationEntry?.mode || "plan").trim().toLowerCase();
+                const recommendationMode = recommendationModeRaw === "ist" ? "ist" : "plan";
                 const recommendationQuoteRaw = Number(recommendationEntry?.quotePct);
                 const recommendation = Number.isFinite(recommendationQuoteRaw)
                   ? clampPct(recommendationQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
                   : null;
                 const recommendationSourceTag = String(
                   recommendationEntry?.sourceTag
-                  || (recommendationMode === "basis" ? "RECOMMENDED_BASIS" : "RECOMMENDED_CONSERVATIVE"),
+                  || "RECOMMENDED_PLAN",
                 );
                 const recommendationSourceLabel = recommendationSourceTag === "IST"
                   ? "IST"
+                  : recommendationSourceTag === "RECOMMENDED_PLAN"
+                    ? "Empfohlen (Plan)"
                   : recommendationSourceTag === "RECOMMENDED_BASIS"
-                    ? "Empfohlen (Basis)"
+                    ? "Empfohlen (Plan)"
                     : recommendationSourceTag === "RECOMMENDED_CONSERVATIVE"
-                      ? "Empfohlen (Konservativ)"
+                      ? "Empfohlen (Plan)"
                       : recommendationSourceTag === "PROGNOSE"
                         ? "Signal"
                         : "Empfehlung";
                 const recommendationTooltip = [
                   `Quelle: ${recommendationSourceLabel}`,
                   recommendationEntry?.explanation ? String(recommendationEntry.explanation) : null,
-                  `Saisonalität: ${cashInRecommendationIgnoreQ4 ? "aus" : "an"}`,
+                  `Saisonalität: ${recommendationEntry?.seasonalityEnabled === false ? "aus" : "an"}`,
                 ]
                   .filter(Boolean)
                   .join(" | ");
@@ -1352,7 +1350,7 @@ export default function InputsModule(): JSX.Element {
                               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                                 <span>{formatNumber(payoutPctForCalc, 2)}</span>
                                 {!hasManualPayout ? (
-                                  <Tag color={recommendationMode === "conservative" ? "volcano" : "blue"} style={{ marginRight: 0 }}>
+                                  <Tag color={recommendationMode === "ist" ? "default" : "blue"} style={{ marginRight: 0 }}>
                                     {recommendationSourceLabel}
                                   </Tag>
                                 ) : null}

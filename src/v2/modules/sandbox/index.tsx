@@ -1,49 +1,35 @@
-import { InfoCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useState } from "react";
+import { InfoCircleOutlined } from "@ant-design/icons";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Button,
   Card,
   Col,
-  Drawer,
   Row,
-  Select,
   Segmented,
   Space,
-  Switch,
-  Tag,
   Table,
+  Tag,
   Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useNavigate } from "react-router-dom";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { parsePayoutPctInput } from "../../../domain/cashInRules.js";
-import { DeNumberInput } from "../../components/DeNumberInput";
-import { currentMonthKey, formatMonthLabel } from "../../domain/months";
+import { formatMonthLabel } from "../../domain/months";
 import type { DashboardBreakdownRow, DashboardEntry } from "../../domain/dashboardMaturity";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Text, Title } = Typography;
 
 type RevenueBasisMode = "hybrid" | "forecast_direct";
+type RevenueCalibrationMode = "forecast" | "calibrated";
 type CashInQuoteMode = "manual" | "recommendation";
-type CashInSafetyMode = "basis" | "conservative";
 
 interface SandboxScenario {
   revenueBasisMode: RevenueBasisMode;
   calibrationEnabled: boolean;
   quoteMode: CashInQuoteMode;
-  safetyMode: CashInSafetyMode;
-  q4SeasonalityEnabled: boolean;
-}
-
-interface SandboxProjectionState {
-  enabled: boolean;
-  month: string | null;
-  projectedRevenueEur: number | null;
-  projectedPayoutEur: number | null;
 }
 
 interface SeriesResult {
@@ -51,169 +37,88 @@ interface SeriesResult {
   breakdown?: DashboardBreakdownRow[];
 }
 
-interface SandboxMonthSnapshot {
+interface MonthMetaSnapshot {
   month: string;
-  activeRevenue: number;
-  activeQuote: number;
-  activePayout: number;
-  forecastRevenueRaw: number;
-  calibratedRevenue: number;
-  manualQuote: number | null;
-  recommendationQuote: number | null;
-  quoteSource: string | null;
-  revenueSource: string | null;
+  payoutPct: number | null;
+  manualPayoutPct: number | null;
+  recommendationQuotePct: number | null;
+  recommendationLevelPct: number | null;
+  recommendationSeasonalityPct: number | null;
+  recommendationSafetyMarginPct: number | null;
+  recommendationRiskAdjustmentPct: number | null;
+  recommendationSeasonalitySourceTag: string | null;
   recommendationSourceTag: string | null;
-  calibrationFactorApplied: number | null;
 }
 
-interface SandboxTableRow {
+interface SandboxQuoteRow {
   key: string;
   month: string;
   monthLabel: string;
-  forecastRevenue: number;
-  hybridRevenue: number;
-  calibratedRevenue: number;
-  calibrationFactorBase: number;
-  calibrationFactorSandbox: number;
-  deltaCalibrationFactor: number;
-  activeRevenueBase: number;
-  activeRevenueSandbox: number;
-  deltaRevenue: number;
   manualQuote: number | null;
-  recommendedBasisQuote: number | null;
-  recommendedConservativeQuote: number | null;
-  activeQuoteBase: number;
-  activeQuoteSandbox: number;
-  deltaQuotePp: number;
-  payoutBase: number;
-  payoutSandbox: number;
-  deltaPayout: number;
-  details: {
-    base: SandboxMonthSnapshot;
-    sandbox: SandboxMonthSnapshot;
-  };
+  recommendedQuote: number | null;
+  levelPct: number | null;
+  seasonalityOffsetPct: number | null;
+  safetyMarginPct: number | null;
+  deltaPct: number | null;
+  activeQuote: number | null;
+  seasonalitySourceTag: string | null;
 }
 
-const BASE_CASE_SCENARIO: SandboxScenario = {
-  revenueBasisMode: "hybrid",
-  calibrationEnabled: false,
-  quoteMode: "manual",
-  safetyMode: "basis",
-  q4SeasonalityEnabled: true,
-};
-
-function toFinite(value: unknown, fallback = 0): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+const DEFAULT_REVENUE_MODE: RevenueBasisMode = "hybrid";
 
 function toFiniteOrNull(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function toNonNegativeFiniteOrNull(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.max(0, parsed);
-}
-
-function formatCurrency(value: unknown): string {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return "-";
-  return amount.toLocaleString("de-DE", {
-    style: "currency",
-    currency: "EUR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  });
-}
-
-function formatSignedCurrency(value: number): string {
-  if (!Number.isFinite(value)) return "-";
-  if (value > 0) return `+${formatCurrency(Math.abs(value))}`;
-  if (value < 0) return `−${formatCurrency(Math.abs(value))}`;
-  return formatCurrency(0);
-}
-
-function formatPercent(value: unknown, digits = 1): string {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "-";
-  return `${numeric.toLocaleString("de-DE", {
+function formatPercent(value: number | null | undefined, digits = 1): string {
+  if (!Number.isFinite(Number(value))) return "-";
+  return `${Number(value).toLocaleString("de-DE", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })} %`;
 }
 
-function formatFactor(value: unknown, digits = 2): string {
+function formatSignedPp(value: number | null | undefined, digits = 1): string {
+  if (!Number.isFinite(Number(value))) return "-";
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return "-";
-  return numeric.toLocaleString("de-DE", {
+  const absText = Math.abs(numeric).toLocaleString("de-DE", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
-}
-
-function formatSignedFactor(value: number, digits = 2): string {
-  if (!Number.isFinite(value)) return "-";
-  const text = Math.abs(value).toLocaleString("de-DE", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-  if (value > 0) return `+${text}`;
-  if (value < 0) return `−${text}`;
-  return text;
-}
-
-function formatSignedPp(value: number, digits = 1): string {
-  if (!Number.isFinite(value)) return "-";
-  const absText = Math.abs(value).toLocaleString("de-DE", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-  if (value > 0) return `+${absText} pp`;
-  if (value < 0) return `−${absText} pp`;
+  if (numeric > 0) return `+${absText} pp`;
+  if (numeric < 0) return `−${absText} pp`;
   return `${absText} pp`;
 }
 
-function deltaClassName(value: number): string | undefined {
-  if (!Number.isFinite(value) || Math.abs(value) <= 0.000001) return undefined;
-  return value > 0 ? "v2-sandbox-delta-positive" : "v2-sandbox-delta-negative";
+function deltaClassName(value: number | null | undefined): string | undefined {
+  if (!Number.isFinite(Number(value))) return undefined;
+  const numeric = Number(value);
+  if (Math.abs(numeric) <= 0.000001) return undefined;
+  return numeric > 0 ? "v2-sandbox-delta-positive" : "v2-sandbox-delta-negative";
 }
 
-function resolveRecommendationComponentLabel(tagRaw: string | null): string {
-  const tag = String(tagRaw || "").trim().toUpperCase();
-  if (!tag) return "-";
-  if (tag.includes("IST")) return "IST";
-  if (tag.includes("PROGNOSE")) return "PROGNOSE";
-  if (tag.includes("BASELINE_Q4") || tag.includes("Q4")) return "BASELINE_Q4";
-  if (tag.includes("BASELINE")) return "BASELINE";
-  if (tag.includes("CONSERVATIVE")) return "RECOMMENDED_CONSERVATIVE";
-  if (tag.includes("BASIS")) return "RECOMMENDED_BASIS";
+function normalizeSeasonalitySourceTag(value: string | null): string | null {
+  const tag = String(value || "").trim();
+  if (!tag) return null;
+  if (tag === "recent_dominant") return "Junge Monate";
+  if (tag === "stabilized_history") return "Stabilisiert";
+  if (tag === "stabilized_prior") return "Historie";
+  if (tag === "no_data") return "Keine Historie";
+  if (tag === "disabled") return "Aus";
   return tag;
 }
 
-function resolveRevenueSourceLabel(source: string | null, mode: RevenueBasisMode): string {
-  const normalized = String(source || "").trim().toLowerCase();
-  if (normalized === "manual_override" || normalized === "manual_no_forecast") {
-    return "manuell";
-  }
-  if (mode === "forecast_direct") return "forecast";
-  if (normalized === "forecast_calibrated" || normalized === "forecast_raw") {
-    return "hybrid (Auto via Forecast)";
-  }
-  return mode === "hybrid" ? "hybrid" : "forecast";
-}
-
-function describeSandboxMode(options: SandboxScenario): string {
-  const revenueLabel = options.revenueBasisMode === "hybrid"
-    ? "Umsatzbasis: Plan-Umsatz (Hybrid)"
-    : "Umsatzbasis: Forecast-Umsatz (direkt)";
-  const calibrationLabel = `Kalibrierung: ${options.calibrationEnabled ? "AN" : "AUS"}`;
-  const quoteLabel = options.quoteMode === "manual"
-    ? "Quote: Manuell"
-    : `Quote: Empfohlen (${options.safetyMode === "conservative" ? "Konservativ" : "Basis"}, Q4 ${options.q4SeasonalityEnabled ? "AN" : "AUS"})`;
-  return `${revenueLabel} · ${calibrationLabel} · ${quoteLabel}`;
+function collectManualQuoteByMonth(state: Record<string, unknown>): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  const incomings = Array.isArray(state.incomings) ? state.incomings as Record<string, unknown>[] : [];
+  incomings.forEach((incoming) => {
+    const month = String(incoming?.month || "").trim();
+    if (!month) return;
+    const parsed = parsePayoutPctInput(incoming?.payoutPct);
+    out.set(month, Number.isFinite(parsed as number) ? Number(parsed) : null);
+  });
+  return out;
 }
 
 function applySandboxCalculationOverrides(
@@ -227,6 +132,7 @@ function applySandboxCalculationOverrides(
   if (!next.forecast || typeof next.forecast !== "object") {
     next.forecast = {};
   }
+
   const settings = next.settings as Record<string, unknown>;
   const forecastState = next.forecast as Record<string, unknown>;
   if (!forecastState.settings || typeof forecastState.settings !== "object") {
@@ -235,11 +141,11 @@ function applySandboxCalculationOverrides(
   const forecastSettings = forecastState.settings as Record<string, unknown>;
 
   forecastSettings.useForecast = true;
-  settings.cashInMode = options.safetyMode === "basis" ? "basis" : "conservative";
+  settings.cashInMode = "basis";
   settings.cashInCalibrationEnabled = options.calibrationEnabled;
   settings.cashInRevenueBasisMode = options.revenueBasisMode;
-  settings.cashInRecommendationSeasonalityEnabled = options.q4SeasonalityEnabled;
-  settings.cashInRecommendationIgnoreQ4 = !options.q4SeasonalityEnabled;
+  settings.cashInRecommendationSeasonalityEnabled = true;
+  settings.cashInRecommendationIgnoreQ4 = false;
 
   if (options.revenueBasisMode === "forecast_direct" && Array.isArray(next.incomings)) {
     next.incomings = (next.incomings as unknown[]).map((entry) => {
@@ -265,63 +171,6 @@ function applySandboxCalculationOverrides(
   return next;
 }
 
-function applySandboxProjectionOverrides(
-  targetState: Record<string, unknown>,
-  projection: SandboxProjectionState,
-): void {
-  if (!projection.enabled || !projection.month) return;
-  if (!Array.isArray(targetState.incomings)) {
-    targetState.incomings = [];
-  }
-  const incomings = targetState.incomings as Record<string, unknown>[];
-  const month = String(projection.month || "").trim();
-  if (!month) return;
-
-  const index = incomings.findIndex((row) => String(row?.month || "") === month);
-  const fallbackRow: Record<string, unknown> = {
-    month,
-    source: "forecast",
-    revenueEur: null,
-    payoutPct: null,
-    calibrationCutoffDate: null,
-    calibrationRevenueToDateEur: null,
-    calibrationPayoutRateToDatePct: null,
-    calibrationSellerboardMonthEndEur: null,
-  };
-  const current = index >= 0 && incomings[index] && typeof incomings[index] === "object"
-    ? incomings[index]
-    : fallbackRow;
-  const projectedRevenue = toNonNegativeFiniteOrNull(projection.projectedRevenueEur);
-  const projectedPayout = toNonNegativeFiniteOrNull(projection.projectedPayoutEur);
-  const currentRevenue = toNonNegativeFiniteOrNull((current as Record<string, unknown>).calibrationSellerboardMonthEndEur);
-  const currentPayout = toNonNegativeFiniteOrNull((current as Record<string, unknown>).calibrationPayoutRateToDatePct);
-
-  const patched = {
-    ...current,
-    month,
-    calibrationSellerboardMonthEndEur: projectedRevenue != null ? projectedRevenue : currentRevenue,
-    calibrationPayoutRateToDatePct: projectedPayout != null ? projectedPayout : currentPayout,
-  };
-
-  if (index >= 0) {
-    incomings[index] = patched;
-  } else {
-    incomings.push(patched);
-  }
-}
-
-function buildManualQuoteByMonth(state: Record<string, unknown>): Map<string, number | null> {
-  const map = new Map<string, number | null>();
-  const incomings = Array.isArray(state.incomings) ? state.incomings as Record<string, unknown>[] : [];
-  incomings.forEach((incoming) => {
-    const month = String(incoming?.month || "").trim();
-    if (!month) return;
-    const parsed = parsePayoutPctInput(incoming?.payoutPct);
-    map.set(month, Number.isFinite(parsed) ? Number(parsed) : null);
-  });
-  return map;
-}
-
 function extractCashInMeta(entry: DashboardEntry): Record<string, unknown> | null {
   if (!entry || typeof entry !== "object") return null;
   const meta = (entry.meta && typeof entry.meta === "object")
@@ -331,516 +180,294 @@ function extractCashInMeta(entry: DashboardEntry): Record<string, unknown> | nul
   return meta.cashIn as Record<string, unknown>;
 }
 
-function buildSnapshotByMonth(report: SeriesResult): Map<string, SandboxMonthSnapshot> {
-  const months = Array.isArray(report.months) ? report.months : [];
-  const breakdownRows = Array.isArray(report.breakdown) ? report.breakdown : [];
-  const breakdownByMonth = new Map<string, DashboardBreakdownRow>(
-    breakdownRows
-      .filter((row) => typeof row?.month === "string" && row.month.trim().length > 0)
-      .map((row) => [row.month, row]),
-  );
+function buildSnapshotByMonth(report: SeriesResult): Map<string, MonthMetaSnapshot> {
+  const rows = Array.isArray(report.breakdown) ? report.breakdown : [];
+  const out = new Map<string, MonthMetaSnapshot>();
 
-  const snapshots = new Map<string, SandboxMonthSnapshot>();
-  months.forEach((month) => {
-    const row = breakdownByMonth.get(month);
-    const entries = Array.isArray(row?.entries) ? row.entries : [];
-    const salesEntries = entries.filter((entry) => String(entry?.kind || "").toLowerCase() === "sales-payout");
+  rows.forEach((row) => {
+    if (!row || !row.month) return;
+    const entries = Array.isArray(row.entries) ? row.entries : [];
+    const salesEntries = entries
+      .filter((entry) => String(entry?.kind || "").toLowerCase() === "sales-payout");
+    const firstMeta = salesEntries
+      .map((entry) => extractCashInMeta(entry as DashboardEntry))
+      .find((meta) => meta && typeof meta === "object") || null;
 
-    let activePayout = 0;
-    let componentRevenueSum = 0;
-    let firstMeta: Record<string, unknown> | null = null;
-
-    salesEntries.forEach((entry) => {
-      const direction = String(entry.direction || "").toLowerCase();
-      const amount = Math.abs(toFinite(entry.amount, 0));
-      activePayout += direction === "out" ? -amount : amount;
-
-      const cashInMeta = extractCashInMeta(entry);
-      if (!firstMeta && cashInMeta) {
-        firstMeta = cashInMeta;
-      }
-      const componentRevenue = toFiniteOrNull(cashInMeta?.revenue);
-      if (componentRevenue != null) {
-        componentRevenueSum += componentRevenue;
-      }
-    });
-
-    const appliedRevenue = toFiniteOrNull(firstMeta?.appliedRevenue);
-    const activeRevenue = appliedRevenue != null
-      ? appliedRevenue
-      : componentRevenueSum;
-
-    snapshots.set(month, {
-      month,
-      activeRevenue,
-      activeQuote: toFinite(firstMeta?.payoutPct, 0),
-      activePayout,
-      forecastRevenueRaw: toFinite(firstMeta?.forecastRevenueRaw, 0),
-      calibratedRevenue: toFinite(firstMeta?.planRevenueAfterCalibration, toFinite(firstMeta?.forecastRevenueRaw, 0)),
-      manualQuote: toFiniteOrNull(firstMeta?.manualPayoutPct),
-      recommendationQuote: toFiniteOrNull(firstMeta?.recommendationQuotePct),
-      quoteSource: firstMeta?.quoteSource ? String(firstMeta.quoteSource) : null,
-      revenueSource: firstMeta?.revenueSource ? String(firstMeta.revenueSource) : null,
-      recommendationSourceTag: firstMeta?.recommendationSourceTag ? String(firstMeta.recommendationSourceTag) : null,
-      calibrationFactorApplied: toFiniteOrNull(firstMeta?.calibrationFactorApplied),
+    out.set(row.month, {
+      month: row.month,
+      payoutPct: toFiniteOrNull(firstMeta?.payoutPct),
+      manualPayoutPct: toFiniteOrNull(firstMeta?.manualPayoutPct),
+      recommendationQuotePct: toFiniteOrNull(firstMeta?.recommendationQuotePct),
+      recommendationLevelPct: toFiniteOrNull(firstMeta?.recommendationLevelPct),
+      recommendationSeasonalityPct: toFiniteOrNull(firstMeta?.recommendationSeasonalityPct),
+      recommendationSafetyMarginPct: toFiniteOrNull(firstMeta?.recommendationSafetyMarginPct),
+      recommendationRiskAdjustmentPct: toFiniteOrNull(firstMeta?.recommendationRiskAdjustmentPct),
+      recommendationSeasonalitySourceTag: firstMeta?.recommendationSeasonalitySourceTag
+        ? String(firstMeta.recommendationSeasonalitySourceTag)
+        : null,
+      recommendationSourceTag: firstMeta?.recommendationSourceTag
+        ? String(firstMeta.recommendationSourceTag)
+        : null,
     });
   });
 
-  return snapshots;
-}
-
-function resolveMonthsFromReports(reports: SeriesResult[]): string[] {
-  const set = new Set<string>();
-  reports.forEach((report) => {
-    (Array.isArray(report.months) ? report.months : []).forEach((month) => {
-      if (!month) return;
-      set.add(month);
-    });
-  });
-  return Array.from(set).sort();
+  return out;
 }
 
 export default function SandboxModule(): JSX.Element {
-  const navigate = useNavigate();
   const { state, loading, error } = useWorkspaceState();
 
-  const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>(BASE_CASE_SCENARIO.revenueBasisMode);
-  const [calibrationEnabled, setCalibrationEnabled] = useState<boolean>(BASE_CASE_SCENARIO.calibrationEnabled);
-  const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>(BASE_CASE_SCENARIO.quoteMode);
-  const [q4SeasonalityEnabled, setQ4SeasonalityEnabled] = useState<boolean>(BASE_CASE_SCENARIO.q4SeasonalityEnabled);
-  const [conservativeEnabled, setConservativeEnabled] = useState<boolean>(BASE_CASE_SCENARIO.safetyMode === "conservative");
-  const [sandboxProjectionEnabled, setSandboxProjectionEnabled] = useState<boolean>(false);
-  const [sandboxProjectionMonth, setSandboxProjectionMonth] = useState<string>(currentMonthKey());
-  const [sandboxProjectionRevenueEur, setSandboxProjectionRevenueEur] = useState<number | null>(null);
-  const [sandboxProjectionPayoutEur, setSandboxProjectionPayoutEur] = useState<number | null>(null);
-  const [detailMonth, setDetailMonth] = useState<string | null>(null);
-  const [detailOpen, setDetailOpen] = useState<boolean>(false);
+  const settings = (state.settings && typeof state.settings === "object")
+    ? state.settings as Record<string, unknown>
+    : {};
+  const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
+  const methodikRevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
+    ? "forecast_direct"
+    : DEFAULT_REVENUE_MODE;
+
+  const [revenueCalibrationMode, setRevenueCalibrationMode] = useState<RevenueCalibrationMode>(
+    methodikCalibrationEnabled ? "calibrated" : "forecast",
+  );
+  const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
 
   const stateObject = state as unknown as Record<string, unknown>;
-  const manualQuoteByMonth = useMemo(() => buildManualQuoteByMonth(stateObject), [state.incomings]);
 
-  const sandboxScenario = useMemo<SandboxScenario>(() => ({
-    revenueBasisMode,
-    calibrationEnabled,
+  const scenarioBase = useMemo<SandboxScenario>(() => ({
+    revenueBasisMode: methodikRevenueBasisMode,
+    calibrationEnabled: revenueCalibrationMode === "calibrated",
+    quoteMode: "manual",
+  }), [methodikRevenueBasisMode, revenueCalibrationMode]);
+
+  const scenarioSandbox = useMemo<SandboxScenario>(() => ({
+    ...scenarioBase,
     quoteMode,
-    q4SeasonalityEnabled,
-    safetyMode: conservativeEnabled ? "conservative" : "basis",
-  }), [calibrationEnabled, conservativeEnabled, q4SeasonalityEnabled, quoteMode, revenueBasisMode]);
+  }), [quoteMode, scenarioBase]);
 
-  const sandboxProjection = useMemo<SandboxProjectionState>(() => ({
-    enabled: sandboxProjectionEnabled,
-    month: sandboxProjectionMonth || null,
-    projectedRevenueEur: sandboxProjectionRevenueEur,
-    projectedPayoutEur: sandboxProjectionPayoutEur,
-  }), [
-    sandboxProjectionEnabled,
-    sandboxProjectionMonth,
-    sandboxProjectionPayoutEur,
-    sandboxProjectionRevenueEur,
-  ]);
-
-  const persistedProjectionByMonth = useMemo(() => {
-    const map = new Map<string, { revenue: number | null; payout: number | null }>();
-    const incomings = Array.isArray(stateObject.incomings) ? stateObject.incomings as Record<string, unknown>[] : [];
-    incomings.forEach((incoming) => {
-      const month = String(incoming?.month || "").trim();
-      if (!month) return;
-      map.set(month, {
-        revenue: toFiniteOrNull(incoming.calibrationSellerboardMonthEndEur),
-        payout: toFiniteOrNull(incoming.calibrationPayoutRateToDatePct),
-      });
-    });
-    return map;
-  }, [state.incomings, stateObject.incomings]);
+  const scenarioRecommendation = useMemo<SandboxScenario>(() => ({
+    ...scenarioBase,
+    quoteMode: "recommendation",
+  }), [scenarioBase]);
 
   const baseReport = useMemo(
-    () => computeSeries(applySandboxCalculationOverrides(stateObject, BASE_CASE_SCENARIO)) as SeriesResult,
-    [stateObject],
+    () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioBase)) as SeriesResult,
+    [scenarioBase, stateObject],
+  );
+  const sandboxReport = useMemo(
+    () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioSandbox)) as SeriesResult,
+    [scenarioSandbox, stateObject],
+  );
+  const recommendationReport = useMemo(
+    () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioRecommendation)) as SeriesResult,
+    [scenarioRecommendation, stateObject],
   );
 
-  const sandboxReport = useMemo(() => {
-    const next = applySandboxCalculationOverrides(stateObject, sandboxScenario);
-    applySandboxProjectionOverrides(next, sandboxProjection);
-    return computeSeries(next) as SeriesResult;
-  }, [sandboxProjection, sandboxScenario, stateObject]);
-
-  const recommendationBasisReport = useMemo(() => {
-    const next = applySandboxCalculationOverrides(stateObject, {
-      ...sandboxScenario,
-      quoteMode: "recommendation",
-      safetyMode: "basis",
-    });
-    applySandboxProjectionOverrides(next, sandboxProjection);
-    return computeSeries(next) as SeriesResult;
-  }, [sandboxProjection, sandboxScenario, stateObject]);
-
-  const recommendationConservativeReport = useMemo(() => {
-    const next = applySandboxCalculationOverrides(stateObject, {
-      ...sandboxScenario,
-      quoteMode: "recommendation",
-      safetyMode: "conservative",
-    });
-    applySandboxProjectionOverrides(next, sandboxProjection);
-    return computeSeries(next) as SeriesResult;
-  }, [sandboxProjection, sandboxScenario, stateObject]);
-
+  const manualQuoteByMonth = useMemo(
+    () => collectManualQuoteByMonth(stateObject),
+    [state.incomings, stateObject],
+  );
   const baseByMonth = useMemo(() => buildSnapshotByMonth(baseReport), [baseReport]);
   const sandboxByMonth = useMemo(() => buildSnapshotByMonth(sandboxReport), [sandboxReport]);
-  const recommendationBasisByMonth = useMemo(() => buildSnapshotByMonth(recommendationBasisReport), [recommendationBasisReport]);
-  const recommendationConservativeByMonth = useMemo(
-    () => buildSnapshotByMonth(recommendationConservativeReport),
-    [recommendationConservativeReport],
-  );
+  const recommendationByMonth = useMemo(() => buildSnapshotByMonth(recommendationReport), [recommendationReport]);
 
-  const months = useMemo(
-    () => resolveMonthsFromReports([
-      baseReport,
-      sandboxReport,
-      recommendationBasisReport,
-      recommendationConservativeReport,
-    ]),
-    [baseReport, recommendationBasisReport, recommendationConservativeReport, sandboxReport],
-  );
+  const months = useMemo(() => {
+    const all = new Set<string>();
+    const add = (report: SeriesResult): void => {
+      (Array.isArray(report.months) ? report.months : []).forEach((month) => {
+        if (!month) return;
+        all.add(month);
+      });
+    };
+    add(baseReport);
+    add(sandboxReport);
+    add(recommendationReport);
+    return Array.from(all).sort();
+  }, [baseReport, recommendationReport, sandboxReport]);
 
-  useEffect(() => {
-    if (!months.length) return;
-    if (months.includes(sandboxProjectionMonth)) return;
-    const currentMonth = currentMonthKey();
-    if (months.includes(currentMonth)) {
-      setSandboxProjectionMonth(currentMonth);
-      return;
-    }
-    setSandboxProjectionMonth(months[0]);
-  }, [months, sandboxProjectionMonth]);
-
-  const projectionRowReference = useMemo(() => {
-    const month = sandboxProjectionMonth;
-    if (!month) return null;
-    return persistedProjectionByMonth.get(month) || null;
-  }, [persistedProjectionByMonth, sandboxProjectionMonth]);
-
-  const rows = useMemo<SandboxTableRow[]>(() => {
+  const rows = useMemo<SandboxQuoteRow[]>(() => {
     return months.map((month) => {
-      const baseSnapshot = baseByMonth.get(month) || {
-        month,
-        activeRevenue: 0,
-        activeQuote: 0,
-        activePayout: 0,
-        forecastRevenueRaw: 0,
-        calibratedRevenue: 0,
-        manualQuote: null,
-        recommendationQuote: null,
-        quoteSource: null,
-        revenueSource: null,
-        recommendationSourceTag: null,
-        calibrationFactorApplied: null,
-      };
-      const sandboxSnapshot = sandboxByMonth.get(month) || baseSnapshot;
-      const recommendationBasisSnapshot = recommendationBasisByMonth.get(month) || baseSnapshot;
-      const recommendationConservativeSnapshot = recommendationConservativeByMonth.get(month) || baseSnapshot;
+      const baseSnapshot = baseByMonth.get(month) || null;
+      const sandboxSnapshot = sandboxByMonth.get(month) || null;
+      const recommendationSnapshot = recommendationByMonth.get(month) || null;
 
-      const activeRevenueBase = toFinite(baseSnapshot.activeRevenue, 0);
-      const activeRevenueSandbox = toFinite(sandboxSnapshot.activeRevenue, 0);
-      const calibrationFactorBase = toFinite(baseSnapshot.calibrationFactorApplied, 1);
-      const calibrationFactorSandbox = toFinite(sandboxSnapshot.calibrationFactorApplied, 1);
-      const activeQuoteBase = toFinite(baseSnapshot.activeQuote, 0);
-      const activeQuoteSandbox = toFinite(sandboxSnapshot.activeQuote, 0);
-      const payoutBase = toFinite(baseSnapshot.activePayout, 0);
-      const payoutSandbox = toFinite(sandboxSnapshot.activePayout, 0);
-
-      const forecastRevenue = toFinite(
-        sandboxSnapshot.forecastRevenueRaw,
-        toFinite(baseSnapshot.forecastRevenueRaw, 0),
-      );
-      const hybridRevenue = activeRevenueBase;
-      const calibratedRevenue = toFinite(
-        sandboxSnapshot.calibratedRevenue,
-        toFinite(baseSnapshot.calibratedRevenue, forecastRevenue),
-      );
+      const manualQuote = manualQuoteByMonth.get(month)
+        ?? toFiniteOrNull(baseSnapshot?.manualPayoutPct)
+        ?? null;
+      const recommendedQuote = toFiniteOrNull(recommendationSnapshot?.payoutPct)
+        ?? toFiniteOrNull(recommendationSnapshot?.recommendationQuotePct)
+        ?? null;
+      const levelPct = toFiniteOrNull(recommendationSnapshot?.recommendationLevelPct);
+      const seasonalityOffsetPct = toFiniteOrNull(recommendationSnapshot?.recommendationSeasonalityPct);
+      const safetyMarginPct = toFiniteOrNull(recommendationSnapshot?.recommendationSafetyMarginPct)
+        ?? toFiniteOrNull(recommendationSnapshot?.recommendationRiskAdjustmentPct);
+      const activeQuote = toFiniteOrNull(sandboxSnapshot?.payoutPct)
+        ?? (quoteMode === "manual" ? manualQuote : recommendedQuote);
 
       return {
         key: month,
         month,
         monthLabel: formatMonthLabel(month),
-        forecastRevenue,
-        hybridRevenue,
-        calibratedRevenue,
-        calibrationFactorBase,
-        calibrationFactorSandbox,
-        deltaCalibrationFactor: calibrationFactorSandbox - calibrationFactorBase,
-        activeRevenueBase,
-        activeRevenueSandbox,
-        deltaRevenue: activeRevenueSandbox - activeRevenueBase,
-        manualQuote: manualQuoteByMonth.get(month) ?? baseSnapshot.manualQuote,
-        recommendedBasisQuote: toFiniteOrNull(recommendationBasisSnapshot.activeQuote),
-        recommendedConservativeQuote: toFiniteOrNull(recommendationConservativeSnapshot.activeQuote),
-        activeQuoteBase,
-        activeQuoteSandbox,
-        deltaQuotePp: activeQuoteSandbox - activeQuoteBase,
-        payoutBase,
-        payoutSandbox,
-        deltaPayout: payoutSandbox - payoutBase,
-        details: {
-          base: baseSnapshot,
-          sandbox: sandboxSnapshot,
-        },
+        manualQuote,
+        recommendedQuote,
+        levelPct,
+        seasonalityOffsetPct,
+        safetyMarginPct,
+        deltaPct: Number.isFinite(Number(recommendedQuote)) && Number.isFinite(Number(manualQuote))
+          ? Number(recommendedQuote) - Number(manualQuote)
+          : null,
+        activeQuote,
+        seasonalitySourceTag: normalizeSeasonalitySourceTag(recommendationSnapshot?.recommendationSeasonalitySourceTag || null),
       };
     });
-  }, [
-    baseByMonth,
-    manualQuoteByMonth,
-    months,
-    recommendationBasisByMonth,
-    recommendationConservativeByMonth,
-    sandboxByMonth,
-  ]);
-
-  const rowByMonth = useMemo(() => new Map(rows.map((row) => [row.month, row])), [rows]);
-  const selectedRow = detailMonth ? rowByMonth.get(detailMonth) || null : null;
-  const projectionReferenceRow = sandboxProjectionMonth ? rowByMonth.get(sandboxProjectionMonth) || null : null;
-  const sandboxProjectionQuotePct = useMemo(() => {
-    const revenue = Number(sandboxProjectionRevenueEur);
-    const payout = Number(sandboxProjectionPayoutEur);
-    if (!(Number.isFinite(revenue) && revenue > 0)) return null;
-    if (!(Number.isFinite(payout) && payout >= 0)) return null;
-    return (payout / revenue) * 100;
-  }, [sandboxProjectionPayoutEur, sandboxProjectionRevenueEur]);
+  }, [baseByMonth, manualQuoteByMonth, months, quoteMode, recommendationByMonth, sandboxByMonth]);
 
   const summary = useMemo(() => {
     const monthCount = rows.length || 1;
-    const deltaRevenueSum = rows.reduce((sum, row) => sum + row.deltaRevenue, 0);
-    const deltaPayoutSum = rows.reduce((sum, row) => sum + row.deltaPayout, 0);
-    const baseQuoteAvg = rows.reduce((sum, row) => sum + row.activeQuoteBase, 0) / monthCount;
-    const sandboxQuoteAvg = rows.reduce((sum, row) => sum + row.activeQuoteSandbox, 0) / monthCount;
+    const avgActiveQuote = rows.reduce((sum, row) => sum + (Number(row.activeQuote || 0)), 0) / monthCount;
+    const avgManualQuote = rows.reduce((sum, row) => sum + (Number(row.manualQuote || 0)), 0) / monthCount;
+    const avgRecommendedQuote = rows.reduce((sum, row) => sum + (Number(row.recommendedQuote || 0)), 0) / monthCount;
+    const validDeltaCount = rows.filter((row) => Number.isFinite(Number(row.deltaPct))).length;
     return {
-      deltaRevenueSum,
-      deltaPayoutSum,
-      deltaQuoteAvgPp: sandboxQuoteAvg - baseQuoteAvg,
+      avgActiveQuote,
+      avgManualQuote,
+      avgRecommendedQuote,
+      validDeltaCount,
       monthCount: rows.length,
     };
   }, [rows]);
 
-  const columns = useMemo<ColumnsType<SandboxTableRow>>(() => {
+  const columns = useMemo<ColumnsType<SandboxQuoteRow>>(() => {
     return [
       {
         title: "Monat",
         dataIndex: "monthLabel",
         key: "month",
-        width: 116,
+        width: 130,
         fixed: "left",
       },
       {
-        title: "Umsatz",
-        children: [
-          {
-            title: "Forecast-Umsatz",
-            dataIndex: "forecastRevenue",
-            key: "forecastRevenue",
-            width: 132,
-            align: "right",
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "Plan-Umsatz (Hybrid)",
-            dataIndex: "hybridRevenue",
-            key: "hybridRevenue",
-            width: 144,
-            align: "right",
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "Kalibrierter Umsatz",
-            dataIndex: "calibratedRevenue",
-            key: "calibratedRevenue",
-            width: 144,
-            align: "right",
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "K (Base Case)",
-            dataIndex: "calibrationFactorBase",
-            key: "calibrationFactorBase",
-            width: 116,
-            align: "right",
-            render: (value: number) => formatFactor(value, 2),
-          },
-          {
-            title: "K (Sandbox)",
-            dataIndex: "calibrationFactorSandbox",
-            key: "calibrationFactorSandbox",
-            width: 116,
-            align: "right",
-            className: "v2-sandbox-col-sandbox",
-            render: (value: number) => formatFactor(value, 2),
-          },
-          {
-            title: "Δ K",
-            dataIndex: "deltaCalibrationFactor",
-            key: "deltaCalibrationFactor",
-            width: 96,
-            align: "right",
-            className: "v2-sandbox-col-delta",
-            render: (value: number) => (
-              <span className={deltaClassName(value)}>{formatSignedFactor(value, 2)}</span>
-            ),
-          },
-          {
-            title: "Umsatz aktiv (Base Case)",
-            dataIndex: "activeRevenueBase",
-            key: "activeRevenueBase",
-            width: 162,
-            align: "right",
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "Umsatz aktiv (Sandbox)",
-            dataIndex: "activeRevenueSandbox",
-            key: "activeRevenueSandbox",
-            width: 166,
-            align: "right",
-            className: "v2-sandbox-col-sandbox",
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "Δ Umsatz",
-            dataIndex: "deltaRevenue",
-            key: "deltaRevenue",
-            width: 130,
-            align: "right",
-            className: "v2-sandbox-col-delta",
-            render: (value: number) => (
-              <span className={deltaClassName(value)}>{formatSignedCurrency(value)}</span>
-            ),
-          },
-        ],
-      },
-      {
-        title: "Quote",
-        children: [
-          {
-            title: "Quote manuell",
-            dataIndex: "manualQuote",
-            key: "manualQuote",
-            width: 124,
-            align: "right",
-            className: "v2-sandbox-block-start",
-            onHeaderCell: () => ({ className: "v2-sandbox-block-start" }),
-            render: (value: number | null) => value == null ? "-" : formatPercent(value),
-          },
-          {
-            title: "Quote empfohlen (Basis)",
-            dataIndex: "recommendedBasisQuote",
-            key: "recommendedBasisQuote",
-            width: 154,
-            align: "right",
-            render: (value: number | null) => value == null ? "-" : formatPercent(value),
-          },
-          {
-            title: "Quote empfohlen (Konservativ)",
-            dataIndex: "recommendedConservativeQuote",
-            key: "recommendedConservativeQuote",
-            width: 184,
-            align: "right",
-            render: (value: number | null) => value == null ? "-" : formatPercent(value),
-          },
-          {
-            title: "Quote aktiv (Base Case)",
-            dataIndex: "activeQuoteBase",
-            key: "activeQuoteBase",
-            width: 154,
-            align: "right",
-            render: (value: number) => formatPercent(value),
-          },
-          {
-            title: "Quote aktiv (Sandbox)",
-            dataIndex: "activeQuoteSandbox",
-            key: "activeQuoteSandbox",
-            width: 158,
-            align: "right",
-            className: "v2-sandbox-col-sandbox",
-            render: (value: number) => formatPercent(value),
-          },
-          {
-            title: "Δ Quote",
-            dataIndex: "deltaQuotePp",
-            key: "deltaQuotePp",
-            width: 122,
-            align: "right",
-            className: "v2-sandbox-col-delta",
-            render: (value: number) => (
-              <span className={deltaClassName(value)}>{formatSignedPp(value)}</span>
-            ),
-          },
-        ],
-      },
-      {
-        title: "Ergebnis",
-        children: [
-          {
-            title: "Payout aktiv (Base Case)",
-            dataIndex: "payoutBase",
-            key: "payoutBase",
-            width: 172,
-            align: "right",
-            className: "v2-sandbox-block-start",
-            onHeaderCell: () => ({ className: "v2-sandbox-block-start" }),
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "Payout aktiv (Sandbox)",
-            dataIndex: "payoutSandbox",
-            key: "payoutSandbox",
-            width: 176,
-            align: "right",
-            className: "v2-sandbox-col-sandbox",
-            render: (value: number) => formatCurrency(value),
-          },
-          {
-            title: "Δ Payout",
-            dataIndex: "deltaPayout",
-            key: "deltaPayout",
-            width: 138,
-            align: "right",
-            className: "v2-sandbox-col-delta v2-sandbox-col-delta-strong",
-            render: (value: number) => (
-              <span className={deltaClassName(value)}>{formatSignedCurrency(value)}</span>
-            ),
-          },
-        ],
-      },
-      {
-        title: "",
-        key: "details",
-        width: 96,
-        fixed: "right",
-        render: (_value, row) => (
-          <Button
-            size="small"
-            icon={<InfoCircleOutlined />}
-            onClick={() => {
-              setDetailMonth(row.month);
-              setDetailOpen(true);
-            }}
-          >
-            Details
-          </Button>
+        title: (
+          <Space size={6}>
+            <span>Manuelle Quote</span>
+            <Tooltip title="Monatswert aus Cash-in Setup. Wenn leer, greift später die Empfehlung.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
         ),
+        dataIndex: "manualQuote",
+        key: "manualQuote",
+        width: 150,
+        align: "right",
+        render: (value: number | null) => formatPercent(value),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Empfohlene Quote (Plan)</span>
+            <Tooltip title="Automatisch berechnet aus Level + SaisonOffset − Sicherheitsmarge.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "recommendedQuote",
+        key: "recommendedQuote",
+        width: 186,
+        align: "right",
+        render: (value: number | null) => formatPercent(value),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Level (aktuelles Niveau)</span>
+            <Tooltip title="Gewichtetes Niveau aus den letzten Monaten, mit Fokus auf jüngere Daten.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "levelPct",
+        key: "levelPct",
+        width: 190,
+        align: "right",
+        render: (value: number | null) => formatPercent(value),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>SaisonOffset (Monatsfaktor)</span>
+            <Tooltip title="Monatsspezifischer Zuschlag/Abzug aus dem saisonalen Jahresmuster (Q4 automatisch enthalten).">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "seasonalityOffsetPct",
+        key: "seasonalityOffsetPct",
+        width: 226,
+        align: "right",
+        render: (value: number | null, row) => {
+          const sourceTag = row.seasonalitySourceTag;
+          return (
+            <Space size={6} style={{ justifyContent: "flex-end", width: "100%" }}>
+              <span>{formatSignedPp(value)}</span>
+              {sourceTag ? <Tag>{sourceTag}</Tag> : null}
+            </Space>
+          );
+        },
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Sicherheitsmarge</span>
+            <Tooltip title="Kleiner fixer Vorsichtspuffer im Plan-Case, ohne harte Monats-Strafen.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "safetyMarginPct",
+        key: "safetyMarginPct",
+        width: 152,
+        align: "right",
+        render: (value: number | null) => Number.isFinite(Number(value)) ? formatSignedPp(-Number(value)) : "-",
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Delta</span>
+            <Tooltip title="Empfohlen minus Manuell pro Monat. Positiv = Empfehlung liegt höher als dein manueller Wert.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "deltaPct",
+        key: "deltaPct",
+        width: 130,
+        align: "right",
+        className: "v2-sandbox-col-delta v2-sandbox-col-delta-strong",
+        render: (value: number | null) => (
+          <span className={deltaClassName(value)}>{formatSignedPp(value)}</span>
+        ),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Aktiv</span>
+            <Tooltip title="Quote, die in der Sandbox aktuell im Cashflow verwendet wird.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "activeQuote",
+        key: "activeQuote",
+        width: 120,
+        align: "right",
+        fixed: "right",
+        className: "v2-sandbox-col-sandbox",
+        render: (value: number | null) => formatPercent(value),
       },
     ];
   }, []);
 
-  function resetToBaseCase(): void {
-    setRevenueBasisMode(BASE_CASE_SCENARIO.revenueBasisMode);
-    setCalibrationEnabled(BASE_CASE_SCENARIO.calibrationEnabled);
-    setQuoteMode(BASE_CASE_SCENARIO.quoteMode);
-    setQ4SeasonalityEnabled(BASE_CASE_SCENARIO.q4SeasonalityEnabled);
-    setConservativeEnabled(BASE_CASE_SCENARIO.safetyMode === "conservative");
-    setSandboxProjectionEnabled(false);
-    setSandboxProjectionRevenueEur(null);
-    setSandboxProjectionPayoutEur(null);
-  }
-
-  const sandboxModeText = describeSandboxMode(sandboxScenario);
+  const scenarioText = quoteMode === "manual"
+    ? "Base Case aktiv: Auszahlungsquote = Manuell."
+    : "Vergleich aktiv: Auszahlungsquote = Empfohlen (Plan).";
 
   return (
     <div className="v2-page">
@@ -849,12 +476,13 @@ export default function SandboxModule(): JSX.Element {
           <Col xs={24} xl={16}>
             <Title level={3}>Sandbox</Title>
             <Paragraph>
-              Interaktive Vergleichsansicht für Umsatzbasis und Amazon-Auszahlungsquote. Nur View-State, ohne Persistenzänderung.
+              Transparenzansicht für die Amazon-Auszahlungsquote. Du siehst pro Monat, wie sich Empfohlen (Plan) aus
+              Level, SaisonOffset und Sicherheitsmarge zusammensetzt.
             </Paragraph>
           </Col>
           <Col xs={24} xl={8}>
             <div className="v2-sandbox-head-note">
-              <Text type="secondary">Sandbox ändert keine echten Einstellungen.</Text>
+              <Text type="secondary">Sandbox ändert keine echten Daten.</Text>
             </div>
           </Col>
         </Row>
@@ -868,37 +496,25 @@ export default function SandboxModule(): JSX.Element {
           <div className="v2-sandbox-control-tile">
             <Space size={6}>
               <Text strong>Umsatzbasis</Text>
-              <Tooltip title="Plan-Umsatz nutzt manuelle Monate aus dem Cash-in Setup und sonst Forecast. Forecast direkt ignoriert manuelle Umsatz-Overrides.">
+              <Tooltip title="Optionaler Vergleich der Umsatzquelle im Sandbox-Run (falls Kalibrierung genutzt wird).">
                 <InfoCircleOutlined />
               </Tooltip>
             </Space>
             <Segmented
               block
-              value={revenueBasisMode}
-              onChange={(value) => setRevenueBasisMode(String(value) === "forecast_direct" ? "forecast_direct" : "hybrid")}
+              value={revenueCalibrationMode}
+              onChange={(value) => setRevenueCalibrationMode(String(value) === "forecast" ? "forecast" : "calibrated")}
               options={[
-                { label: "Plan-Umsatz (Hybrid)", value: "hybrid" },
-                { label: "Forecast-Umsatz (direkt)", value: "forecast_direct" },
+                { label: "Forecast", value: "forecast" },
+                { label: "Kalibriert", value: "calibrated" },
               ]}
             />
-            <div className="v2-sandbox-inline-row">
-              <Text strong>Kalibrierung</Text>
-              <Switch
-                size="small"
-                checked={calibrationEnabled}
-                onChange={(checked) => setCalibrationEnabled(checked)}
-              />
-              <Tooltip title="Wirkt nur auf Monate, in denen Forecast-Umsatz genutzt wird.">
-                <InfoCircleOutlined />
-              </Tooltip>
-            </div>
-            <Button size="small" type="link" onClick={() => navigate("/v2/abschluss/eingaben")}>Cash-in Setup öffnen</Button>
           </div>
 
           <div className="v2-sandbox-control-tile">
             <Space size={6}>
-              <Text strong>Amazon-Auszahlungsquote</Text>
-              <Tooltip title="Manuell nutzt die gepflegte Monatsquote. Empfohlen berechnet die Quote monatlich mit bestehender Methodik.">
+              <Text strong>Auszahlungsquote</Text>
+              <Tooltip title="Manuell nutzt deine Monatswerte. Empfohlen (Plan) nutzt die berechnete Heuristik.">
                 <InfoCircleOutlined />
               </Tooltip>
             </Space>
@@ -908,254 +524,52 @@ export default function SandboxModule(): JSX.Element {
               onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
               options={[
                 { label: "Manuell", value: "manual" },
-                { label: "Empfohlen", value: "recommendation" },
+                { label: "Empfohlen (Plan)", value: "recommendation" },
               ]}
             />
-            <div className="v2-sandbox-switch-grid">
-              <div className="v2-sandbox-inline-row">
-                <Text>Q4 berücksichtigen</Text>
-                <Tooltip title={quoteMode === "manual" ? "wirkt nur im Modus Empfohlen" : "Q4-Saisonalität in der Empfehlung berücksichtigen."}>
-                  <span>
-                    <Switch
-                      size="small"
-                      checked={q4SeasonalityEnabled}
-                      disabled={quoteMode === "manual"}
-                      onChange={(checked) => setQ4SeasonalityEnabled(checked)}
-                    />
-                  </span>
-                </Tooltip>
-              </div>
-              <div className="v2-sandbox-inline-row">
-                <Text>Konservativ</Text>
-                <Tooltip title={quoteMode === "manual" ? "wirkt nur im Modus Empfohlen" : "Zusätzlicher Sicherheitsabschlag auf die Empfehlung."}>
-                  <span>
-                    <Switch
-                      size="small"
-                      checked={conservativeEnabled}
-                      disabled={quoteMode === "manual"}
-                      onChange={(checked) => setConservativeEnabled(checked)}
-                    />
-                  </span>
-                </Tooltip>
-              </div>
-            </div>
+            <Button size="small" type="link" href="#/v2/abschluss/eingaben">
+              Cash-in Setup öffnen
+            </Button>
           </div>
 
           <div className="v2-sandbox-control-actions">
-            <Button icon={<ReloadOutlined />} onClick={resetToBaseCase}>Zurück auf Base Case</Button>
-            <Text type="secondary">Base Case: Plan-Umsatz (Hybrid) · Manuell · Kalibrierung AUS</Text>
-            <Text type="secondary">Nur für Nachvollziehbarkeit, ohne Speicherung.</Text>
+            <Text strong>{scenarioText}</Text>
+            <Text type="secondary">Delta-Spalte: Empfohlen minus Manuell.</Text>
+            <Text type="secondary">Keine Überschreibung deiner manuellen Tabelle.</Text>
           </div>
         </div>
       </Card>
 
       <Card>
-        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
-          <Title level={5} style={{ margin: 0 }}>Monatsende-Projektion (nur Sandbox)</Title>
-          <Switch
-            checked={sandboxProjectionEnabled}
-            onChange={(checked) => setSandboxProjectionEnabled(checked)}
-            checkedChildren="AN"
-            unCheckedChildren="AUS"
-          />
-        </Space>
-        <Text type="secondary">
-          Lokaler Override nur für diese Sandbox-Ansicht. Keine Speicherung in globalen Einstellungen.
-        </Text>
-        <div className="v2-sandbox-projection-grid">
-          <div>
-            <Text type="secondary">Monat</Text>
-            <Select
-              value={sandboxProjectionMonth || undefined}
-              options={months.map((month) => ({ value: month, label: `${formatMonthLabel(month)} (${month})` }))}
-              onChange={(value) => setSandboxProjectionMonth(String(value || ""))}
-              disabled={!months.length}
-              style={{ width: "100%" }}
-            />
-          </div>
-          <div>
-            <Text type="secondary">Projektion Umsatz Monatsende (EUR)</Text>
-            <DeNumberInput
-              value={sandboxProjectionRevenueEur ?? undefined}
-              mode="decimal"
-              min={0}
-              step={100}
-              style={{ width: "100%" }}
-              onChange={(value) => setSandboxProjectionRevenueEur(toNonNegativeFiniteOrNull(value))}
-            />
-          </div>
-          <div>
-            <Text type="secondary">Projektion Auszahlung Monatsende (EUR)</Text>
-            <DeNumberInput
-              value={sandboxProjectionPayoutEur ?? undefined}
-              mode="decimal"
-              min={0}
-              step={100}
-              style={{ width: "100%" }}
-              onChange={(value) => setSandboxProjectionPayoutEur(toNonNegativeFiniteOrNull(value))}
-            />
-          </div>
-        </div>
-        <Space wrap style={{ marginTop: 10 }}>
-          <Tag color="default">
-            Quote aus Projektion: {Number.isFinite(sandboxProjectionQuotePct as number) ? formatPercent(sandboxProjectionQuotePct) : "-"}
-          </Tag>
-          <Tag color="default">
-            Forecast-Umsatz (gewählter Monat): {formatCurrency(projectionReferenceRow?.forecastRevenue || 0)}
-          </Tag>
-          <Button
-            size="small"
-            onClick={() => {
-              setSandboxProjectionRevenueEur(projectionRowReference?.revenue ?? null);
-              setSandboxProjectionPayoutEur(projectionRowReference?.payout ?? null);
-            }}
-            disabled={!sandboxProjectionMonth}
-          >
-            Werte aus Cash-in Setup laden
-          </Button>
-          <Button
-            size="small"
-            onClick={() => {
-              setSandboxProjectionRevenueEur(null);
-              setSandboxProjectionPayoutEur(null);
-            }}
-          >
-            Projektion leeren
-          </Button>
-        </Space>
-      </Card>
-
-      <Card>
         <div className="v2-sandbox-summary-head">
-          <Text strong>Aktueller Modus:</Text>
-          <Text>{sandboxModeText}</Text>
+          <Text strong>Ø Manuell:</Text>
+          <Text>{formatPercent(summary.avgManualQuote)}</Text>
+          <Text strong>Ø Empfohlen (Plan):</Text>
+          <Text>{formatPercent(summary.avgRecommendedQuote)}</Text>
+          <Text strong>Ø Aktiv:</Text>
+          <Text>{formatPercent(summary.avgActiveQuote)}</Text>
         </div>
         <div className="v2-sandbox-summary-head">
-          <Text strong>Vergleich gegen:</Text>
-          <Text>Base Case (Plan-Umsatz (Hybrid), Manuell, Kalibrierung AUS)</Text>
-        </div>
-        <div className="v2-sandbox-kpi-grid">
-          <div className="v2-sandbox-kpi-card">
-            <Text type="secondary">Δ Umsatz (Summe)</Text>
-            <Text strong className={deltaClassName(summary.deltaRevenueSum)}>{formatSignedCurrency(summary.deltaRevenueSum)}</Text>
-          </div>
-          <div className="v2-sandbox-kpi-card">
-            <Text type="secondary">Δ Ø Quote (pp)</Text>
-            <Text strong className={deltaClassName(summary.deltaQuoteAvgPp)}>{formatSignedPp(summary.deltaQuoteAvgPp)}</Text>
-          </div>
-          <div className="v2-sandbox-kpi-card v2-sandbox-kpi-card-strong">
-            <Text type="secondary">Δ Payout (Summe)</Text>
-            <Text strong className={deltaClassName(summary.deltaPayoutSum)}>{formatSignedCurrency(summary.deltaPayoutSum)}</Text>
-          </div>
+          <Text type="secondary">{summary.validDeltaCount} Monate mit direktem Delta-Vergleich.</Text>
         </div>
       </Card>
 
       <Card>
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
           <Title level={4} style={{ margin: 0 }}>Monatsvergleich</Title>
-          <Text type="secondary">{summary.monthCount} Monate im aktuellen Planungszeitraum</Text>
+          <Text type="secondary">{summary.monthCount} Monate im Planungszeitraum</Text>
         </Space>
-        <Table<SandboxTableRow>
+        <Table<SandboxQuoteRow>
           className="v2-ant-table v2-sandbox-table"
           columns={columns}
           dataSource={rows}
           pagination={false}
           size="small"
           rowKey="key"
-          scroll={{ x: 3400, y: 560 }}
+          scroll={{ x: 1400, y: 560 }}
           sticky
         />
       </Card>
-
-      <Drawer
-        title={selectedRow ? `Monat-Details: ${selectedRow.monthLabel}` : "Monat-Details"}
-        placement="right"
-        width={560}
-        open={detailOpen && Boolean(selectedRow)}
-        onClose={() => setDetailOpen(false)}
-      >
-        {selectedRow ? (
-          <Space direction="vertical" size={12} style={{ width: "100%" }}>
-            <Card size="small" title="A) Warum ist Umsatz aktiv (Sandbox) so?">
-              <div className="v2-sandbox-detail-lines">
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Quelle</Text>
-                  <Text strong>{resolveRevenueSourceLabel(selectedRow.details.sandbox.revenueSource, sandboxScenario.revenueBasisMode)}</Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Kalibrierung</Text>
-                  <Text strong>
-                    {sandboxScenario.calibrationEnabled ? "an" : "aus"}
-                    {sandboxScenario.calibrationEnabled && selectedRow.details.sandbox.calibrationFactorApplied != null
-                      ? ` · Faktor ${selectedRow.details.sandbox.calibrationFactorApplied.toLocaleString("de-DE", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}`
-                      : ""}
-                  </Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Ergebnis-Umsatz</Text>
-                  <Text strong>{formatCurrency(selectedRow.activeRevenueSandbox)}</Text>
-                </div>
-              </div>
-            </Card>
-
-            <Card size="small" title="B) Warum ist Quote aktiv (Sandbox) so?">
-              <div className="v2-sandbox-detail-lines">
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Quelle</Text>
-                  <Text strong>{selectedRow.details.sandbox.quoteSource === "manual" ? "manuell" : "empfohlen"}</Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Q4 / konservativ</Text>
-                  <Text strong>
-                    {selectedRow.details.sandbox.quoteSource === "manual"
-                      ? "nicht aktiv (nur im Modus Empfohlen)"
-                      : `Q4 ${sandboxScenario.q4SeasonalityEnabled ? "ja" : "nein"} · konservativ ${sandboxScenario.safetyMode === "conservative" ? "ja" : "nein"}`}
-                  </Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Empfehlungskomponente</Text>
-                  <Text strong>{selectedRow.details.sandbox.quoteSource === "manual" ? "-" : resolveRecommendationComponentLabel(selectedRow.details.sandbox.recommendationSourceTag)}</Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Ergebnis-Quote</Text>
-                  <Text strong>{formatPercent(selectedRow.activeQuoteSandbox)}</Text>
-                </div>
-              </div>
-            </Card>
-
-            <Card size="small" title="C) Wirkung (Base Case vs Sandbox)">
-              <div className="v2-sandbox-detail-lines">
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Umsatz</Text>
-                  <Text>
-                    {formatCurrency(selectedRow.activeRevenueBase)} → {formatCurrency(selectedRow.activeRevenueSandbox)}
-                    {" "}(<span className={deltaClassName(selectedRow.deltaRevenue)}>{formatSignedCurrency(selectedRow.deltaRevenue)}</span>)
-                  </Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Quote</Text>
-                  <Text>
-                    {formatPercent(selectedRow.activeQuoteBase)} → {formatPercent(selectedRow.activeQuoteSandbox)}
-                    {" "}(<span className={deltaClassName(selectedRow.deltaQuotePp)}>{formatSignedPp(selectedRow.deltaQuotePp)}</span>)
-                  </Text>
-                </div>
-                <div className="v2-sandbox-detail-line">
-                  <Text type="secondary">Payout</Text>
-                  <Text>
-                    {formatCurrency(selectedRow.payoutBase)} → {formatCurrency(selectedRow.payoutSandbox)}
-                    {" "}(<span className={deltaClassName(selectedRow.deltaPayout)}>{formatSignedCurrency(selectedRow.deltaPayout)}</span>)
-                  </Text>
-                </div>
-              </div>
-            </Card>
-          </Space>
-        ) : (
-          <Text type="secondary">Kein Monat gewählt.</Text>
-        )}
-      </Drawer>
     </div>
   );
 }

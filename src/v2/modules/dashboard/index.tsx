@@ -4,7 +4,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Col,
   Drawer,
   Row,
@@ -48,7 +47,6 @@ type DashboardRange = "next6" | "next12" | "next18" | "all";
 
 type RevenueBasisMode = "hybrid" | "forecast_direct";
 type CashInQuoteMode = "manual" | "recommendation";
-type CashInSafetyMode = "basis" | "conservative";
 type InventoryRiskFilterParam = "all" | "oos" | "under_safety";
 type InventoryAbcFilterParam = "all" | "a" | "b" | "ab" | "abc";
 type ProductIssueFilterParam = "all" | "needs_fix" | "revenue" | "blocked";
@@ -205,10 +203,8 @@ function applyDashboardCalculationOverrides(
   sourceState: Record<string, unknown>,
   options: {
     quoteMode: CashInQuoteMode;
-    safetyMode: CashInSafetyMode;
     revenueBasisMode: RevenueBasisMode;
     calibrationEnabled: boolean;
-    q4SeasonalityEnabled: boolean;
   },
 ): Record<string, unknown> {
   const next = structuredClone(sourceState || {});
@@ -227,11 +223,11 @@ function applyDashboardCalculationOverrides(
 
   // Dashboard cockpit compares forecast-based variants; keep forecast active in simulation.
   forecastSettings.useForecast = true;
-  settings.cashInMode = options.safetyMode === "basis" ? "basis" : "conservative";
+  settings.cashInMode = "basis";
   settings.cashInCalibrationEnabled = options.calibrationEnabled;
   settings.cashInRevenueBasisMode = options.revenueBasisMode;
-  settings.cashInRecommendationSeasonalityEnabled = options.q4SeasonalityEnabled;
-  settings.cashInRecommendationIgnoreQ4 = !options.q4SeasonalityEnabled;
+  settings.cashInRecommendationSeasonalityEnabled = true;
+  settings.cashInRecommendationIgnoreQ4 = false;
   if (options.revenueBasisMode === "forecast_direct" && Array.isArray(next.incomings)) {
     next.incomings = (next.incomings as unknown[]).map((entry) => {
       if (!entry || typeof entry !== "object") return entry;
@@ -660,8 +656,6 @@ export default function DashboardModule(): JSX.Element {
   const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>("hybrid");
   const [calibrationEnabled, setCalibrationEnabled] = useState<boolean>(true);
   const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
-  const [safetyMode, setSafetyMode] = useState<CashInSafetyMode>("basis");
-  const [q4SeasonalityEnabled, setQ4SeasonalityEnabled] = useState<boolean>(true);
   const [cockpitDefaultsApplied, setCockpitDefaultsApplied] = useState(false);
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
@@ -679,20 +673,15 @@ export default function DashboardModule(): JSX.Element {
   const methodikRevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
     ? "forecast_direct"
     : "hybrid";
-  const methodikSeasonalityEnabled = settings.cashInRecommendationSeasonalityEnabled == null
-    ? settings.cashInRecommendationIgnoreQ4 !== true
-    : settings.cashInRecommendationSeasonalityEnabled !== false;
   useEffect(() => {
     if (cockpitDefaultsApplied) return;
     setRevenueBasisMode(methodikRevenueBasisMode);
     setCalibrationEnabled(methodikCalibrationEnabled);
-    setQ4SeasonalityEnabled(methodikSeasonalityEnabled);
     setCockpitDefaultsApplied(true);
   }, [
     cockpitDefaultsApplied,
     methodikCalibrationEnabled,
     methodikRevenueBasisMode,
-    methodikSeasonalityEnabled,
   ]);
   const persistDashboardCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
     await saveWith((current) => {
@@ -736,12 +725,10 @@ export default function DashboardModule(): JSX.Element {
   const calculationState = useMemo(
     () => applyDashboardCalculationOverrides(planningState, {
       quoteMode,
-      safetyMode,
       revenueBasisMode,
       calibrationEnabled,
-      q4SeasonalityEnabled,
     }),
-    [calibrationEnabled, planningState, q4SeasonalityEnabled, quoteMode, revenueBasisMode, safetyMode],
+    [calibrationEnabled, planningState, quoteMode, revenueBasisMode],
   );
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
@@ -908,7 +895,6 @@ export default function DashboardModule(): JSX.Element {
     if (!simulatedBreakdown.length) return null;
     return Math.min(...simulatedBreakdown.map((row) => Number(row.closing || 0)));
   }, [simulatedBreakdown]);
-  const q4ToggleVisible = quoteMode === "recommendation";
   const calibrationApplied = report.kpis?.cashIn?.calibrationApplied === true;
   const calibrationCandidateCount = Math.max(0, Math.round(Number(report.kpis?.cashIn?.calibrationCandidateCount || 0)));
   const calibrationNonDefaultFactorMonthCount = Math.max(
@@ -1727,8 +1713,6 @@ export default function DashboardModule(): JSX.Element {
     setRevenueBasisMode(methodikRevenueBasisMode);
     setCalibrationEnabled(methodikCalibrationEnabled);
     setQuoteMode("manual");
-    setSafetyMode("basis");
-    setQ4SeasonalityEnabled(methodikSeasonalityEnabled);
   }
 
   function openBlockerTarget(blocker: RobustMonthBlocker): void {
@@ -2091,7 +2075,7 @@ export default function DashboardModule(): JSX.Element {
           <div className="v2-calc-cockpit-module">
             <Space size={6}>
               <Text strong>Amazon Auszahlungsquote</Text>
-              <Tooltip title="MANUELL nutzt die Monatsquote aus Cash-in Setup. EMPFOHLEN berechnet die Quote automatisch je Monat.">
+              <Tooltip title="Manuell nutzt deine Monatswerte. Empfohlen (Plan) berechnet die Quote aus Niveau, Saisonmuster und Sicherheitsmarge.">
                 <InfoCircleOutlined />
               </Tooltip>
             </Space>
@@ -2101,59 +2085,22 @@ export default function DashboardModule(): JSX.Element {
               value={quoteMode}
               onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
               options={[
-                { label: "MANUELL", value: "manual" },
-                { label: "EMPFOHLEN", value: "recommendation" },
+                { label: "Manuell", value: "manual" },
+                { label: "Empfohlen (Plan)", value: "recommendation" },
               ]}
             />
-              <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                <Space size={6}>
-                  <Text strong>Sicherheitsmodus</Text>
-                  <Tooltip title="Basis = normale Empfehlungsquote. Konservativ = gleiche Quote mit zusätzlichem Sicherheitsabschlag.">
-                    <InfoCircleOutlined />
-                  </Tooltip>
-                </Space>
-              <Segmented
-                block
-                value={safetyMode}
-                disabled={quoteMode === "manual"}
-                onChange={(value) => setSafetyMode(String(value) === "conservative" ? "conservative" : "basis")}
-                options={[
-                  { label: "Basis", value: "basis" },
-                  { label: "Konservativ", value: "conservative" },
-                ]}
-              />
-            </Space>
-            {q4ToggleVisible ? (
-              <div className="v2-calc-cockpit-q4-row">
-                <Checkbox
-                  checked={q4SeasonalityEnabled}
-                  disabled={quoteMode === "manual"}
-                  onChange={(event) => setQ4SeasonalityEnabled(event.target.checked)}
-                >
-                  Saisonalität berücksichtigen
-                </Checkbox>
-                <Tooltip title="Nutzt den Monatsfaktor (z. B. Q4 stärker). Wirkt nur, wenn 'Empfohlen' aktiv ist.">
-                  <InfoCircleOutlined />
-                </Tooltip>
-              </div>
-            ) : null}
             {quoteMode === "manual" ? (
               <Text type="secondary">
-                Manuelle Monatsquote ist führend. Sicherheitsmodus und Saisonalität sind in diesem Modus aus.
+                Nutzt deine Monatswerte aus dem Tab Cash-in Setup.
               </Text>
             ) : (
-              <Space direction="vertical" size={4}>
-                <Text type="secondary">
-                  Basis: normale Empfehlungsquote. Konservativ: Basis minus Sicherheitsabschlag.
-                </Text>
-                <Text type="secondary">
-                  Beispiel (vereinfacht): 100.000 EUR Umsatz, Basis 20% = 20.000 EUR Auszahlung, Konservativ mit 3% Abschlag = 17.000 EUR.
-                </Text>
-                <Text type="secondary">
-                  Saisonalität verändert die Quote je Monat (z. B. Q4 höher) und gilt nur für die Empfehlung.
-                </Text>
-              </Space>
+              <Text type="secondary">
+                Basiert auf aktuellem Niveau + Saisonmuster - Sicherheitsmarge.
+              </Text>
             )}
+            <Button size="small" type="link" onClick={() => navigate("/v2/sandbox")}>
+              Sandbox öffnen
+            </Button>
           </div>
         </div>
       </div>

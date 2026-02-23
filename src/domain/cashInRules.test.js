@@ -46,68 +46,47 @@ test("recommendation stays near start profile with only two IST months", () => {
   assert.ok(nextQuote >= 49 && nextQuote <= 54, `quote should stay near prior, got ${nextQuote}`);
 });
 
-test("risk base rises after optimistic miss and lowers conservative quote", () => {
+test("plan recommendation uses fixed safety margin and ignores conservative mode flag", () => {
   const currentMonth = monthKeyFromDate(new Date());
+  const prev2 = addMonths(currentMonth, -2);
   const prev1 = addMonths(currentMonth, -1);
   const next1 = addMonths(currentMonth, 1);
 
-  const result = buildPayoutRecommendation({
-    mode: "conservative",
+  const input = {
     seasonalityEnabled: true,
     currentMonth,
     maxMonth: currentMonth,
     months: [currentMonth, next1],
     learningState: {
       levelPct: 54,
-      riskBasePct: 0.5,
-      seasonalityByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
-      seasonalityPriorByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
-      predictionSnapshotByMonth: {
-        [prev1]: { quotePct: 58, mode: "conservative", source: "test" },
-      },
-    },
-    monthlyActuals: {
-      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 50 },
-    },
-  });
-
-  const riskBase = Number(result.riskBasePct);
-  assert.ok(riskBase > 0.5, `risk base should increase, got ${riskBase}`);
-
-  const currentQuote = Number(result.byMonth?.[currentMonth]?.quotePct);
-  const futureQuote = Number(result.byMonth?.[next1]?.quotePct);
-  assert.ok(Number.isFinite(currentQuote));
-  assert.ok(Number.isFinite(futureQuote));
-  assert.ok(futureQuote <= currentQuote, "future conservative quote should not exceed current quote");
-});
-
-test("positive surprises do not drive risk base negative", () => {
-  const currentMonth = monthKeyFromDate(new Date());
-  const prev1 = addMonths(currentMonth, -1);
-
-  const result = buildPayoutRecommendation({
-    mode: "conservative",
-    seasonalityEnabled: true,
-    currentMonth,
-    maxMonth: currentMonth,
-    months: [currentMonth],
-    learningState: {
-      levelPct: 52,
       riskBasePct: 2,
       seasonalityByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
       seasonalityPriorByMonth: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
-      predictionSnapshotByMonth: {
-        [prev1]: { quotePct: 50, mode: "conservative", source: "test" },
-      },
     },
     monthlyActuals: {
-      [prev1]: { realRevenueEUR: 11000, realPayoutRatePct: 56 },
+      [prev2]: { realRevenueEUR: 10000, realPayoutRatePct: 53 },
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 50 },
     },
+  };
+
+  const planResult = buildPayoutRecommendation({
+    ...input,
+    mode: "plan",
+  });
+  const conservativeResult = buildPayoutRecommendation({
+    ...input,
+    mode: "conservative",
   });
 
-  const riskBase = Number(result.riskBasePct);
-  assert.ok(riskBase >= 1.9, `risk base should stay stable on positive surprise, got ${riskBase}`);
-  assert.ok(riskBase <= 2.1, `risk base should not jump, got ${riskBase}`);
+  assert.equal(planResult.mode, "plan");
+  near(planResult.safetyMarginPct, 0.5, 0.0001);
+  near(Number(planResult.byMonth?.[next1]?.safetyMarginPct), 0.5, 0.0001);
+  near(
+    Number(planResult.byMonth?.[next1]?.quotePct),
+    Number(conservativeResult.byMonth?.[next1]?.quotePct),
+    0.0001,
+  );
+  assert.equal(planResult.byMonth?.[next1]?.sourceTag, "RECOMMENDED_PLAN");
 });
 
 test("shrinkage limits seasonal outliers until three samples", () => {
@@ -184,9 +163,9 @@ test("historical prior import is robust and clamps outputs", () => {
 
   const entry = recommendation.byMonth?.[nextMonth];
   assert.ok(Number(entry?.quotePct) <= 60);
-  assert.equal(entry?.capApplied, true);
+  assert.equal(entry?.sourceTag, "RECOMMENDED_PLAN");
+  near(Number(entry?.safetyMarginPct), 0.5, 0.0001);
   assert.ok(Array.isArray(entry?.capsApplied));
-  assert.ok((entry?.capsApplied || []).includes("risk_cap_6pp") || (entry?.capsApplied || []).includes("quote_band_40_60"));
 });
 
 test("revenue calibration follows day-weighted live anchor (Tag 5/15/25)", () => {

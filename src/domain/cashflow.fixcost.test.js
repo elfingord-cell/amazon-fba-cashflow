@@ -417,7 +417,7 @@ test("computeSeries seasonality toggle changes recommendation without extreme ju
   assert.ok((seasonalityOn - seasonalityOff) < 60, "seasonality difference should stay bounded");
 });
 
-test("computeSeries applies conservative risk deduction from risk base (no fixed 1pp steps)", () => {
+test("computeSeries applies plan safety margin without conservative horizon deduction", () => {
   const currentMonth = monthKeyFromDate(new Date());
   const next1 = addMonths(currentMonth, 1);
   const next2 = addMonths(currentMonth, 2);
@@ -462,11 +462,11 @@ test("computeSeries applies conservative risk deduction from risk base (no fixed
 
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 60);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - 580) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - 578) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - 576) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next5) - 570) < 3);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next7) - 568) < 3);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - 595) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - 595) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - 595) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next5) - 595) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next7) - 595) < 2);
   assert.equal(report.kpis?.cashIn?.quoteMinPct, 40);
   assert.equal(report.kpis?.cashIn?.quoteMaxPct, 60);
 });
@@ -611,6 +611,6 @@ test("computeSeries uses manual normal baseline when no IST quotes exist", () =>
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.fallbackUsed, "learning_model");
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 53);
-  assert.equal(salesPayoutAmountForMonth(report, next1), 530);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 530);
+  assert.equal(salesPayoutAmountForMonth(report, next1), 525);
+  assert.equal(salesPayoutAmountForMonth(report, next2), 525);
 });

@@ -51,7 +51,7 @@ function readOptionalNumber(value, parser = parseEuro) {
 }
 
 function normalizeCashInMode(value) {
-  return String(value || '').trim().toLowerCase() === 'basis' ? 'basis' : 'conservative';
+  return String(value || '').trim().toLowerCase() === 'conservative' ? 'conservative' : 'basis';
 }
 
 function formatTooltipCurrency(value) {
@@ -84,23 +84,31 @@ function formatTooltipFactor(value, digits = 3) {
 }
 
 function normalizeRecommendationMode(value) {
-  return String(value || '').trim().toLowerCase() === 'basis' ? 'basis' : 'conservative';
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'ist') return 'ist';
+  if (normalized === 'manual') return 'manual';
+  if (normalized === 'plan' || normalized === 'basis' || normalized === 'conservative') {
+    return 'plan';
+  }
+  return 'plan';
 }
 
 function recommendationModeLabel(value) {
-  return normalizeRecommendationMode(value) === 'basis'
-    ? 'Empfohlen (Basis)'
-    : 'Empfohlen (Konservativ)';
+  const mode = normalizeRecommendationMode(value);
+  if (mode === 'ist') return 'IST';
+  if (mode === 'manual') return 'Manuell';
+  return 'Empfohlen (Plan)';
 }
 
 function buildRecommendationBreakdown(meta = {}) {
   const levelPct = Number(meta.recommendationLevelPct);
   const seasonalityPct = Number(meta.recommendationSeasonalityPct);
-  const riskBasePct = Number(meta.recommendationRiskBasePct);
+  const safetyMarginPct = Number(meta.recommendationSafetyMarginPct);
+  const riskExtraPct = Number(meta.recommendationRiskExtraPct);
   const riskAdjustmentPct = Number(meta.recommendationRiskAdjustmentPct);
   const monthSamples = Math.max(0, Math.round(Number(meta.recommendationSeasonalitySampleCount || 0)));
   const seasonalityWeight = Number(meta.recommendationSeasonalityWeight);
-  const horizonMonths = Math.max(0, Math.round(Number(meta.recommendationHorizonMonths || 0)));
+  const seasonalitySourceTag = String(meta.recommendationSeasonalitySourceTag || '').trim();
   const capsApplied = Array.isArray(meta.recommendationCapsApplied)
     ? meta.recommendationCapsApplied.filter(Boolean)
     : [];
@@ -110,19 +118,20 @@ function buildRecommendationBreakdown(meta = {}) {
     const sText = Number.isFinite(seasonalityPct) ? formatTooltipPercent(seasonalityPct, 1) : '—';
     parts.push(`L: ${lText}% · S: ${sText}%`);
   }
-  if (Number.isFinite(riskBasePct) || Number.isFinite(riskAdjustmentPct)) {
-    const baseText = Number.isFinite(riskBasePct) ? formatTooltipPercent(riskBasePct, 1) : '0,0';
+  if (Number.isFinite(safetyMarginPct) || Number.isFinite(riskExtraPct) || Number.isFinite(riskAdjustmentPct)) {
+    const safetyText = Number.isFinite(safetyMarginPct) ? formatTooltipPercent(safetyMarginPct, 1) : '0,0';
+    const extraText = Number.isFinite(riskExtraPct) ? formatTooltipPercent(riskExtraPct, 1) : '0,0';
     const adjText = Number.isFinite(riskAdjustmentPct) ? formatTooltipPercent(riskAdjustmentPct, 1) : '0,0';
-    parts.push(`RiskBase: ${baseText}pp · R(h=${horizonMonths}): ${adjText}pp`);
+    parts.push(`Marge: ${safetyText}pp · Extra: ${extraText}pp · Gesamt: ${adjText}pp`);
   }
   if (monthSamples > 0 || Number.isFinite(seasonalityWeight)) {
     const weightText = Number.isFinite(seasonalityWeight)
       ? formatTooltipPercent(seasonalityWeight * 100, 0)
       : '0';
-    parts.push(`n(Monat): ${monthSamples} · Shrinkage: ${weightText}%`);
+    parts.push(`n(Monat): ${monthSamples} · Gewicht: ${weightText}%`);
   }
-  if (meta.recommendationShrinkageActive === true) {
-    parts.push('Shrinkage aktiv');
+  if (seasonalitySourceTag) {
+    parts.push(`Saisonquelle: ${seasonalitySourceTag}`);
   }
   if (meta.recommendationLiveSignalUsed === true) {
     const weightText = Number.isFinite(Number(meta.recommendationLiveSignalWeight))
@@ -153,10 +162,12 @@ function buildCashInTooltip({
     : recommendationModeLabel(mode);
   const recommendationLabel = recommendationSourceTag === 'IST'
     ? 'IST'
+    : recommendationSourceTag === 'RECOMMENDED_PLAN'
+      ? 'Empfohlen (Plan)'
     : recommendationSourceTag === 'RECOMMENDED_BASIS'
-      ? 'Empfohlen (Basis)'
-      : recommendationSourceTag === 'RECOMMENDED_CONSERVATIVE'
-        ? 'Empfohlen (Konservativ)'
+      ? 'Empfohlen (Plan)'
+    : recommendationSourceTag === 'RECOMMENDED_CONSERVATIVE'
+        ? 'Empfohlen (Plan)'
         : recommendationSourceTag === 'PROGNOSE'
           ? 'Live-Signal'
           : 'Empfehlung';
@@ -1405,7 +1416,7 @@ export function computeSeries(state) {
     const recommendationMode = normalizeRecommendationMode(recommendationByMonth?.mode || cashInMode);
     const recommendationSourceTag = String(
       recommendationByMonth?.sourceTag
-      || (recommendationMode === 'basis' ? 'RECOMMENDED_BASIS' : 'RECOMMENDED_CONSERVATIVE'),
+      || 'RECOMMENDED_PLAN',
     );
     const recommendationExplanation = String(recommendationByMonth?.explanation || '').trim() || null;
     const recommendationQuoteRaw = parsePayoutPctInput(recommendationByMonth?.quotePct);
@@ -1492,9 +1503,12 @@ export function computeSeries(state) {
       recommendationSeasonalityPriorPct: Number(recommendationByMonth?.seasonalityPriorPct),
       recommendationSeasonalityWeight: Number(recommendationByMonth?.seasonalityWeight),
       recommendationSeasonalitySampleCount: Number(recommendationByMonth?.seasonalitySampleCount),
+      recommendationSeasonalitySourceTag: String(recommendationByMonth?.seasonalitySourceTag || ''),
       recommendationShrinkageActive: recommendationByMonth?.shrinkageActive === true,
       recommendationRiskBasePct: Number(recommendationByMonth?.riskBasePct),
       recommendationRiskAdjustmentPct: Number(recommendationByMonth?.riskAdjustmentPct),
+      recommendationSafetyMarginPct: Number(recommendationByMonth?.safetyMarginPct),
+      recommendationRiskExtraPct: Number(recommendationByMonth?.riskExtraPct),
       recommendationHorizonMonths: Number(recommendationByMonth?.horizonMonths),
       recommendationCapsApplied,
       recommendationCapApplied: recommendationByMonth?.capApplied === true || recommendationCapsApplied.length > 0,
@@ -1972,7 +1986,7 @@ export function computeSeries(state) {
     firstNegativeMonth: null,
     actuals: {},
     cashIn: {
-      mode: cashInMode,
+      mode: payoutRecommendation.mode || 'plan',
       basisMethod: 'learning',
       basisQuotePct: recommendationBaselineNormalPct,
       istMonthsCount: payoutRecommendation.sampleCount,
@@ -1980,7 +1994,7 @@ export function computeSeries(state) {
       fallbackUsed: cashInFallbackUsed,
       quoteMinPct: cashInQuoteMinPct,
       quoteMaxPct: cashInQuoteMaxPct,
-      recommendationMode: payoutRecommendation.mode || cashInMode,
+      recommendationMode: payoutRecommendation.mode || 'plan',
       recommendationSeasonalityEnabled: payoutRecommendation.seasonalityEnabled !== false,
       recommendationMedianPct,
       recommendationSampleCount: payoutRecommendation.sampleCount,

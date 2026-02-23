@@ -258,7 +258,7 @@ function buildSkuProjection({ sku, baselineMonth, stock0 = 0, forecastByMonth = 
         missingForecastMonths,
     };
 }
-function computeFoRecommendation({ sku, baselineMonth, projection, plannedSalesBySku = {}, safetyStockDays = 60, coverageDays = 90, leadTimeDays = 0, cnyPeriod, inboundWithoutEtaCount = 0, moqUnits = 0, requiredArrivalMonth = null, }) {
+function computeFoRecommendation({ sku, baselineMonth, projection, plannedSalesBySku = {}, safetyStockDays = 60, coverageDays = 90, leadTimeDays = 0, cnyPeriod, inboundWithoutEtaCount = 0, moqUnits = 0, unitsPerCarton = null, roundupCartonBlock = null, roundupMaxPct = null, requiredArrivalMonth = null, }) {
     if (!baselineMonth) {
         return {
             sku,
@@ -304,12 +304,55 @@ function computeFoRecommendation({ sku, baselineMonth, projection, plannedSalesB
         : [];
     const stockAtArrival = Number(selectedProjectionMonth?.startStock || 0);
     const recommendedUnitsRaw = Math.max(0, Math.ceil(coverageDemandUnits));
-    let recommendedUnits = recommendedUnitsRaw;
+    let unitsAfterMoq = recommendedUnitsRaw;
     let moqApplied = false;
-    if (recommendedUnits > 0 && moqUnits > 0 && recommendedUnits < moqUnits) {
-        recommendedUnits = moqUnits;
+    const moqFloor = Number.isFinite(Number(moqUnits)) ? Math.max(0, Math.ceil(Number(moqUnits))) : 0;
+    if (unitsAfterMoq > 0 && moqFloor > 0 && unitsAfterMoq < moqFloor) {
+        unitsAfterMoq = moqFloor;
         moqApplied = true;
     }
+    const normalizedUnitsPerCarton = Number.isFinite(Number(unitsPerCarton))
+        ? Math.max(1, Math.round(Number(unitsPerCarton)))
+        : null;
+    const cartonSize = normalizedUnitsPerCarton && normalizedUnitsPerCarton > 1
+        ? normalizedUnitsPerCarton
+        : null;
+    const unitsAfterCartonRounding = (cartonSize && unitsAfterMoq > 0)
+        ? Math.ceil(unitsAfterMoq / cartonSize) * cartonSize
+        : unitsAfterMoq;
+    const cartonRoundingApplied = unitsAfterCartonRounding !== unitsAfterMoq;
+    const normalizedRoundupCartonBlock = Number.isFinite(Number(roundupCartonBlock))
+        ? Math.max(1, Math.round(Number(roundupCartonBlock)))
+        : null;
+    const normalizedRoundupMaxPct = Number.isFinite(Number(roundupMaxPct))
+        ? Math.max(0, Number(roundupMaxPct))
+        : 0;
+    let recommendedUnits = unitsAfterCartonRounding;
+    let roundupCandidateUnits = unitsAfterCartonRounding;
+    let roundupLiftUnits = 0;
+    let roundupLiftPct = 0;
+    let blockRoundupApplied = false;
+    if (cartonSize
+        && normalizedRoundupCartonBlock
+        && normalizedRoundupCartonBlock > 1
+        && normalizedRoundupMaxPct > 0
+        && unitsAfterCartonRounding > 0) {
+        const cartonsAfterCartonRounding = Math.ceil(unitsAfterCartonRounding / cartonSize);
+        const candidateCartons = Math.ceil(cartonsAfterCartonRounding / normalizedRoundupCartonBlock)
+            * normalizedRoundupCartonBlock;
+        roundupCandidateUnits = candidateCartons * cartonSize;
+        roundupLiftUnits = Math.max(0, roundupCandidateUnits - unitsAfterCartonRounding);
+        roundupLiftPct = unitsAfterCartonRounding > 0
+            ? (roundupLiftUnits / unitsAfterCartonRounding) * 100
+            : 0;
+        if (roundupLiftUnits > 0 && roundupLiftPct <= normalizedRoundupMaxPct) {
+            recommendedUnits = roundupCandidateUnits;
+            blockRoundupApplied = true;
+        }
+    }
+    const recommendedCartons = cartonSize && recommendedUnits > 0
+        ? Math.ceil(recommendedUnits / cartonSize)
+        : null;
     return {
         sku,
         status: "ok",
@@ -325,11 +368,22 @@ function computeFoRecommendation({ sku, baselineMonth, projection, plannedSalesB
         coverageDemandBreakdown,
         recommendedUnitsRaw,
         recommendedUnits,
+        unitsAfterMoq,
+        unitsAfterCartonRounding,
+        unitsPerCarton: cartonSize,
+        recommendedCartons,
+        cartonRoundingApplied,
+        roundupCartonBlock: normalizedRoundupCartonBlock,
+        roundupMaxPct: normalizedRoundupMaxPct,
+        blockRoundupApplied,
+        roundupCandidateUnits,
+        roundupLiftUnits: blockRoundupApplied ? roundupLiftUnits : 0,
+        roundupLiftPct: blockRoundupApplied ? roundupLiftPct : 0,
         safetyStockDays,
         coverageDays,
-        moqUnits,
+        moqUnits: moqFloor,
         moqApplied,
-        moqLiftUnits: moqApplied ? Math.max(0, recommendedUnits - recommendedUnitsRaw) : 0,
+        moqLiftUnits: moqApplied ? Math.max(0, unitsAfterMoq - recommendedUnitsRaw) : 0,
         stockAtArrival,
         avgDailyDemand: selectedProjectionMonth?.avgDailyDemand ?? firstRisk.avgDailyDemand,
         issues: buildIssueList(projection, inboundWithoutEtaCount),

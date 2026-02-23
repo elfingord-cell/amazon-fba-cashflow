@@ -28,10 +28,6 @@ import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph, Text, Title } = Typography;
 
-function normalizeCashInMode(value: unknown): "basis" | "conservative" {
-  return String(value || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
-}
-
 function normalizePayoutInput(value: unknown): number | null {
   const parsed = parsePayoutPctInput(value);
   if (!Number.isFinite(parsed as number)) return null;
@@ -55,7 +51,6 @@ export default function MethodikModule(): JSX.Element {
     : {};
 
   const useForecast = forecastSettings.useForecast === true;
-  const cashInMode = normalizeCashInMode(settings.cashInMode);
   const cashInCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const cashInCalibrationHorizonMonths = normalizeCalibrationHorizonMonths(
     settings.cashInCalibrationHorizonMonths,
@@ -68,17 +63,15 @@ export default function MethodikModule(): JSX.Element {
     ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
 
   const statusLine = useMemo(() => {
-    const modeLabel = cashInMode === "basis" ? "Basis" : "Konservativ";
     return [
       `Forecast: ${boolLabel(useForecast)}`,
-      `Cash-In Modus: ${modeLabel}`,
+      "Cash-In Quote: Empfohlen (Plan)",
       `Kalibrierung: ${boolLabel(cashInCalibrationEnabled)}${cashInCalibrationEnabled ? ` (${cashInCalibrationHorizonMonths} Monate)` : ""}`,
       `Saisonalität: ${boolLabel(cashInRecommendationSeasonalityEnabled)}`,
     ].join(" · ");
   }, [
     cashInCalibrationEnabled,
     cashInCalibrationHorizonMonths,
-    cashInMode,
     cashInRecommendationSeasonalityEnabled,
     useForecast,
   ]);
@@ -157,7 +150,7 @@ export default function MethodikModule(): JSX.Element {
           <Text>{statusLine}</Text>
           <Row gutter={[12, 12]}>
             <Col xs={24} md={12} xl={6}><Tag color={useForecast ? "green" : "default"}>Forecast: {boolLabel(useForecast)}</Tag></Col>
-            <Col xs={24} md={12} xl={6}><Tag>Cash-In: {cashInMode === "basis" ? "Basis" : "Konservativ"}</Tag></Col>
+            <Col xs={24} md={12} xl={6}><Tag>Cash-In Quote: Empfohlen (Plan)</Tag></Col>
             <Col xs={24} md={12} xl={6}><Tag>Kalibrierung: {boolLabel(cashInCalibrationEnabled)}{cashInCalibrationEnabled ? ` (${cashInCalibrationHorizonMonths} M)` : ""}</Tag></Col>
             <Col xs={24} md={12} xl={6}><Tag>Saisonalität: {boolLabel(cashInRecommendationSeasonalityEnabled)}</Tag></Col>
           </Row>
@@ -191,30 +184,16 @@ export default function MethodikModule(): JSX.Element {
         <Col xs={24} xl={12}>
           <Card>
             <Space wrap style={{ marginBottom: 8 }}>
-              <Title level={5} style={{ margin: 0 }}>B) Cash-In Modus</Title>
+              <Title level={5} style={{ margin: 0 }}>B) Auszahlungsquote (Plan)</Title>
               <Tag color="blue">GLOBAL</Tag>
-              <Tooltip title="Basis: L + S[Monat]. Konservativ: L + S[Monat] minus lernender Risikoabschlag R(h) aus RiskBase.">
+              <Tooltip title="Empfohlen (Plan) nutzt Niveau + Saisonmuster - kleine Sicherheitsmarge. Manuell/Eingaben steuerst du im Dashboard oder in der Sandbox.">
                 <Tag icon={<InfoCircleOutlined />}>Hilfe</Tag>
               </Tooltip>
             </Space>
-            <Space align="center" wrap>
-              <Text>Cash-In Modus:</Text>
-              <Select
-                value={cashInMode}
-                options={[
-                  { value: "basis", label: "Basis" },
-                  { value: "conservative", label: "Konservativ" },
-                ]}
-                onChange={(value) => {
-                  const nextMode = String(value || "").trim().toLowerCase() === "basis" ? "basis" : "conservative";
-                  void updateMethodikSettings(
-                    { cashInMode: nextMode },
-                    `v2:methodik:cashin-mode:${nextMode}`,
-                  );
-                }}
-                style={{ width: 220 }}
-              />
-            </Space>
+            <Text>
+              Kein separater Basis/Konservativ-Modus mehr. Die Empfehlung bleibt leicht vorsichtig über die
+              integrierte Sicherheitsmarge.
+            </Text>
           </Card>
         </Col>
 
