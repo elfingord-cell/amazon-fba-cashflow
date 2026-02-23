@@ -38,6 +38,11 @@ interface SeriesResult {
   breakdown?: DashboardBreakdownRow[];
 }
 
+interface MonthQuoteSample {
+  month: string;
+  quotePct: number;
+}
+
 interface MonthMetaSnapshot {
   month: string;
   payoutPct: number | null;
@@ -47,7 +52,13 @@ interface MonthMetaSnapshot {
   manualPayoutPct: number | null;
   recommendationQuotePct: number | null;
   recommendationLevelPct: number | null;
+  recommendationLevelAvg3Pct: number | null;
+  recommendationLevelAvg12Pct: number | null;
+  recommendationLevelRecentMonths: MonthQuoteSample[];
+  recommendationLevelWindowMonths: MonthQuoteSample[];
   recommendationSeasonalityPct: number | null;
+  recommendationSeasonalityMonthMeanPct: number | null;
+  recommendationSeasonalityOverallMeanPct: number | null;
   recommendationSafetyMarginPct: number | null;
   recommendationRiskAdjustmentPct: number | null;
   recommendationSeasonalitySourceTag: string | null;
@@ -61,7 +72,13 @@ interface SandboxQuoteRow {
   manualQuote: number | null;
   recommendedQuote: number | null;
   levelPct: number | null;
-  seasonalityOffsetPct: number | null;
+  levelAvg3Pct: number | null;
+  levelAvg12Pct: number | null;
+  levelRecentMonths: MonthQuoteSample[];
+  levelWindowMonths: MonthQuoteSample[];
+  seasonalityFactorPct: number | null;
+  seasonalityMonthMeanPct: number | null;
+  seasonalityOverallMeanPct: number | null;
   safetyMarginPct: number | null;
   deltaPct: number | null;
   activeQuote: number | null;
@@ -131,14 +148,40 @@ function deltaClassName(value: number | null | undefined): string | undefined {
 }
 
 function normalizeSeasonalitySourceTag(value: string | null): string | null {
-  const tag = String(value || "").trim();
+  const tag = String(value || "").trim().toLowerCase();
   if (!tag) return null;
-  if (tag === "recent_dominant") return "Junge Monate";
-  if (tag === "stabilized_history") return "Stabilisiert";
-  if (tag === "stabilized_prior") return "Historie";
+  if (tag === "ist_month") return "Ist-Daten (Kalendermonat)";
+  if (tag === "history_month") return "Historie (Kalendermonat)";
   if (tag === "no_data") return "Keine Historie";
   if (tag === "disabled") return "Aus";
   return tag;
+}
+
+function normalizeMonthQuoteSamples(value: unknown): MonthQuoteSample[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const month = String((entry as Record<string, unknown>).month || "").trim();
+      const quotePct = toFiniteOrNull((entry as Record<string, unknown>).quotePct);
+      if (!month || !Number.isFinite(Number(quotePct))) return null;
+      return {
+        month,
+        quotePct: Number(quotePct),
+      };
+    })
+    .filter((entry): entry is MonthQuoteSample => Boolean(entry));
+}
+
+function formatSampleList(
+  samples: MonthQuoteSample[],
+  maxEntries = 3,
+): string {
+  if (!samples.length) return "keine";
+  const items = samples.slice(Math.max(0, samples.length - maxEntries));
+  return items
+    .map((sample) => `${formatMonthLabel(sample.month)}: ${formatPercent(sample.quotePct)}`)
+    .join(" · ");
 }
 
 function averageFinite(values: Array<number | null | undefined>): number | null {
@@ -242,7 +285,13 @@ function buildSnapshotByMonth(report: SeriesResult): Map<string, MonthMetaSnapsh
       manualPayoutPct: toFiniteOrNull(firstMeta?.manualPayoutPct),
       recommendationQuotePct: toFiniteOrNull(firstMeta?.recommendationQuotePct),
       recommendationLevelPct: toFiniteOrNull(firstMeta?.recommendationLevelPct),
+      recommendationLevelAvg3Pct: toFiniteOrNull(firstMeta?.recommendationLevelAvg3Pct),
+      recommendationLevelAvg12Pct: toFiniteOrNull(firstMeta?.recommendationLevelAvg12Pct),
+      recommendationLevelRecentMonths: normalizeMonthQuoteSamples(firstMeta?.recommendationLevelRecentMonths),
+      recommendationLevelWindowMonths: normalizeMonthQuoteSamples(firstMeta?.recommendationLevelWindowMonths),
       recommendationSeasonalityPct: toFiniteOrNull(firstMeta?.recommendationSeasonalityPct),
+      recommendationSeasonalityMonthMeanPct: toFiniteOrNull(firstMeta?.recommendationSeasonalityMonthMeanPct),
+      recommendationSeasonalityOverallMeanPct: toFiniteOrNull(firstMeta?.recommendationSeasonalityOverallMeanPct),
       recommendationSafetyMarginPct: toFiniteOrNull(firstMeta?.recommendationSafetyMarginPct),
       recommendationRiskAdjustmentPct: toFiniteOrNull(firstMeta?.recommendationRiskAdjustmentPct),
       recommendationSeasonalitySourceTag: firstMeta?.recommendationSeasonalitySourceTag
@@ -377,7 +426,13 @@ export default function SandboxModule(): JSX.Element {
         ?? toFiniteOrNull(recommendationSnapshot?.recommendationQuotePct)
         ?? null;
       const levelPct = toFiniteOrNull(recommendationSnapshot?.recommendationLevelPct);
-      const seasonalityOffsetPct = toFiniteOrNull(recommendationSnapshot?.recommendationSeasonalityPct);
+      const levelAvg3Pct = toFiniteOrNull(recommendationSnapshot?.recommendationLevelAvg3Pct);
+      const levelAvg12Pct = toFiniteOrNull(recommendationSnapshot?.recommendationLevelAvg12Pct);
+      const levelRecentMonths = recommendationSnapshot?.recommendationLevelRecentMonths || [];
+      const levelWindowMonths = recommendationSnapshot?.recommendationLevelWindowMonths || [];
+      const seasonalityFactorPct = toFiniteOrNull(recommendationSnapshot?.recommendationSeasonalityPct);
+      const seasonalityMonthMeanPct = toFiniteOrNull(recommendationSnapshot?.recommendationSeasonalityMonthMeanPct);
+      const seasonalityOverallMeanPct = toFiniteOrNull(recommendationSnapshot?.recommendationSeasonalityOverallMeanPct);
       const safetyMarginPct = toFiniteOrNull(recommendationSnapshot?.recommendationSafetyMarginPct)
         ?? toFiniteOrNull(recommendationSnapshot?.recommendationRiskAdjustmentPct);
       const activeQuote = toFiniteOrNull(sandboxSnapshot?.payoutPct)
@@ -396,7 +451,13 @@ export default function SandboxModule(): JSX.Element {
         manualQuote,
         recommendedQuote,
         levelPct,
-        seasonalityOffsetPct,
+        levelAvg3Pct,
+        levelAvg12Pct,
+        levelRecentMonths,
+        levelWindowMonths,
+        seasonalityFactorPct,
+        seasonalityMonthMeanPct,
+        seasonalityOverallMeanPct,
         safetyMarginPct,
         deltaPct: Number.isFinite(Number(recommendedQuote)) && Number.isFinite(Number(manualQuote))
           ? Number(recommendedQuote) - Number(manualQuote)
@@ -470,7 +531,7 @@ export default function SandboxModule(): JSX.Element {
         title: (
           <Space size={6}>
             <span>Empfohlene Quote (Plan)</span>
-            <Tooltip title="Automatisch berechnet aus Level + SaisonOffset − Sicherheitsmarge.">
+            <Tooltip title="Automatisch berechnet aus Level + Saisonalitätsfaktor − Sicherheitsmarge.">
               <InfoCircleOutlined />
             </Tooltip>
           </Space>
@@ -485,7 +546,7 @@ export default function SandboxModule(): JSX.Element {
         title: (
           <Space size={6}>
             <span>Level (aktuelles Niveau)</span>
-            <Tooltip title="Gewichtetes Niveau aus den letzten Monaten, mit Fokus auf jüngere Daten.">
+            <Tooltip title="Basiswert ohne Sicherheitsmarge; berechnet aus jüngsten Ist-Daten (stärker) und letzten 12 Monaten (schwächer).">
               <InfoCircleOutlined />
             </Tooltip>
           </Space>
@@ -499,14 +560,14 @@ export default function SandboxModule(): JSX.Element {
       {
         title: (
           <Space size={6}>
-            <span>SaisonOffset (Monatsfaktor)</span>
-            <Tooltip title="Monatsspezifischer Zuschlag/Abzug aus dem saisonalen Jahresmuster (Q4 automatisch enthalten).">
+            <span>Saisonalitätsfaktor</span>
+            <Tooltip title="Monatsspezifischer Faktor aus Historie je Kalendermonat (Q4 automatisch enthalten).">
               <InfoCircleOutlined />
             </Tooltip>
           </Space>
         ),
-        dataIndex: "seasonalityOffsetPct",
-        key: "seasonalityOffsetPct",
+        dataIndex: "seasonalityFactorPct",
+        key: "seasonalityFactorPct",
         width: 226,
         align: "right",
         render: (value: number | null, row) => {
@@ -523,7 +584,7 @@ export default function SandboxModule(): JSX.Element {
         title: (
           <Space size={6}>
             <span>Sicherheitsmarge</span>
-            <Tooltip title="Kleiner fixer Vorsichtspuffer im Plan-Case, ohne harte Monats-Strafen.">
+            <Tooltip title="Kleiner Sicherheitsabschlag, damit Planung leicht vorsichtig bleibt.">
               <InfoCircleOutlined />
             </Tooltip>
           </Space>
@@ -533,6 +594,59 @@ export default function SandboxModule(): JSX.Element {
         width: 152,
         align: "right",
         render: (value: number | null) => Number.isFinite(Number(value)) ? formatSignedPp(-Number(value)) : "-",
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Herleitung (kurz)</span>
+            <Tooltip title="Kurze Begründung der empfohlenen Quote je Monat.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        key: "derivation",
+        width: 250,
+        render: (_value: unknown, row) => {
+          const avg3Text = Number.isFinite(Number(row.levelAvg3Pct))
+            ? formatPercent(row.levelAvg3Pct)
+            : "—";
+          const avg12Text = Number.isFinite(Number(row.levelAvg12Pct))
+            ? formatPercent(row.levelAvg12Pct)
+            : "—";
+          const recentList = formatSampleList(row.levelRecentMonths, 3);
+          const windowCount = row.levelWindowMonths.length;
+          const monthMeanText = Number.isFinite(Number(row.seasonalityMonthMeanPct))
+            ? formatPercent(row.seasonalityMonthMeanPct)
+            : "—";
+          const overallMeanText = Number.isFinite(Number(row.seasonalityOverallMeanPct))
+            ? formatPercent(row.seasonalityOverallMeanPct)
+            : "—";
+          const factorText = formatSignedPp(row.seasonalityFactorPct);
+          const sourceText = row.seasonalitySourceTag || "Keine Historie";
+          const marginText = Number.isFinite(Number(row.safetyMarginPct))
+            ? formatSignedPp(-Number(row.safetyMarginPct))
+            : "−0,3 pp";
+          return (
+            <Tooltip
+              title={(
+                <Space direction="vertical" size={2}>
+                  <Text>Level (70/30): Ø3M {avg3Text}, Ø12M {avg12Text}</Text>
+                  <Text>3M-Inputs: {recentList}</Text>
+                  <Text>12M-Inputs: Ø12M {avg12Text} (n={windowCount})</Text>
+                  <Text>Saison: Monatsmittel {monthMeanText}, Gesamtmittel {overallMeanText}</Text>
+                  <Text>Abgeleiteter Faktor: {factorText}</Text>
+                  <Text>Quelle: {sourceText}</Text>
+                  <Text>Marge: {marginText}</Text>
+                </Space>
+              )}
+            >
+              <Space size={4}>
+                <span>Level 70/30 · Saison Monat · Marge 0,3pp</span>
+                <InfoCircleOutlined />
+              </Space>
+            </Tooltip>
+          );
+        },
       },
       {
         title: (
@@ -664,7 +778,7 @@ export default function SandboxModule(): JSX.Element {
             <Title level={3}>Sandbox</Title>
             <Paragraph>
               Transparenzansicht für die Amazon-Auszahlungsquote. Du siehst pro Monat, wie sich Empfohlen (Plan) aus
-              Level, SaisonOffset und Sicherheitsmarge zusammensetzt.
+              Level, Saisonalitätsfaktor und Sicherheitsmarge zusammensetzt.
             </Paragraph>
           </Col>
           <Col xs={24} xl={8}>
@@ -794,7 +908,7 @@ export default function SandboxModule(): JSX.Element {
           pagination={false}
           size="small"
           rowKey="key"
-          scroll={{ x: 1400, y: 560 }}
+          scroll={{ x: 1700, y: 560 }}
           sticky
         />
       </Card>

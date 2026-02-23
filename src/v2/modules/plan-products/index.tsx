@@ -62,6 +62,11 @@ interface PlanProductDraft {
   baselineReferenceSku?: string;
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
+  productionLeadTimeDaysDefault: number | null;
+  transportMode: "SEA" | "RAIL" | "AIR";
+  transitDays: number | null;
+  unitPriceUsd: number | null;
+  logisticsPerUnitEur: number | null;
   launchDate: string;
   rampUpWeeks: number | null;
   softLaunchStartSharePct: number | null;
@@ -137,6 +142,11 @@ function planDraftFromRow(row?: Record<string, unknown>): PlanProductDraft {
     baselineReferenceSku: normalized.baselineReferenceSku || "",
     avgSellingPriceGrossEUR: asNumber(normalized.avgSellingPriceGrossEUR),
     sellerboardMarginPct: asNumber((normalized as Record<string, unknown>).sellerboardMarginPct),
+    productionLeadTimeDaysDefault: asNumber((normalized as Record<string, unknown>).productionLeadTimeDaysDefault),
+    transportMode: String((normalized as Record<string, unknown>).transportMode || "SEA").toUpperCase() as "SEA" | "RAIL" | "AIR",
+    transitDays: asNumber((normalized as Record<string, unknown>).transitDays),
+    unitPriceUsd: asNumber((normalized as Record<string, unknown>).unitPriceUsd),
+    logisticsPerUnitEur: asNumber((normalized as Record<string, unknown>).logisticsPerUnitEur),
     launchDate: normalized.launchDate || todayIsoDate(),
     rampUpWeeks: asNumber(normalized.rampUpWeeks),
     softLaunchStartSharePct: asNumber(normalized.softLaunchStartSharePct),
@@ -244,6 +254,11 @@ export default function PlanProductsModule(): JSX.Element {
       baselineReferenceSku: "",
       avgSellingPriceGrossEUR: null,
       sellerboardMarginPct: null,
+      productionLeadTimeDaysDefault: null,
+      transportMode: "SEA",
+      transitDays: null,
+      unitPriceUsd: null,
+      logisticsPerUnitEur: null,
       launchDate: todayIsoDate(),
       rampUpWeeks: 8,
       softLaunchStartSharePct: 0,
@@ -287,6 +302,26 @@ export default function PlanProductsModule(): JSX.Element {
     const grossMargin = Number(values.sellerboardMarginPct || 0);
     if (includeInForecast && (!Number.isFinite(grossMargin) || grossMargin <= 0 || grossMargin > 100)) {
       throw new Error("Bitte eine gültige Brutto-Marge (%) > 0 und <= 100 pflegen.");
+    }
+    const productionLeadDays = Math.round(Number(values.productionLeadTimeDaysDefault || 0));
+    if (includeInForecast && (!Number.isFinite(productionLeadDays) || productionLeadDays <= 0)) {
+      throw new Error("Bitte Production Lead Time (Tage) > 0 pflegen.");
+    }
+    const transportModeRaw = String(values.transportMode || "").trim().toUpperCase();
+    const transportMode = transportModeRaw === "AIR" || transportModeRaw === "SEA" || transportModeRaw === "RAIL"
+      ? transportModeRaw
+      : "SEA";
+    const transitDays = Math.round(Number(values.transitDays || 0));
+    if (includeInForecast && (!Number.isFinite(transitDays) || transitDays <= 0)) {
+      throw new Error("Bitte Transit Lead Time (Tage) > 0 pflegen.");
+    }
+    const unitPriceUsd = Number(values.unitPriceUsd || 0);
+    if (includeInForecast && (!Number.isFinite(unitPriceUsd) || unitPriceUsd <= 0)) {
+      throw new Error("Bitte einen gültigen Einkaufspreis pro Stück (USD) > 0 pflegen.");
+    }
+    const logisticsPerUnitEur = Number(values.logisticsPerUnitEur || 0);
+    if (includeInForecast && (!Number.isFinite(logisticsPerUnitEur) || logisticsPerUnitEur < 0)) {
+      throw new Error("Bitte gültige Frachtkosten pro Stück (EUR) pflegen.");
     }
     const launchDate = normalizeIsoDate(values.launchDate);
     if (!launchDate) {
@@ -336,6 +371,23 @@ export default function PlanProductsModule(): JSX.Element {
         baselineReferenceSku: String(values.baselineReferenceSku || "").trim(),
         avgSellingPriceGrossEUR: price,
         sellerboardMarginPct: grossMargin,
+        productionLeadTimeDaysDefault: productionLeadDays,
+        transportMode,
+        transitDays,
+        unitPriceUsd,
+        logisticsPerUnitEur,
+        freightPerUnitEur: logisticsPerUnitEur,
+        template: {
+          scope: "SKU",
+          name: "Planprodukt",
+          fields: {
+            transportMode,
+            transitDays,
+            productionDays: productionLeadDays,
+            unitPriceUsd,
+            freightEur: logisticsPerUnitEur,
+          },
+        },
         launchDate,
         rampUpWeeks,
         softLaunchStartSharePct,
@@ -691,6 +743,95 @@ export default function PlanProductsModule(): JSX.Element {
                 allowClear
                 options={categories.map((entry) => ({ value: entry.id, label: entry.name }))}
               />
+            </Form.Item>
+          </div>
+
+          <div className="v2-form-row">
+            <Form.Item
+              name="productionLeadTimeDaysDefault"
+              label="Production Lead Time (Tage)"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const days = Math.round(Number(value || 0));
+                    if (Number.isFinite(days) && days > 0) return Promise.resolve();
+                    return Promise.reject(new Error("Production Lead Time > 0 erforderlich."));
+                  },
+                },
+              ]}
+            >
+              <DeNumberInput mode="int" min={0} />
+            </Form.Item>
+            <Form.Item
+              name="transportMode"
+              label="Freight / Transport"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const mode = String(value || "").trim().toUpperCase();
+                    if (mode === "SEA" || mode === "RAIL" || mode === "AIR") return Promise.resolve();
+                    return Promise.reject(new Error("Transportmodus erforderlich."));
+                  },
+                },
+              ]}
+            >
+              <Select
+                options={[
+                  { value: "SEA", label: "SEA" },
+                  { value: "RAIL", label: "RAIL" },
+                  { value: "AIR", label: "AIR" },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="unitPriceUsd"
+              label="Einkaufskosten / Stk. (USD)"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const price = Number(value);
+                    if (Number.isFinite(price) && price > 0) return Promise.resolve();
+                    return Promise.reject(new Error("Einkaufskosten > 0 erforderlich."));
+                  },
+                },
+              ]}
+            >
+              <DeNumberInput mode="decimal" min={0} />
+            </Form.Item>
+            <Form.Item
+              name="transitDays"
+              label="Transit Lead Time (Tage)"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const days = Math.round(Number(value || 0));
+                    if (Number.isFinite(days) && days > 0) return Promise.resolve();
+                    return Promise.reject(new Error("Transit Lead Time > 0 erforderlich."));
+                  },
+                },
+              ]}
+            >
+              <DeNumberInput mode="int" min={0} />
+            </Form.Item>
+            <Form.Item
+              name="logisticsPerUnitEur"
+              label="Frachtkosten / Stk. (EUR)"
+              rules={[
+                {
+                  validator: (_, value) => {
+                    if (draftValues?.includeInForecast === false) return Promise.resolve();
+                    const freight = Number(value);
+                    if (Number.isFinite(freight) && freight >= 0) return Promise.resolve();
+                    return Promise.reject(new Error("Frachtkosten pro Stück erforderlich."));
+                  },
+                },
+              ]}
+            >
+              <DeNumberInput mode="decimal" min={0} />
             </Form.Item>
           </div>
 

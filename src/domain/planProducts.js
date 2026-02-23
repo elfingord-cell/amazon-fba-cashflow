@@ -78,6 +78,22 @@ function asPositiveInt(value) {
   return rounded;
 }
 
+function normalizeTransportMode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw === "AIR" || raw === "SEA" || raw === "RAIL") return raw;
+  return "SEA";
+}
+
+function resolveTemplateFields(row) {
+  const template = row?.template && typeof row.template === "object"
+    ? row.template
+    : {};
+  const fields = template.fields && typeof template.fields === "object"
+    ? template.fields
+    : template;
+  return fields && typeof fields === "object" ? fields : {};
+}
+
 function normalizeRelationType(value) {
   const raw = String(value || "").trim().toLowerCase();
   if (PLAN_RELATION_TYPES.includes(raw)) return raw;
@@ -169,6 +185,7 @@ export function buildPlanProductKey(input, fallbackIndex = 0) {
 
 export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
   const row = raw && typeof raw === "object" ? raw : {};
+  const templateFields = resolveTemplateFields(row);
   const alias = String(row.alias || "").trim();
   const id = String(row.id || "");
   const relationType = normalizeRelationType(row.relationType);
@@ -178,6 +195,23 @@ export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
   const sellerboardMarginPct = asNumber(row.sellerboardMarginPct);
   const launchDate = normalizeIsoDate(row.launchDate);
   const rampUpWeeks = asPositiveInt(row.rampUpWeeks);
+  const productionLeadTimeDaysDefault = asPositiveInt(
+    row.productionLeadTimeDaysDefault
+    ?? row.productionLeadTimeDays
+    ?? templateFields.productionDays,
+  );
+  const transitDays = asPositiveInt(row.transitDays ?? templateFields.transitDays);
+  const transportMode = normalizeTransportMode(
+    row.transportMode
+    ?? templateFields.transportMode
+    ?? templateFields.transport,
+  );
+  const unitPriceUsd = asNumber(row.unitPriceUsd ?? templateFields.unitPriceUsd);
+  const logisticsPerUnitEur = asNumber(
+    row.logisticsPerUnitEur
+    ?? row.freightPerUnitEur
+    ?? templateFields.freightEur,
+  );
   const softLaunchStartSharePctRaw = asNumber(row.softLaunchStartSharePct);
   const softLaunchStartSharePct = (
     Number.isFinite(softLaunchStartSharePctRaw)
@@ -205,6 +239,12 @@ export function normalizePlanProductRecord(raw, fallbackIndex = 0) {
     sellerboardMarginPct,
     launchDate,
     rampUpWeeks,
+    productionLeadTimeDaysDefault,
+    transitDays,
+    transportMode,
+    unitPriceUsd,
+    logisticsPerUnitEur,
+    freightPerUnitEur: logisticsPerUnitEur,
     softLaunchStartSharePct,
     mappedSku: normalizeSku(row.mappedSku || row.liveSku),
     mappedAt: row.mappedAt ? String(row.mappedAt) : null,

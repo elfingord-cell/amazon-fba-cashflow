@@ -14,6 +14,7 @@ import {
   type RobustnessCoverageOrderDutyIssue,
 } from "./dashboardRobustness";
 import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
+import { buildPlanProductForecastRows } from "../../domain/planProducts.js";
 
 const PHANTOM_FO_SOURCE = "robustness_order_duty_v2";
 
@@ -106,6 +107,42 @@ function sanitizeToken(value: unknown, fallback = "PH"): string {
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, "");
   return cleaned || fallback;
+}
+
+function normalizeSkuToken(value: unknown, fallback = "PLAN"): string {
+  const cleaned = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || fallback;
+}
+
+function ensureUniqueSku(baseSku: string, usedSkuKeys: Set<string>): string {
+  const base = normalizeSkuToken(baseSku, "PLAN");
+  let candidate = base;
+  let cursor = 2;
+  while (usedSkuKeys.has(candidate.toLowerCase())) {
+    candidate = `${base}-${cursor}`;
+    cursor += 1;
+  }
+  return candidate;
+}
+
+function normalizeTransportMode(value: unknown): "SEA" | "RAIL" | "AIR" {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw === "SEA" || raw === "RAIL" || raw === "AIR") return raw;
+  return "SEA";
+}
+
+function resolveTransitDaysForMode(
+  settings: Record<string, unknown>,
+  transportMode: "SEA" | "RAIL" | "AIR",
+): number | null {
+  const leadTimes = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
+  return asPositiveInt(leadTimes[transportMode.toLowerCase()])
+    ?? asPositiveInt(leadTimes.sea)
+    ?? null;
 }
 
 function buildPhantomFoId(issue: RobustnessCoverageOrderDutyIssue): string {
@@ -460,11 +497,89 @@ export function buildPhantomFoSuggestions(input: {
   if (!months.length) return [];
   const targetMonth = resolvePhantomTargetMonth(months, input.targetMonth);
   if (!targetMonth) return [];
+  const settings = (state.settings && typeof state.settings === "object")
+    ? state.settings as Record<string, unknown>
+    : {};
 
-  const products = (Array.isArray(state.products) ? state.products : [])
+  const liveProducts = (Array.isArray(state.products) ? state.products : [])
     .map((entry) => entry as Record<string, unknown>)
     .filter((entry) => normalizeSku(entry.sku))
     .filter(statusIsActive);
+  const usedSkuKeys = new Set(
+    (Array.isArray(state.products) ? state.products : [])
+      .map((entry) => normalizeSku((entry as Record<string, unknown>).sku).toLowerCase())
+      .filter(Boolean),
+  );
+  const planRows = buildPlanProductForecastRows({
+    state,
+    months,
+  }) as Record<string, unknown>[];
+  const virtualPlanProducts: Record<string, unknown>[] = [];
+  const virtualPlanForecastBySku: Record<string, Record<string, number>> = {};
+  planRows.forEach((row, index) => {
+    const include = normalizeIncludeInForecast(row.includeInForecast, true);
+    if (!include) return;
+    const status = String(row.status || "").trim().toLowerCase();
+    if (status && status !== "active" && status !== "aktiv") return;
+    const mappedSku = String(row.mappedSku || "").trim();
+    if (mappedSku) return;
+    const alias = String(row.alias || "").trim();
+    if (!alias) return;
+
+    const requestedSku = String(row.plannedSku || "").trim();
+    const fallbackSku = `PLAN-${normalizeSkuToken(row.id || alias, String(index + 1))}`;
+    const sku = ensureUniqueSku(requestedSku || fallbackSku, usedSkuKeys);
+    usedSkuKeys.add(sku.toLowerCase());
+
+    const transportMode = normalizeTransportMode(row.transportMode);
+    const transitDays = asPositiveInt(row.transitDays)
+      ?? resolveTransitDaysForMode(settings, transportMode);
+    const productionLead = asPositiveInt(row.productionLeadTimeDaysDefault);
+    const unitPriceUsd = asPositiveNumber(row.unitPriceUsd) ?? 0;
+    const freightPerUnitRaw = asNumber(row.logisticsPerUnitEur ?? row.freightPerUnitEur, 0);
+    const freightPerUnitEur = Number.isFinite(freightPerUnitRaw) ? Math.max(0, freightPerUnitRaw) : 0;
+    const plannedUnitsByMonth: Record<string, number> = {};
+    const unitsByMonth = row.unitsByMonth && typeof row.unitsByMonth === "object"
+      ? row.unitsByMonth as Record<string, unknown>
+      : {};
+    Object.entries(unitsByMonth).forEach(([monthRaw, unitsRaw]) => {
+      const month = normalizeMonthKey(monthRaw);
+      const units = asNumber(unitsRaw, Number.NaN);
+      if (!month || !Number.isFinite(units)) return;
+      plannedUnitsByMonth[month] = Math.max(0, Math.round(units));
+    });
+
+    virtualPlanForecastBySku[sku] = plannedUnitsByMonth;
+    virtualPlanProducts.push({
+      ...row,
+      id: `plan-virtual-${String(row.id || index + 1)}`,
+      sku,
+      alias,
+      status: "active",
+      includeInForecast: true,
+      transportMode,
+      transitDays,
+      productionLeadTimeDaysDefault: productionLead,
+      unitPriceUsd,
+      logisticsPerUnitEur: freightPerUnitEur,
+      freightPerUnitEur: freightPerUnitEur,
+      template: {
+        scope: "SKU",
+        name: "Planprodukt",
+        fields: {
+          transportMode,
+          transitDays,
+          productionDays: productionLead,
+          unitPriceUsd,
+          freightEur: freightPerUnitEur,
+        },
+      },
+      __planVirtual: true,
+      __planProductId: String(row.id || ""),
+    });
+  });
+
+  const products = [...liveProducts, ...virtualPlanProducts];
   const productBySkuKey = new Map<string, Record<string, unknown>>();
   products.forEach((product) => {
     productBySkuKey.set(normalizeSkuKey(product.sku), product);
@@ -479,12 +594,33 @@ export function buildPhantomFoSuggestions(input: {
       supplierById.set(id, supplier);
     });
 
-  const settings = (state.settings && typeof state.settings === "object")
-    ? state.settings as Record<string, unknown>
+  const forecastState = (state.forecast && typeof state.forecast === "object")
+    ? state.forecast as Record<string, unknown>
     : {};
+  const manualBase = (forecastState.forecastManual && typeof forecastState.forecastManual === "object")
+    ? forecastState.forecastManual as Record<string, Record<string, unknown>>
+    : {};
+  const mergedForecastManual: Record<string, Record<string, unknown>> = { ...manualBase };
+  Object.entries(virtualPlanForecastBySku).forEach(([sku, byMonth]) => {
+    mergedForecastManual[sku] = {
+      ...(mergedForecastManual[sku] || {}),
+      ...byMonth,
+    };
+  });
+  const planningState: Record<string, unknown> = (virtualPlanProducts.length || Object.keys(virtualPlanForecastBySku).length)
+    ? {
+      ...state,
+      products: [...(Array.isArray(state.products) ? state.products : []), ...virtualPlanProducts],
+      forecast: {
+        ...forecastState,
+        forecastManual: mergedForecastManual,
+      },
+    }
+    : state;
+
   const suggestions: PhantomFoSuggestion[] = [];
   const seenSuggestionIds = new Set<string>();
-  let workingState = state;
+  let workingState = planningState;
   const maxSuggestions = asPositiveInt(input.maxSuggestions);
   const maxIterations = Math.max(1, months.length * 2);
 

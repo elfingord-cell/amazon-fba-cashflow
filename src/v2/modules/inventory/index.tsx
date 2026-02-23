@@ -40,7 +40,6 @@ import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../.
 import {
   buildFoRecommendationContext,
   computeFoRecommendationForSku,
-  resolveProductBySku,
 } from "../../domain/orderUtils";
 import { ensureAppStateV2 } from "../../state/appState";
 import {
@@ -50,6 +49,7 @@ import {
 } from "../../state/uiPrefs";
 import { useWorkspaceState } from "../../state/workspace";
 import { useLocation, useNavigate } from "react-router-dom";
+import { buildPlanProductForecastRows } from "../../../domain/planProducts.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -163,6 +163,12 @@ interface FoWorklistEntry {
   recommendedOrderDate: string | null;
   priority: number;
   intent: ProjectionActionIntent;
+}
+
+interface VirtualPlanProductEntry {
+  sku: string;
+  raw: Record<string, unknown>;
+  plannedUnitsByMonth: Record<string, number>;
 }
 
 function normalizeForecastImpactSummary(value: unknown): {
@@ -387,6 +393,50 @@ function parsePositiveNumber(value: unknown): number | null {
   return parsed;
 }
 
+function parseNonNegativeNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+}
+
+function normalizeTransportMode(value: unknown): "SEA" | "RAIL" | "AIR" {
+  const raw = String(value || "").trim().toUpperCase();
+  if (raw === "SEA" || raw === "RAIL" || raw === "AIR") return raw;
+  return "SEA";
+}
+
+function resolveTransitDaysForTransport(
+  settings: Record<string, unknown>,
+  transportMode: "SEA" | "RAIL" | "AIR",
+): number | null {
+  const leadTimes = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
+  const direct = parsePositiveNumber(leadTimes[transportMode.toLowerCase()]);
+  if (direct != null) return Math.round(direct);
+  const fallbackSea = parsePositiveNumber(leadTimes.sea);
+  if (fallbackSea != null) return Math.round(fallbackSea);
+  return null;
+}
+
+function normalizeSkuToken(value: unknown, fallback = "PLAN"): string {
+  const cleaned = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || fallback;
+}
+
+function ensureUniqueSku(baseSku: string, usedKeys: Set<string>): string {
+  const base = normalizeSkuToken(baseSku, "PLAN");
+  let candidate = base;
+  let cursor = 2;
+  while (usedKeys.has(candidate.toLowerCase())) {
+    candidate = `${base}-${cursor}`;
+    cursor += 1;
+  }
+  return candidate;
+}
+
 function estimateLeadTimeDays(product: Record<string, unknown> | null, settings: Record<string, unknown>): number {
   const production = parsePositiveNumber(product?.productionLeadTimeDaysDefault)
     ?? parsePositiveNumber(settings.defaultProductionLeadTimeDays)
@@ -398,7 +448,9 @@ function estimateLeadTimeDays(product: Record<string, unknown> | null, settings:
     ?? "sea",
   ).toLowerCase();
   const transportLeadTimes = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
-  const transit = parsePositiveNumber(transportLeadTimes[transportMode])
+  const transit = parsePositiveNumber(product?.transitDays)
+    ?? parsePositiveNumber(productTemplate?.transitDays)
+    ?? parsePositiveNumber(transportLeadTimes[transportMode])
     ?? parsePositiveNumber(transportLeadTimes.sea)
     ?? 45;
   const buffer = Number(settings.defaultBufferDays ?? 0);
@@ -671,15 +723,114 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     return snapshot.bySku;
   }, [state]);
 
+  const planForecastMonths = useMemo(() => {
+    const configured = Math.round(Number(settings.horizonMonths || 18));
+    const count = Number.isFinite(configured) && configured > 0
+      ? Math.max(18, configured)
+      : 18;
+    return monthRange(currentMonthKey(), count);
+  }, [settings.horizonMonths]);
+
+  const virtualPlanProducts = useMemo<VirtualPlanProductEntry[]>(() => {
+    const baseProducts = (Array.isArray(state.products) ? state.products : []) as Record<string, unknown>[];
+    const usedSkuKeys = new Set(
+      baseProducts
+        .map((entry) => String(entry?.sku || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const rows = buildPlanProductForecastRows({
+      state: stateObject,
+      months: planForecastMonths,
+    }) as Record<string, unknown>[];
+
+    const out: VirtualPlanProductEntry[] = [];
+    rows.forEach((row, index) => {
+      const include = normalizeIncludeInForecast(row.includeInForecast, true);
+      if (!include) return;
+      const status = String(row.status || "").trim().toLowerCase();
+      if (status && status !== "active" && status !== "aktiv") return;
+      const mappedSku = String(row.mappedSku || "").trim();
+      if (mappedSku) return;
+
+      const alias = String(row.alias || "").trim();
+      if (!alias) return;
+      const requestedSku = String(row.plannedSku || "").trim();
+      const fallbackSku = `PLAN-${normalizeSkuToken(row.id || alias, String(index + 1))}`;
+      const sku = ensureUniqueSku(requestedSku || fallbackSku, usedSkuKeys);
+      usedSkuKeys.add(sku.toLowerCase());
+
+      const transportMode = normalizeTransportMode(row.transportMode);
+      const transitDays = parsePositiveNumber(row.transitDays)
+        ?? resolveTransitDaysForTransport(settings, transportMode);
+      const productionLead = parsePositiveNumber(row.productionLeadTimeDaysDefault);
+      const unitPriceUsd = parsePositiveNumber(row.unitPriceUsd);
+      const logisticsPerUnitEur = parseNonNegativeNumber(row.logisticsPerUnitEur ?? row.freightPerUnitEur);
+      const plannedUnitsByMonth: Record<string, number> = {};
+      const unitsByMonth = row.unitsByMonth && typeof row.unitsByMonth === "object"
+        ? row.unitsByMonth as Record<string, unknown>
+        : {};
+      Object.entries(unitsByMonth).forEach(([monthRaw, unitsRaw]) => {
+        const month = normalizeMonthKey(monthRaw);
+        const units = Number(unitsRaw);
+        if (!month || !Number.isFinite(units)) return;
+        plannedUnitsByMonth[month] = Math.max(0, Math.round(units));
+      });
+
+      out.push({
+        sku,
+        raw: {
+          ...row,
+          id: `plan-virtual-${String(row.id || index + 1)}`,
+          sku,
+          alias,
+          status: "active",
+          includeInForecast: true,
+          productionLeadTimeDaysDefault: productionLead != null ? Math.round(productionLead) : null,
+          transportMode,
+          transitDays: transitDays != null ? Math.round(transitDays) : null,
+          unitPriceUsd: unitPriceUsd != null ? Number(unitPriceUsd) : null,
+          logisticsPerUnitEur: logisticsPerUnitEur != null ? Number(logisticsPerUnitEur) : null,
+          freightPerUnitEur: logisticsPerUnitEur != null ? Number(logisticsPerUnitEur) : null,
+          template: {
+            scope: "SKU",
+            name: "Planprodukt",
+            fields: {
+              transportMode,
+              transitDays: transitDays != null ? Math.round(transitDays) : null,
+              productionDays: productionLead != null ? Math.round(productionLead) : null,
+              unitPriceUsd: unitPriceUsd != null ? Number(unitPriceUsd) : null,
+              freightEur: logisticsPerUnitEur != null ? Number(logisticsPerUnitEur) : null,
+            },
+          },
+          __planVirtual: true,
+          __planProductId: String(row.id || ""),
+        },
+        plannedUnitsByMonth,
+      });
+    });
+
+    return out;
+  }, [planForecastMonths, settings, state.forecast, state.planProducts, state.products, stateObject]);
+
+  const virtualPlanForecastBySku = useMemo<Record<string, Record<string, number>>>(() => {
+    const out: Record<string, Record<string, number>> = {};
+    virtualPlanProducts.forEach((entry) => {
+      out[entry.sku] = { ...entry.plannedUnitsByMonth };
+    });
+    return out;
+  }, [virtualPlanProducts]);
+
   const productRows = useMemo(() => {
-    return (Array.isArray(state.products) ? state.products : [])
-      .map((entry) => entry as Record<string, unknown>)
+    const realRows = (Array.isArray(state.products) ? state.products : [])
+      .map((entry) => entry as Record<string, unknown>);
+    const virtualRows = virtualPlanProducts.map((entry) => entry.raw);
+    return [...realRows, ...virtualRows]
       .map((entry) => ({
         sku: String(entry.sku || "").trim(),
         raw: entry,
       }))
       .filter((entry) => entry.sku);
-  }, [state.products]);
+  }, [state.products, virtualPlanProducts]);
 
   const productBySku = useMemo(
     () => new Map(productRows.map((entry) => [entry.sku, entry.raw])),
@@ -697,11 +848,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   );
 
   const baseRows = useMemo(() => {
-    const products = (Array.isArray(state.products) ? state.products : []);
-    return products
+    return productRows
       .map((entry) => {
-        const product = entry as Record<string, unknown>;
-        const sku = String(product.sku || "").trim();
+        const product = entry.raw;
+        const sku = String(entry.sku || "").trim();
         if (!sku) return null;
         const alias = String(product.alias || sku);
         const status = String(product.status || "").trim().toLowerCase();
@@ -733,7 +883,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         } satisfies InventoryProductRow;
       })
       .filter(Boolean) as InventoryProductRow[];
-  }, [abcBySku, categoriesById, previousDraft, snapshotDraft, state.products, stateObject]);
+  }, [abcBySku, categoriesById, previousDraft, productRows, snapshotDraft, stateObject]);
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -800,12 +950,25 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     snapshot: null,
     snapshotMonth: projectionAnchorMonth,
     projectionMode,
-  }), [filteredRows, projectionAnchorMonth, projectionMode, projectionMonthList, stateObject]);
+    forecastUnitsBySkuMonth: virtualPlanForecastBySku,
+  }), [filteredRows, projectionAnchorMonth, projectionMode, projectionMonthList, stateObject, virtualPlanForecastBySku]);
 
-  const recommendationContext = useMemo(
-    () => buildFoRecommendationContext(stateObject),
-    [state.forecast, state.inventory, state.pos, state.fos],
-  );
+  const recommendationContext = useMemo(() => {
+    const baseContext = buildFoRecommendationContext(stateObject);
+    const plannedSalesBySku: Record<string, Record<string, number>> = {
+      ...(baseContext.plannedSalesBySku || {}),
+    };
+    Object.entries(virtualPlanForecastBySku).forEach(([sku, byMonth]) => {
+      plannedSalesBySku[sku] = {
+        ...(plannedSalesBySku[sku] || {}),
+        ...byMonth,
+      };
+    });
+    return {
+      ...baseContext,
+      plannedSalesBySku,
+    };
+  }, [state.forecast, state.inventory, state.pos, state.fos, stateObject, virtualPlanForecastBySku]);
 
   const riskSummary = useMemo<ProjectionRiskSummary>(() => {
     const underSafetySet = new Set<string>();
@@ -943,7 +1106,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     data: ProjectionCellData,
     cellKey: string,
   ): ProjectionActionIntent {
-    const product = resolveProductBySku(Array.isArray(state.products) ? (state.products as Record<string, unknown>[]) : [], row.sku);
+    const product = productBySku.get(row.sku) || null;
     const leadTimeDays = estimateLeadTimeDays(product, settings);
     const recommendation = computeFoRecommendationForSku({
       context: recommendationContext,
@@ -1014,7 +1177,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       map.set(cellKey, intent);
     });
     return map;
-  }, [projection, projectionMode, projectionMonthList, projectionRows, projectionMonths, recommendationContext, settings, state.products]);
+  }, [productBySku, projection, projectionMode, projectionMonthList, projectionRows, projectionMonths, recommendationContext, settings]);
 
   const foWorklist = useMemo<FoWorklistEntry[]>(() => {
     const entries = Array.from(firstRiskFoIntentByCellKey.values())

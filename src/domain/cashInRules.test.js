@@ -79,8 +79,8 @@ test("plan recommendation uses fixed safety margin and ignores conservative mode
   });
 
   assert.equal(planResult.mode, "plan");
-  near(planResult.safetyMarginPct, 0.5, 0.0001);
-  near(Number(planResult.byMonth?.[next1]?.safetyMarginPct), 0.5, 0.0001);
+  near(planResult.safetyMarginPct, 0.3, 0.0001);
+  near(Number(planResult.byMonth?.[next1]?.safetyMarginPct), 0.3, 0.0001);
   near(
     Number(planResult.byMonth?.[next1]?.quotePct),
     Number(conservativeResult.byMonth?.[next1]?.quotePct),
@@ -89,50 +89,84 @@ test("plan recommendation uses fixed safety margin and ignores conservative mode
   assert.equal(planResult.byMonth?.[next1]?.sourceTag, "RECOMMENDED_PLAN");
 });
 
-test("shrinkage limits seasonal outliers until three samples", () => {
-  const currentMonth = monthKeyFromDate(new Date());
-  const nextJuly = (() => {
-    for (let i = 0; i < 24; i += 1) {
-      const month = addMonths(currentMonth, i);
-      if (month.endsWith("-07")) return month;
-    }
-    return addMonths(currentMonth, 1);
-  })();
-  const yearBase = Number(currentMonth.slice(0, 4));
-
-  const withOneJuly = buildPayoutRecommendation({
+test("seasonality factor is month-specific and derived from month mean minus overall mean", () => {
+  const currentMonth = "2026-01";
+  const june = "2026-06";
+  const december = "2026-12";
+  const result = buildPayoutRecommendation({
     mode: "basis",
     seasonalityEnabled: true,
     currentMonth,
     maxMonth: currentMonth,
-    months: [nextJuly],
+    months: [june, december],
     baselineNormalPct: 51,
     monthlyActuals: {
-      [`${yearBase - 1}-07`]: { realRevenueEUR: 8000, realPayoutRatePct: 60 },
+      "2025-01": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-02": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-03": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-04": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-05": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-06": { realRevenueEUR: 10000, realPayoutRatePct: 48 },
+      "2025-07": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-08": { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      "2025-09": { realRevenueEUR: 10000, realPayoutRatePct: 49 },
+      "2025-10": { realRevenueEUR: 10000, realPayoutRatePct: 49 },
+      "2025-11": { realRevenueEUR: 10000, realPayoutRatePct: 50 },
+      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 57 },
+      "2024-06": { realRevenueEUR: 10000, realPayoutRatePct: 49 },
+      "2024-12": { realRevenueEUR: 10000, realPayoutRatePct: 56 },
     },
   });
 
-  const oneJulyEntry = withOneJuly.byMonth?.[nextJuly];
-  assert.ok(Number(oneJulyEntry?.seasonalityWeight) < 1);
-  assert.ok(Math.abs(Number(oneJulyEntry?.seasonalityPct || 0)) <= 4);
+  const juneEntry = result.byMonth?.[june];
+  const decemberEntry = result.byMonth?.[december];
+  assert.ok(Number(juneEntry?.seasonalityPct) < 0);
+  assert.ok(Number(decemberEntry?.seasonalityPct) > 0);
+  assert.notEqual(
+    Number(juneEntry?.seasonalityPct).toFixed(3),
+    Number(decemberEntry?.seasonalityPct).toFixed(3),
+  );
+  near(
+    Number(juneEntry?.seasonalityPct),
+    Number(juneEntry?.seasonalityMonthMeanPct) - Number(juneEntry?.seasonalityOverallMeanPct),
+    0.0001,
+  );
+  near(
+    Number(decemberEntry?.seasonalityPct),
+    Number(decemberEntry?.seasonalityMonthMeanPct) - Number(decemberEntry?.seasonalityOverallMeanPct),
+    0.0001,
+  );
+  assert.equal(juneEntry?.seasonalitySourceTag, "ist_month");
+  assert.equal(decemberEntry?.seasonalitySourceTag, "ist_month");
+});
 
-  const withThreeJuly = buildPayoutRecommendation({
+test("seasonality factor is capped at 8pp", () => {
+  const result = buildPayoutRecommendation({
     mode: "basis",
     seasonalityEnabled: true,
-    currentMonth,
-    maxMonth: currentMonth,
-    months: [nextJuly],
+    currentMonth: "2026-01",
+    maxMonth: "2026-01",
+    months: ["2026-12"],
     baselineNormalPct: 51,
     monthlyActuals: {
-      [`${yearBase - 3}-07`]: { realRevenueEUR: 8000, realPayoutRatePct: 58 },
-      [`${yearBase - 2}-07`]: { realRevenueEUR: 9000, realPayoutRatePct: 59 },
-      [`${yearBase - 1}-07`]: { realRevenueEUR: 10000, realPayoutRatePct: 60 },
+      "2025-01": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-02": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-03": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-04": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-05": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-06": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-07": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-08": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-09": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-10": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-11": { realRevenueEUR: 10000, realPayoutRatePct: 40 },
+      "2025-12": { realRevenueEUR: 10000, realPayoutRatePct: 60 },
     },
   });
-
-  const threeJulyEntry = withThreeJuly.byMonth?.[nextJuly];
-  assert.ok(Number(threeJulyEntry?.seasonalityWeight) >= 1);
-  assert.ok(Math.abs(Number(threeJulyEntry?.seasonalityPct || 0)) >= 2);
+  const decemberEntry = result.byMonth?.["2026-12"];
+  near(Number(decemberEntry?.seasonalityPct), 8, 0.0001);
+  assert.ok(Array.isArray(decemberEntry?.capsApplied));
+  assert.ok(decemberEntry?.capsApplied.includes("seasonality_cap_8pp"));
 });
 
 test("historical prior import is robust and clamps outputs", () => {
@@ -164,7 +198,7 @@ test("historical prior import is robust and clamps outputs", () => {
   const entry = recommendation.byMonth?.[nextMonth];
   assert.ok(Number(entry?.quotePct) <= 60);
   assert.equal(entry?.sourceTag, "RECOMMENDED_PLAN");
-  near(Number(entry?.safetyMarginPct), 0.5, 0.0001);
+  near(Number(entry?.safetyMarginPct), 0.3, 0.0001);
   assert.ok(Array.isArray(entry?.capsApplied));
 });
 

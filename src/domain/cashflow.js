@@ -100,15 +100,27 @@ function recommendationModeLabel(value) {
   return 'Empfohlen (Plan)';
 }
 
+function seasonalitySourceLabel(tag) {
+  const normalized = String(tag || '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'ist_month') return 'Ist-Daten (Kalendermonat)';
+  if (normalized === 'history_month') return 'Historie (Kalendermonat)';
+  if (normalized === 'no_data') return 'Keine Historie';
+  if (normalized === 'disabled') return 'Aus';
+  return normalized;
+}
+
 function buildRecommendationBreakdown(meta = {}) {
   const levelPct = Number(meta.recommendationLevelPct);
+  const levelAvg3Pct = Number(meta.recommendationLevelAvg3Pct);
+  const levelAvg12Pct = Number(meta.recommendationLevelAvg12Pct);
   const seasonalityPct = Number(meta.recommendationSeasonalityPct);
+  const seasonalityMonthMeanPct = Number(meta.recommendationSeasonalityMonthMeanPct);
+  const seasonalityOverallMeanPct = Number(meta.recommendationSeasonalityOverallMeanPct);
   const safetyMarginPct = Number(meta.recommendationSafetyMarginPct);
-  const riskExtraPct = Number(meta.recommendationRiskExtraPct);
   const riskAdjustmentPct = Number(meta.recommendationRiskAdjustmentPct);
   const monthSamples = Math.max(0, Math.round(Number(meta.recommendationSeasonalitySampleCount || 0)));
-  const seasonalityWeight = Number(meta.recommendationSeasonalityWeight);
-  const seasonalitySourceTag = String(meta.recommendationSeasonalitySourceTag || '').trim();
+  const seasonalitySourceTag = seasonalitySourceLabel(meta.recommendationSeasonalitySourceTag);
   const capsApplied = Array.isArray(meta.recommendationCapsApplied)
     ? meta.recommendationCapsApplied.filter(Boolean)
     : [];
@@ -118,17 +130,26 @@ function buildRecommendationBreakdown(meta = {}) {
     const sText = Number.isFinite(seasonalityPct) ? formatTooltipPercent(seasonalityPct, 1) : '—';
     parts.push(`L: ${lText}% · S: ${sText}%`);
   }
-  if (Number.isFinite(safetyMarginPct) || Number.isFinite(riskExtraPct) || Number.isFinite(riskAdjustmentPct)) {
-    const safetyText = Number.isFinite(safetyMarginPct) ? formatTooltipPercent(safetyMarginPct, 1) : '0,0';
-    const extraText = Number.isFinite(riskExtraPct) ? formatTooltipPercent(riskExtraPct, 1) : '0,0';
-    const adjText = Number.isFinite(riskAdjustmentPct) ? formatTooltipPercent(riskAdjustmentPct, 1) : '0,0';
-    parts.push(`Marge: ${safetyText}pp · Extra: ${extraText}pp · Gesamt: ${adjText}pp`);
+  if (Number.isFinite(levelAvg3Pct) || Number.isFinite(levelAvg12Pct)) {
+    const avg3Text = Number.isFinite(levelAvg3Pct) ? formatTooltipPercent(levelAvg3Pct, 1) : '—';
+    const avg12Text = Number.isFinite(levelAvg12Pct) ? formatTooltipPercent(levelAvg12Pct, 1) : '—';
+    parts.push(`Level: Ø3M ${avg3Text}% · Ø12M ${avg12Text}%`);
   }
-  if (monthSamples > 0 || Number.isFinite(seasonalityWeight)) {
-    const weightText = Number.isFinite(seasonalityWeight)
-      ? formatTooltipPercent(seasonalityWeight * 100, 0)
-      : '0';
-    parts.push(`n(Monat): ${monthSamples} · Gewicht: ${weightText}%`);
+  if (Number.isFinite(safetyMarginPct) || Number.isFinite(riskAdjustmentPct)) {
+    const safetyText = Number.isFinite(safetyMarginPct) ? formatTooltipPercent(safetyMarginPct, 1) : '0,0';
+    const adjText = Number.isFinite(riskAdjustmentPct) ? formatTooltipPercent(riskAdjustmentPct, 1) : '0,0';
+    parts.push(`Sicherheitsmarge: ${safetyText}pp · Gesamtabschlag: ${adjText}pp`);
+  }
+  if (Number.isFinite(seasonalityMonthMeanPct) || Number.isFinite(seasonalityOverallMeanPct)) {
+    const monthText = Number.isFinite(seasonalityMonthMeanPct)
+      ? formatTooltipPercent(seasonalityMonthMeanPct, 1)
+      : '—';
+    const overallText = Number.isFinite(seasonalityOverallMeanPct)
+      ? formatTooltipPercent(seasonalityOverallMeanPct, 1)
+      : '—';
+    parts.push(`Saison: Monat ${monthText}% · Gesamt ${overallText}%`);
+  } else if (monthSamples > 0) {
+    parts.push(`Saison-Samples: ${monthSamples}`);
   }
   if (seasonalitySourceTag) {
     parts.push(`Saisonquelle: ${seasonalitySourceTag}`);
@@ -1498,12 +1519,22 @@ export function computeSeries(state) {
       recommendationSourceTag,
       recommendationExplanation,
       recommendationLevelPct: Number(recommendationByMonth?.levelPct),
+      recommendationLevelAvg3Pct: Number(recommendationByMonth?.levelAvg3Pct),
+      recommendationLevelAvg12Pct: Number(recommendationByMonth?.levelAvg12Pct),
+      recommendationLevelRecentMonths: Array.isArray(recommendationByMonth?.levelRecentMonths)
+        ? recommendationByMonth.levelRecentMonths
+        : [],
+      recommendationLevelWindowMonths: Array.isArray(recommendationByMonth?.levelWindowMonths)
+        ? recommendationByMonth.levelWindowMonths
+        : [],
       recommendationSeasonalityPct: Number(recommendationByMonth?.seasonalityPct),
       recommendationSeasonalityRawPct: Number(recommendationByMonth?.seasonalityRawPct),
       recommendationSeasonalityPriorPct: Number(recommendationByMonth?.seasonalityPriorPct),
       recommendationSeasonalityWeight: Number(recommendationByMonth?.seasonalityWeight),
       recommendationSeasonalitySampleCount: Number(recommendationByMonth?.seasonalitySampleCount),
       recommendationSeasonalitySourceTag: String(recommendationByMonth?.seasonalitySourceTag || ''),
+      recommendationSeasonalityMonthMeanPct: Number(recommendationByMonth?.seasonalityMonthMeanPct),
+      recommendationSeasonalityOverallMeanPct: Number(recommendationByMonth?.seasonalityOverallMeanPct),
       recommendationShrinkageActive: recommendationByMonth?.shrinkageActive === true,
       recommendationRiskBasePct: Number(recommendationByMonth?.riskBasePct),
       recommendationRiskAdjustmentPct: Number(recommendationByMonth?.riskAdjustmentPct),

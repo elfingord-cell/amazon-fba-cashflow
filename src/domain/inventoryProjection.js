@@ -110,6 +110,13 @@ function isFoCountable(fo) {
 function getForecastUnits(state, sku, month) {
   const normalizedMonth = normalizeMonthKey(month);
   if (!normalizedMonth) return null;
+  const normalizedSku = normalizeSku(sku);
+  if (normalizedSku) {
+    const overrideByMonth = state?.__inventoryForecastOverrideBySku?.get(normalizedSku)
+      || state?.__inventoryForecastOverrideBySku?.get(normalizedSku.toLowerCase());
+    const overrideValue = overrideByMonth?.get(normalizedMonth);
+    if (Number.isFinite(overrideValue)) return Number(overrideValue);
+  }
   const manual = state?.forecast?.forecastManual?.[sku]?.[normalizedMonth];
   const manualParsed = parseDeNumber(manual);
   if (Number.isFinite(manualParsed)) return manualParsed;
@@ -117,6 +124,27 @@ function getForecastUnits(state, sku, month) {
   const importParsed = parseDeNumber(imported);
   if (Number.isFinite(importParsed)) return importParsed;
   return null;
+}
+
+function normalizeForecastOverridesBySku(input) {
+  const out = new Map();
+  if (!input || typeof input !== "object") return out;
+  Object.entries(input).forEach(([skuRaw, byMonthRaw]) => {
+    const sku = normalizeSku(skuRaw);
+    if (!sku) return;
+    if (!byMonthRaw || typeof byMonthRaw !== "object") return;
+    const monthMap = new Map();
+    Object.entries(byMonthRaw).forEach(([monthRaw, valueRaw]) => {
+      const month = normalizeMonthKey(monthRaw);
+      const parsed = parseDeNumber(valueRaw);
+      if (!month || !Number.isFinite(parsed)) return;
+      monthMap.set(month, Number(parsed));
+    });
+    if (!monthMap.size) return;
+    out.set(sku, monthMap);
+    out.set(sku.toLowerCase(), monthMap);
+  });
+  return out;
 }
 
 function ensureInboundDetailsBucket(map, sku, month) {
@@ -348,12 +376,18 @@ export function computeInventoryProjection({
   products,
   snapshot,
   snapshotMonth,
+  forecastUnitsBySkuMonth,
   projectionMode = "units",
 }) {
+  const forecastOverridesBySku = normalizeForecastOverridesBySku(forecastUnitsBySkuMonth);
+  const stateWithForecastOverride = {
+    ...(state || {}),
+    __inventoryForecastOverrideBySku: forecastOverridesBySku,
+  };
   const monthKeys = (Array.isArray(months) ? months : [])
     .map(month => normalizeMonthKey(month))
     .filter(Boolean);
-  const productList = Array.isArray(products) ? products : (state?.products || []);
+  const productList = Array.isArray(products) ? products : (stateWithForecastOverride?.products || []);
   const firstProjectionMonth = monthKeys[0] || null;
   const requestedSnapshotMonthRaw = normalizeMonthKey(snapshotMonth || snapshot?.month);
   const projectionAnchorLimit = firstProjectionMonth
@@ -371,7 +405,7 @@ export function computeInventoryProjection({
 
   const providedSnapshot = snapshot && Array.isArray(snapshot.items) ? snapshot : null;
   const resolvedSnapshot = providedSnapshot
-    || getLatestSnapshotAtOrBefore(state, anchorTargetMonth);
+    || getLatestSnapshotAtOrBefore(stateWithForecastOverride, anchorTargetMonth);
   const resolvedSnapshotMonth = normalizeMonthKey(resolvedSnapshot?.month);
   const snapshotFallbackUsed = Boolean(
     requestedSnapshotMonthRaw
@@ -387,7 +421,7 @@ export function computeInventoryProjection({
       snapshotMap.set(sku, parseSnapshotItemTotalUnits(item));
     });
   }
-  const latestSnapshotBySku = buildLatestSnapshotBySkuAtOrBefore(state, anchorTargetMonth);
+  const latestSnapshotBySku = buildLatestSnapshotBySkuAtOrBefore(stateWithForecastOverride, anchorTargetMonth);
   const startSourceBySku = new Map();
   const startAvailableRawBySku = new Map();
   const anchorSkuFallbackSkus = new Set();
@@ -424,7 +458,7 @@ export function computeInventoryProjection({
     inboundUnitsMap,
     inboundDetailsMap,
     inboundMissingDateCount,
-  } = buildInboundDetailMaps(state, inboundMonths);
+  } = buildInboundDetailMaps(stateWithForecastOverride, inboundMonths);
   const perSkuMonth = new Map();
   const activeSkus = new Set();
   const normalizedMode = projectionMode === "doh" ? "doh" : "units";
@@ -440,7 +474,7 @@ export function computeInventoryProjection({
     const anchorRollforwardMonths = anchorRollforwardMonthsBySku.get(sku) || [];
     anchorRollforwardMonths.forEach(month => {
       const inboundUnits = inboundUnitsMap.get(sku)?.get(month) || 0;
-      const forecastUnits = getForecastUnits(state, sku, month);
+      const forecastUnits = getForecastUnits(stateWithForecastOverride, sku, month);
       if (!Number.isFinite(forecastUnits)) {
         anchorForecastGapSkus.add(sku);
       }
@@ -451,10 +485,10 @@ export function computeInventoryProjection({
     let prevAvailable = anchorAvailable;
     let previousUnknown = false;
     const monthMap = new Map();
-    const safetyDays = resolveSafetyStockDays(product, state);
+    const safetyDays = resolveSafetyStockDays(product, stateWithForecastOverride);
 
     monthKeys.forEach(month => {
-      const forecastUnits = getForecastUnits(state, sku, month);
+      const forecastUnits = getForecastUnits(stateWithForecastOverride, sku, month);
       const hasForecast = Number.isFinite(forecastUnits);
       const inboundDetails = inboundDetailsMap.get(sku)?.get(month) || null;
       const inboundUnits = inboundDetails?.totalUnits || inboundUnitsMap.get(sku)?.get(month) || 0;

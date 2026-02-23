@@ -322,7 +322,7 @@ test("computeSeries uses manual quote first and recommendation for future months
   const report = computeSeries(state);
   assert.equal(salesPayoutAmountForMonth(report, next1), 580);
   const recommendedNext2 = salesPayoutAmountForMonth(report, next2);
-  assert.ok(recommendedNext2 >= 500 && recommendedNext2 <= 520, `expected learned quote near start profile, got ${recommendedNext2}`);
+  assert.ok(recommendedNext2 >= 490 && recommendedNext2 <= 510, `expected learned quote near start profile, got ${recommendedNext2}`);
 
   const next1Entry = salesEntriesForMonth(report, next1)[0];
   const next2Entry = salesEntriesForMonth(report, next2)[0];
@@ -358,9 +358,9 @@ test("computeSeries keeps recommendation near profile when only two IST months e
   };
 
   const report = computeSeries(state);
-  assert.ok(report.kpis?.cashIn?.basisQuotePct >= 51 && report.kpis?.cashIn?.basisQuotePct <= 54);
+  assert.ok(report.kpis?.cashIn?.basisQuotePct >= 54 && report.kpis?.cashIn?.basisQuotePct <= 56);
   const nextQuote = salesPayoutAmountForMonth(report, next1);
-  assert.ok(nextQuote >= 510 && nextQuote <= 540, `expected moderate quote after 2 IST months, got ${nextQuote}`);
+  assert.ok(nextQuote >= 530 && nextQuote <= 550, `expected moderate quote after 2 IST months, got ${nextQuote}`);
 });
 
 test("computeSeries seasonality toggle changes recommendation without extreme jumps", () => {
@@ -378,7 +378,7 @@ test("computeSeries seasonality toggle changes recommendation without extreme ju
   assert.ok(seasonalMonth);
   assert.ok(seasonalOffset != null);
   const currentYear = Number(currentMonth.slice(0, 4));
-  const priorDecember = `${currentYear - 1}-12`;
+  const priorYear = currentYear - 1;
 
   const baseState = {
     settings: {
@@ -393,7 +393,18 @@ test("computeSeries seasonality toggle changes recommendation without extreme ju
       { month: seasonalMonth, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
     ],
     monthlyActuals: {
-      [priorDecember]: { realRevenueEUR: 10000, realPayoutRatePct: 58 },
+      [`${priorYear}-01`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-02`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-03`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-04`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-05`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-06`]: { realRevenueEUR: 10000, realPayoutRatePct: 49 },
+      [`${priorYear}-07`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-08`]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [`${priorYear}-09`]: { realRevenueEUR: 10000, realPayoutRatePct: 49 },
+      [`${priorYear}-10`]: { realRevenueEUR: 10000, realPayoutRatePct: 49 },
+      [`${priorYear}-11`]: { realRevenueEUR: 10000, realPayoutRatePct: 50 },
+      [`${priorYear}-12`]: { realRevenueEUR: 10000, realPayoutRatePct: 58 },
     },
     extras: [],
     dividends: [],
@@ -414,7 +425,7 @@ test("computeSeries seasonality toggle changes recommendation without extreme ju
   });
   const seasonalityOff = Math.round(salesPayoutAmountForMonth(seasonalityOffReport, seasonalMonth));
   assert.ok(seasonalityOn > seasonalityOff, `expected seasonality to lift recommendation, got on=${seasonalityOn}, off=${seasonalityOff}`);
-  assert.ok((seasonalityOn - seasonalityOff) < 60, "seasonality difference should stay bounded");
+  assert.ok((seasonalityOn - seasonalityOff) < 120, "seasonality difference should stay bounded");
 });
 
 test("computeSeries applies plan safety margin without conservative horizon deduction", () => {
@@ -462,11 +473,11 @@ test("computeSeries applies plan safety margin without conservative horizon dedu
 
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 60);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - 595) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - 595) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - 595) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next5) - 595) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next7) - 595) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - 597) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - 597) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - 597) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next5) - 597) < 2);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next7) - 597) < 2);
   assert.equal(report.kpis?.cashIn?.quoteMinPct, 40);
   assert.equal(report.kpis?.cashIn?.quoteMaxPct, 60);
 });
@@ -611,6 +622,6 @@ test("computeSeries uses manual normal baseline when no IST quotes exist", () =>
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.fallbackUsed, "learning_model");
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 53);
-  assert.equal(salesPayoutAmountForMonth(report, next1), 525);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 525);
+  assert.equal(salesPayoutAmountForMonth(report, next1), 527);
+  assert.equal(salesPayoutAmountForMonth(report, next2), 527);
 });
