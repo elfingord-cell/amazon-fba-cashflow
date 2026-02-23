@@ -146,6 +146,12 @@ const COVERAGE_STATUS_UI_META: Record<CoverageStatusKey, {
   insufficient: { label: "Unzureichend", color: "red", className: "is-insufficient" },
 };
 
+function normalizeCashInQuoteMode(value: unknown): CashInQuoteMode {
+  return String(value || "").trim().toLowerCase() === "recommendation"
+    ? "recommendation"
+    : "manual";
+}
+
 function formatCurrency(value: unknown): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
@@ -653,10 +659,6 @@ export default function DashboardModule(): JSX.Element {
   const navigate = useNavigate();
   const [range, setRange] = useState<DashboardRange>("next6");
   const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
-  const [revenueBasisMode, setRevenueBasisMode] = useState<RevenueBasisMode>("hybrid");
-  const [calibrationEnabled, setCalibrationEnabled] = useState<boolean>(true);
-  const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
-  const [cockpitDefaultsApplied, setCockpitDefaultsApplied] = useState(false);
   const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
@@ -669,20 +671,11 @@ export default function DashboardModule(): JSX.Element {
   const forecast = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
     : {};
-  const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
-  const methodikRevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
+  const calibrationEnabled = settings.cashInCalibrationEnabled !== false;
+  const revenueBasisMode: RevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
     ? "forecast_direct"
     : "hybrid";
-  useEffect(() => {
-    if (cockpitDefaultsApplied) return;
-    setRevenueBasisMode(methodikRevenueBasisMode);
-    setCalibrationEnabled(methodikCalibrationEnabled);
-    setCockpitDefaultsApplied(true);
-  }, [
-    cockpitDefaultsApplied,
-    methodikCalibrationEnabled,
-    methodikRevenueBasisMode,
-  ]);
+  const quoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
   const persistDashboardCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
     await saveWith((current) => {
       const next = structuredClone(current);
@@ -2033,7 +2026,6 @@ export default function DashboardModule(): JSX.Element {
               value={revenueBasisMode}
               onChange={(value) => {
                 const nextMode = String(value) === "forecast_direct" ? "forecast_direct" : "hybrid";
-                setRevenueBasisMode(nextMode);
                 void persistDashboardCashInSettings({
                   cashInRevenueBasisMode: nextMode,
                 }).catch(() => {});
@@ -2049,7 +2041,6 @@ export default function DashboardModule(): JSX.Element {
                 size="small"
                 checked={calibrationEnabled}
                 onChange={(checked) => {
-                  setCalibrationEnabled(checked);
                   void persistDashboardCashInSettings({
                     cashInCalibrationEnabled: checked,
                   }).catch(() => {});
@@ -2083,7 +2074,12 @@ export default function DashboardModule(): JSX.Element {
             <Segmented
               block
               value={quoteMode}
-              onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
+              onChange={(value) => {
+                const nextMode = String(value) === "recommendation" ? "recommendation" : "manual";
+                void persistDashboardCashInSettings({
+                  cashInQuoteMode: nextMode,
+                }).catch(() => {});
+              }}
               options={[
                 { label: "Manuell", value: "manual" },
                 { label: "Empfohlen (Plan)", value: "recommendation" },

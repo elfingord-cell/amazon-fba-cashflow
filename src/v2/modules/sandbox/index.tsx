@@ -1,5 +1,5 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -25,6 +25,7 @@ const { Paragraph, Text, Title } = Typography;
 type RevenueBasisMode = "hybrid" | "forecast_direct";
 type RevenueCalibrationMode = "forecast" | "calibrated";
 type CashInQuoteMode = "manual" | "recommendation";
+type SandboxTableFocus = "payout" | "revenue";
 
 interface SandboxScenario {
   revenueBasisMode: RevenueBasisMode;
@@ -40,6 +41,9 @@ interface SeriesResult {
 interface MonthMetaSnapshot {
   month: string;
   payoutPct: number | null;
+  appliedRevenue: number | null;
+  forecastRevenueRaw: number | null;
+  revenueSource: string | null;
   manualPayoutPct: number | null;
   recommendationQuotePct: number | null;
   recommendationLevelPct: number | null;
@@ -61,10 +65,20 @@ interface SandboxQuoteRow {
   safetyMarginPct: number | null;
   deltaPct: number | null;
   activeQuote: number | null;
+  forecastRevenue: number | null;
+  calibratedRevenue: number | null;
+  deltaRevenue: number | null;
+  activeRevenue: number | null;
   seasonalitySourceTag: string | null;
 }
 
 const DEFAULT_REVENUE_MODE: RevenueBasisMode = "hybrid";
+
+function normalizeCashInQuoteMode(value: unknown): CashInQuoteMode {
+  return String(value || "").trim().toLowerCase() === "recommendation"
+    ? "recommendation"
+    : "manual";
+}
 
 function toFiniteOrNull(value: unknown): number | null {
   const parsed = Number(value);
@@ -91,6 +105,24 @@ function formatSignedPp(value: number | null | undefined, digits = 1): string {
   return `${absText} pp`;
 }
 
+function formatCurrency(value: number | null | undefined): string {
+  if (!Number.isFinite(Number(value))) return "-";
+  return Number(value).toLocaleString("de-DE", {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
+function formatSignedCurrency(value: number | null | undefined): string {
+  if (!Number.isFinite(Number(value))) return "-";
+  const numeric = Number(value);
+  if (numeric > 0) return `+${formatCurrency(numeric)}`;
+  if (numeric < 0) return `−${formatCurrency(Math.abs(numeric))}`;
+  return formatCurrency(0);
+}
+
 function deltaClassName(value: number | null | undefined): string | undefined {
   if (!Number.isFinite(Number(value))) return undefined;
   const numeric = Number(value);
@@ -107,6 +139,14 @@ function normalizeSeasonalitySourceTag(value: string | null): string | null {
   if (tag === "no_data") return "Keine Historie";
   if (tag === "disabled") return "Aus";
   return tag;
+}
+
+function averageFinite(values: Array<number | null | undefined>): number | null {
+  const finite = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!finite.length) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
 }
 
 function collectManualQuoteByMonth(state: Record<string, unknown>): Map<string, number | null> {
@@ -196,6 +236,9 @@ function buildSnapshotByMonth(report: SeriesResult): Map<string, MonthMetaSnapsh
     out.set(row.month, {
       month: row.month,
       payoutPct: toFiniteOrNull(firstMeta?.payoutPct),
+      appliedRevenue: toFiniteOrNull(firstMeta?.appliedRevenue),
+      forecastRevenueRaw: toFiniteOrNull(firstMeta?.forecastRevenueRaw),
+      revenueSource: firstMeta?.revenueSource ? String(firstMeta.revenueSource) : null,
       manualPayoutPct: toFiniteOrNull(firstMeta?.manualPayoutPct),
       recommendationQuotePct: toFiniteOrNull(firstMeta?.recommendationQuotePct),
       recommendationLevelPct: toFiniteOrNull(firstMeta?.recommendationLevelPct),
@@ -215,28 +258,42 @@ function buildSnapshotByMonth(report: SeriesResult): Map<string, MonthMetaSnapsh
 }
 
 export default function SandboxModule(): JSX.Element {
-  const { state, loading, error } = useWorkspaceState();
+  const { state, loading, error, saveWith } = useWorkspaceState();
 
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
-  const methodikCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
+  const calibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const methodikRevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
     ? "forecast_direct"
     : DEFAULT_REVENUE_MODE;
+  const quoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
+  const revenueCalibrationMode: RevenueCalibrationMode = calibrationEnabled ? "calibrated" : "forecast";
+  const [tableFocus, setTableFocus] = useState<SandboxTableFocus>("payout");
 
-  const [revenueCalibrationMode, setRevenueCalibrationMode] = useState<RevenueCalibrationMode>(
-    methodikCalibrationEnabled ? "calibrated" : "forecast",
-  );
-  const [quoteMode, setQuoteMode] = useState<CashInQuoteMode>("manual");
+  const persistSandboxCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
+    await saveWith((current) => {
+      const next = structuredClone(current);
+      if (!next.settings || typeof next.settings !== "object") {
+        next.settings = {};
+      }
+      const settingsState = next.settings as Record<string, unknown>;
+      next.settings = {
+        ...settingsState,
+        ...patch,
+        lastUpdatedAt: new Date().toISOString(),
+      };
+      return next;
+    }, "v2:sandbox:cashin-controls");
+  }, [saveWith]);
 
   const stateObject = state as unknown as Record<string, unknown>;
 
   const scenarioBase = useMemo<SandboxScenario>(() => ({
     revenueBasisMode: methodikRevenueBasisMode,
-    calibrationEnabled: revenueCalibrationMode === "calibrated",
+    calibrationEnabled,
     quoteMode: "manual",
-  }), [methodikRevenueBasisMode, revenueCalibrationMode]);
+  }), [calibrationEnabled, methodikRevenueBasisMode]);
 
   const scenarioSandbox = useMemo<SandboxScenario>(() => ({
     ...scenarioBase,
@@ -247,6 +304,16 @@ export default function SandboxModule(): JSX.Element {
     ...scenarioBase,
     quoteMode: "recommendation",
   }), [scenarioBase]);
+  const scenarioRevenueForecast = useMemo<SandboxScenario>(() => ({
+    revenueBasisMode: methodikRevenueBasisMode,
+    calibrationEnabled: false,
+    quoteMode,
+  }), [methodikRevenueBasisMode, quoteMode]);
+  const scenarioRevenueCalibrated = useMemo<SandboxScenario>(() => ({
+    revenueBasisMode: methodikRevenueBasisMode,
+    calibrationEnabled: true,
+    quoteMode,
+  }), [methodikRevenueBasisMode, quoteMode]);
 
   const baseReport = useMemo(
     () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioBase)) as SeriesResult,
@@ -260,6 +327,14 @@ export default function SandboxModule(): JSX.Element {
     () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioRecommendation)) as SeriesResult,
     [scenarioRecommendation, stateObject],
   );
+  const revenueForecastReport = useMemo(
+    () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioRevenueForecast)) as SeriesResult,
+    [scenarioRevenueForecast, stateObject],
+  );
+  const revenueCalibratedReport = useMemo(
+    () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioRevenueCalibrated)) as SeriesResult,
+    [scenarioRevenueCalibrated, stateObject],
+  );
 
   const manualQuoteByMonth = useMemo(
     () => collectManualQuoteByMonth(stateObject),
@@ -268,6 +343,8 @@ export default function SandboxModule(): JSX.Element {
   const baseByMonth = useMemo(() => buildSnapshotByMonth(baseReport), [baseReport]);
   const sandboxByMonth = useMemo(() => buildSnapshotByMonth(sandboxReport), [sandboxReport]);
   const recommendationByMonth = useMemo(() => buildSnapshotByMonth(recommendationReport), [recommendationReport]);
+  const revenueForecastByMonth = useMemo(() => buildSnapshotByMonth(revenueForecastReport), [revenueForecastReport]);
+  const revenueCalibratedByMonth = useMemo(() => buildSnapshotByMonth(revenueCalibratedReport), [revenueCalibratedReport]);
 
   const months = useMemo(() => {
     const all = new Set<string>();
@@ -280,14 +357,18 @@ export default function SandboxModule(): JSX.Element {
     add(baseReport);
     add(sandboxReport);
     add(recommendationReport);
+    add(revenueForecastReport);
+    add(revenueCalibratedReport);
     return Array.from(all).sort();
-  }, [baseReport, recommendationReport, sandboxReport]);
+  }, [baseReport, recommendationReport, revenueCalibratedReport, revenueForecastReport, sandboxReport]);
 
   const rows = useMemo<SandboxQuoteRow[]>(() => {
     return months.map((month) => {
       const baseSnapshot = baseByMonth.get(month) || null;
       const sandboxSnapshot = sandboxByMonth.get(month) || null;
       const recommendationSnapshot = recommendationByMonth.get(month) || null;
+      const forecastSnapshot = revenueForecastByMonth.get(month) || null;
+      const calibratedSnapshot = revenueCalibratedByMonth.get(month) || null;
 
       const manualQuote = manualQuoteByMonth.get(month)
         ?? toFiniteOrNull(baseSnapshot?.manualPayoutPct)
@@ -301,6 +382,12 @@ export default function SandboxModule(): JSX.Element {
         ?? toFiniteOrNull(recommendationSnapshot?.recommendationRiskAdjustmentPct);
       const activeQuote = toFiniteOrNull(sandboxSnapshot?.payoutPct)
         ?? (quoteMode === "manual" ? manualQuote : recommendedQuote);
+      const forecastRevenue = toFiniteOrNull(forecastSnapshot?.appliedRevenue)
+        ?? toFiniteOrNull(forecastSnapshot?.forecastRevenueRaw);
+      const calibratedRevenue = toFiniteOrNull(calibratedSnapshot?.appliedRevenue)
+        ?? toFiniteOrNull(calibratedSnapshot?.forecastRevenueRaw);
+      const activeRevenue = toFiniteOrNull(sandboxSnapshot?.appliedRevenue)
+        ?? (revenueCalibrationMode === "calibrated" ? calibratedRevenue : forecastRevenue);
 
       return {
         key: month,
@@ -315,27 +402,47 @@ export default function SandboxModule(): JSX.Element {
           ? Number(recommendedQuote) - Number(manualQuote)
           : null,
         activeQuote,
+        forecastRevenue,
+        calibratedRevenue,
+        deltaRevenue: Number.isFinite(Number(calibratedRevenue)) && Number.isFinite(Number(forecastRevenue))
+          ? Number(calibratedRevenue) - Number(forecastRevenue)
+          : null,
+        activeRevenue,
         seasonalitySourceTag: normalizeSeasonalitySourceTag(recommendationSnapshot?.recommendationSeasonalitySourceTag || null),
       };
     });
-  }, [baseByMonth, manualQuoteByMonth, months, quoteMode, recommendationByMonth, sandboxByMonth]);
+  }, [
+    baseByMonth,
+    manualQuoteByMonth,
+    months,
+    quoteMode,
+    recommendationByMonth,
+    revenueCalibratedByMonth,
+    revenueCalibrationMode,
+    revenueForecastByMonth,
+    sandboxByMonth,
+  ]);
 
-  const summary = useMemo(() => {
-    const monthCount = rows.length || 1;
-    const avgActiveQuote = rows.reduce((sum, row) => sum + (Number(row.activeQuote || 0)), 0) / monthCount;
-    const avgManualQuote = rows.reduce((sum, row) => sum + (Number(row.manualQuote || 0)), 0) / monthCount;
-    const avgRecommendedQuote = rows.reduce((sum, row) => sum + (Number(row.recommendedQuote || 0)), 0) / monthCount;
-    const validDeltaCount = rows.filter((row) => Number.isFinite(Number(row.deltaPct))).length;
+  const payoutSummary = useMemo(() => {
     return {
-      avgActiveQuote,
-      avgManualQuote,
-      avgRecommendedQuote,
-      validDeltaCount,
+      avgActiveQuote: averageFinite(rows.map((row) => row.activeQuote)),
+      avgManualQuote: averageFinite(rows.map((row) => row.manualQuote)),
+      avgRecommendedQuote: averageFinite(rows.map((row) => row.recommendedQuote)),
+      validDeltaCount: rows.filter((row) => Number.isFinite(Number(row.deltaPct))).length,
+      monthCount: rows.length,
+    };
+  }, [rows]);
+  const revenueSummary = useMemo(() => {
+    return {
+      avgActiveRevenue: averageFinite(rows.map((row) => row.activeRevenue)),
+      avgForecastRevenue: averageFinite(rows.map((row) => row.forecastRevenue)),
+      avgCalibratedRevenue: averageFinite(rows.map((row) => row.calibratedRevenue)),
+      validDeltaCount: rows.filter((row) => Number.isFinite(Number(row.deltaRevenue))).length,
       monthCount: rows.length,
     };
   }, [rows]);
 
-  const columns = useMemo<ColumnsType<SandboxQuoteRow>>(() => {
+  const payoutColumns = useMemo<ColumnsType<SandboxQuoteRow>>(() => {
     return [
       {
         title: "Monat",
@@ -464,10 +571,90 @@ export default function SandboxModule(): JSX.Element {
       },
     ];
   }, []);
+  const revenueColumns = useMemo<ColumnsType<SandboxQuoteRow>>(() => {
+    return [
+      {
+        title: "Monat",
+        dataIndex: "monthLabel",
+        key: "month",
+        width: 130,
+        fixed: "left",
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Umsatz Forecast</span>
+            <Tooltip title="Monatsumsatz ohne Kalibrierung (reiner Forecast/Plan-Umsatz).">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "forecastRevenue",
+        key: "forecastRevenue",
+        width: 190,
+        align: "right",
+        render: (value: number | null) => formatCurrency(value),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Umsatz Kalibriert</span>
+            <Tooltip title="Monatsumsatz mit Kalibrierung (gleiche Umsatzbasis, aber mit Kalibrierfaktor).">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "calibratedRevenue",
+        key: "calibratedRevenue",
+        width: 190,
+        align: "right",
+        render: (value: number | null) => formatCurrency(value),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Delta</span>
+            <Tooltip title="Kalibriert minus Forecast pro Monat. Positiv = Kalibrierung hebt den Umsatz.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "deltaRevenue",
+        key: "deltaRevenue",
+        width: 160,
+        align: "right",
+        className: "v2-sandbox-col-delta v2-sandbox-col-delta-strong",
+        render: (value: number | null) => (
+          <span className={deltaClassName(value)}>{formatSignedCurrency(value)}</span>
+        ),
+      },
+      {
+        title: (
+          <Space size={6}>
+            <span>Aktiv</span>
+            <Tooltip title="Umsatz, der in der Sandbox aktuell im Cashflow verwendet wird.">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        ),
+        dataIndex: "activeRevenue",
+        key: "activeRevenue",
+        width: 170,
+        align: "right",
+        fixed: "right",
+        className: "v2-sandbox-col-sandbox",
+        render: (value: number | null) => formatCurrency(value),
+      },
+    ];
+  }, []);
+  const columns = tableFocus === "revenue" ? revenueColumns : payoutColumns;
 
   const scenarioText = quoteMode === "manual"
     ? "Base Case aktiv: Auszahlungsquote = Manuell."
     : "Vergleich aktiv: Auszahlungsquote = Empfohlen (Plan).";
+  const deltaHintText = tableFocus === "revenue"
+    ? "Delta-Spalte: Kalibriert minus Forecast."
+    : "Delta-Spalte: Empfohlen minus Manuell.";
 
   return (
     <div className="v2-page">
@@ -503,7 +690,12 @@ export default function SandboxModule(): JSX.Element {
             <Segmented
               block
               value={revenueCalibrationMode}
-              onChange={(value) => setRevenueCalibrationMode(String(value) === "forecast" ? "forecast" : "calibrated")}
+              onChange={(value) => {
+                const nextMode = String(value) === "forecast" ? "forecast" : "calibrated";
+                void persistSandboxCashInSettings({
+                  cashInCalibrationEnabled: nextMode === "calibrated",
+                }).catch(() => {});
+              }}
               options={[
                 { label: "Forecast", value: "forecast" },
                 { label: "Kalibriert", value: "calibrated" },
@@ -521,7 +713,12 @@ export default function SandboxModule(): JSX.Element {
             <Segmented
               block
               value={quoteMode}
-              onChange={(value) => setQuoteMode(String(value) === "recommendation" ? "recommendation" : "manual")}
+              onChange={(value) => {
+                const nextMode = String(value) === "recommendation" ? "recommendation" : "manual";
+                void persistSandboxCashInSettings({
+                  cashInQuoteMode: nextMode,
+                }).catch(() => {});
+              }}
               options={[
                 { label: "Manuell", value: "manual" },
                 { label: "Empfohlen (Plan)", value: "recommendation" },
@@ -534,30 +731,61 @@ export default function SandboxModule(): JSX.Element {
 
           <div className="v2-sandbox-control-actions">
             <Text strong>{scenarioText}</Text>
-            <Text type="secondary">Delta-Spalte: Empfohlen minus Manuell.</Text>
+            <Text type="secondary">{deltaHintText}</Text>
             <Text type="secondary">Keine Überschreibung deiner manuellen Tabelle.</Text>
           </div>
         </div>
       </Card>
 
       <Card>
-        <div className="v2-sandbox-summary-head">
-          <Text strong>Ø Manuell:</Text>
-          <Text>{formatPercent(summary.avgManualQuote)}</Text>
-          <Text strong>Ø Empfohlen (Plan):</Text>
-          <Text>{formatPercent(summary.avgRecommendedQuote)}</Text>
-          <Text strong>Ø Aktiv:</Text>
-          <Text>{formatPercent(summary.avgActiveQuote)}</Text>
-        </div>
-        <div className="v2-sandbox-summary-head">
-          <Text type="secondary">{summary.validDeltaCount} Monate mit direktem Delta-Vergleich.</Text>
-        </div>
+        {tableFocus === "payout" ? (
+          <>
+            <div className="v2-sandbox-summary-head">
+              <Text strong>Ø Manuell:</Text>
+              <Text>{formatPercent(payoutSummary.avgManualQuote)}</Text>
+              <Text strong>Ø Empfohlen (Plan):</Text>
+              <Text>{formatPercent(payoutSummary.avgRecommendedQuote)}</Text>
+              <Text strong>Ø Aktiv:</Text>
+              <Text>{formatPercent(payoutSummary.avgActiveQuote)}</Text>
+            </div>
+            <div className="v2-sandbox-summary-head">
+              <Text type="secondary">{payoutSummary.validDeltaCount} Monate mit direktem Delta-Vergleich.</Text>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="v2-sandbox-summary-head">
+              <Text strong>Ø Forecast:</Text>
+              <Text>{formatCurrency(revenueSummary.avgForecastRevenue)}</Text>
+              <Text strong>Ø Kalibriert:</Text>
+              <Text>{formatCurrency(revenueSummary.avgCalibratedRevenue)}</Text>
+              <Text strong>Ø Aktiv:</Text>
+              <Text>{formatCurrency(revenueSummary.avgActiveRevenue)}</Text>
+            </div>
+            <div className="v2-sandbox-summary-head">
+              <Text type="secondary">{revenueSummary.validDeltaCount} Monate mit direktem Delta-Vergleich.</Text>
+            </div>
+          </>
+        )}
       </Card>
 
       <Card>
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
           <Title level={4} style={{ margin: 0 }}>Monatsvergleich</Title>
-          <Text type="secondary">{summary.monthCount} Monate im Planungszeitraum</Text>
+          <Space size={10} wrap>
+            <Text type="secondary">
+              {(tableFocus === "revenue" ? revenueSummary.monthCount : payoutSummary.monthCount)} Monate im Planungszeitraum
+            </Text>
+            <Segmented
+              size="small"
+              value={tableFocus}
+              onChange={(value) => setTableFocus(String(value) === "revenue" ? "revenue" : "payout")}
+              options={[
+                { label: "Auszahlung", value: "payout" },
+                { label: "Umsatz", value: "revenue" },
+              ]}
+            />
+          </Space>
         </Space>
         <Table<SandboxQuoteRow>
           className="v2-ant-table v2-sandbox-table"
