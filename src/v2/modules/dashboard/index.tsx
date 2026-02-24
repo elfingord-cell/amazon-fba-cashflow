@@ -23,6 +23,7 @@ import {
   type DashboardBreakdownRow,
   type DashboardEntry,
 } from "../../domain/dashboardMaturity";
+import { buildHybridClosingBalanceSeries } from "../../domain/closingBalanceSeries";
 import {
   buildDashboardRobustness,
   type CoverageStatusKey,
@@ -410,10 +411,7 @@ function applyBucketScopeToBreakdown(
   bucketScope: Set<string>,
 ): ScopedDashboardBreakdownRow[] {
   if (!rows.length) return [];
-  const firstOpening = Number(rows[0]?.opening || 0);
-  let running = firstOpening;
-  return rows.map((row, index) => {
-    const opening = index === 0 ? firstOpening : running;
+  const scopedRows = rows.map((row) => {
     const scopedEntries = (Array.isArray(row.entries) ? row.entries : [])
       .filter((entry) => isEntryInBucketScope(entry, bucketScope));
     const inflow = scopedEntries
@@ -423,19 +421,32 @@ function applyBucketScopeToBreakdown(
       .filter((entry) => String(entry.direction || "").toLowerCase() === "out")
       .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
     const net = inflow - outflow;
-    const actualRaw = Number((row as Record<string, unknown>).actualClosing);
-    const hasActualClosing = Number.isFinite(actualRaw);
-    const closing = hasActualClosing ? actualRaw : (opening + net);
-    running = closing;
     return {
       ...row,
-      opening,
       inflow,
       outflow,
       net,
-      hasActualClosing,
-      closing,
       entries: scopedEntries,
+    };
+  });
+
+  const firstOpening = Number(rows[0]?.opening || 0);
+  const closingSeries = buildHybridClosingBalanceSeries({
+    rows: scopedRows.map((row) => ({
+      month: row.month,
+      net: row.net,
+      actualClosing: row.actualClosing,
+    })),
+    initialOpening: firstOpening,
+  });
+
+  return scopedRows.map((row, index) => {
+    const derived = closingSeries[index];
+    return {
+      ...row,
+      opening: Number(derived?.opening ?? row.opening ?? 0),
+      closing: Number(derived?.closing ?? row.closing ?? 0),
+      hasActualClosing: derived?.lockedActual === true,
     };
   });
 }

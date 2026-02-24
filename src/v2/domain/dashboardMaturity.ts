@@ -58,6 +58,9 @@ export interface DashboardBreakdownRow {
   inflow: number;
   outflow: number;
   net: number;
+  plannedClosing?: number;
+  actualClosing?: number | null;
+  hasActualClosing?: boolean;
   entries?: DashboardEntry[];
 }
 

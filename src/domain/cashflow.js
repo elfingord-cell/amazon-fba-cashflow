@@ -2106,6 +2106,7 @@ export function computeSeries(state) {
       net: row.net.total,
       entries: row.entries,
       plannedClosing,
+      hasActualClosing,
       actualClosing: hasActualClosing ? Number(actualClosing) : null,
     };
   });

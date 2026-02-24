@@ -4,6 +4,9 @@ const assert = require("node:assert/strict");
 const {
   buildDashboardOrderTimeline,
 } = require("../../.test-build/migration/v2/domain/dashboardOrderTimeline.js");
+const {
+  buildHybridClosingBalanceSeries,
+} = require("../../.test-build/migration/v2/domain/closingBalanceSeries.js");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -181,4 +184,58 @@ test("dashboard order timeline: FO lookup via id fallback works when number is m
 
   assert.ok(timeline, "timeline should be built via id fallback");
   assert.equal(timeline.sourceId, "fo-only-id");
+});
+
+test("closing balance series: one locked month rebases following plan months", () => {
+  const result = buildHybridClosingBalanceSeries({
+    initialOpening: 50005,
+    rows: [
+      { month: "2026-01", net: 10679, actualClosing: 43616 },
+      { month: "2026-02", net: 6868, actualClosing: null },
+      { month: "2026-03", net: 13272 },
+    ],
+  });
+
+  assert.equal(result.length, 3);
+  assert.equal(result[0].closing, 43616);
+  assert.equal(result[0].lockedActual, true);
+  assert.equal(result[1].closing, 50484);
+  assert.equal(result[1].lockedActual, false);
+  assert.equal(result[2].closing, 63756);
+  assert.equal(result[2].lockedActual, false);
+});
+
+test("closing balance series: later locked month rebases again", () => {
+  const result = buildHybridClosingBalanceSeries({
+    initialOpening: 50005,
+    rows: [
+      { month: "2026-01", net: 10679, actualClosing: 43616 },
+      { month: "2026-02", net: 6868 },
+      { month: "2026-03", net: 13272, actualClosing: 70000 },
+      { month: "2026-04", net: 1000 },
+    ],
+  });
+
+  assert.equal(result.length, 4);
+  assert.equal(result[1].closing, 50484);
+  assert.equal(result[2].closing, 70000);
+  assert.equal(result[2].lockedActual, true);
+  assert.equal(result[3].closing, 71000);
+  assert.equal(result[3].lockedActual, false);
+});
+
+test("closing balance series: no locks uses opening balance and net progression", () => {
+  const result = buildHybridClosingBalanceSeries({
+    initialOpening: 50005,
+    rows: [
+      { month: "2026-01", net: 10679 },
+      { month: "2026-02", net: 6868 },
+    ],
+  });
+
+  assert.equal(result.length, 2);
+  assert.equal(result[0].closing, 60684);
+  assert.equal(result[1].closing, 67552);
+  assert.equal(result[0].lockedActual, false);
+  assert.equal(result[1].lockedActual, false);
 });
