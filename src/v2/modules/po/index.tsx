@@ -132,10 +132,13 @@ interface PoPaymentRow {
   status: "open" | "paid";
   paidDate: string | null;
   paidEurActual: number | null;
+  paidUsdActual: number | null;
   paymentId: string | null;
   method: string | null;
   paidBy: string | null;
   note: string;
+  invoiceIdOrNumber: string;
+  transferReference: string;
   invoiceDriveUrl: string;
   invoiceFolderDriveUrl: string;
   eventType: string | null;
@@ -150,6 +153,8 @@ interface PoPaymentFormValues {
   amountActualEur: number | null;
   amountActualUsd: number | null;
   paymentId: string;
+  invoiceIdOrNumber: string;
+  transferReference: string;
   invoiceDriveUrl: string;
   invoiceFolderDriveUrl: string;
   note: string;
@@ -315,10 +320,13 @@ function mapBuiltPaymentRow(row: Record<string, unknown>): PoPaymentRow {
     status: row.status === "paid" ? "paid" : "open",
     paidDate: row.paidDate ? String(row.paidDate) : null,
     paidEurActual: Number.isFinite(Number(row.paidEurActual)) ? Number(row.paidEurActual) : null,
+    paidUsdActual: Number.isFinite(Number(row.paidUsdActual)) ? Number(row.paidUsdActual) : null,
     paymentId: row.paymentId ? String(row.paymentId) : null,
     method: row.method ? String(row.method) : null,
     paidBy: row.paidBy ? String(row.paidBy) : null,
     note: String(row.note || ""),
+    invoiceIdOrNumber: String(row.invoiceIdOrNumber || ""),
+    transferReference: String(row.transferReference || ""),
     invoiceDriveUrl: String(row.invoiceDriveUrl || ""),
     invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
     eventType: row.eventType ? String(row.eventType) : null,
@@ -1698,6 +1706,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         ? Number(paymentRecord?.amountActualUsdTotal)
         : null,
       paymentId: requestedPaymentId,
+      invoiceIdOrNumber: String(paymentRecord?.invoiceIdOrNumber || fromSeed?.invoiceIdOrNumber || ""),
+      transferReference: String(paymentRecord?.transferReference || fromSeed?.transferReference || ""),
       invoiceDriveUrl: String(paymentRecord?.invoiceDriveUrl || fromSeed?.invoiceDriveUrl || ""),
       invoiceFolderDriveUrl: String(paymentRecord?.invoiceFolderDriveUrl || fromSeed?.invoiceFolderDriveUrl || ""),
       note: String(paymentRecord?.note || fromSeed?.note || ""),
@@ -1774,6 +1784,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           amountActualUsd: null,
           method: null,
           payer: null,
+          invoiceIdOrNumber: null,
+          transferReference: null,
           note: null,
         };
       });
@@ -1792,6 +1804,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           amountActualUsd: usdByEvent.get(entry.eventId) ?? null,
           method: values.method.trim(),
           payer: values.paidBy.trim(),
+          invoiceIdOrNumber: values.invoiceIdOrNumber?.trim() || null,
+          transferReference: values.transferReference?.trim() || null,
           note: values.note?.trim() || null,
         };
       });
@@ -1820,6 +1834,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         amountActualUsdTotal: amountActualUsd,
         coveredEventIds: selectedIds,
         note: values.note?.trim() || null,
+        invoiceIdOrNumber: values.invoiceIdOrNumber?.trim() || "",
+        transferReference: values.transferReference?.trim() || "",
         invoiceDriveUrl: values.invoiceDriveUrl?.trim() || "",
         invoiceFolderDriveUrl: values.invoiceFolderDriveUrl?.trim() || "",
       };
@@ -2942,6 +2958,15 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             </Form.Item>
             <Form.Item name="paymentId" label="Payment-ID (intern)" style={{ minWidth: 300, flex: 1 }}>
               <Input placeholder="pay-..." />
+            </Form.Item>
+          </Space>
+
+          <Space align="start" wrap style={{ width: "100%" }}>
+            <Form.Item name="invoiceIdOrNumber" label="Invoice Nr. (optional)" style={{ minWidth: 280, flex: 1 }}>
+              <Input placeholder="z. B. INV-2026-001" />
+            </Form.Item>
+            <Form.Item name="transferReference" label="Transfer-Referenz (optional)" style={{ minWidth: 280, flex: 1 }}>
+              <Input placeholder="z. B. Wise/Alibaba Transaction ID" />
             </Form.Item>
           </Space>
 

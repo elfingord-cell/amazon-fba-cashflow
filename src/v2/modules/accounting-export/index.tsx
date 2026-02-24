@@ -11,6 +11,7 @@ import {
   buildAccountantReportBundleFromState,
 } from "../../../domain/accountantReport.js";
 import { triggerBlobDownload } from "../../../domain/accountantBundle.js";
+import { buildPoPaymentsLedgerExport } from "../../../domain/poPaymentsLedger.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -256,6 +257,22 @@ export default function AccountingExportModule(): JSX.Element {
     }
   }
 
+  async function handlePoPaymentsLedgerExport(): Promise<void> {
+    try {
+      const exportPayload = buildPoPaymentsLedgerExport(stateObject, { month });
+      if (!exportPayload.rowCount) {
+        messageApi.warning(`Keine bezahlten PO-Zahlungen fuer ${month} gefunden.`);
+        return;
+      }
+      const blob = new Blob([exportPayload.csv], { type: "text/csv;charset=utf-8" });
+      await triggerBlobDownload(blob, exportPayload.fileName);
+      messageApi.success(`Ledger exportiert: ${exportPayload.fileName} (${exportPayload.rowCount} Zeilen)`);
+    } catch (ledgerError) {
+      console.error(ledgerError);
+      messageApi.error(ledgerError instanceof Error ? ledgerError.message : "PO Payments Ledger Export fehlgeschlagen");
+    }
+  }
+
   return (
     <div className="v2-page">
       {contextHolder}
@@ -299,6 +316,9 @@ export default function AccountingExportModule(): JSX.Element {
             <div className="v2-actions-inline">
               <Button type="primary" onClick={() => { void handleExport(); }} loading={exportBusy}>
                 Paket erstellen
+              </Button>
+              <Button onClick={() => { void handlePoPaymentsLedgerExport(); }}>
+                Export PO Payments (Monat)
               </Button>
               <Button onClick={() => { void handleCopyEmail(); }}>
                 E-Mail Text kopieren
