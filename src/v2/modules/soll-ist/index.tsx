@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Col, Row, Select, Space, Statistic, Table, Tag, Typography, message } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { DataTable } from "../../components/DataTable";
 import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
-import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
+import { addMonths, currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
 import { v2SollIstChartColors } from "../../app/chartPalette";
+import { DeNumberInput } from "../../components/DeNumberInput";
+import { StatsTableShell } from "../../components/StatsTableShell";
+import { ensureAppStateV2 } from "../../state/appState";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -53,6 +56,16 @@ interface DriverRow {
   kind: "component" | "total";
 }
 
+interface SellerboardActualRow {
+  month: string;
+  realClosingBalanceEur: number | null;
+  realRevenueEur: number | null;
+  realProfitEur: number | null;
+  realPayoutEur: number | null;
+  sellerboardMarginPct: number | null;
+  payoutQuotePct: number | null;
+}
+
 const RANGE_OPTIONS: Array<{ value: SollIstRange; label: string; count: number | null }> = [
   { value: "last6", label: "Letzte 6 Monate", count: 6 },
   { value: "last12", label: "Letzte 12 Monate", count: 12 },
@@ -73,8 +86,29 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isMonthKey(value: unknown): boolean {
+  return /^\d{4}-\d{2}$/.test(String(value || "").trim());
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function round4(value: number): number {
+  return Math.round(value * 10000) / 10000;
+}
+
+function toFiniteOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Number(parsed) : null;
+}
+
+function buildPayoutQuotePct(revenue: unknown, payout: unknown): number | null {
+  const revenueNumber = Number(revenue);
+  const payoutNumber = Number(payout);
+  if (!Number.isFinite(revenueNumber) || revenueNumber <= 0) return null;
+  if (!Number.isFinite(payoutNumber)) return null;
+  return (payoutNumber / revenueNumber) * 100;
 }
 
 function formatCurrency(value: unknown): string {
@@ -168,9 +202,12 @@ function deriveMonthDrivers(current: SollIstRow, previous: SollIstRow | null): D
 }
 
 export default function SollIstModule(): JSX.Element {
-  const { state, loading, error } = useWorkspaceState();
+  const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const [range, setRange] = useState<SollIstRange>("last12");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [monthlyActualDrafts, setMonthlyActualDrafts] = useState<Record<string, SellerboardActualRow>>({});
+  const [isDraftDirty, setIsDraftDirty] = useState(false);
+  const [messageApi, contextHolder] = message.useMessage();
 
   const stateObject = state as unknown as Record<string, unknown>;
   const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [stateObject]);
@@ -210,6 +247,164 @@ export default function SollIstModule(): JSX.Element {
       .filter((row) => row.month)
       .sort((a, b) => a.month.localeCompare(b.month));
   }, [currentMonthIdx, report.actualComparisons]);
+
+  const monthlyActualRaw = useMemo<Record<string, Record<string, unknown>>>(() => {
+    return (stateObject.monthlyActuals && typeof stateObject.monthlyActuals === "object")
+      ? stateObject.monthlyActuals as Record<string, Record<string, unknown>>
+      : {};
+  }, [stateObject]);
+
+  const closedMonths = useMemo(() => {
+    const monthSet = new Set<string>();
+    rows.forEach((row) => {
+      const index = monthIndex(row.month);
+      if (!row.month || index == null || currentMonthIdx == null) return;
+      if (index < currentMonthIdx) monthSet.add(row.month);
+    });
+    Object.keys(monthlyActualRaw).forEach((month) => {
+      const index = monthIndex(month);
+      if (index == null || currentMonthIdx == null) return;
+      if (index < currentMonthIdx) monthSet.add(month);
+    });
+    if (!monthSet.size) {
+      const fallback = Array.from({ length: 12 }, (_, idx) => addMonths(currentMonth, -(idx + 1)));
+      fallback.forEach((month) => monthSet.add(month));
+    }
+    return Array.from(monthSet).sort((a, b) => b.localeCompare(a));
+  }, [currentMonth, currentMonthIdx, monthlyActualRaw, rows]);
+
+  const defaultDraftByMonth = useMemo<Record<string, SellerboardActualRow>>(() => {
+    const byMonth = new Map(rows.map((row) => [row.month, row]));
+    const out: Record<string, SellerboardActualRow> = {};
+    closedMonths.forEach((month) => {
+      const row = byMonth.get(month) || null;
+      const source = (monthlyActualRaw[month] && typeof monthlyActualRaw[month] === "object")
+        ? monthlyActualRaw[month]
+        : {};
+      const realRevenueEur = toFiniteOrNull(source.realRevenueEUR ?? row?.actualRevenue);
+      const realPayoutEur = toFiniteOrNull(source.realPayoutEur ?? row?.actualPayout);
+      const payoutQuotePct = buildPayoutQuotePct(realRevenueEur, realPayoutEur)
+        ?? toFiniteOrNull(source.realPayoutRatePct ?? row?.actualPayoutRatePct);
+      out[month] = {
+        month,
+        realClosingBalanceEur: toFiniteOrNull(source.realClosingBalanceEUR ?? row?.actualClosing),
+        realRevenueEur,
+        realProfitEur: toFiniteOrNull(source.realProfitEur),
+        realPayoutEur,
+        sellerboardMarginPct: toFiniteOrNull(source.sellerboardMarginPct),
+        payoutQuotePct: Number.isFinite(payoutQuotePct as number) ? round4(Number(payoutQuotePct)) : null,
+      };
+    });
+    return out;
+  }, [closedMonths, monthlyActualRaw, rows]);
+
+  useEffect(() => {
+    if (isDraftDirty) return;
+    setMonthlyActualDrafts(defaultDraftByMonth);
+  }, [defaultDraftByMonth, isDraftDirty]);
+
+  const editableActualRows = useMemo(() => {
+    return closedMonths
+      .map((month) => monthlyActualDrafts[month] || defaultDraftByMonth[month])
+      .filter((row): row is SellerboardActualRow => Boolean(row));
+  }, [closedMonths, defaultDraftByMonth, monthlyActualDrafts]);
+
+  function updateMonthlyActualDraft(
+    month: string,
+    patch: Partial<Omit<SellerboardActualRow, "month" | "payoutQuotePct">>,
+  ): void {
+    setMonthlyActualDrafts((prev) => {
+      const base = prev[month] || defaultDraftByMonth[month] || {
+        month,
+        realClosingBalanceEur: null,
+        realRevenueEur: null,
+        realProfitEur: null,
+        realPayoutEur: null,
+        sellerboardMarginPct: null,
+        payoutQuotePct: null,
+      };
+      const next: SellerboardActualRow = {
+        ...base,
+        ...patch,
+      };
+      const payoutQuotePct = buildPayoutQuotePct(next.realRevenueEur, next.realPayoutEur);
+      next.payoutQuotePct = Number.isFinite(payoutQuotePct as number) ? round4(Number(payoutQuotePct)) : null;
+      return {
+        ...prev,
+        [month]: next,
+      };
+    });
+    setIsDraftDirty(true);
+  }
+
+  async function saveMonthlyActuals(): Promise<void> {
+    if (!closedMonths.length) {
+      messageApi.warning("Keine abgeschlossenen Monate vorhanden.");
+      return;
+    }
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const existing = (next.monthlyActuals && typeof next.monthlyActuals === "object")
+          ? next.monthlyActuals as Record<string, Record<string, unknown>>
+          : {};
+        const monthlyOut: Record<string, Record<string, unknown>> = {};
+
+        Object.entries(existing).forEach(([month, entry]) => {
+          if (!isMonthKey(month)) return;
+          const index = monthIndex(month);
+          if (index == null || currentMonthIdx == null || index < currentMonthIdx) return;
+          monthlyOut[month] = { ...(entry || {}) };
+        });
+
+        closedMonths.forEach((month) => {
+          const base = (existing[month] && typeof existing[month] === "object")
+            ? { ...existing[month] }
+            : {};
+          const draft = monthlyActualDrafts[month] || defaultDraftByMonth[month];
+          if (!draft) return;
+
+          const realClosingBalanceEur = toFiniteOrNull(draft.realClosingBalanceEur);
+          const realRevenueEur = toFiniteOrNull(draft.realRevenueEur);
+          const realProfitEur = toFiniteOrNull(draft.realProfitEur);
+          const realPayoutEur = toFiniteOrNull(draft.realPayoutEur);
+          const sellerboardMarginPct = toFiniteOrNull(draft.sellerboardMarginPct);
+          const payoutQuotePct = buildPayoutQuotePct(realRevenueEur, realPayoutEur);
+
+          if (Number.isFinite(realClosingBalanceEur as number)) base.realClosingBalanceEUR = round2(Number(realClosingBalanceEur));
+          else delete base.realClosingBalanceEUR;
+
+          if (Number.isFinite(realRevenueEur as number)) base.realRevenueEUR = round2(Number(realRevenueEur));
+          else delete base.realRevenueEUR;
+
+          if (Number.isFinite(realProfitEur as number)) base.realProfitEur = round2(Number(realProfitEur));
+          else delete base.realProfitEur;
+
+          if (Number.isFinite(realPayoutEur as number)) base.realPayoutEur = round2(Number(realPayoutEur));
+          else delete base.realPayoutEur;
+
+          if (Number.isFinite(sellerboardMarginPct as number)) base.sellerboardMarginPct = round4(Number(sellerboardMarginPct));
+          else delete base.sellerboardMarginPct;
+
+          if (Number.isFinite(payoutQuotePct as number)) base.realPayoutRatePct = round4(Number(payoutQuotePct));
+          else delete base.realPayoutRatePct;
+
+          if (Object.keys(base).length) {
+            monthlyOut[month] = base;
+          }
+        });
+
+        next.monthlyActuals = monthlyOut;
+        return next;
+      }, "v2:soll-ist:actuals");
+
+      setIsDraftDirty(false);
+      messageApi.success("Ist-Werte gespeichert.");
+    } catch (saveError) {
+      console.error(saveError);
+      messageApi.error(saveError instanceof Error ? saveError.message : "Ist-Werte konnten nicht gespeichert werden.");
+    }
+  }
 
   const visibleRows = useMemo(() => {
     const option = RANGE_OPTIONS.find((entry) => entry.value === range);
@@ -326,7 +521,7 @@ export default function SollIstModule(): JSX.Element {
           itemStyle: { color: v2SollIstChartColors.plannedClosing },
         },
         {
-          name: "Kontostand Ist",
+          name: "Kontostand-IST",
           type: "line",
           smooth: true,
           data: visibleRows.map((row) => asNumber(row.actualClosing)),
@@ -468,7 +663,7 @@ export default function SollIstModule(): JSX.Element {
       cell: ({ row }) => formatCurrency(row.original.plannedClosing),
     },
     {
-      header: "Kontostand Ist",
+      header: "Kontostand-IST",
       meta: { align: "right", width: 150 },
       cell: ({ row }) => formatCurrency(row.original.actualClosing),
     },
@@ -519,31 +714,9 @@ export default function SollIstModule(): JSX.Element {
     );
   }
 
-  if (!rows.length) {
-    return (
-      <div className="v2-page">
-        <Card className="v2-intro-card">
-          <div className="v2-page-head">
-            <div>
-              <Title level={3}>Soll vs. Ist</Title>
-              <Paragraph>
-                Analyse von Planwerten gegen eingetretene Ist-Werte (Kontostand, Umsatz und Payout).
-              </Paragraph>
-            </div>
-          </div>
-        </Card>
-        <Alert
-          type="warning"
-          showIcon
-          message="Noch keine Ist-Daten vorhanden"
-          description="Bitte zuerst Monats-Istwerte in 'Abschluss > Cash-in Setup' pflegen."
-        />
-      </div>
-    );
-  }
-
   return (
     <div className="v2-page">
+      {contextHolder}
       <Card className="v2-intro-card">
         <div className="v2-page-head">
           <div>
@@ -571,10 +744,130 @@ export default function SollIstModule(): JSX.Element {
         </div>
       </Card>
 
+      {!rows.length ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="Noch keine Vergleichsdaten vorhanden"
+          description="Du kannst unten trotzdem Monats-Istwerte erfassen; die Analyse füllt sich danach."
+        />
+      ) : null}
+
+      <Card>
+        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+          <div>
+            <Title level={4} style={{ marginBottom: 0 }}>Ist-Werte Monatsende (Sellerboard)</Title>
+            <Text type="secondary">
+              Für jeden abgeschlossenen Monat: Kontostand, Umsatz, Gewinn, Auszahlung, Marge. Auszahlungsquote wird automatisch aus Auszahlung/Umsatz berechnet.
+              Der eingetragene Kontostand-IST am Monatsende wird als Eröffnungsstand für den Folgemonat verwendet.
+            </Text>
+          </div>
+          <Space wrap>
+            <Tag color="blue">Abgeschlossene Monate: {editableActualRows.length}</Tag>
+            {isDraftDirty ? <Tag color="gold">Ungespeicherte Änderungen</Tag> : <Tag color="green">Synchron</Tag>}
+            {saving ? <Tag color="processing">Speichern...</Tag> : null}
+            <Button
+              type="primary"
+              onClick={() => { void saveMonthlyActuals(); }}
+              disabled={!isDraftDirty || !editableActualRows.length}
+              loading={saving}
+            >
+              Ist-Werte speichern
+            </Button>
+          </Space>
+        </Space>
+        <div style={{ marginTop: 12 }}>
+          <StatsTableShell>
+            <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1300 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 140 }}>Monat</th>
+                  <th style={{ width: 210 }}>Kontostand-IST (EUR)</th>
+                  <th style={{ width: 190 }}>Umsatz IST (EUR)</th>
+                  <th style={{ width: 190 }}>Gewinn IST (EUR)</th>
+                  <th style={{ width: 190 }}>Auszahlung IST (EUR)</th>
+                  <th style={{ width: 170 }}>Marge lt. Sellerboard (%)</th>
+                  <th style={{ width: 170 }}>Auszahlungsquote (%)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {editableActualRows.map((row) => (
+                  <tr key={row.month}>
+                    <td>
+                      <Text strong>{formatMonthLabel(row.month)}</Text>
+                      <div><Text type="secondary">{row.month}</Text></div>
+                    </td>
+                    <td>
+                      <DeNumberInput
+                        value={row.realClosingBalanceEur ?? undefined}
+                        mode="decimal"
+                        step={100}
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          updateMonthlyActualDraft(row.month, { realClosingBalanceEur: toFiniteOrNull(value) });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <DeNumberInput
+                        value={row.realRevenueEur ?? undefined}
+                        mode="decimal"
+                        step={100}
+                        min={0}
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          updateMonthlyActualDraft(row.month, { realRevenueEur: toFiniteOrNull(value) });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <DeNumberInput
+                        value={row.realProfitEur ?? undefined}
+                        mode="decimal"
+                        step={100}
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          updateMonthlyActualDraft(row.month, { realProfitEur: toFiniteOrNull(value) });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <DeNumberInput
+                        value={row.realPayoutEur ?? undefined}
+                        mode="decimal"
+                        step={100}
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          updateMonthlyActualDraft(row.month, { realPayoutEur: toFiniteOrNull(value) });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <DeNumberInput
+                        value={row.sellerboardMarginPct ?? undefined}
+                        mode="percent"
+                        step={0.1}
+                        style={{ width: "100%" }}
+                        onChange={(value) => {
+                          updateMonthlyActualDraft(row.month, { sellerboardMarginPct: toFiniteOrNull(value) });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <Text strong>{formatPercent(row.payoutQuotePct)}</Text>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StatsTableShell>
+        </div>
+      </Card>
+
       <div className="v2-svi-kpi-grid">
         <Card>
           <Statistic
-            title="Treffsicherheit Kontostand"
+            title="Treffsicherheit Kontostand-IST"
             value={closingAccuracy.accuracyPct != null ? `${closingAccuracy.accuracyPct.toLocaleString("de-DE", { maximumFractionDigits: 1 })} %` : "—"}
           />
           <Text type="secondary">MAPE: {formatPercent(closingAccuracy.mapePct)} · n={closingAccuracy.sampleCount}</Text>
@@ -605,9 +898,9 @@ export default function SollIstModule(): JSX.Element {
       </div>
 
       <Card>
-        <Title level={4}>Kontostand Soll vs. Ist</Title>
+        <Title level={4}>Kontostand-IST vs Soll</Title>
         <Paragraph type="secondary">
-          Linien zeigen Soll/Ist-Kontostand, Balken darunter die Abweichung (Ist minus Soll) pro Monat.
+          Linien zeigen Kontostand-IST und Kontostand Soll, Balken darunter die Abweichung (IST minus Soll) pro Monat.
         </Paragraph>
         <ReactECharts style={{ height: 380 }} option={closingChartOption} />
       </Card>

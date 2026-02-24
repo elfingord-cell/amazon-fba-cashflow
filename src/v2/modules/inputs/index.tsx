@@ -884,16 +884,26 @@ export default function InputsModule(): JSX.Element {
         amountEur: Number(row.amountEur || 0),
       }));
 
-      const monthlyObject: Record<string, Record<string, number>> = {};
+      const existingMonthly = (next.monthlyActuals && typeof next.monthlyActuals === "object")
+        ? next.monthlyActuals as Record<string, Record<string, unknown>>
+        : {};
+      const monthlyObject: Record<string, Record<string, unknown>> = {};
       snapshot.monthlyActuals.forEach((row) => {
         if (!isMonthKey(row.month)) return;
-        const nextMonthly: Record<string, number> = {};
+        const nextMonthly: Record<string, unknown> = (
+          existingMonthly[row.month] && typeof existingMonthly[row.month] === "object"
+            ? { ...existingMonthly[row.month] }
+            : {}
+        );
         const realRevenue = toNumber(row.realRevenueEUR);
         const realPayoutRate = toNumber(row.realPayoutRatePct);
         const realClosing = toNumber(row.realClosingBalanceEUR);
         if (Number.isFinite(realRevenue as number)) nextMonthly.realRevenueEUR = Number(realRevenue);
+        else delete nextMonthly.realRevenueEUR;
         if (Number.isFinite(realPayoutRate as number)) nextMonthly.realPayoutRatePct = Number(realPayoutRate);
+        else delete nextMonthly.realPayoutRatePct;
         if (Number.isFinite(realClosing as number)) nextMonthly.realClosingBalanceEUR = Number(realClosing);
+        else delete nextMonthly.realClosingBalanceEUR;
         if (Object.keys(nextMonthly).length) {
           monthlyObject[row.month] = nextMonthly;
         }

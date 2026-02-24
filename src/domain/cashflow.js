@@ -249,13 +249,18 @@ function buildActualMap(state) {
   Object.entries(monthlyActuals).forEach(([month, entry]) => {
     if (!month) return;
     const revenue = readOptionalNumber(entry?.realRevenueEUR, parseEuro);
+    const payoutEur = readOptionalNumber(entry?.realPayoutEur, parseEuro);
     const payoutRatePct = readOptionalNumber(entry?.realPayoutRatePct, parsePct);
     const closing = readOptionalNumber(entry?.realClosingBalanceEUR, parseEuro);
     const actual = {};
     if (Number.isFinite(revenue)) actual.revenue = revenue;
+    if (Number.isFinite(payoutEur)) actual.payout = payoutEur;
     if (Number.isFinite(payoutRatePct)) actual.payoutRatePct = payoutRatePct;
-    if (Number.isFinite(revenue) && Number.isFinite(payoutRatePct)) {
+    if (!Number.isFinite(actual.payout) && Number.isFinite(revenue) && Number.isFinite(payoutRatePct)) {
       actual.payout = revenue * (payoutRatePct / 100);
+    }
+    if (!Number.isFinite(actual.payoutRatePct) && Number.isFinite(revenue) && revenue !== 0 && Number.isFinite(payoutEur)) {
+      actual.payoutRatePct = (payoutEur / revenue) * 100;
     }
     if (Number.isFinite(closing)) actual.closing = closing;
     if (Object.keys(actual).length) actualMap.set(month, actual);
