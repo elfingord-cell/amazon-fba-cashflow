@@ -18,7 +18,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import ReactECharts from "echarts-for-react";
-import { computeSeries } from "../../../domain/cashflow.js";
+import { buildEffectiveCashInByMonth, computeSeries } from "../../../domain/cashflow.js";
 import {
   type DashboardBreakdownRow,
   type DashboardEntry,
@@ -495,6 +495,7 @@ function splitOutflowEntriesByType(
 function splitInflowEntriesByType(
   entries: DashboardEntry[],
   bucketScope?: Set<string>,
+  effectiveCashIn?: { payoutEUR?: number | null } | null,
 ): {
   amazon: number;
   amazonCore: number;
@@ -546,6 +547,12 @@ function splitInflowEntriesByType(
     }
     totals.total += amount;
   });
+
+  const effectivePayout = Number(effectiveCashIn?.payoutEUR);
+  if (Number.isFinite(effectivePayout) && Math.abs(effectivePayout) > 0.000001) {
+    totals.amazon = Math.max(0, effectivePayout);
+    totals.total = totals.amazon + totals.other;
+  }
 
   return totals;
 }
@@ -799,6 +806,14 @@ export default function DashboardModule(): JSX.Element {
     () => visibleBreakdown.map((row) => ({ ...row })),
     [visibleBreakdown],
   );
+  const effectiveCashInByMonth = useMemo(() => {
+    return buildEffectiveCashInByMonth(
+      visibleMonths,
+      calculationState,
+      null,
+      { report, bucketScope: bucketScopeSet },
+    ) as Record<string, { payoutEUR?: number | null }>;
+  }, [bucketScopeSet, calculationState, report, visibleMonths]);
   const monthHasActualClosing = useMemo(
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
     [simulatedBreakdown],
@@ -817,10 +832,11 @@ export default function DashboardModule(): JSX.Element {
       map.set(row.month, splitInflowEntriesByType(
         Array.isArray(row.entries) ? row.entries : [],
         bucketScopeSet,
+        effectiveCashInByMonth[row.month] || null,
       ));
     });
     return map;
-  }, [bucketScopeSet, simulatedBreakdown]);
+  }, [bucketScopeSet, effectiveCashInByMonth, simulatedBreakdown]);
 
   const inflowSplitSeries = useMemo(
     () => simulatedBreakdown.map((row) => inflowSplitByMonth.get(row.month) || {

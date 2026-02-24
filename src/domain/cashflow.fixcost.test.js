@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { computeSeries, expandFixcostInstances } from "./cashflow.js";
+import { buildEffectiveCashInByMonth, computeSeries, expandFixcostInstances, getEffectiveCashInMonth } from "./cashflow.js";
 import { CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL } from "./cashInRules.js";
 import { PORTFOLIO_BUCKET } from "./portfolioBuckets.js";
 import { createEmptyState, saveState, STORAGE_KEY } from "../data/storageLocal.js";
@@ -950,4 +950,88 @@ test("computeSeries keeps monthly amazon payout invariant: sum(entries) == appli
     const expected = Number(meta.appliedRevenue || 0) * Number(meta.payoutPct || 0) / 100;
     assert.ok(Math.abs(totalPayout - expected) < 0.01);
   });
+});
+
+test("getEffectiveCashInMonth falls back to recommendation when manual mode has empty quote", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const previousMonth = addMonths(currentMonth, -1);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      { month: currentMonth, revenueEur: "1.000,00", payoutPct: null, source: "manual" },
+    ],
+    monthlyActuals: {
+      [previousMonth]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const effective = getEffectiveCashInMonth(currentMonth, state);
+  assert.ok(effective);
+  assert.ok(Number(effective.payoutPctUsed) > 0);
+  assert.notEqual(Number(effective.payoutPctUsed), 0);
+  assert.equal(effective.payoutSource, "recommendation");
+  assert.ok(Math.abs(Number(effective.payoutEUR) - (Number(effective.revenueUsedEUR) * Number(effective.payoutPctUsed) / 100)) < 0.01);
+});
+
+test("buildEffectiveCashInByMonth returns month-aligned payout data", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const nextMonth = addMonths(currentMonth, 1);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 2,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "recommendation",
+      cashInRevenueBasisMode: "forecast_direct",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-A": {
+          [currentMonth]: { revenueEur: 1000 },
+          [nextMonth]: { revenueEur: 1200 },
+        },
+      },
+    },
+    products: [
+      {
+        sku: "SKU-A",
+        alias: "A",
+        status: "active",
+        includeInForecast: true,
+      },
+    ],
+    incomings: [
+      { month: currentMonth, revenueEur: null, payoutPct: null, source: "forecast" },
+      { month: nextMonth, revenueEur: null, payoutPct: null, source: "forecast" },
+    ],
+    monthlyActuals: {
+      [addMonths(currentMonth, -1)]: { realRevenueEUR: 8000, realPayoutRatePct: 51 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const byMonth = buildEffectiveCashInByMonth([currentMonth, nextMonth], state);
+  assert.ok(byMonth[currentMonth]);
+  assert.ok(byMonth[nextMonth]);
+  assert.ok(Number(byMonth[currentMonth].payoutEUR) > 0);
+  assert.ok(Number(byMonth[nextMonth].payoutEUR) > 0);
 });

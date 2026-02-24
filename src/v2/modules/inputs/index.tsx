@@ -23,7 +23,7 @@ import {
   normalizeRevenueCalibrationMode,
   parsePayoutPctInput,
 } from "../../../domain/cashInRules.js";
-import { computeSeries } from "../../../domain/cashflow.js";
+import { buildEffectiveCashInByMonth } from "../../../domain/cashflow.js";
 import { addMonths, currentMonthKey, formatMonthLabel, monthRange } from "../../domain/months";
 import {
   buildCategoryLabelMap,
@@ -271,7 +271,7 @@ function recommendationSourceLabel(sourceTag: string): string {
 function usedRevenueSourceLabel(source: string | null): string {
   if (source === "manual_override") return "MANUELL";
   if (source === "manual_no_forecast") return "MANUELL";
-  if (source === "forecast_calibrated") return "FORECAST (KALIBRIERT)";
+  if (source === "forecast_calibrated") return "KALIBRIERT";
   if (source === "forecast_raw") return "FORECAST";
   return "—";
 }
@@ -1097,45 +1097,11 @@ export default function InputsModule(): JSX.Element {
     });
     nextState.monthlyActuals = monthlyObject;
 
-    const report = computeSeries(nextState) as { series?: Array<Record<string, unknown>> };
-    const usedByMonth = new Map<string, {
-      usedRevenue: number | null;
-      usedRevenueSource: string | null;
-      usedQuote: number | null;
-      usedQuoteSource: string | null;
-      usedPayout: number;
-    }>();
-    (Array.isArray(report.series) ? report.series : []).forEach((seriesRow) => {
-      const month = String(seriesRow.month || "");
-      if (!month) return;
-      const entries = Array.isArray(seriesRow.entries) ? seriesRow.entries as Array<Record<string, unknown>> : [];
-      const salesEntries = entries.filter((entry) => String(entry.kind || "") === "sales-payout");
-      let firstCashInMeta: Record<string, unknown> | null = null;
-      for (const entry of salesEntries) {
-        const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : null;
-        const cashInMeta = (meta?.cashIn && typeof meta.cashIn === "object") ? meta.cashIn as Record<string, unknown> : null;
-        if (cashInMeta) {
-          firstCashInMeta = cashInMeta;
-          break;
-        }
-      }
-      const usedPayout = salesEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-      usedByMonth.set(month, {
-        usedRevenue: Number.isFinite(Number(firstCashInMeta?.appliedRevenue))
-          ? Number(firstCashInMeta?.appliedRevenue)
-          : null,
-        usedRevenueSource: firstCashInMeta?.revenueSource
-          ? String(firstCashInMeta.revenueSource)
-          : null,
-        usedQuote: Number.isFinite(Number(firstCashInMeta?.payoutPct))
-          ? Number(firstCashInMeta?.payoutPct)
-          : null,
-        usedQuoteSource: firstCashInMeta?.quoteSource
-          ? String(firstCashInMeta.quoteSource)
-          : null,
-        usedPayout: Number.isFinite(usedPayout) ? usedPayout : 0,
-      });
-    });
+    const usedByMonth = buildEffectiveCashInByMonth(
+      normalizedIncomings.map((row) => row.month),
+      nextState,
+      null,
+    );
 
     return normalizedIncomings.map((row) => {
       const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
@@ -1168,17 +1134,19 @@ export default function InputsModule(): JSX.Element {
       const hasManualRevenue = row.source === "manual" && Number.isFinite(manualRevenue as number);
       const manualQuote = normalizePayoutInput(row.payoutPct);
 
-      const used = usedByMonth.get(row.month) || null;
-      let usedRevenue = Number.isFinite(Number(used?.usedRevenue))
-        ? Number(used?.usedRevenue)
+      const used = (usedByMonth && typeof usedByMonth === "object")
+        ? usedByMonth[row.month] as Record<string, unknown> | undefined
+        : undefined;
+      let usedRevenue = Number.isFinite(Number(used?.revenueUsedEUR))
+        ? Number(used?.revenueUsedEUR)
         : null;
-      let usedRevenueSource = used?.usedRevenueSource || null;
-      let usedQuote = Number.isFinite(Number(used?.usedQuote))
-        ? Number(used?.usedQuote)
+      let usedRevenueSource = used?.revenueSource ? String(used.revenueSource) : null;
+      let usedQuote = Number.isFinite(Number(used?.payoutPctUsed))
+        ? Number(used?.payoutPctUsed)
         : null;
-      let usedQuoteSource = used?.usedQuoteSource || null;
-      let usedPayout = Number.isFinite(Number(used?.usedPayout))
-        ? Number(used?.usedPayout)
+      let usedQuoteSource = used?.payoutSource ? String(used.payoutSource) : null;
+      let usedPayout = Number.isFinite(Number(used?.payoutEUR))
+        ? Number(used?.payoutEUR)
         : 0;
 
       if (!Number.isFinite(usedRevenue as number)) {
@@ -1540,9 +1508,13 @@ export default function InputsModule(): JSX.Element {
                             }}
                           />
                           <div style={{ marginTop: 6 }}>
-                            <Tag color={row.hasManualRevenue ? "orange" : "default"} style={{ marginRight: 0 }}>
-                              {row.hasManualRevenue ? "MANUELL" : "AUTO"}
-                            </Tag>
+                            {row.hasManualRevenue ? (
+                              <Tag color="orange" style={{ marginRight: 0 }}>
+                                MANUELL
+                              </Tag>
+                            ) : (
+                              <Text type="secondary">Leer = automatisch (Forecast/Kalibrierung)</Text>
+                            )}
                           </div>
                         </div>
                       </td>

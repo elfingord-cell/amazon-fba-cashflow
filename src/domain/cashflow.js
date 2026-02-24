@@ -66,6 +66,52 @@ function normalizeCashInRevenueBasisMode(value) {
     : 'hybrid';
 }
 
+function normalizeBucketScopeSet(input) {
+  if (!input) return null;
+  if (input instanceof Set) return input.size ? input : null;
+  if (Array.isArray(input)) {
+    const normalized = input
+      .map((entry) => normalizePortfolioBucket(entry, ''))
+      .filter((entry) => PORTFOLIO_BUCKET_VALUES.includes(entry));
+    return normalized.length ? new Set(normalized) : null;
+  }
+  return null;
+}
+
+function isSalesPayoutEntry(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  return String(entry.kind || '').toLowerCase() === 'sales-payout';
+}
+
+function resolveCashInMeta(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const meta = (entry.meta && typeof entry.meta === 'object') ? entry.meta : null;
+  if (!meta || typeof meta.cashIn !== 'object') return null;
+  return meta.cashIn;
+}
+
+function entryInBucketScope(entry, bucketScopeSet) {
+  if (!bucketScopeSet || !bucketScopeSet.size) return true;
+  const meta = (entry?.meta && typeof entry.meta === 'object') ? entry.meta : null;
+  const rawBucket = entry?.portfolioBucket || meta?.portfolioBucket || '';
+  const bucket = normalizePortfolioBucket(rawBucket, PORTFOLIO_BUCKET.CORE);
+  return bucketScopeSet.has(bucket);
+}
+
+function mergeStateWithGlobalSettings(state, globalSettings) {
+  const base = (state && typeof state === 'object') ? structuredClone(state) : {};
+  if (globalSettings && typeof globalSettings === 'object') {
+    if (!base.settings || typeof base.settings !== 'object') {
+      base.settings = {};
+    }
+    base.settings = {
+      ...base.settings,
+      ...globalSettings,
+    };
+  }
+  return base;
+}
+
 function formatTooltipCurrency(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '0 €';
@@ -2243,6 +2289,77 @@ export function computeSeries(state) {
   };
 
   return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons };
+}
+
+export function getEffectiveCashInMonth(monthKey, state, globalSettings = null, options = {}) {
+  const normalizedMonth = String(monthKey || '').trim();
+  if (!normalizedMonth) {
+    return {
+      month: normalizedMonth,
+      revenueUsedEUR: null,
+      revenueSource: null,
+      payoutPctUsed: null,
+      payoutSource: null,
+      payoutEUR: 0,
+    };
+  }
+
+  const mergedState = mergeStateWithGlobalSettings(state, globalSettings);
+  const report = (options && options.report && typeof options.report === 'object')
+    ? options.report
+    : computeSeries(mergedState);
+  const series = Array.isArray(report?.series) ? report.series : [];
+  const row = series.find((entry) => String(entry?.month || '') === normalizedMonth) || null;
+  const entries = Array.isArray(row?.entries) ? row.entries : [];
+  const salesEntries = entries.filter(isSalesPayoutEntry);
+  const bucketScopeSet = normalizeBucketScopeSet(options?.bucketScope || null);
+
+  let firstCashInMeta = null;
+  for (const entry of salesEntries) {
+    const cashInMeta = resolveCashInMeta(entry);
+    if (cashInMeta) {
+      firstCashInMeta = cashInMeta;
+      break;
+    }
+  }
+
+  const payoutEUR = salesEntries.reduce((sum, entry) => {
+    if (!entryInBucketScope(entry, bucketScopeSet)) return sum;
+    const amount = Math.abs(Number(entry?.amount || 0));
+    if (!Number.isFinite(amount) || amount <= 0) return sum;
+    const direction = String(entry?.direction || '').toLowerCase();
+    return direction === 'out' ? (sum - amount) : (sum + amount);
+  }, 0);
+
+  const appliedRevenue = Number(firstCashInMeta?.appliedRevenue);
+  const payoutPct = Number(firstCashInMeta?.payoutPct);
+
+  return {
+    month: normalizedMonth,
+    revenueUsedEUR: Number.isFinite(appliedRevenue) ? appliedRevenue : null,
+    revenueSource: firstCashInMeta?.revenueSource ? String(firstCashInMeta.revenueSource) : null,
+    payoutPctUsed: Number.isFinite(payoutPct) ? payoutPct : null,
+    payoutSource: firstCashInMeta?.quoteSource ? String(firstCashInMeta.quoteSource) : null,
+    payoutEUR: Number.isFinite(payoutEUR) ? payoutEUR : 0,
+  };
+}
+
+export function buildEffectiveCashInByMonth(monthKeys, state, globalSettings = null, options = {}) {
+  const months = Array.isArray(monthKeys) ? monthKeys : [];
+  const mergedState = mergeStateWithGlobalSettings(state, globalSettings);
+  const report = (options && options.report && typeof options.report === 'object')
+    ? options.report
+    : computeSeries(mergedState);
+  const byMonth = {};
+  months.forEach((month) => {
+    const key = String(month || '').trim();
+    if (!key) return;
+    byMonth[key] = getEffectiveCashInMonth(key, mergedState, null, {
+      ...options,
+      report,
+    });
+  });
+  return byMonth;
 }
 
 // ---------- State ----------
