@@ -43,7 +43,7 @@ test("recommendation stays near start profile with only two IST months", () => {
 
   const nextQuote = Number(result.byMonth?.[next1]?.quotePct);
   assert.ok(Number.isFinite(nextQuote));
-  assert.ok(nextQuote >= 49 && nextQuote <= 54, `quote should stay near prior, got ${nextQuote}`);
+  assert.ok(nextQuote >= 49 && nextQuote <= 57, `quote should stay bounded, got ${nextQuote}`);
 });
 
 test("plan recommendation uses fixed safety margin and ignores conservative mode flag", () => {
@@ -127,12 +127,12 @@ test("seasonality factor is month-specific and derived from month mean minus ove
     Number(decemberEntry?.seasonalityPct).toFixed(3),
   );
   near(
-    Number(juneEntry?.seasonalityPct),
+    Number(juneEntry?.seasonalityRawPct),
     Number(juneEntry?.seasonalityMonthMeanPct) - Number(juneEntry?.seasonalityOverallMeanPct),
     0.0001,
   );
   near(
-    Number(decemberEntry?.seasonalityPct),
+    Number(decemberEntry?.seasonalityRawPct),
     Number(decemberEntry?.seasonalityMonthMeanPct) - Number(decemberEntry?.seasonalityOverallMeanPct),
     0.0001,
   );
@@ -167,6 +167,103 @@ test("seasonality factor is capped at 8pp", () => {
   near(Number(decemberEntry?.seasonalityPct), 8, 0.0001);
   assert.ok(Array.isArray(decemberEntry?.capsApplied));
   assert.ok(decemberEntry?.capsApplied.includes("seasonality_cap_8pp"));
+});
+
+test("default seasonality priors are month-specific and sum to zero", () => {
+  const result = buildPayoutRecommendation({
+    mode: "basis",
+    seasonalityEnabled: true,
+    currentMonth: "2026-01",
+    maxMonth: "2026-01",
+    months: [
+      "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
+      "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12",
+    ],
+    baselineNormalPct: 53.62,
+    monthlyActuals: {},
+  });
+
+  const expectedOffsets = {
+    "2026-01": -0.84,
+    "2026-02": 0.71,
+    "2026-03": 2.08,
+    "2026-04": -1.65,
+    "2026-05": -1.64,
+    "2026-06": -2.92,
+    "2026-07": 2.46,
+    "2026-08": 0.41,
+    "2026-09": -3.12,
+    "2026-10": -2.92,
+    "2026-11": 2.11,
+    "2026-12": 5.32,
+  };
+
+  Object.entries(expectedOffsets).forEach(([month, expected]) => {
+    const entry = result.byMonth?.[month];
+    near(Number(entry?.seasonalityPct), expected, 0.02);
+    assert.equal(entry?.seasonalitySourceTag, "history_month");
+  });
+
+  const offsetSum = Object.keys(expectedOffsets).reduce((sum, month) => (
+    sum + Number(result.byMonth?.[month]?.seasonalityPct || 0)
+  ), 0);
+  near(offsetSum, 0, 0.01);
+});
+
+test("flat persisted seasonality profile falls back to historical priors", () => {
+  const result = buildPayoutRecommendation({
+    mode: "basis",
+    seasonalityEnabled: true,
+    currentMonth: "2026-01",
+    maxMonth: "2026-01",
+    months: ["2026-06", "2026-12"],
+    monthlyActuals: {},
+    learningState: {
+      levelPct: 53.62,
+      seasonalityByMonth: {
+        1: 0.0, 2: -0.2, 3: -0.2, 4: -0.2, 5: -0.2, 6: -0.2,
+        7: -0.2, 8: -0.2, 9: -0.2, 10: -0.2, 11: -0.2, 12: 2.6,
+      },
+      seasonalityPriorByMonth: {
+        1: 0.0, 2: -0.2, 3: -0.2, 4: -0.2, 5: -0.2, 6: -0.2,
+        7: -0.2, 8: -0.2, 9: -0.2, 10: -0.2, 11: -0.2, 12: 2.6,
+      },
+      seasonalitySampleCountByMonth: {
+        1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1,
+        7: 1, 8: 1, 9: 1, 10: 1, 11: 1, 12: 1,
+      },
+    },
+  });
+
+  near(Number(result.byMonth?.["2026-06"]?.seasonalityPct), -2.92, 0.02);
+  near(Number(result.byMonth?.["2026-12"]?.seasonalityPct), 5.32, 0.02);
+});
+
+test("non-flat persisted seasonality profile remains active", () => {
+  const persistedProfile = {
+    1: 1, 2: -1, 3: 2, 4: -2, 5: 3, 6: -3,
+    7: 4, 8: -4, 9: 1, 10: -1, 11: 0, 12: 0,
+  };
+  const result = buildPayoutRecommendation({
+    mode: "basis",
+    seasonalityEnabled: true,
+    currentMonth: "2026-01",
+    maxMonth: "2026-01",
+    months: ["2026-01", "2026-07"],
+    monthlyActuals: {},
+    learningState: {
+      levelPct: 53.62,
+      seasonalityByMonth: persistedProfile,
+      seasonalityPriorByMonth: persistedProfile,
+      seasonalitySampleCountByMonth: {
+        1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1,
+        7: 1, 8: 1, 9: 1, 10: 1, 11: 1, 12: 1,
+      },
+    },
+  });
+
+  near(Number(result.byMonth?.["2026-01"]?.seasonalityPct), 1, 0.02);
+  near(Number(result.byMonth?.["2026-07"]?.seasonalityPct), 4, 0.02);
 });
 
 test("historical prior import is robust and clamps outputs", () => {

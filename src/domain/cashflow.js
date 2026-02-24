@@ -121,6 +121,7 @@ function buildRecommendationBreakdown(meta = {}) {
   const riskAdjustmentPct = Number(meta.recommendationRiskAdjustmentPct);
   const monthSamples = Math.max(0, Math.round(Number(meta.recommendationSeasonalitySampleCount || 0)));
   const seasonalitySourceTag = seasonalitySourceLabel(meta.recommendationSeasonalitySourceTag);
+  const seasonalityProfileSource = String(meta.recommendationSeasonalityProfileSource || "").trim();
   const capsApplied = Array.isArray(meta.recommendationCapsApplied)
     ? meta.recommendationCapsApplied.filter(Boolean)
     : [];
@@ -153,6 +154,9 @@ function buildRecommendationBreakdown(meta = {}) {
   }
   if (seasonalitySourceTag) {
     parts.push(`Saisonquelle: ${seasonalitySourceTag}`);
+  }
+  if (seasonalityProfileSource) {
+    parts.push(`Saisonalitätsprofil: ${seasonalityProfileSource}`);
   }
   if (meta.recommendationLiveSignalUsed === true) {
     const weightText = Number.isFinite(Number(meta.recommendationLiveSignalWeight))
@@ -1538,6 +1542,7 @@ export function computeSeries(state) {
       recommendationSeasonalityWeight: Number(recommendationByMonth?.seasonalityWeight),
       recommendationSeasonalitySampleCount: Number(recommendationByMonth?.seasonalitySampleCount),
       recommendationSeasonalitySourceTag: String(recommendationByMonth?.seasonalitySourceTag || ''),
+      recommendationSeasonalityProfileSource: String(recommendationByMonth?.seasonalityProfileSource || ''),
       recommendationSeasonalityMonthMeanPct: Number(recommendationByMonth?.seasonalityMonthMeanPct),
       recommendationSeasonalityOverallMeanPct: Number(recommendationByMonth?.seasonalityOverallMeanPct),
       recommendationShrinkageActive: recommendationByMonth?.shrinkageActive === true,

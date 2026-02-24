@@ -62,6 +62,7 @@ interface MonthMetaSnapshot {
   recommendationSafetyMarginPct: number | null;
   recommendationRiskAdjustmentPct: number | null;
   recommendationSeasonalitySourceTag: string | null;
+  recommendationSeasonalityProfileSource: string | null;
   recommendationSourceTag: string | null;
 }
 
@@ -87,6 +88,7 @@ interface SandboxQuoteRow {
   deltaRevenue: number | null;
   activeRevenue: number | null;
   seasonalitySourceTag: string | null;
+  seasonalityProfileSource: string | null;
 }
 
 const DEFAULT_REVENUE_MODE: RevenueBasisMode = "hybrid";
@@ -297,6 +299,9 @@ function buildSnapshotByMonth(report: SeriesResult): Map<string, MonthMetaSnapsh
       recommendationSeasonalitySourceTag: firstMeta?.recommendationSeasonalitySourceTag
         ? String(firstMeta.recommendationSeasonalitySourceTag)
         : null,
+      recommendationSeasonalityProfileSource: firstMeta?.recommendationSeasonalityProfileSource
+        ? String(firstMeta.recommendationSeasonalityProfileSource)
+        : null,
       recommendationSourceTag: firstMeta?.recommendationSourceTag
         ? String(firstMeta.recommendationSourceTag)
         : null,
@@ -470,6 +475,7 @@ export default function SandboxModule(): JSX.Element {
           : null,
         activeRevenue,
         seasonalitySourceTag: normalizeSeasonalitySourceTag(recommendationSnapshot?.recommendationSeasonalitySourceTag || null),
+        seasonalityProfileSource: recommendationSnapshot?.recommendationSeasonalityProfileSource || null,
       };
     });
   }, [
@@ -560,8 +566,8 @@ export default function SandboxModule(): JSX.Element {
       {
         title: (
           <Space size={6}>
-            <span>Saisonalitätsfaktor</span>
-            <Tooltip title="Monatsspezifischer Faktor aus Historie je Kalendermonat (Q4 automatisch enthalten).">
+            <span>Saisonalitätsfaktor (pp)</span>
+            <Tooltip title="Monatsspezifischer Faktor in Prozentpunkten (pp) aus dem Saisonalitätsprofil der Historie.">
               <InfoCircleOutlined />
             </Tooltip>
           </Space>
@@ -623,20 +629,27 @@ export default function SandboxModule(): JSX.Element {
             : "—";
           const factorText = formatSignedPp(row.seasonalityFactorPct);
           const sourceText = row.seasonalitySourceTag || "Keine Historie";
+          const profileSourceText = row.seasonalityProfileSource || "Historie (Mai 2022–Jan 2026)";
           const marginText = Number.isFinite(Number(row.safetyMarginPct))
             ? formatSignedPp(-Number(row.safetyMarginPct))
             : "−0,3 pp";
+          const levelText = formatPercent(row.levelPct);
+          const recommendedText = formatPercent(row.recommendedQuote);
           return (
             <Tooltip
               title={(
                 <Space direction="vertical" size={2}>
+                  <Text>Level (aktuelles Niveau): {levelText}</Text>
+                  <Text>Saisonalitätsfaktor (pp): {factorText} (Historie-Prior)</Text>
+                  <Text>Sicherheitsmarge (pp): {marginText}</Text>
+                  <Text>Empfohlene Quote: {recommendedText}</Text>
+                  <Text>Saisonalitätsprofil: {profileSourceText}</Text>
                   <Text>Level (70/30): Ø3M {avg3Text}, Ø12M {avg12Text}</Text>
                   <Text>3M-Inputs: {recentList}</Text>
                   <Text>12M-Inputs: Ø12M {avg12Text} (n={windowCount})</Text>
                   <Text>Saison: Monatsmittel {monthMeanText}, Gesamtmittel {overallMeanText}</Text>
-                  <Text>Abgeleiteter Faktor: {factorText}</Text>
+                  <Text>Saisonalitätsfaktor (pp): {factorText}</Text>
                   <Text>Quelle: {sourceText}</Text>
-                  <Text>Marge: {marginText}</Text>
                 </Space>
               )}
             >

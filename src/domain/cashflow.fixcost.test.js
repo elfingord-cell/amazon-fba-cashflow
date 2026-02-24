@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { computeSeries, expandFixcostInstances } from "./cashflow.js";
+import { CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL } from "./cashInRules.js";
 import { createEmptyState, saveState, STORAGE_KEY } from "../data/storageLocal.js";
 
 const store = new Map();
@@ -73,6 +74,11 @@ function salesEntriesForMonth(report, month) {
   if (!row) return [];
   return (Array.isArray(row.entries) ? row.entries : [])
     .filter((entry) => entry.kind === "sales-payout");
+}
+
+function salesCashInMetaForMonth(report, month) {
+  const entry = salesEntriesForMonth(report, month)[0];
+  return entry?.meta?.cashIn || null;
 }
 
 test.beforeEach(() => {
@@ -322,12 +328,23 @@ test("computeSeries uses manual quote first and recommendation for future months
   const report = computeSeries(state);
   assert.equal(salesPayoutAmountForMonth(report, next1), 580);
   const recommendedNext2 = salesPayoutAmountForMonth(report, next2);
-  assert.ok(recommendedNext2 >= 490 && recommendedNext2 <= 510, `expected learned quote near start profile, got ${recommendedNext2}`);
-
   const next1Entry = salesEntriesForMonth(report, next1)[0];
   const next2Entry = salesEntriesForMonth(report, next2)[0];
+  const next2Meta = next2Entry?.meta?.cashIn;
+  assert.ok(next2Meta);
+  const expectedNext2Pct = Math.min(
+    Number(next2Meta.quoteMaxPct),
+    Math.max(
+      Number(next2Meta.quoteMinPct),
+      Number(next2Meta.recommendationLevelPct) + Number(next2Meta.recommendationSeasonalityPct) - Number(next2Meta.recommendationSafetyMarginPct),
+    ),
+  );
+  assert.ok(Math.abs(Number(next2Meta.payoutPct) - expectedNext2Pct) < 0.000001);
+  assert.ok(Math.abs(recommendedNext2 - (Number(next2Meta.payoutPct) * 10)) < 0.000001);
+
   assert.equal(next1Entry?.meta?.cashIn?.quoteSource, "manual");
   assert.equal(next2Entry?.meta?.cashIn?.quoteSource, "recommendation");
+  assert.equal(next2Meta.recommendationSeasonalityProfileSource, CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL);
 });
 
 test("computeSeries keeps recommendation near profile when only two IST months exist", () => {
@@ -360,7 +377,19 @@ test("computeSeries keeps recommendation near profile when only two IST months e
   const report = computeSeries(state);
   assert.ok(report.kpis?.cashIn?.basisQuotePct >= 54 && report.kpis?.cashIn?.basisQuotePct <= 56);
   const nextQuote = salesPayoutAmountForMonth(report, next1);
-  assert.ok(nextQuote >= 530 && nextQuote <= 550, `expected moderate quote after 2 IST months, got ${nextQuote}`);
+  const nextMeta = salesCashInMetaForMonth(report, next1);
+  assert.ok(nextMeta);
+  const expectedNextPct = Math.min(
+    Number(nextMeta.quoteMaxPct),
+    Math.max(
+      Number(nextMeta.quoteMinPct),
+      Number(nextMeta.recommendationLevelPct) + Number(nextMeta.recommendationSeasonalityPct) - Number(nextMeta.recommendationSafetyMarginPct),
+    ),
+  );
+  assert.ok(Math.abs(Number(nextMeta.payoutPct) - expectedNextPct) < 0.000001);
+  assert.ok(Math.abs(nextQuote - (Number(nextMeta.payoutPct) * 10)) < 0.000001, `unexpected payout for ${next1}: ${nextQuote}`);
+  assert.equal(nextMeta.quoteSource, "recommendation");
+  assert.equal(nextMeta.recommendationSeasonalityProfileSource, CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL);
 });
 
 test("computeSeries seasonality toggle changes recommendation without extreme jumps", () => {
@@ -473,11 +502,24 @@ test("computeSeries applies plan safety margin without conservative horizon dedu
 
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 60);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - 597) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - 597) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - 597) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next5) - 597) < 2);
-  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next7) - 597) < 2);
+  const monthsToCheck = [currentMonth, next1, next2, next5, next7];
+  monthsToCheck.forEach((month) => {
+    const meta = salesCashInMetaForMonth(report, month);
+    assert.ok(meta);
+    assert.equal(meta.quoteSource, "recommendation");
+    assert.equal(meta.recommendationSeasonalityProfileSource, CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL);
+    assert.ok(Math.abs(Number(meta.recommendationRiskAdjustmentPct) - 0.3) < 0.000001);
+    assert.ok(Math.abs(Number(meta.recommendationSafetyMarginPct) - 0.3) < 0.000001);
+    const expectedPct = Math.min(
+      Number(meta.quoteMaxPct),
+      Math.max(
+        Number(meta.quoteMinPct),
+        Number(meta.recommendationLevelPct) + Number(meta.recommendationSeasonalityPct) - Number(meta.recommendationSafetyMarginPct),
+      ),
+    );
+    assert.ok(Math.abs(Number(meta.payoutPct) - expectedPct) < 0.000001, `unexpected quote in ${month}`);
+    assert.ok(Math.abs(salesPayoutAmountForMonth(report, month) - (Number(meta.payoutPct) * 10)) < 0.000001, `unexpected payout in ${month}`);
+  });
   assert.equal(report.kpis?.cashIn?.quoteMinPct, 40);
   assert.equal(report.kpis?.cashIn?.quoteMaxPct, 60);
 });
@@ -622,6 +664,29 @@ test("computeSeries uses manual normal baseline when no IST quotes exist", () =>
   const report = computeSeries(state);
   assert.equal(report.kpis?.cashIn?.fallbackUsed, "learning_model");
   assert.equal(report.kpis?.cashIn?.basisQuotePct, 53);
-  assert.equal(salesPayoutAmountForMonth(report, next1), 527);
-  assert.equal(salesPayoutAmountForMonth(report, next2), 527);
+  const next1Meta = salesCashInMetaForMonth(report, next1);
+  const next2Meta = salesCashInMetaForMonth(report, next2);
+  assert.ok(next1Meta);
+  assert.ok(next2Meta);
+  assert.equal(next1Meta.recommendationSeasonalityProfileSource, CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL);
+  assert.equal(next2Meta.recommendationSeasonalityProfileSource, CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL);
+  const expectedNext1Pct = Math.min(
+    Number(next1Meta.quoteMaxPct),
+    Math.max(
+      Number(next1Meta.quoteMinPct),
+      Number(next1Meta.recommendationLevelPct) + Number(next1Meta.recommendationSeasonalityPct) - Number(next1Meta.recommendationSafetyMarginPct),
+    ),
+  );
+  const expectedNext2Pct = Math.min(
+    Number(next2Meta.quoteMaxPct),
+    Math.max(
+      Number(next2Meta.quoteMinPct),
+      Number(next2Meta.recommendationLevelPct) + Number(next2Meta.recommendationSeasonalityPct) - Number(next2Meta.recommendationSafetyMarginPct),
+    ),
+  );
+  assert.ok(Math.abs(Number(next1Meta.payoutPct) - expectedNext1Pct) < 0.000001);
+  assert.ok(Math.abs(Number(next2Meta.payoutPct) - expectedNext2Pct) < 0.000001);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - (Number(next1Meta.payoutPct) * 10)) < 0.000001);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - (Number(next2Meta.payoutPct) * 10)) < 0.000001);
+  assert.notEqual(Number(next1Meta.payoutPct), Number(next2Meta.payoutPct));
 });

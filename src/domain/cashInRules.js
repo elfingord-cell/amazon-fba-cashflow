@@ -7,6 +7,21 @@ export const CASH_IN_SEASONALITY_CAP_PCT = 8;
 export const CASH_IN_RISK_CAP_PCT = 6;
 export const CASH_IN_SHRINKAGE_MIN_SAMPLES = 3;
 export const CASH_IN_PLAN_SAFETY_MARGIN_PCT = 0.3;
+export const CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL = "Historie (Mai 2022–Jan 2026)";
+export const CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH = Object.freeze([
+  -0.84,
+  0.71,
+  2.08,
+  -1.65,
+  -1.64,
+  -2.92,
+  2.46,
+  0.41,
+  -3.12,
+  -2.92,
+  2.11,
+  5.32,
+]);
 
 const CASH_IN_LEVEL_ALPHA = 0.22;
 const CASH_IN_SEASONALITY_ALPHA = 0.18;
@@ -193,6 +208,44 @@ function toSeasonalityArray(raw, fallback = 0) {
   return out;
 }
 
+function hasSeasonalityInput(raw) {
+  if (Array.isArray(raw)) {
+    return raw.some((value) => asFiniteNumber(value) != null);
+  }
+  if (!raw || typeof raw !== "object") return false;
+  return Object.entries(raw).some(([key, value]) => normalizeMonthSlot(key) && asFiniteNumber(value) != null);
+}
+
+function isFlatSeasonalityProfile(values) {
+  const numeric = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (numeric.length < 12) return true;
+  const median = computeMedian(numeric);
+  if (!Number.isFinite(median)) return true;
+  const nearMedianCount = numeric.filter((value) => Math.abs(value - median) <= 0.35).length;
+  return nearMedianCount >= 9;
+}
+
+function normalizeSeasonalityOffsetsToZero(values) {
+  const base = Array.from({ length: 12 }, (_, index) => clampSeasonalityPct(
+    Array.isArray(values) ? values[index] : 0,
+  ));
+  const sum = base.reduce((acc, value) => acc + Number(value || 0), 0);
+  const correction = sum / 12;
+  const centered = base.map((value) => clampSeasonalityPct(value - correction));
+  let residual = centered.reduce((acc, value) => acc + Number(value || 0), 0);
+  if (Math.abs(residual) <= 0.000001) return centered;
+  for (let idx = centered.length - 1; idx >= 0; idx -= 1) {
+    const candidate = centered[idx] - residual;
+    if (candidate < -CASH_IN_SEASONALITY_CAP_PCT || candidate > CASH_IN_SEASONALITY_CAP_PCT) continue;
+    centered[idx] = candidate;
+    residual = centered.reduce((acc, value) => acc + Number(value || 0), 0);
+    if (Math.abs(residual) <= 0.000001) break;
+  }
+  return centered;
+}
+
 function toCountArray(raw, fallback = 0) {
   const out = Array.from({ length: 12 }, () => Math.max(0, Math.round(Number(fallback || 0))));
   if (Array.isArray(raw)) {
@@ -270,25 +323,33 @@ function normalizeLearningState(raw, options = {}) {
     ? clampPct(Number(fallbackLevelRaw), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
     : CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
   const importedProfile = normalizeHistoricalImport(source.historicalImport || source.importProfile);
-  const priorFromImport = importedProfile
-    ? importedProfile.seasonalityPriorByMonth
-    : Array.from({ length: 12 }, () => 0);
-  const seasonalityPriorByMonth = toSeasonalityArray(
-    source.seasonalityPriorByMonth,
-    0,
-  ).map((value, index) => (
-    Number.isFinite(Number(value))
-      ? clampSeasonalityPct(value)
-      : clampSeasonalityPct(priorFromImport[index] || 0)
-  ));
-  const seasonalityByMonth = toSeasonalityArray(
-    source.seasonalityByMonth,
-    0,
-  ).map((value, index) => (
-    Number.isFinite(Number(value))
-      ? clampSeasonalityPct(value)
-      : clampSeasonalityPct(seasonalityPriorByMonth[index] || 0)
-  ));
+  const fallbackPriorOffsets = normalizeSeasonalityOffsetsToZero(CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH);
+  const importedPriorOffsets = importedProfile
+    ? normalizeSeasonalityOffsetsToZero(
+      toSeasonalityArray(importedProfile.seasonalityPriorByMonth, 0),
+    )
+    : fallbackPriorOffsets.slice();
+  const priorBase = importedPriorOffsets.length === 12
+    ? importedPriorOffsets
+    : fallbackPriorOffsets;
+
+  const rawPriorOffsets = normalizeSeasonalityOffsetsToZero(
+    toSeasonalityArray(source.seasonalityPriorByMonth, 0),
+  );
+  const useFallbackPrior = !hasSeasonalityInput(source.seasonalityPriorByMonth)
+    || isFlatSeasonalityProfile(rawPriorOffsets);
+  const seasonalityPriorByMonth = useFallbackPrior
+    ? priorBase.slice()
+    : rawPriorOffsets.slice();
+
+  const rawSeasonalityOffsets = normalizeSeasonalityOffsetsToZero(
+    toSeasonalityArray(source.seasonalityByMonth, 0),
+  );
+  const useFallbackSeasonality = !hasSeasonalityInput(source.seasonalityByMonth)
+    || isFlatSeasonalityProfile(rawSeasonalityOffsets);
+  const seasonalityByMonth = useFallbackSeasonality
+    ? seasonalityPriorByMonth.slice()
+    : rawSeasonalityOffsets.slice();
   const seasonalitySampleCountByMonth = toCountArray(source.seasonalitySampleCountByMonth, 0);
   const levelRaw = parsePayoutPctInput(source.levelPct ?? importedProfile?.levelPct ?? fallbackLevelPct);
   const levelPct = Number.isFinite(levelRaw)
@@ -669,9 +730,13 @@ function computeSeasonalityProfile({
 }) {
   const fallbackOffsets = Array.from({ length: 12 }, () => 0);
   const fallbackCounts = Array.from({ length: 12 }, () => 0);
-  const normalizedPriorOffsets = Array.isArray(priorOffsets)
-    ? priorOffsets.map((value) => clampSeasonalityPct(value))
-    : fallbackOffsets.slice();
+  const fallbackPriorOffsets = normalizeSeasonalityOffsetsToZero(CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH);
+  let normalizedPriorOffsets = Array.isArray(priorOffsets)
+    ? normalizeSeasonalityOffsetsToZero(priorOffsets.map((value) => clampSeasonalityPct(value)))
+    : fallbackPriorOffsets.slice();
+  if (isFlatSeasonalityProfile(normalizedPriorOffsets)) {
+    normalizedPriorOffsets = fallbackPriorOffsets.slice();
+  }
   const normalizedPriorCounts = Array.isArray(priorSampleCounts)
     ? priorSampleCounts.map((value) => Math.max(0, Math.round(Number(value || 0))))
     : fallbackCounts.slice();
@@ -730,7 +795,7 @@ function computeSeasonalityProfile({
     const mean = computeAverage(quotes);
     return Number.isFinite(mean) ? Number(mean) : null;
   });
-  const rawOffsets = Array.from({ length: 12 }, (_, slotIndex) => {
+  const rawOffsetsUnbalanced = Array.from({ length: 12 }, (_, slotIndex) => {
     const sampleCount = sampleCountBySlot[slotIndex];
     const monthMean = monthMeanBySlot[slotIndex];
     const priorOffset = Number(normalizedPriorOffsets[slotIndex] || 0);
@@ -739,7 +804,8 @@ function computeSeasonalityProfile({
     }
     return priorOffset;
   });
-  const offsets = rawOffsets.map((offset) => clampSeasonalityPct(offset));
+  const rawOffsets = rawOffsetsUnbalanced.map((offset) => clampSeasonalityPct(offset));
+  const offsets = normalizeSeasonalityOffsetsToZero(rawOffsets);
   const shrinkWeights = sampleCountBySlot.map((count) => (count > 0 ? 1 : 0));
   const sourceTags = Array.from({ length: 12 }, (_, slotIndex) => {
     const sampleCount = sampleCountBySlot[slotIndex];
@@ -878,6 +944,7 @@ export function buildPayoutRecommendation(input = {}) {
           ? Number(seasonalityProfile.monthMeanBySlot?.[monthSlotIndex])
           : null,
         seasonalityOverallMeanPct: Number(seasonalityProfile.overallMeanPct),
+        seasonalityProfileSource: CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL,
         shrinkageActive: false,
         capsApplied: [],
         capApplied: false,
@@ -969,6 +1036,7 @@ export function buildPayoutRecommendation(input = {}) {
         ? Number(seasonalityProfile.monthMeanBySlot?.[monthSlotIndex])
         : null,
       seasonalityOverallMeanPct: Number(seasonalityProfile.overallMeanPct),
+      seasonalityProfileSource: CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL,
       shrinkageActive: seasonalityWeight < 1,
       capsApplied,
       capApplied: capsApplied.length > 0,
