@@ -247,6 +247,13 @@ function normalizePayoutInput(value: unknown): number | null {
   return clampPct(Number(parsed), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
 }
 
+function normalizeManualPayoutInput(value: unknown): number | null {
+  const parsed = parsePayoutPctInput(value);
+  if (!Number.isFinite(parsed as number)) return null;
+  if (Number(parsed) <= 0) return null;
+  return clampPct(Number(parsed), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
+}
+
 function normalizeCashInQuoteMode(value: unknown): CashInQuoteMode {
   return String(value || "").trim().toLowerCase() === "recommendation"
     ? "recommendation"
@@ -703,7 +710,7 @@ export default function InputsModule(): JSX.Element {
   const currentMonthCalibratedRevenue = currentMonthForecastRevenue
     * (Number.isFinite(currentMonthAppliedFactor) ? currentMonthAppliedFactor : 1);
   const currentMonthPayoutPct = useMemo(() => {
-    const manualPayoutPct = normalizePayoutInput(currentMonthIncoming?.payoutPct);
+    const manualPayoutPct = normalizeManualPayoutInput(currentMonthIncoming?.payoutPct);
     if (Number.isFinite(manualPayoutPct as number)) return Number(manualPayoutPct);
     const recommendation = payoutRecommendationByMonth.get(currentMonthValue);
     const recommendationQuote = Number(recommendation?.quotePct);
@@ -767,7 +774,7 @@ export default function InputsModule(): JSX.Element {
       calibratedRevenueTotal += Number(revenueWithCalibration || 0);
       if (!isManualRevenueOverride && Math.abs(factorApplied - 1) > 0.000001) affectedMonths += 1;
 
-      const manualPayoutPct = normalizePayoutInput(row.payoutPct);
+      const manualPayoutPct = normalizeManualPayoutInput(row.payoutPct);
       const recommendation = payoutRecommendationByMonth.get(month);
       const recommendationQuote = Number(recommendation?.quotePct);
       const payoutPct = Number.isFinite(manualPayoutPct as number)
@@ -923,7 +930,7 @@ export default function InputsModule(): JSX.Element {
         id: row.id,
         month: row.month,
         revenueEur: toNumber(row.revenueEur),
-        payoutPct: normalizePayoutInput(row.payoutPct),
+        payoutPct: normalizeManualPayoutInput(row.payoutPct),
         source: row.source,
         calibrationCutoffDate: row.calibrationCutoffDate || null,
         calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
@@ -1062,7 +1069,7 @@ export default function InputsModule(): JSX.Element {
       id: row.id,
       month: row.month,
       revenueEur: toNumber(row.revenueEur),
-      payoutPct: normalizePayoutInput(row.payoutPct),
+      payoutPct: normalizeManualPayoutInput(row.payoutPct),
       source: row.source,
       calibrationCutoffDate: row.calibrationCutoffDate || null,
       calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
@@ -1131,8 +1138,12 @@ export default function InputsModule(): JSX.Element {
       const calibratedRevenue = forecastRevenue * factorApplied;
 
       const manualRevenue = toNumber(row.revenueEur);
-      const hasManualRevenue = row.source === "manual" && Number.isFinite(manualRevenue as number);
-      const manualQuote = normalizePayoutInput(row.payoutPct);
+      const hasManualRevenue = (
+        row.source === "manual"
+        && Number.isFinite(manualRevenue as number)
+        && Number(manualRevenue) > 0
+      );
+      const manualQuote = normalizeManualPayoutInput(row.payoutPct);
 
       const used = (usedByMonth && typeof usedByMonth === "object")
         ? usedByMonth[row.month] as Record<string, unknown> | undefined
@@ -1145,41 +1156,75 @@ export default function InputsModule(): JSX.Element {
         ? Number(used?.payoutPctUsed)
         : null;
       let usedQuoteSource = used?.payoutSource ? String(used.payoutSource) : null;
-      let usedPayout = Number.isFinite(Number(used?.payoutEUR))
+      const helperPayout = Number.isFinite(Number(used?.payoutEUR))
         ? Number(used?.payoutEUR)
-        : 0;
+        : null;
 
-      if (!Number.isFinite(usedRevenue as number)) {
-        if (globalRevenueBasisMode === "forecast_direct") {
-          usedRevenue = globalCalibrationEnabled ? calibratedRevenue : forecastRevenue;
-          usedRevenueSource = globalCalibrationEnabled ? "forecast_calibrated" : "forecast_raw";
-        } else if (hasManualRevenue) {
-          usedRevenue = Number(manualRevenue);
-          usedRevenueSource = "manual_override";
-        } else {
-          usedRevenue = globalCalibrationEnabled ? calibratedRevenue : forecastRevenue;
-          usedRevenueSource = globalCalibrationEnabled ? "forecast_calibrated" : "forecast_raw";
-        }
+      const autoRevenue = globalCalibrationEnabled ? calibratedRevenue : forecastRevenue;
+      const autoRevenueSource = globalCalibrationEnabled ? "forecast_calibrated" : "forecast_raw";
+      const expectedRevenue = (
+        globalRevenueBasisMode === "hybrid"
+        && hasManualRevenue
+      )
+        ? Number(manualRevenue)
+        : autoRevenue;
+      const expectedRevenueSource = (
+        globalRevenueBasisMode === "hybrid"
+        && hasManualRevenue
+      )
+        ? "manual_override"
+        : autoRevenueSource;
+
+      const shouldRepairHelperRevenue = (
+        !Number.isFinite(usedRevenue as number)
+        || usedRevenueSource !== expectedRevenueSource
+        || (
+          Number.isFinite(expectedRevenue)
+          && Number(expectedRevenue) > 0
+          && Number.isFinite(usedRevenue as number)
+          && Number(usedRevenue) <= 0
+        )
+      );
+      if (shouldRepairHelperRevenue) {
+        usedRevenue = Number.isFinite(expectedRevenue) ? Number(expectedRevenue) : null;
+        usedRevenueSource = usedRevenue != null ? expectedRevenueSource : null;
       }
 
-      if (!Number.isFinite(usedQuote as number)) {
-        if (globalQuoteMode === "recommendation") {
-          usedQuote = Number.isFinite(recommendedQuote as number) ? Number(recommendedQuote) : null;
-          usedQuoteSource = "recommendation";
-        } else if (Number.isFinite(manualQuote as number)) {
-          usedQuote = Number(manualQuote);
-          usedQuoteSource = "manual";
-        } else {
-          usedQuote = Number.isFinite(recommendedQuote as number) ? Number(recommendedQuote) : null;
-          usedQuoteSource = "recommendation";
-        }
+      const expectedQuoteSource = (
+        globalQuoteMode === "manual"
+        && Number.isFinite(manualQuote as number)
+      )
+        ? "manual"
+        : "recommendation";
+      const expectedQuote = expectedQuoteSource === "manual"
+        ? Number(manualQuote)
+        : (Number.isFinite(recommendedQuote as number) ? Number(recommendedQuote) : null);
+
+      const shouldRepairHelperQuote = (
+        !Number.isFinite(usedQuote as number)
+        || Number(usedQuote) <= 0
+        || usedQuoteSource !== expectedQuoteSource
+      );
+      if (shouldRepairHelperQuote) {
+        usedQuote = Number.isFinite(expectedQuote as number) ? Number(expectedQuote) : null;
+        usedQuoteSource = usedQuote != null ? expectedQuoteSource : null;
       }
 
-      if (!Number.isFinite(usedPayout as number)) {
-        usedPayout = (
-          Number.isFinite(usedRevenue as number)
-          && Number.isFinite(usedQuote as number)
-        ) ? Number(usedRevenue) * (Number(usedQuote) / 100) : 0;
+      const computedPayout = (
+        Number.isFinite(usedRevenue as number)
+        && Number.isFinite(usedQuote as number)
+      )
+        ? Number(usedRevenue) * (Number(usedQuote) / 100)
+        : null;
+      let usedPayout = Number.isFinite(computedPayout as number)
+        ? Number(computedPayout)
+        : (Number.isFinite(helperPayout as number) ? Number(helperPayout) : 0);
+      if (
+        Number.isFinite(computedPayout as number)
+        && Number(computedPayout) > 0
+        && (!Number.isFinite(helperPayout as number) || Number(helperPayout) <= 0)
+      ) {
+        usedPayout = Number(computedPayout);
       }
 
       return {
@@ -1224,7 +1269,7 @@ export default function InputsModule(): JSX.Element {
 
   function hasManualRevenueOverride(row: IncomingDraft): boolean {
     const manualRevenue = toNumber(row.revenueEur);
-    return row.source === "manual" && Number.isFinite(manualRevenue as number);
+    return row.source === "manual" && Number.isFinite(manualRevenue as number) && Number(manualRevenue) > 0;
   }
 
   function updateIncomingMonth(month: string, updater: (row: IncomingDraft) => IncomingDraft): void {
@@ -1500,10 +1545,11 @@ export default function InputsModule(): JSX.Element {
                             style={{ width: "100%" }}
                             onChange={(value) => {
                               const parsed = toNumber(value);
+                              const hasManualValue = Number.isFinite(parsed as number) && Number(parsed) > 0;
                               updateIncomingMonth(row.month, (current) => ({
                                 ...current,
-                                revenueEur: Number.isFinite(parsed as number) ? Number(parsed) : null,
-                                source: Number.isFinite(parsed as number) ? "manual" : "forecast",
+                                revenueEur: hasManualValue ? Number(parsed) : null,
+                                source: hasManualValue ? "manual" : "forecast",
                               }));
                             }}
                           />
@@ -1555,14 +1601,16 @@ export default function InputsModule(): JSX.Element {
                             onChange={(value) => {
                               updateIncomingMonth(row.month, (current) => ({
                                 ...current,
-                                payoutPct: normalizePayoutInput(value),
+                                payoutPct: normalizeManualPayoutInput(value),
                               }));
                             }}
                           />
                           <div style={{ marginTop: 6 }}>
-                            <Tag color={Number.isFinite(row.manualQuote as number) ? "orange" : "default"} style={{ marginRight: 0 }}>
-                              {Number.isFinite(row.manualQuote as number) ? "MANUELL" : "AUTO"}
-                            </Tag>
+                            {Number.isFinite(row.manualQuote as number) ? (
+                              <Tag color="orange" style={{ marginRight: 0 }}>MANUELL</Tag>
+                            ) : (
+                              <Text type="secondary">Leer = Empfehlung</Text>
+                            )}
                           </div>
                         </div>
                       </td>
