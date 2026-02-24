@@ -1,0 +1,1 @@
+import{k as r}from"./index-Coy5uI_5.js";function m({children:s,className:a,style:e,shellVariant:t="single-frame",density:l="compact"}){const o=[a||"v2-stats-table-wrap",t==="single-frame"?"v2-table-shell v2-scroll-host":"v2-scroll-host",l==="cozy"?"v2-density-cozy":"v2-density-compact"].filter(Boolean).join(" ");return r.jsx("div",{className:o,style:e,children:s})}export{m as S};

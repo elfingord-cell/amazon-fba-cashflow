@@ -551,6 +551,9 @@ function splitInflowEntriesByType(
   const effectivePayout = Number(effectiveCashIn?.payoutEUR);
   if (Number.isFinite(effectivePayout) && Math.abs(effectivePayout) > 0.000001) {
     totals.amazon = Math.max(0, effectivePayout);
+    totals.amazonCore = totals.amazon;
+    totals.amazonPlanned = 0;
+    totals.amazonNew = 0;
     totals.total = totals.amazon + totals.other;
   }
 
@@ -811,9 +814,9 @@ export default function DashboardModule(): JSX.Element {
       visibleMonths,
       calculationState,
       null,
-      { report, bucketScope: bucketScopeSet },
+      { report },
     ) as Record<string, { payoutEUR?: number | null }>;
-  }, [bucketScopeSet, calculationState, report, visibleMonths]);
+  }, [calculationState, report, visibleMonths]);
   const monthHasActualClosing = useMemo(
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
     [simulatedBreakdown],
