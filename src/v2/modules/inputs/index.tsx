@@ -123,6 +123,7 @@ interface CashInMonthMatrixRow {
   month: string;
   monthLabel: string;
   forecastRevenue: number;
+  calibrationFactor: number;
   calibratedRevenue: number;
   manualRevenue: number | null;
   hasManualRevenue: boolean;
@@ -1232,6 +1233,7 @@ export default function InputsModule(): JSX.Element {
         month: row.month,
         monthLabel: formatMonthLabel(row.month),
         forecastRevenue,
+        calibrationFactor: Number.isFinite(factorApplied) ? Number(factorApplied) : 1,
         calibratedRevenue,
         manualRevenue: hasManualRevenue ? Number(manualRevenue) : null,
         hasManualRevenue,
@@ -1501,15 +1503,17 @@ export default function InputsModule(): JSX.Element {
           ]}
         />
         <StatsTableShell>
-          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: tableFocus === "revenue" ? 1520 : 1320 }}>
+          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: tableFocus === "revenue" ? 1860 : 1320 }}>
             <thead>
               {tableFocus === "revenue" ? (
                 <tr>
                   <th style={{ width: 130 }}>Monat</th>
                   <th style={{ width: 190 }}>Umsatz Forecast (EUR)</th>
                   <th style={{ width: 280 }}>Umsatz Manuell (EUR)</th>
+                  <th style={{ width: 170 }}>Kalibrierungsfaktor</th>
                   <th style={{ width: 190 }}>Umsatz Kalibriert (EUR)</th>
                   <th style={{ width: 250 }}>Umsatz verwendet (EUR)</th>
+                  <th style={{ width: 260 }}>Auszahlungsquote verwendet (%)</th>
                   <th style={{ width: 210 }}>Einzahlungen (EUR)</th>
                   <th style={{ width: 130 }}>Aktion</th>
                 </tr>
@@ -1565,12 +1569,21 @@ export default function InputsModule(): JSX.Element {
                         </div>
                       </td>
                       <td>
+                        <Text>{formatFactor(row.calibrationFactor)}</Text>
+                      </td>
+                      <td>
                         <Text>{formatNumber(row.calibratedRevenue, 2)}</Text>
                       </td>
                       <td>
                         <Space direction="vertical" size={4}>
                           <Text strong>{formatNumber(row.usedRevenue, 2)}</Text>
                           <Tag style={{ marginRight: 0 }}>{usedRevenueSourceLabel(row.usedRevenueSource)}</Tag>
+                        </Space>
+                      </td>
+                      <td>
+                        <Space direction="vertical" size={4}>
+                          <Text strong>{formatNumber(row.usedQuote, 2)}</Text>
+                          <Tag style={{ marginRight: 0 }}>{usedQuoteSourceLabel(row.usedQuoteSource)}</Tag>
                         </Space>
                       </td>
                       <td>
