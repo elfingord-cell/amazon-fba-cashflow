@@ -1,5 +1,5 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -227,31 +227,11 @@ function applySandboxCalculationOverrides(
 
   forecastSettings.useForecast = true;
   settings.cashInMode = "basis";
+  settings.cashInQuoteMode = options.quoteMode;
   settings.cashInCalibrationEnabled = options.calibrationEnabled;
   settings.cashInRevenueBasisMode = options.revenueBasisMode;
   settings.cashInRecommendationSeasonalityEnabled = true;
   settings.cashInRecommendationIgnoreQ4 = false;
-
-  if (options.revenueBasisMode === "forecast_direct" && Array.isArray(next.incomings)) {
-    next.incomings = (next.incomings as unknown[]).map((entry) => {
-      if (!entry || typeof entry !== "object") return entry;
-      return {
-        ...(entry as Record<string, unknown>),
-        source: "forecast",
-        revenueEur: null,
-      };
-    });
-  }
-
-  if (options.quoteMode === "recommendation" && Array.isArray(next.incomings)) {
-    next.incomings = (next.incomings as unknown[]).map((entry) => {
-      if (!entry || typeof entry !== "object") return entry;
-      return {
-        ...(entry as Record<string, unknown>),
-        payoutPct: null,
-      };
-    });
-  }
 
   return next;
 }
@@ -312,34 +292,30 @@ function buildSnapshotByMonth(report: SeriesResult): Map<string, MonthMetaSnapsh
 }
 
 export default function SandboxModule(): JSX.Element {
-  const { state, loading, error, saveWith } = useWorkspaceState();
+  const { state, loading, error } = useWorkspaceState();
 
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
-  const calibrationEnabled = settings.cashInCalibrationEnabled !== false;
+  const globalCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const methodikRevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
     ? "forecast_direct"
     : DEFAULT_REVENUE_MODE;
-  const quoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
-  const revenueCalibrationMode: RevenueCalibrationMode = calibrationEnabled ? "calibrated" : "forecast";
+  const globalQuoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
+  const [sandboxRevenueCalibrationMode, setSandboxRevenueCalibrationMode] = useState<RevenueCalibrationMode>(
+    globalCalibrationEnabled ? "calibrated" : "forecast",
+  );
+  const [sandboxQuoteMode, setSandboxQuoteMode] = useState<CashInQuoteMode>(globalQuoteMode);
   const [tableFocus, setTableFocus] = useState<SandboxTableFocus>("payout");
+  const calibrationEnabled = sandboxRevenueCalibrationMode === "calibrated";
 
-  const persistSandboxCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
-    await saveWith((current) => {
-      const next = structuredClone(current);
-      if (!next.settings || typeof next.settings !== "object") {
-        next.settings = {};
-      }
-      const settingsState = next.settings as Record<string, unknown>;
-      next.settings = {
-        ...settingsState,
-        ...patch,
-        lastUpdatedAt: new Date().toISOString(),
-      };
-      return next;
-    }, "v2:sandbox:cashin-controls");
-  }, [saveWith]);
+  useEffect(() => {
+    setSandboxRevenueCalibrationMode(globalCalibrationEnabled ? "calibrated" : "forecast");
+  }, [globalCalibrationEnabled]);
+
+  useEffect(() => {
+    setSandboxQuoteMode(globalQuoteMode);
+  }, [globalQuoteMode]);
 
   const stateObject = state as unknown as Record<string, unknown>;
 
@@ -351,8 +327,8 @@ export default function SandboxModule(): JSX.Element {
 
   const scenarioSandbox = useMemo<SandboxScenario>(() => ({
     ...scenarioBase,
-    quoteMode,
-  }), [quoteMode, scenarioBase]);
+    quoteMode: sandboxQuoteMode,
+  }), [sandboxQuoteMode, scenarioBase]);
 
   const scenarioRecommendation = useMemo<SandboxScenario>(() => ({
     ...scenarioBase,
@@ -361,13 +337,13 @@ export default function SandboxModule(): JSX.Element {
   const scenarioRevenueForecast = useMemo<SandboxScenario>(() => ({
     revenueBasisMode: methodikRevenueBasisMode,
     calibrationEnabled: false,
-    quoteMode,
-  }), [methodikRevenueBasisMode, quoteMode]);
+    quoteMode: sandboxQuoteMode,
+  }), [methodikRevenueBasisMode, sandboxQuoteMode]);
   const scenarioRevenueCalibrated = useMemo<SandboxScenario>(() => ({
     revenueBasisMode: methodikRevenueBasisMode,
     calibrationEnabled: true,
-    quoteMode,
-  }), [methodikRevenueBasisMode, quoteMode]);
+    quoteMode: sandboxQuoteMode,
+  }), [methodikRevenueBasisMode, sandboxQuoteMode]);
 
   const baseReport = useMemo(
     () => computeSeries(applySandboxCalculationOverrides(stateObject, scenarioBase)) as SeriesResult,
@@ -441,13 +417,13 @@ export default function SandboxModule(): JSX.Element {
       const safetyMarginPct = toFiniteOrNull(recommendationSnapshot?.recommendationSafetyMarginPct)
         ?? toFiniteOrNull(recommendationSnapshot?.recommendationRiskAdjustmentPct);
       const activeQuote = toFiniteOrNull(sandboxSnapshot?.payoutPct)
-        ?? (quoteMode === "manual" ? manualQuote : recommendedQuote);
+        ?? (sandboxQuoteMode === "manual" ? manualQuote : recommendedQuote);
       const forecastRevenue = toFiniteOrNull(forecastSnapshot?.appliedRevenue)
         ?? toFiniteOrNull(forecastSnapshot?.forecastRevenueRaw);
       const calibratedRevenue = toFiniteOrNull(calibratedSnapshot?.appliedRevenue)
         ?? toFiniteOrNull(calibratedSnapshot?.forecastRevenueRaw);
       const activeRevenue = toFiniteOrNull(sandboxSnapshot?.appliedRevenue)
-        ?? (revenueCalibrationMode === "calibrated" ? calibratedRevenue : forecastRevenue);
+        ?? (sandboxRevenueCalibrationMode === "calibrated" ? calibratedRevenue : forecastRevenue);
 
       return {
         key: month,
@@ -482,10 +458,10 @@ export default function SandboxModule(): JSX.Element {
     baseByMonth,
     manualQuoteByMonth,
     months,
-    quoteMode,
+    sandboxQuoteMode,
     recommendationByMonth,
     revenueCalibratedByMonth,
-    revenueCalibrationMode,
+    sandboxRevenueCalibrationMode,
     revenueForecastByMonth,
     sandboxByMonth,
   ]);
@@ -776,7 +752,7 @@ export default function SandboxModule(): JSX.Element {
   }, []);
   const columns = tableFocus === "revenue" ? revenueColumns : payoutColumns;
 
-  const scenarioText = quoteMode === "manual"
+  const scenarioText = sandboxQuoteMode === "manual"
     ? "Base Case aktiv: Auszahlungsquote = Manuell."
     : "Vergleich aktiv: Auszahlungsquote = Empfohlen (Plan).";
   const deltaHintText = tableFocus === "revenue"
@@ -816,12 +792,10 @@ export default function SandboxModule(): JSX.Element {
             </Space>
             <Segmented
               block
-              value={revenueCalibrationMode}
+              value={sandboxRevenueCalibrationMode}
               onChange={(value) => {
                 const nextMode = String(value) === "forecast" ? "forecast" : "calibrated";
-                void persistSandboxCashInSettings({
-                  cashInCalibrationEnabled: nextMode === "calibrated",
-                }).catch(() => {});
+                setSandboxRevenueCalibrationMode(nextMode);
               }}
               options={[
                 { label: "Forecast", value: "forecast" },
@@ -839,12 +813,10 @@ export default function SandboxModule(): JSX.Element {
             </Space>
             <Segmented
               block
-              value={quoteMode}
+              value={sandboxQuoteMode}
               onChange={(value) => {
                 const nextMode = String(value) === "recommendation" ? "recommendation" : "manual";
-                void persistSandboxCashInSettings({
-                  cashInQuoteMode: nextMode,
-                }).catch(() => {});
+                setSandboxQuoteMode(nextMode);
               }}
               options={[
                 { label: "Manuell", value: "manual" },

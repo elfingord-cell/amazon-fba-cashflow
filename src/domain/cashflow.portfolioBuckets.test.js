@@ -81,7 +81,7 @@ test("includeInForecast gates forecast payout and PO events", () => {
 
   const salesEntries = row.entries.filter((entry) => entry.kind === "sales-payout" && entry.source === "sales");
   assert.equal(salesEntries.length, 1);
-  assert.equal(salesEntries[0].amount, 500);
+  assert.equal(salesEntries[0].amount, 300);
   assert.equal(salesEntries[0].portfolioBucket, PORTFOLIO_BUCKET.PLAN);
 
   const poEntries = row.entries.filter((entry) => entry.source === "po");
@@ -203,4 +203,3 @@ test("launch costs are emitted as outflows in product bucket and respect include
   assert.equal(launchEntries[0].amount, 300);
   assert.equal(launchEntries[0].portfolioBucket, PORTFOLIO_BUCKET.IDEAS);
 });
-

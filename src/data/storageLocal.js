@@ -37,6 +37,7 @@ const defaults = {
     horizonMonths: 18,
     cashInMode: "basis",
     cashInQuoteMode: "manual",
+    cashInRevenueBasisMode: "hybrid",
     cashInCalibrationEnabled: true,
     cashInCalibrationHorizonMonths: 6,
     cashInCalibrationMode: "basis",
@@ -248,6 +249,10 @@ function ensureGlobalSettings(state) {
   settings.cashInMode = cashInMode === "conservative" ? "conservative" : "basis";
   const cashInQuoteMode = String(settings.cashInQuoteMode || defaults.settings.cashInQuoteMode || "manual").trim().toLowerCase();
   settings.cashInQuoteMode = cashInQuoteMode === "recommendation" ? "recommendation" : "manual";
+  const cashInRevenueBasisMode = String(
+    settings.cashInRevenueBasisMode || defaults.settings.cashInRevenueBasisMode || "hybrid",
+  ).trim().toLowerCase();
+  settings.cashInRevenueBasisMode = cashInRevenueBasisMode === "forecast_direct" ? "forecast_direct" : "hybrid";
   settings.cashInCalibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const calibrationHorizon = Math.round(Number(
     settings.cashInCalibrationHorizonMonths ?? defaults.settings.cashInCalibrationHorizonMonths,

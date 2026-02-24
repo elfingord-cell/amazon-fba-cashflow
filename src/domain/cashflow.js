@@ -54,6 +54,18 @@ function normalizeCashInMode(value) {
   return String(value || '').trim().toLowerCase() === 'conservative' ? 'conservative' : 'basis';
 }
 
+function normalizeCashInQuoteMode(value) {
+  return String(value || '').trim().toLowerCase() === 'recommendation'
+    ? 'recommendation'
+    : 'manual';
+}
+
+function normalizeCashInRevenueBasisMode(value) {
+  return String(value || '').trim().toLowerCase() === 'forecast_direct'
+    ? 'forecast_direct'
+    : 'hybrid';
+}
+
 function formatTooltipCurrency(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '0 €';
@@ -1354,6 +1366,8 @@ export function computeSeries(state) {
   const currentMonth = toMonthKey(today);
   const currentMonthIdx = monthIndex(currentMonth);
   const cashInMode = normalizeCashInMode(s?.settings?.cashInMode);
+  const cashInQuoteMode = normalizeCashInQuoteMode(s?.settings?.cashInQuoteMode);
+  const cashInRevenueBasisMode = normalizeCashInRevenueBasisMode(s?.settings?.cashInRevenueBasisMode);
   const legacyIgnoreQ4 = s?.settings?.cashInRecommendationIgnoreQ4 === true;
   const cashInSeasonalityEnabled = s?.settings?.cashInRecommendationSeasonalityEnabled == null
     ? !legacyIgnoreQ4
@@ -1437,7 +1451,10 @@ export function computeSeries(state) {
     const incomingSource = String(incoming?.source || '').trim().toLowerCase();
     const hasManualRevenueInput = incoming?.revenueEur != null && String(incoming.revenueEur).trim() !== '';
     const manualRevenue = hasManualRevenueInput ? parseEuro(incoming.revenueEur) : null;
-    const hasManualRevenueOverride = forecastEnabled && incomingSource === 'manual' && Number.isFinite(manualRevenue);
+    const hasManualRevenueOverride = forecastEnabled
+      && cashInRevenueBasisMode === 'hybrid'
+      && incomingSource === 'manual'
+      && Number.isFinite(manualRevenue);
     const hasManualPayoutInput = incoming?.payoutPct != null && String(incoming.payoutPct).trim() !== '';
     const manualPayoutPct = hasManualPayoutInput
       ? parsePayoutPctInput(incoming.payoutPct)
@@ -1453,8 +1470,12 @@ export function computeSeries(state) {
     const recommendationQuotePct = Number.isFinite(recommendationQuoteRaw)
       ? clampPct(recommendationQuoteRaw, cashInQuoteMinPct, cashInQuoteMaxPct)
       : recommendationBaselineNormalPct;
-    const quoteSource = hasManualPayoutInput ? 'manual' : 'recommendation';
-    const basePayoutPctRaw = hasManualPayoutInput ? manualPayoutPct : recommendationQuotePct;
+    const quoteSource = cashInQuoteMode === 'recommendation'
+      ? 'recommendation'
+      : (hasManualPayoutInput ? 'manual' : 'recommendation');
+    const basePayoutPctRaw = quoteSource === 'manual'
+      ? manualPayoutPct
+      : recommendationQuotePct;
     const basePayoutPct = clampPct(basePayoutPctRaw, cashInQuoteMinPct, cashInQuoteMaxPct);
     const calibration = calibrationProfile.byMonth?.[m] || {
       factor: 1,
@@ -1509,7 +1530,7 @@ export function computeSeries(state) {
     const isFutureMonth = horizonFromCurrentMonth > 0;
     const payoutPct = clampPct(basePayoutPct, cashInQuoteMinPct, cashInQuoteMaxPct);
     const planRevenueAfterCalibration = forecastEnabled
-      ? (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw)
+      ? (hasManualRevenueOverride ? Number(manualRevenue) : (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw))
       : revenue;
     const forecastRevenueForTooltip = forecastEnabled ? forecastRevenueRaw : revenue;
     const recommendationCapsApplied = Array.isArray(recommendationByMonth?.capsApplied)
@@ -1561,7 +1582,9 @@ export function computeSeries(state) {
       manualPayoutPct,
       quoteSource,
       quoteLabel,
+      quoteMode: cashInQuoteMode,
       revenueSource,
+      revenueBasisMode: cashInRevenueBasisMode,
       appliedRevenue: revenue,
       forecastRevenueRaw,
       calibrationMode: cashInCalibrationMode,
@@ -1589,8 +1612,18 @@ export function computeSeries(state) {
       quoteMaxPct: cashInQuoteMaxPct,
     };
     const date = monthEndFromKey(m);
-    if (!forecastEnabled || hasManualRevenueOverride) {
-      const amt = revenue * (payoutPct / 100);
+    const pushSalesEntry = ({
+      id,
+      label,
+      source,
+      sourceTab,
+      component,
+      componentRevenueRaw,
+      portfolioBucket,
+      componentRevenue,
+    }) => {
+      const amt = Number(componentRevenue || 0) * (payoutPct / 100);
+      if (Math.abs(amt) <= 0.000001) return;
       const tooltip = buildCashInTooltip({
         forecastRevenue: forecastRevenueForTooltip,
         calibrationFactorApplied,
@@ -1603,113 +1636,153 @@ export function computeSeries(state) {
         cashInMeta: cashInMetaByMonth[m],
       });
       pushEntry(m, baseEntry({
-        id: `sales-${m}`,
+        id,
         direction: amt >= 0 ? 'in' : 'out',
         amount: Math.abs(amt),
-        label: 'Amazon Payout',
+        label,
         month: m,
         date: isoDate(date),
         kind: 'sales-payout',
         group: amt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
-        source: 'sales',
-        sourceTab: '#eingaben',
+        source,
+        sourceTab,
         tooltip,
-        portfolioBucket: null,
+        portfolioBucket,
         meta: {
           cashIn: {
             ...cashInMetaByMonth[m],
-            revenue,
+            revenue: Number(componentRevenue || 0),
             payoutAmount: amt,
+            component,
+            componentRevenueRaw: Number(componentRevenueRaw || 0),
+            portfolioBucket,
           },
         },
       }, { auto: false }));
+    };
+
+    if (!forecastEnabled) {
+      pushSalesEntry({
+        id: `sales-manual-${m}`,
+        label: 'Amazon Payout',
+        source: 'sales',
+        sourceTab: '#eingaben',
+        component: 'manual_no_forecast',
+        componentRevenueRaw: revenue,
+        portfolioBucket: PORTFOLIO_BUCKET.CORE,
+        componentRevenue: revenue,
+      });
       return;
     }
 
-    PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
-      const liveRevenueRaw = forecastMapLiveByBucket[bucketName]?.[m] || 0;
-      const liveRevenue = liveRevenueRaw * calibrationFactorApplied;
-      const liveAmt = liveRevenue * (payoutPct / 100);
-      if (Math.abs(liveAmt) > 0.000001) {
-        const tooltip = buildCashInTooltip({
-          forecastRevenue: forecastRevenueForTooltip,
-          calibrationFactorApplied,
-          planRevenue: planRevenueAfterCalibration,
-          payoutPct,
-          payoutAmount: liveAmt,
-          quoteSource,
-          recommendationSourceTag,
-          recommendationExplanation,
-          cashInMeta: cashInMetaByMonth[m],
+    const salesComponents = [];
+    if (hasManualRevenueOverride) {
+      const weightedComponents = [];
+      PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
+        const liveRevenueRaw = Number(forecastMapLiveByBucket[bucketName]?.[m] || 0);
+        if (liveRevenueRaw > 0) {
+          weightedComponents.push({
+            bucketName,
+            source: 'sales',
+            sourceTab: '#eingaben',
+            component: 'live',
+            weight: liveRevenueRaw,
+            componentRevenueRaw: liveRevenueRaw,
+            label: `Amazon Payout (Manuell-Override - Live/CSV · ${bucketName})`,
+          });
+        }
+        const planRevenueRaw = Number(forecastMapPlanByBucket[bucketName]?.[m] || 0);
+        if (planRevenueRaw > 0) {
+          weightedComponents.push({
+            bucketName,
+            source: 'sales-plan',
+            sourceTab: '#eingaben',
+            component: 'plan',
+            weight: planRevenueRaw,
+            componentRevenueRaw: planRevenueRaw,
+            label: `Amazon Payout (Manuell-Override - Plan · ${bucketName})`,
+          });
+        }
+      });
+      const totalWeight = weightedComponents.reduce((sum, component) => sum + Number(component.weight || 0), 0);
+      if (totalWeight > 0) {
+        weightedComponents.forEach((component) => {
+          salesComponents.push({
+            ...component,
+            componentRevenue: (revenue * Number(component.weight || 0)) / totalWeight,
+          });
         });
-        pushEntry(m, baseEntry({
-          id: `sales-live-${bucketName}-${m}`,
-          direction: liveAmt >= 0 ? 'in' : 'out',
-          amount: Math.abs(liveAmt),
-          label: `Amazon Payout (Prognose - Live/CSV · ${bucketName})`,
-          month: m,
-          date: isoDate(date),
-          kind: 'sales-payout',
-          group: liveAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
+        const allocatedRevenue = salesComponents.reduce((sum, component) => sum + Number(component.componentRevenue || 0), 0);
+        const residual = Number(revenue || 0) - allocatedRevenue;
+        const lastComponent = salesComponents[salesComponents.length - 1];
+        if (lastComponent) {
+          lastComponent.componentRevenue = Number(lastComponent.componentRevenue || 0) + residual;
+        }
+      } else {
+        salesComponents.push({
+          bucketName: PORTFOLIO_BUCKET.CORE,
           source: 'sales',
-          sourceTab: '#forecast',
-          tooltip,
-          portfolioBucket: bucketName,
-          meta: {
-            cashIn: {
-              ...cashInMetaByMonth[m],
-              revenue: liveRevenue,
-              payoutAmount: liveAmt,
-              component: 'live',
-              componentRevenueRaw: liveRevenueRaw,
-              portfolioBucket: bucketName,
-            },
-          },
-        }, { auto: false }));
-      }
-    });
-
-    PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
-      const planRevenueRaw = forecastMapPlanByBucket[bucketName]?.[m] || 0;
-      const planRevenue = planRevenueRaw * calibrationFactorApplied;
-      const planAmt = planRevenue * (payoutPct / 100);
-      if (Math.abs(planAmt) > 0.000001) {
-        const tooltip = buildCashInTooltip({
-          forecastRevenue: forecastRevenueForTooltip,
-          calibrationFactorApplied,
-          planRevenue: planRevenueAfterCalibration,
-          payoutPct,
-          payoutAmount: planAmt,
-          quoteSource,
-          recommendationSourceTag,
-          recommendationExplanation,
-          cashInMeta: cashInMetaByMonth[m],
+          sourceTab: '#eingaben',
+          component: 'manual_fallback',
+          componentRevenueRaw: revenue,
+          componentRevenue: revenue,
+          label: 'Amazon Payout (Manuell-Override · Fallback)',
         });
-        pushEntry(m, baseEntry({
-          id: `sales-plan-${bucketName}-${m}`,
-          direction: planAmt >= 0 ? 'in' : 'out',
-          amount: Math.abs(planAmt),
-          label: `Amazon Payout (Prognose - Plan · ${bucketName})`,
-          month: m,
-          date: isoDate(date),
-          kind: 'sales-payout',
-          group: planAmt >= 0 ? 'Sales × Payout' : 'Extras (Out)',
-          source: 'sales-plan',
-          sourceTab: '#forecast',
-          tooltip,
-          portfolioBucket: bucketName,
-          meta: {
-            cashIn: {
-              ...cashInMetaByMonth[m],
-              revenue: planRevenue,
-              payoutAmount: planAmt,
-              component: 'plan',
-              componentRevenueRaw: planRevenueRaw,
-              portfolioBucket: bucketName,
-            },
-          },
-        }, { auto: false }));
       }
+    } else {
+      PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
+        const liveRevenueRaw = Number(forecastMapLiveByBucket[bucketName]?.[m] || 0);
+        const liveRevenue = liveRevenueRaw * calibrationFactorApplied;
+        if (Math.abs(liveRevenue) > 0.000001) {
+          salesComponents.push({
+            bucketName,
+            source: 'sales',
+            sourceTab: '#forecast',
+            component: 'live',
+            componentRevenueRaw: liveRevenueRaw,
+            componentRevenue: liveRevenue,
+            label: `Amazon Payout (Prognose - Live/CSV · ${bucketName})`,
+          });
+        }
+        const planRevenueRaw = Number(forecastMapPlanByBucket[bucketName]?.[m] || 0);
+        const planRevenue = planRevenueRaw * calibrationFactorApplied;
+        if (Math.abs(planRevenue) > 0.000001) {
+          salesComponents.push({
+            bucketName,
+            source: 'sales-plan',
+            sourceTab: '#forecast',
+            component: 'plan',
+            componentRevenueRaw: planRevenueRaw,
+            componentRevenue: planRevenue,
+            label: `Amazon Payout (Prognose - Plan · ${bucketName})`,
+          });
+        }
+      });
+    }
+
+    if (!salesComponents.length && Math.abs(Number(revenue || 0)) > 0.000001) {
+      salesComponents.push({
+        bucketName: PORTFOLIO_BUCKET.CORE,
+        source: 'sales',
+        sourceTab: forecastEnabled ? '#forecast' : '#eingaben',
+        component: 'fallback',
+        componentRevenueRaw: revenue,
+        componentRevenue: revenue,
+        label: 'Amazon Payout',
+      });
+    }
+
+    salesComponents.forEach((component, index) => {
+      pushSalesEntry({
+        id: `sales-${component.component}-${component.bucketName}-${m}-${index + 1}`,
+        label: component.label,
+        source: component.source,
+        sourceTab: component.sourceTab,
+        component: component.component,
+        componentRevenueRaw: component.componentRevenueRaw,
+        portfolioBucket: component.bucketName,
+        componentRevenue: component.componentRevenue,
+      });
     });
   });
 

@@ -235,29 +235,11 @@ function applyDashboardCalculationOverrides(
   // Dashboard cockpit compares forecast-based variants; keep forecast active in simulation.
   forecastSettings.useForecast = true;
   settings.cashInMode = "basis";
+  settings.cashInQuoteMode = options.quoteMode;
   settings.cashInCalibrationEnabled = options.calibrationEnabled;
   settings.cashInRevenueBasisMode = options.revenueBasisMode;
   settings.cashInRecommendationSeasonalityEnabled = true;
   settings.cashInRecommendationIgnoreQ4 = false;
-  if (options.revenueBasisMode === "forecast_direct" && Array.isArray(next.incomings)) {
-    next.incomings = (next.incomings as unknown[]).map((entry) => {
-      if (!entry || typeof entry !== "object") return entry;
-      return {
-        ...(entry as Record<string, unknown>),
-        source: "forecast",
-        revenueEur: null,
-      };
-    });
-  }
-  if (options.quoteMode === "recommendation" && Array.isArray(next.incomings)) {
-    next.incomings = (next.incomings as unknown[]).map((entry) => {
-      if (!entry || typeof entry !== "object") return entry;
-      return {
-        ...(entry as Record<string, unknown>),
-        payoutPct: null,
-      };
-    });
-  }
   return next;
 }
 
@@ -1323,7 +1305,6 @@ export default function DashboardModule(): JSX.Element {
           smooth: true,
           yAxisIndex: 1,
           connectNulls: true,
-          showSymbol: false,
           showSymbol: true,
           showAllSymbol: true,
           symbol: "emptyCircle",

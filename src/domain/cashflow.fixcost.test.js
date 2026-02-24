@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { computeSeries, expandFixcostInstances } from "./cashflow.js";
 import { CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL } from "./cashInRules.js";
+import { PORTFOLIO_BUCKET } from "./portfolioBuckets.js";
 import { createEmptyState, saveState, STORAGE_KEY } from "../data/storageLocal.js";
 
 const store = new Map();
@@ -689,4 +690,264 @@ test("computeSeries uses manual normal baseline when no IST quotes exist", () =>
   assert.ok(Math.abs(salesPayoutAmountForMonth(report, next1) - (Number(next1Meta.payoutPct) * 10)) < 0.000001);
   assert.ok(Math.abs(salesPayoutAmountForMonth(report, next2) - (Number(next2Meta.payoutPct) * 10)) < 0.000001);
   assert.notEqual(Number(next1Meta.payoutPct), Number(next2Meta.payoutPct));
+});
+
+test("computeSeries honors global quote mode recommendation and ignores manual payout input", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const prev1 = addMonths(currentMonth, -1);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "recommendation",
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [
+      { month: currentMonth, revenueEur: "1.000,00", payoutPct: "60", source: "manual" },
+    ],
+    monthlyActuals: {
+      [prev1]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  const meta = salesCashInMetaForMonth(report, currentMonth);
+  assert.ok(meta);
+  assert.equal(meta.quoteSource, "recommendation");
+  const expectedPct = Math.min(
+    Number(meta.quoteMaxPct),
+    Math.max(
+      Number(meta.quoteMinPct),
+      Number(meta.recommendationLevelPct) + Number(meta.recommendationSeasonalityPct) - Number(meta.recommendationSafetyMarginPct),
+    ),
+  );
+  assert.ok(Math.abs(Number(meta.payoutPct) - expectedPct) < 0.000001);
+  assert.ok(Math.abs(salesPayoutAmountForMonth(report, currentMonth) - (Number(meta.appliedRevenue) * Number(meta.payoutPct) / 100)) < 0.000001);
+});
+
+test("computeSeries honors global revenue basis forecast_direct and ignores manual revenue override", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "forecast_direct",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-A": {
+          [currentMonth]: { revenueEur: 1000 },
+        },
+      },
+    },
+    incomings: [
+      { month: currentMonth, revenueEur: "5.000,00", payoutPct: "50", source: "manual" },
+    ],
+    products: [
+      {
+        sku: "SKU-A",
+        alias: "A",
+        status: "active",
+        includeInForecast: true,
+      },
+    ],
+    monthlyActuals: {},
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  const meta = salesCashInMetaForMonth(report, currentMonth);
+  assert.ok(meta);
+  assert.equal(meta.revenueSource, "forecast_raw");
+  assert.equal(Number(meta.appliedRevenue), 1000);
+  assert.equal(salesPayoutAmountForMonth(report, currentMonth), 500);
+});
+
+test("computeSeries splits manual revenue override by forecast bucket shares in hybrid mode", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-CORE": {
+          [currentMonth]: { revenueEur: 600 },
+        },
+        "SKU-PLAN": {
+          [currentMonth]: { revenueEur: 400 },
+        },
+      },
+    },
+    incomings: [
+      { month: currentMonth, revenueEur: "2.000,00", payoutPct: "50", source: "manual" },
+    ],
+    products: [
+      {
+        sku: "SKU-CORE",
+        alias: "Core",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: "core",
+      },
+      {
+        sku: "SKU-PLAN",
+        alias: "Plan",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: "plan",
+      },
+    ],
+    monthlyActuals: {},
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  const monthRow = report.series.find((row) => row.month === currentMonth);
+  assert.ok(monthRow);
+  const salesEntries = (monthRow.entries || []).filter((entry) => entry.kind === "sales-payout");
+  assert.ok(salesEntries.length >= 2);
+  assert.equal(salesEntries.some((entry) => entry.portfolioBucket == null), false);
+  const totalPayout = salesEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  assert.ok(Math.abs(totalPayout - 1000) < 0.000001);
+  const payoutByBucket = salesEntries.reduce((acc, entry) => {
+    const bucket = String(entry.portfolioBucket || "");
+    acc[bucket] = Number(acc[bucket] || 0) + Number(entry.amount || 0);
+    return acc;
+  }, {});
+  assert.ok(Math.abs(Number(payoutByBucket[PORTFOLIO_BUCKET.CORE] || 0) - 600) < 0.01);
+  assert.ok(Math.abs(Number(payoutByBucket[PORTFOLIO_BUCKET.PLAN] || 0) - 400) < 0.01);
+  const meta = salesEntries[0]?.meta?.cashIn;
+  assert.ok(meta);
+  assert.equal(meta.revenueSource, "manual_override");
+  assert.ok(Math.abs(Number(meta.appliedRevenue) - 2000) < 0.000001);
+});
+
+test("computeSeries uses core fallback bucket when manual override has no forecast split basis", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {},
+    },
+    incomings: [
+      { month: currentMonth, revenueEur: "2.000,00", payoutPct: "50", source: "manual" },
+    ],
+    products: [],
+    monthlyActuals: {},
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  const monthRow = report.series.find((row) => row.month === currentMonth);
+  assert.ok(monthRow);
+  const salesEntries = (monthRow.entries || []).filter((entry) => entry.kind === "sales-payout");
+  assert.equal(salesEntries.length, 1);
+  assert.equal(salesEntries[0].portfolioBucket, PORTFOLIO_BUCKET.CORE);
+  assert.ok(Math.abs(Number(salesEntries[0].amount || 0) - 1000) < 0.000001);
+});
+
+test("computeSeries keeps monthly amazon payout invariant: sum(entries) == appliedRevenue * payoutPct", () => {
+  const currentMonth = monthKeyFromDate(new Date());
+  const nextMonth = addMonths(currentMonth, 1);
+  const state = {
+    settings: {
+      startMonth: currentMonth,
+      horizonMonths: 2,
+      openingBalance: 0,
+      cashInMode: "basis",
+      cashInQuoteMode: "recommendation",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: true,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-CORE": {
+          [currentMonth]: { revenueEur: 800 },
+          [nextMonth]: { revenueEur: 1000 },
+        },
+        "SKU-PLAN": {
+          [currentMonth]: { revenueEur: 200 },
+          [nextMonth]: { revenueEur: 500 },
+        },
+      },
+    },
+    incomings: [
+      { month: currentMonth, revenueEur: "2.200,00", payoutPct: "59", source: "manual" },
+      { month: nextMonth, revenueEur: null, payoutPct: "58", source: "forecast" },
+    ],
+    products: [
+      {
+        sku: "SKU-CORE",
+        alias: "Core",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: "core",
+      },
+      {
+        sku: "SKU-PLAN",
+        alias: "Plan",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: "plan",
+      },
+    ],
+    monthlyActuals: {
+      [addMonths(currentMonth, -1)]: { realRevenueEUR: 10000, realPayoutRatePct: 52 },
+      [addMonths(currentMonth, -2)]: { realRevenueEUR: 9000, realPayoutRatePct: 54 },
+      [addMonths(currentMonth, -3)]: { realRevenueEUR: 8000, realPayoutRatePct: 53 },
+    },
+    extras: [],
+    dividends: [],
+    pos: [],
+    fos: [],
+  };
+
+  const report = computeSeries(state);
+  [currentMonth, nextMonth].forEach((month) => {
+    const salesEntries = salesEntriesForMonth(report, month);
+    assert.ok(salesEntries.length > 0);
+    const meta = salesEntries[0]?.meta?.cashIn;
+    assert.ok(meta);
+    const totalPayout = salesEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+    const expected = Number(meta.appliedRevenue || 0) * Number(meta.payoutPct || 0) / 100;
+    assert.ok(Math.abs(totalPayout - expected) < 0.01);
+  });
 });
