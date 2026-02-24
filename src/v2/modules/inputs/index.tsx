@@ -1503,13 +1503,13 @@ export default function InputsModule(): JSX.Element {
           ]}
         />
         <StatsTableShell>
-          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: tableFocus === "revenue" ? 1860 : 1320 }}>
+          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: tableFocus === "revenue" ? 1750 : 1320 }}>
             <thead>
               {tableFocus === "revenue" ? (
                 <tr>
                   <th style={{ width: 130 }}>Monat</th>
                   <th style={{ width: 190 }}>Umsatz Forecast (EUR)</th>
-                  <th style={{ width: 280 }}>Umsatz Manuell (EUR)</th>
+                  <th style={{ width: 168 }}>Umsatz Manuell (EUR)</th>
                   <th style={{ width: 170 }}>Kalibrierungsfaktor</th>
                   <th style={{ width: 190 }}>Umsatz Kalibriert (EUR)</th>
                   <th style={{ width: 250 }}>Umsatz verwendet (EUR)</th>
@@ -1531,8 +1531,31 @@ export default function InputsModule(): JSX.Element {
               {monthlyMatrixRows.map((row) => (
                 <tr key={row.month}>
                   <td>
-                    <Text strong>{row.monthLabel}</Text>
-                    <div><Text type="secondary">{row.month}</Text></div>
+                    {tableFocus === "revenue" ? (
+                      <Tooltip
+                        placement="right"
+                        title={(
+                          <Space direction="vertical" size={0}>
+                            <Text style={{ color: "white" }}>
+                              Umsatz (Absatzprognose): {formatNumber(row.forecastRevenue, 2)} EUR
+                            </Text>
+                            <Text style={{ color: "white" }}>
+                              Einzahlung (Dashboard): {formatNumber(row.usedPayout, 2)} EUR
+                            </Text>
+                          </Space>
+                        )}
+                      >
+                        <div style={{ display: "inline-block", cursor: "help" }}>
+                          <Text strong>{row.monthLabel}</Text>
+                          <div><Text type="secondary">{row.month}</Text></div>
+                        </div>
+                      </Tooltip>
+                    ) : (
+                      <>
+                        <Text strong>{row.monthLabel}</Text>
+                        <div><Text type="secondary">{row.month}</Text></div>
+                      </>
+                    )}
                   </td>
                   {tableFocus === "revenue" ? (
                     <>
