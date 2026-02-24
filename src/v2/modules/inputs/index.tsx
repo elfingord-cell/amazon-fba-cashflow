@@ -1562,9 +1562,7 @@ export default function InputsModule(): JSX.Element {
                               <Tag color="orange" style={{ marginRight: 0 }}>
                                 MANUELL
                               </Tag>
-                            ) : (
-                              <Text type="secondary">Leer = automatisch (Forecast/Kalibrierung)</Text>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       </td>
