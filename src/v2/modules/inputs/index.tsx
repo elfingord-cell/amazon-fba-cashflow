@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Modal,
+  Segmented,
   Space,
   Tag,
   Tooltip,
@@ -22,6 +23,7 @@ import {
   normalizeRevenueCalibrationMode,
   parsePayoutPctInput,
 } from "../../../domain/cashInRules.js";
+import { computeSeries } from "../../../domain/cashflow.js";
 import { addMonths, currentMonthKey, formatMonthLabel, monthRange } from "../../domain/months";
 import {
   buildCategoryLabelMap,
@@ -110,6 +112,29 @@ interface RecommendationByMonthEntry {
   liveSignalWeight?: number;
   liveSignalQuotePct?: number;
   seasonalityEnabled?: boolean;
+}
+
+type CashInQuoteMode = "manual" | "recommendation";
+type CashInRevenueBasisMode = "hybrid" | "forecast_direct";
+type CashInTableFocus = "revenue" | "payout";
+
+interface CashInMonthMatrixRow {
+  rowId: string;
+  month: string;
+  monthLabel: string;
+  forecastRevenue: number;
+  calibratedRevenue: number;
+  manualRevenue: number | null;
+  hasManualRevenue: boolean;
+  manualQuote: number | null;
+  recommendedQuote: number | null;
+  recommendationSourceLabel: string;
+  recommendationTooltip: string;
+  usedRevenue: number | null;
+  usedRevenueSource: string | null;
+  usedQuote: number | null;
+  usedQuoteSource: string | null;
+  usedPayout: number;
 }
 
 function isEditableNode(target: EventTarget | null): boolean {
@@ -220,6 +245,41 @@ function normalizePayoutInput(value: unknown): number | null {
   const parsed = parsePayoutPctInput(value);
   if (!Number.isFinite(parsed as number)) return null;
   return clampPct(Number(parsed), CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT);
+}
+
+function normalizeCashInQuoteMode(value: unknown): CashInQuoteMode {
+  return String(value || "").trim().toLowerCase() === "recommendation"
+    ? "recommendation"
+    : "manual";
+}
+
+function normalizeCashInRevenueBasisMode(value: unknown): CashInRevenueBasisMode {
+  return String(value || "").trim().toLowerCase() === "forecast_direct"
+    ? "forecast_direct"
+    : "hybrid";
+}
+
+function recommendationSourceLabel(sourceTag: string): string {
+  if (sourceTag === "IST") return "IST";
+  if (sourceTag === "RECOMMENDED_PLAN") return "Empfohlen (Plan)";
+  if (sourceTag === "RECOMMENDED_BASIS") return "Empfohlen (Plan)";
+  if (sourceTag === "RECOMMENDED_CONSERVATIVE") return "Empfohlen (Plan)";
+  if (sourceTag === "PROGNOSE") return "Signal";
+  return "Empfehlung";
+}
+
+function usedRevenueSourceLabel(source: string | null): string {
+  if (source === "manual_override") return "MANUELL";
+  if (source === "manual_no_forecast") return "MANUELL";
+  if (source === "forecast_calibrated") return "FORECAST (KALIBRIERT)";
+  if (source === "forecast_raw") return "FORECAST";
+  return "—";
+}
+
+function usedQuoteSourceLabel(source: string | null): string {
+  if (source === "manual") return "MANUELL";
+  if (source === "recommendation") return "EMPFOHLEN";
+  return "—";
 }
 
 function normalizeNonNegativeInput(value: unknown): number | null {
@@ -357,6 +417,7 @@ export default function InputsModule(): JSX.Element {
   const [historicalImportStartMonth, setHistoricalImportStartMonth] = useState<string>(currentMonthKey());
   const [historicalImportValues, setHistoricalImportValues] = useState<string>("");
   const [historicalImportError, setHistoricalImportError] = useState<string | null>(null);
+  const [tableFocus, setTableFocus] = useState<CashInTableFocus>("revenue");
 
   const autoSaveTimerRef = useRef<number | null>(null);
   const lastSavedHashRef = useRef("");
@@ -369,6 +430,9 @@ export default function InputsModule(): JSX.Element {
   const settingsState = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
+  const globalQuoteMode = normalizeCashInQuoteMode(settingsState.cashInQuoteMode);
+  const globalRevenueBasisMode = normalizeCashInRevenueBasisMode(settingsState.cashInRevenueBasisMode);
+  const globalCalibrationEnabled = settingsState.cashInCalibrationEnabled !== false;
   const forecastState = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
     : {};
@@ -631,7 +695,7 @@ export default function InputsModule(): JSX.Element {
     ?? revenueCalibrationProfile.byMonth?.[currentMonthValue]?.cLiveRaw,
   );
   const currentMonthCalibrationEntry = revenueCalibrationProfile.byMonth?.[currentMonthValue] as Record<string, unknown> | undefined;
-  const currentMonthAppliedFactor = cashInCalibrationEnabled
+  const currentMonthAppliedFactor = globalCalibrationEnabled
     ? Number(currentMonthCalibrationEntry?.factor || 1)
     : 1;
   const currentMonthFactorBasis = Number(currentMonthCalibrationEntry?.factorBasis || 1);
@@ -651,9 +715,9 @@ export default function InputsModule(): JSX.Element {
     : null;
   const currentMonthCalibrationUnusual = Number.isFinite(currentMonthCalibrationRawFactor)
     && (currentMonthCalibrationRawFactor > 1.25 || currentMonthCalibrationRawFactor < 0.5);
-  const currentMonthCalibrationTooltip = currentMonthCalibrationEntry && cashInCalibrationEnabled
+  const currentMonthCalibrationTooltip = currentMonthCalibrationEntry && globalCalibrationEnabled
     ? buildCalibrationMonthTooltip(currentMonthCalibrationEntry, cashInCalibrationMode)
-    : cashInCalibrationEnabled
+    : globalCalibrationEnabled
       ? "Kalibrierfaktor wird berechnet, sobald die Umsatzprognose bis Monatsende im aktuellen Monat gesetzt ist und Forecast-Umsatz > 0 ist."
       : "Kalibrierung ist deaktiviert.";
   const currentMonthProjectedQuotePct = useMemo(() => {
@@ -690,7 +754,7 @@ export default function InputsModule(): JSX.Element {
     sortIncomings(incomings).forEach((row) => {
       const month = String(row.month || "");
       const forecastRevenue = Number(forecastRevenueByMonth.get(month) || 0);
-      const factor = cashInCalibrationEnabled
+      const factor = globalCalibrationEnabled
         ? Number(revenueCalibrationProfile.byMonth?.[month]?.factor || 1)
         : 1;
       const factorApplied = Number.isFinite(factor) ? factor : 1;
@@ -717,15 +781,15 @@ export default function InputsModule(): JSX.Element {
       calibratedPayoutTotal += Number(revenueWithCalibration || 0) * (Number(payoutPct) / 100);
     });
 
-    const revenueDelta = cashInCalibrationEnabled ? (calibratedRevenueTotal - baseRevenueTotal) : 0;
-    const payoutDelta = cashInCalibrationEnabled ? (calibratedPayoutTotal - basePayoutTotal) : 0;
+    const revenueDelta = globalCalibrationEnabled ? (calibratedRevenueTotal - baseRevenueTotal) : 0;
+    const payoutDelta = globalCalibrationEnabled ? (calibratedPayoutTotal - basePayoutTotal) : 0;
     return {
       revenueDelta,
       payoutDelta,
       affectedMonths,
     };
   }, [
-    cashInCalibrationEnabled,
+    globalCalibrationEnabled,
     revenueCalibrationProfile.byMonth,
     forecastRevenueByMonth,
     incomings,
@@ -843,7 +907,6 @@ export default function InputsModule(): JSX.Element {
         openingBalance: Number(snapshot.openingBalance || 0),
         startMonth: snapshot.startMonth,
         horizonMonths: Math.max(1, Math.round(snapshot.horizonMonths || 1)),
-        cashInCalibrationEnabled: snapshot.cashInCalibrationEnabled !== false,
         cashInCalibrationHorizonMonths: normalizeCalibrationHorizonMonths(snapshot.cashInCalibrationHorizonMonths, 6),
         cashInCalibrationMode: normalizeRevenueCalibrationMode(snapshot.cashInCalibrationMode),
         cashInRecommendationIgnoreQ4: snapshot.cashInRecommendationIgnoreQ4 === true,
@@ -976,9 +1039,220 @@ export default function InputsModule(): JSX.Element {
     monthlyActuals,
   ]);
 
-  const incomingRows = useMemo(() => {
-    return syncIncomingsToWindow(incomings, startMonth, horizonMonths);
-  }, [horizonMonths, incomings, startMonth]);
+  const monthlyMatrixRows = useMemo<CashInMonthMatrixRow[]>(() => {
+    const normalizedIncomings = syncIncomingsToWindow(incomings, startMonth, horizonMonths);
+    const nextState = structuredClone(state as unknown as Record<string, unknown>);
+    if (!nextState.settings || typeof nextState.settings !== "object") {
+      nextState.settings = {};
+    }
+    const nextSettings = nextState.settings as Record<string, unknown>;
+    nextSettings.openingBalance = Number(openingBalance || 0);
+    nextSettings.startMonth = startMonth;
+    nextSettings.horizonMonths = Math.max(1, Math.round(horizonMonths || 1));
+    nextSettings.cashInCalibrationHorizonMonths = normalizeCalibrationHorizonMonths(cashInCalibrationHorizonMonths, 6);
+    nextSettings.cashInCalibrationMode = normalizeRevenueCalibrationMode(cashInCalibrationMode);
+    nextSettings.cashInRecommendationIgnoreQ4 = cashInRecommendationIgnoreQ4 === true;
+    nextSettings.cashInRecommendationSeasonalityEnabled = cashInRecommendationIgnoreQ4 !== true;
+    nextSettings.cashInRecommendationBaselineNormalPct = normalizePayoutInput(cashInRecommendationBaselineNormalPct)
+      ?? CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
+    nextSettings.cashInRecommendationBaselineQ4Pct = normalizePayoutInput(cashInRecommendationBaselineQ4Pct);
+    nextSettings.cashInLearning = normalizeLearningPayload(cashInLearningState);
+
+    nextState.incomings = sortIncomings(normalizedIncomings).map((row) => ({
+      id: row.id,
+      month: row.month,
+      revenueEur: toNumber(row.revenueEur),
+      payoutPct: normalizePayoutInput(row.payoutPct),
+      source: row.source,
+      calibrationCutoffDate: row.calibrationCutoffDate || null,
+      calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
+      calibrationPayoutRateToDatePct: normalizeNonNegativeInput(row.calibrationPayoutRateToDatePct),
+      calibrationSellerboardMonthEndEur: normalizeNonNegativeInput(row.calibrationSellerboardMonthEndEur),
+    }));
+
+    const existingMonthly = (
+      nextState.monthlyActuals
+      && typeof nextState.monthlyActuals === "object"
+    ) ? nextState.monthlyActuals as Record<string, Record<string, unknown>> : {};
+    const monthlyObject: Record<string, Record<string, unknown>> = {};
+    monthlyActuals.forEach((row) => {
+      if (!isMonthKey(row.month)) return;
+      const nextMonthly: Record<string, unknown> = (
+        existingMonthly[row.month] && typeof existingMonthly[row.month] === "object"
+          ? { ...existingMonthly[row.month] }
+          : {}
+      );
+      const realRevenue = toNumber(row.realRevenueEUR);
+      const realPayoutRate = toNumber(row.realPayoutRatePct);
+      const realClosing = toNumber(row.realClosingBalanceEUR);
+      if (Number.isFinite(realRevenue as number)) nextMonthly.realRevenueEUR = Number(realRevenue);
+      else delete nextMonthly.realRevenueEUR;
+      if (Number.isFinite(realPayoutRate as number)) nextMonthly.realPayoutRatePct = Number(realPayoutRate);
+      else delete nextMonthly.realPayoutRatePct;
+      if (Number.isFinite(realClosing as number)) nextMonthly.realClosingBalanceEUR = Number(realClosing);
+      else delete nextMonthly.realClosingBalanceEUR;
+      if (Object.keys(nextMonthly).length) {
+        monthlyObject[row.month] = nextMonthly;
+      }
+    });
+    nextState.monthlyActuals = monthlyObject;
+
+    const report = computeSeries(nextState) as { series?: Array<Record<string, unknown>> };
+    const usedByMonth = new Map<string, {
+      usedRevenue: number | null;
+      usedRevenueSource: string | null;
+      usedQuote: number | null;
+      usedQuoteSource: string | null;
+      usedPayout: number;
+    }>();
+    (Array.isArray(report.series) ? report.series : []).forEach((seriesRow) => {
+      const month = String(seriesRow.month || "");
+      if (!month) return;
+      const entries = Array.isArray(seriesRow.entries) ? seriesRow.entries as Array<Record<string, unknown>> : [];
+      const salesEntries = entries.filter((entry) => String(entry.kind || "") === "sales-payout");
+      let firstCashInMeta: Record<string, unknown> | null = null;
+      for (const entry of salesEntries) {
+        const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : null;
+        const cashInMeta = (meta?.cashIn && typeof meta.cashIn === "object") ? meta.cashIn as Record<string, unknown> : null;
+        if (cashInMeta) {
+          firstCashInMeta = cashInMeta;
+          break;
+        }
+      }
+      const usedPayout = salesEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+      usedByMonth.set(month, {
+        usedRevenue: Number.isFinite(Number(firstCashInMeta?.appliedRevenue))
+          ? Number(firstCashInMeta?.appliedRevenue)
+          : null,
+        usedRevenueSource: firstCashInMeta?.revenueSource
+          ? String(firstCashInMeta.revenueSource)
+          : null,
+        usedQuote: Number.isFinite(Number(firstCashInMeta?.payoutPct))
+          ? Number(firstCashInMeta?.payoutPct)
+          : null,
+        usedQuoteSource: firstCashInMeta?.quoteSource
+          ? String(firstCashInMeta.quoteSource)
+          : null,
+        usedPayout: Number.isFinite(usedPayout) ? usedPayout : 0,
+      });
+    });
+
+    return normalizedIncomings.map((row) => {
+      const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
+      const recommendationQuoteRaw = Number(recommendationEntry?.quotePct);
+      const recommendedQuote = Number.isFinite(recommendationQuoteRaw)
+        ? clampPct(recommendationQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
+        : null;
+      const recommendationSourceTag = String(
+        recommendationEntry?.sourceTag
+        || "RECOMMENDED_PLAN",
+      );
+      const recommendationSource = recommendationSourceLabel(recommendationSourceTag);
+      const recommendationTooltip = [
+        `Quelle: ${recommendationSource}`,
+        recommendationEntry?.explanation ? String(recommendationEntry.explanation) : null,
+        `Saisonalität: ${recommendationEntry?.seasonalityEnabled === false ? "aus" : "an"}`,
+      ].filter(Boolean).join(" | ");
+
+      const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
+      const calibrationByMonth = (revenueCalibrationProfile.byMonth?.[row.month] || null) as Record<string, unknown> | null;
+      const factorBasis = Number(calibrationByMonth?.factorBasis || 1);
+      const factorConservative = Number(calibrationByMonth?.factorConservative || 1);
+      const selectedFactorRaw = cashInCalibrationMode === "conservative" ? factorConservative : factorBasis;
+      const factorApplied = globalCalibrationEnabled && Number.isFinite(selectedFactorRaw)
+        ? selectedFactorRaw
+        : 1;
+      const calibratedRevenue = forecastRevenue * factorApplied;
+
+      const manualRevenue = toNumber(row.revenueEur);
+      const hasManualRevenue = row.source === "manual" && Number.isFinite(manualRevenue as number);
+      const manualQuote = normalizePayoutInput(row.payoutPct);
+
+      const used = usedByMonth.get(row.month) || null;
+      let usedRevenue = Number.isFinite(Number(used?.usedRevenue))
+        ? Number(used?.usedRevenue)
+        : null;
+      let usedRevenueSource = used?.usedRevenueSource || null;
+      let usedQuote = Number.isFinite(Number(used?.usedQuote))
+        ? Number(used?.usedQuote)
+        : null;
+      let usedQuoteSource = used?.usedQuoteSource || null;
+      let usedPayout = Number.isFinite(Number(used?.usedPayout))
+        ? Number(used?.usedPayout)
+        : 0;
+
+      if (!Number.isFinite(usedRevenue as number)) {
+        if (globalRevenueBasisMode === "forecast_direct") {
+          usedRevenue = globalCalibrationEnabled ? calibratedRevenue : forecastRevenue;
+          usedRevenueSource = globalCalibrationEnabled ? "forecast_calibrated" : "forecast_raw";
+        } else if (hasManualRevenue) {
+          usedRevenue = Number(manualRevenue);
+          usedRevenueSource = "manual_override";
+        } else {
+          usedRevenue = globalCalibrationEnabled ? calibratedRevenue : forecastRevenue;
+          usedRevenueSource = globalCalibrationEnabled ? "forecast_calibrated" : "forecast_raw";
+        }
+      }
+
+      if (!Number.isFinite(usedQuote as number)) {
+        if (globalQuoteMode === "recommendation") {
+          usedQuote = Number.isFinite(recommendedQuote as number) ? Number(recommendedQuote) : null;
+          usedQuoteSource = "recommendation";
+        } else if (Number.isFinite(manualQuote as number)) {
+          usedQuote = Number(manualQuote);
+          usedQuoteSource = "manual";
+        } else {
+          usedQuote = Number.isFinite(recommendedQuote as number) ? Number(recommendedQuote) : null;
+          usedQuoteSource = "recommendation";
+        }
+      }
+
+      if (!Number.isFinite(usedPayout as number)) {
+        usedPayout = (
+          Number.isFinite(usedRevenue as number)
+          && Number.isFinite(usedQuote as number)
+        ) ? Number(usedRevenue) * (Number(usedQuote) / 100) : 0;
+      }
+
+      return {
+        rowId: row.id,
+        month: row.month,
+        monthLabel: formatMonthLabel(row.month),
+        forecastRevenue,
+        calibratedRevenue,
+        manualRevenue: hasManualRevenue ? Number(manualRevenue) : null,
+        hasManualRevenue,
+        manualQuote: Number.isFinite(manualQuote as number) ? Number(manualQuote) : null,
+        recommendedQuote: Number.isFinite(recommendedQuote as number) ? Number(recommendedQuote) : null,
+        recommendationSourceLabel: recommendationSource,
+        recommendationTooltip,
+        usedRevenue,
+        usedRevenueSource,
+        usedQuote,
+        usedQuoteSource,
+        usedPayout: Number(usedPayout || 0),
+      };
+    });
+  }, [
+    cashInCalibrationHorizonMonths,
+    cashInCalibrationMode,
+    cashInLearningState,
+    cashInRecommendationBaselineNormalPct,
+    cashInRecommendationBaselineQ4Pct,
+    cashInRecommendationIgnoreQ4,
+    forecastRevenueByMonth,
+    globalCalibrationEnabled,
+    globalQuoteMode,
+    globalRevenueBasisMode,
+    horizonMonths,
+    incomings,
+    monthlyActuals,
+    openingBalance,
+    payoutRecommendationByMonth,
+    revenueCalibrationProfile.byMonth,
+    startMonth,
+    state,
+  ]);
 
   function hasManualRevenueOverride(row: IncomingDraft): boolean {
     const manualRevenue = toNumber(row.revenueEur);
@@ -1056,7 +1330,7 @@ export default function InputsModule(): JSX.Element {
           <div>
             <Title level={3}>Cash-in Setup</Title>
             <Paragraph>
-              Plan-Umsatz (Hybrid): Monatlich manuell überschreiben oder automatisch aus der Absatzprognose übernehmen.
+              Transparenz für Forecast, manuelle Eingaben und die global verwendeten Cash-in-Werte aus dem Dashboard.
             </Paragraph>
           </div>
         </div>
@@ -1189,203 +1463,158 @@ export default function InputsModule(): JSX.Element {
             </Button>
           </Space>
         </Space>
-        <Space style={{ marginTop: 10, marginBottom: 12 }} wrap>
-          <Text strong>Kalibrierung</Text>
-          <Tooltip title="Kalibrierung wirkt nur auf automatische Monate. Manuelle Monatswerte bleiben unverändert.">
-            <Tag>Info</Tag>
-          </Tooltip>
-          <Button
-            size="small"
-            type={cashInCalibrationEnabled ? "primary" : "default"}
-            onClick={() => setCashInCalibrationEnabled((prev) => !prev)}
-          >
-            {cashInCalibrationEnabled ? "AN" : "AUS"}
-          </Button>
-          <Tag>Modus: {cashInCalibrationMode === "basis" ? "Basis" : "Konservativ"}</Tag>
-          <Text type="secondary">Planungsfenster: {startMonth} + {horizonMonths} Monate</Text>
+        <Space style={{ marginTop: 10, marginBottom: 8 }} wrap>
+          <Text strong>Globale Steuerung (Dashboard)</Text>
+          <Tag color="blue">
+            Umsatzbasis: {globalRevenueBasisMode === "forecast_direct" ? "Forecast-Umsatz (direkt)" : "Plan-Umsatz (Hybrid)"}
+          </Tag>
+          <Tag color={globalCalibrationEnabled ? "green" : "default"}>
+            Kalibrierung: {globalCalibrationEnabled ? "AN" : "AUS"}
+          </Tag>
+          <Tag color={globalQuoteMode === "recommendation" ? "green" : "orange"}>
+            Auszahlungsquote: {globalQuoteMode === "recommendation" ? "Empfohlen (Plan)" : "Manuell"}
+          </Tag>
+          <Text type="secondary">Read-only in Cash-in. Ändern im Dashboard.</Text>
         </Space>
+        <Segmented
+          style={{ marginBottom: 12 }}
+          value={tableFocus}
+          onChange={(value) => {
+            setTableFocus(String(value) === "payout" ? "payout" : "revenue");
+          }}
+          options={[
+            { label: "Umsatz", value: "revenue" },
+            { label: "Auszahlungsquote", value: "payout" },
+          ]}
+        />
         <StatsTableShell>
-          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1360 }}>
+          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: tableFocus === "revenue" ? 1520 : 1320 }}>
             <thead>
-              <tr>
-                <th style={{ width: 130 }}>Monat</th>
-                <th style={{ width: 340 }}>Plan-Umsatz (EUR)</th>
-                <th style={{ width: 220 }}>Auszahlungsquote (%)</th>
-                <th style={{ width: 250 }}>Verwendete Quote (%)</th>
-                <th style={{ width: 220 }}>Einzahlungen (EUR)</th>
-                <th style={{ width: 140 }}>Aktion</th>
-              </tr>
+              {tableFocus === "revenue" ? (
+                <tr>
+                  <th style={{ width: 130 }}>Monat</th>
+                  <th style={{ width: 190 }}>Umsatz Forecast (EUR)</th>
+                  <th style={{ width: 280 }}>Umsatz Manuell (EUR)</th>
+                  <th style={{ width: 190 }}>Umsatz Kalibriert (EUR)</th>
+                  <th style={{ width: 250 }}>Umsatz verwendet (EUR)</th>
+                  <th style={{ width: 210 }}>Einzahlungen (EUR)</th>
+                  <th style={{ width: 130 }}>Aktion</th>
+                </tr>
+              ) : (
+                <tr>
+                  <th style={{ width: 130 }}>Monat</th>
+                  <th style={{ width: 280 }}>Manuelle Quote (%)</th>
+                  <th style={{ width: 250 }}>Empfohlene Quote (%)</th>
+                  <th style={{ width: 260 }}>Auszahlungsquote verwendet (%)</th>
+                  <th style={{ width: 220 }}>Einzahlungen (EUR)</th>
+                </tr>
+              )}
             </thead>
             <tbody>
-              {incomingRows.map((row) => {
-                const recommendationEntry = payoutRecommendationByMonth.get(row.month) || null;
-                const recommendationModeRaw = String(recommendationEntry?.mode || "plan").trim().toLowerCase();
-                const recommendationMode = recommendationModeRaw === "ist" ? "ist" : "plan";
-                const recommendationQuoteRaw = Number(recommendationEntry?.quotePct);
-                const recommendation = Number.isFinite(recommendationQuoteRaw)
-                  ? clampPct(recommendationQuoteRaw, CASH_IN_QUOTE_MIN_PCT, CASH_IN_QUOTE_MAX_PCT)
-                  : null;
-                const recommendationSourceTag = String(
-                  recommendationEntry?.sourceTag
-                  || "RECOMMENDED_PLAN",
-                );
-                const recommendationSourceLabel = recommendationSourceTag === "IST"
-                  ? "IST"
-                  : recommendationSourceTag === "RECOMMENDED_PLAN"
-                    ? "Empfohlen (Plan)"
-                  : recommendationSourceTag === "RECOMMENDED_BASIS"
-                    ? "Empfohlen (Plan)"
-                    : recommendationSourceTag === "RECOMMENDED_CONSERVATIVE"
-                      ? "Empfohlen (Plan)"
-                      : recommendationSourceTag === "PROGNOSE"
-                        ? "Signal"
-                        : "Empfehlung";
-                const recommendationTooltip = [
-                  `Quelle: ${recommendationSourceLabel}`,
-                  recommendationEntry?.explanation ? String(recommendationEntry.explanation) : null,
-                  `Saisonalität: ${recommendationEntry?.seasonalityEnabled === false ? "aus" : "an"}`,
-                ]
-                  .filter(Boolean)
-                  .join(" | ");
-                const manualPayout = normalizePayoutInput(row.payoutPct);
-                const hasManualPayout = Number.isFinite(manualPayout as number);
-                const payoutPctForCalc = Number.isFinite(manualPayout as number)
-                  ? Number(manualPayout)
-                  : (Number.isFinite(recommendation as number) ? Number(recommendation) : null);
-                const forecastRevenue = Number(forecastRevenueByMonth.get(row.month) || 0);
-                const calibrationByMonth = (revenueCalibrationProfile.byMonth?.[row.month] || null) as Record<string, unknown> | null;
-                const factorBasis = Number(calibrationByMonth?.factorBasis || 1);
-                const factorConservative = Number(calibrationByMonth?.factorConservative || 1);
-                const selectedFactorRaw = cashInCalibrationMode === "conservative" ? factorConservative : factorBasis;
-                const factorApplied = cashInCalibrationEnabled && Number.isFinite(selectedFactorRaw)
-                  ? selectedFactorRaw
-                  : 1;
-                const calibratedRevenueBasis = forecastRevenue * (Number.isFinite(factorBasis) ? factorBasis : 1);
-                const calibratedRevenueConservative = forecastRevenue * (Number.isFinite(factorConservative) ? factorConservative : 1);
-                const calibratedRevenue = cashInCalibrationMode === "conservative"
-                  ? calibratedRevenueConservative
-                  : calibratedRevenueBasis;
-                const manualRevenue = toNumber(row.revenueEur);
-                const isManualRevenueOverride = hasManualRevenueOverride(row);
-                const autoRevenue = cashInCalibrationEnabled ? calibratedRevenue : forecastRevenue;
-                const planRevenue = isManualRevenueOverride
-                  ? Number(manualRevenue)
-                  : autoRevenue;
-                const effectivePayout = Number.isFinite(payoutPctForCalc as number)
-                  ? planRevenue * (Number(payoutPctForCalc) / 100)
-                  : null;
-                const revenueSourceLabel = isManualRevenueOverride
-                  ? "MANUELL"
-                  : (cashInCalibrationEnabled ? "AUTO (kalibriert)" : "AUTO");
-                const revenueSourceTooltip = isManualRevenueOverride
-                  ? "Dieser Monatswert wurde von dir überschrieben."
-                  : (cashInCalibrationEnabled
-                    ? "Dieser Monatswert kommt aus der Absatzprognose und wird mit Kalibrierung angepasst."
-                    : "Dieser Monatswert kommt aus der Absatzprognose.");
-                const quoteSourceLabel = hasManualPayout ? "MANUELL" : "EMPFOHLEN";
-                const quoteSourceTooltip = hasManualPayout
-                  ? "Diese Monatsquote wurde von dir überschrieben."
-                  : "Diese Monatsquote wird automatisch empfohlen.";
-
-                return (
-                  <tr key={row.month}>
-                    <td>
-                      <Text strong>{formatMonthLabel(row.month)}</Text>
-                      <div><Text type="secondary">{row.month}</Text></div>
-                    </td>
-                    <td>
-                      <div data-field-key={`inputs.incomings.${row.id}.revenueEur`}>
-                        <DeNumberInput
-                          value={planRevenue}
-                          mode="decimal"
-                          min={0}
-                          step={100}
-                          style={{ width: "100%" }}
-                          onChange={(value) => {
-                            const parsed = toNumber(value);
-                            updateIncomingMonth(row.month, (current) => ({
-                              ...current,
-                              revenueEur: Number.isFinite(parsed as number) ? Number(parsed) : null,
-                              source: Number.isFinite(parsed as number) ? "manual" : "forecast",
-                            }));
-                          }}
-                        />
-                        <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                          <Tooltip title={revenueSourceTooltip}>
-                            <Tag color={isManualRevenueOverride ? "orange" : "blue"} style={{ marginRight: 0 }}>
-                              {revenueSourceLabel}
+              {monthlyMatrixRows.map((row) => (
+                <tr key={row.month}>
+                  <td>
+                    <Text strong>{row.monthLabel}</Text>
+                    <div><Text type="secondary">{row.month}</Text></div>
+                  </td>
+                  {tableFocus === "revenue" ? (
+                    <>
+                      <td>
+                        <Text>{formatNumber(row.forecastRevenue, 2)}</Text>
+                      </td>
+                      <td>
+                        <div data-field-key={`inputs.incomings.${row.rowId}.revenueEur`}>
+                          <DeNumberInput
+                            value={row.manualRevenue ?? undefined}
+                            mode="decimal"
+                            min={0}
+                            step={100}
+                            style={{ width: "100%" }}
+                            onChange={(value) => {
+                              const parsed = toNumber(value);
+                              updateIncomingMonth(row.month, (current) => ({
+                                ...current,
+                                revenueEur: Number.isFinite(parsed as number) ? Number(parsed) : null,
+                                source: Number.isFinite(parsed as number) ? "manual" : "forecast",
+                              }));
+                            }}
+                          />
+                          <div style={{ marginTop: 6 }}>
+                            <Tag color={row.hasManualRevenue ? "orange" : "default"} style={{ marginRight: 0 }}>
+                              {row.hasManualRevenue ? "MANUELL" : "AUTO"}
                             </Tag>
-                          </Tooltip>
-                          <Text type="secondary">
-                            Forecast roh: {formatNumber(forecastRevenue, 2)} EUR
-                          </Text>
-                          {cashInCalibrationEnabled ? (
-                            <Text type="secondary">
-                              Forecast kalibriert: {formatNumber(calibratedRevenue, 2)} EUR
-                            </Text>
-                          ) : null}
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div data-field-key={`inputs.incomings.${row.id}.payoutPct`}>
-                        <DeNumberInput
-                          value={row.payoutPct ?? undefined}
-                          mode="percent"
-                          min={CASH_IN_QUOTE_MIN_PCT}
-                          max={CASH_IN_QUOTE_MAX_PCT}
-                          step={0.1}
-                          style={{ width: "100%" }}
-                          onChange={(value) => {
-                            updateIncomingMonth(row.month, (current) => ({
-                              ...current,
-                              payoutPct: normalizePayoutInput(value),
-                            }));
-                          }}
-                        />
-                        <div style={{ marginTop: 6 }}>
-                          <Tooltip title={quoteSourceTooltip}>
-                            <Tag color={hasManualPayout ? "orange" : "green"} style={{ marginRight: 0 }}>
-                              {quoteSourceLabel}
-                            </Tag>
-                          </Tooltip>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      {Number.isFinite(payoutPctForCalc as number)
-                        ? (
-                          <div>
-                            <Tooltip title={hasManualPayout ? quoteSourceTooltip : recommendationTooltip}>
-                              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                <span>{formatNumber(payoutPctForCalc, 2)}</span>
-                                {!hasManualPayout ? (
-                                  <Tag color={recommendationMode === "ist" ? "default" : "blue"} style={{ marginRight: 0 }}>
-                                    {recommendationSourceLabel}
-                                  </Tag>
-                                ) : null}
-                              </div>
-                            </Tooltip>
                           </div>
-                        )
-                        : <Text type="secondary">—</Text>}
-                    </td>
-                    <td>
-                      <Text strong>{formatNumber(effectivePayout, 2)}</Text>
-                    </td>
-                    <td>
-                      <Button
-                        size="small"
-                        type="text"
-                        disabled={!isManualRevenueOverride}
-                        onClick={() => resetRevenueOverrideForMonth(row.month)}
-                      >
-                        ↺ Reset
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
+                        </div>
+                      </td>
+                      <td>
+                        <Text>{formatNumber(row.calibratedRevenue, 2)}</Text>
+                      </td>
+                      <td>
+                        <Space direction="vertical" size={4}>
+                          <Text strong>{formatNumber(row.usedRevenue, 2)}</Text>
+                          <Tag style={{ marginRight: 0 }}>{usedRevenueSourceLabel(row.usedRevenueSource)}</Tag>
+                        </Space>
+                      </td>
+                      <td>
+                        <Text strong>{formatNumber(row.usedPayout, 2)}</Text>
+                      </td>
+                      <td>
+                        <Button
+                          size="small"
+                          type="text"
+                          disabled={!row.hasManualRevenue}
+                          onClick={() => resetRevenueOverrideForMonth(row.month)}
+                        >
+                          ↺ Reset
+                        </Button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>
+                        <div data-field-key={`inputs.incomings.${row.rowId}.payoutPct`}>
+                          <DeNumberInput
+                            value={row.manualQuote ?? undefined}
+                            mode="percent"
+                            min={CASH_IN_QUOTE_MIN_PCT}
+                            max={CASH_IN_QUOTE_MAX_PCT}
+                            step={0.1}
+                            style={{ width: "100%" }}
+                            onChange={(value) => {
+                              updateIncomingMonth(row.month, (current) => ({
+                                ...current,
+                                payoutPct: normalizePayoutInput(value),
+                              }));
+                            }}
+                          />
+                          <div style={{ marginTop: 6 }}>
+                            <Tag color={Number.isFinite(row.manualQuote as number) ? "orange" : "default"} style={{ marginRight: 0 }}>
+                              {Number.isFinite(row.manualQuote as number) ? "MANUELL" : "AUTO"}
+                            </Tag>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <Space direction="vertical" size={4}>
+                          <Text>{formatNumber(row.recommendedQuote, 2)}</Text>
+                          <Tooltip title={row.recommendationTooltip}>
+                            <Tag color="blue" style={{ marginRight: 0 }}>{row.recommendationSourceLabel}</Tag>
+                          </Tooltip>
+                        </Space>
+                      </td>
+                      <td>
+                        <Space direction="vertical" size={4}>
+                          <Text strong>{formatNumber(row.usedQuote, 2)}</Text>
+                          <Tag style={{ marginRight: 0 }}>{usedQuoteSourceLabel(row.usedQuoteSource)}</Tag>
+                        </Space>
+                      </td>
+                      <td>
+                        <Text strong>{formatNumber(row.usedPayout, 2)}</Text>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
             </tbody>
           </table>
         </StatsTableShell>
