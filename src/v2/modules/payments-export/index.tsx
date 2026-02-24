@@ -65,7 +65,7 @@ function triggerCsvDownload(csv: string, fileName: string): void {
 
 export default function PaymentsExportModule(): JSX.Element {
   const { state, loading, error, reload } = useWorkspaceState();
-  const [scope, setScope] = useState<PaymentExportScope>("both");
+  const [scope, setScope] = useState<PaymentExportScope>("paid");
   const [monthFilter, setMonthFilter] = useState<string>(currentMonthKey());
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [messageApi, contextHolder] = message.useMessage();
@@ -114,15 +114,10 @@ export default function PaymentsExportModule(): JSX.Element {
   );
 
   const columns = useMemo<ColumnDef<PaymentJournalRow>[]>(() => [
-    { header: "Monat", accessorKey: "month" },
-    { header: "Typ", accessorKey: "entityType" },
     {
-      header: "PO/FO Nr",
-      cell: ({ row }) => (row.original.entityType === "PO" ? row.original.poNumber : row.original.foNumber) || "—",
+      header: "Zahlungsdatum",
+      cell: ({ row }) => formatDate(row.original.status === "PAID" ? (row.original.paidDate || row.original.dueDate) : row.original.dueDate),
     },
-    { header: "Supplier", accessorKey: "supplierName" },
-    { header: "SKU Alias", accessorKey: "skuAliases" },
-    { header: "Payment Type", accessorKey: "paymentType" },
     {
       header: "Status",
       cell: ({ row }) => (
@@ -132,36 +127,36 @@ export default function PaymentsExportModule(): JSX.Element {
       ),
     },
     {
-      header: "Faellig",
-      cell: ({ row }) => formatDate(row.original.dueDate),
+      header: "PO/FO Nr",
+      cell: ({ row }) => (row.original.entityType === "PO" ? row.original.poNumber : row.original.foNumber) || "—",
     },
+    { header: "Lieferant", accessorKey: "supplierName" },
     {
-      header: "Bezahlt",
-      cell: ({ row }) => formatDate(row.original.paidDate),
+      header: "Item",
+      cell: ({ row }) => (
+        <span title={row.original.itemTooltip || row.original.skuAliases}>
+          {row.original.itemSummary || row.original.skuAliases}
+        </span>
+      ),
     },
-    {
-      header: "Soll EUR",
-      cell: ({ row }) => formatCurrency(row.original.amountPlannedEur),
-    },
+    { header: "Enthaltene Positionen", accessorKey: "paymentType" },
     {
       header: "Ist EUR",
       cell: ({ row }) => {
         if (row.original.status !== "PAID") return "—";
-        const hasMissingActual = row.original.amountActualEur == null;
-        return (
-          <span className={hasMissingActual ? "v2-negative" : undefined}>
-            {formatCurrency(row.original.amountActualEur)}
-          </span>
-        );
+        return formatCurrency(row.original.amountActualEur);
+      },
+    },
+    {
+      header: "Plan EUR",
+      cell: ({ row }) => {
+        const hasMissingActual = row.original.status === "PAID" && row.original.amountActualEur == null;
+        return <span className={hasMissingActual ? "v2-negative" : undefined}>{formatCurrency(row.original.amountPlannedEur)}</span>;
       },
     },
     {
       header: "Issues",
       cell: ({ row }) => row.original.issues?.length ? row.original.issues.join(" | ") : "—",
-    },
-    {
-      header: "Payment ID",
-      cell: ({ row }) => row.original.paymentId || "—",
     },
     {
       header: "Zahler",
@@ -202,7 +197,7 @@ export default function PaymentsExportModule(): JSX.Element {
           <div>
             <Title level={3}>Payments Export</Title>
             <Paragraph>
-              Zahlungsjournal mit Scope/Monatsfilter sowie CSV-Export und PDF-Print-View.
+              Zahlungsjournal auf Zahlungsebene fuer steuerrelevante PO-Positionen inkl. Datum-Fallback und Warnhinweisen.
             </Paragraph>
           </div>
         </div>
@@ -231,9 +226,9 @@ export default function PaymentsExportModule(): JSX.Element {
                 optionType="button"
                 buttonStyle="solid"
                 options={[
-                  { label: "Paid", value: "paid" },
+                  { label: "Nur bezahlt", value: "paid" },
                   { label: "Open", value: "open" },
-                  { label: "Both", value: "both" },
+                  { label: "Beides", value: "both" },
                 ]}
               />
             </div>
@@ -274,12 +269,12 @@ export default function PaymentsExportModule(): JSX.Element {
       <Card>
         <Title level={4}>Journal</Title>
         <Text type="secondary">
-          Paid-Positionen werden mit Ist-Betrag angezeigt; fehlende Ist-Werte sind als Issue markiert.
+          Monatslogik: bezahlt nach Paid-Date, ohne Paid-Date mit Due-Date als Fallback (markiert als Hinweis).
         </Text>
         <DataTable
           data={rows}
           columns={columns}
-          minTableWidth={1600}
+          minTableWidth={1480}
           tableLayout="auto"
         />
       </Card>

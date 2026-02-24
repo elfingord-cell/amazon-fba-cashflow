@@ -121,6 +121,12 @@ interface PnlMatrixRow {
   children?: PnlMatrixRow[];
 }
 
+interface ScopedDashboardBreakdownRow extends DashboardBreakdownRow {
+  planClosing: number;
+  actualClosing: number | null;
+  hasActualClosing: boolean;
+}
+
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
   { value: "next6", label: "Nächste 6 Monate", count: 6 },
   { value: "next12", label: "Nächste 12 Monate", count: 12 },
@@ -404,7 +410,7 @@ function isEntryInBucketScope(entry: DashboardEntry, bucketScope: Set<string>): 
 function applyBucketScopeToBreakdown(
   rows: DashboardBreakdownRow[],
   bucketScope: Set<string>,
-): DashboardBreakdownRow[] {
+): ScopedDashboardBreakdownRow[] {
   if (!rows.length) return [];
   const firstOpening = Number(rows[0]?.opening || 0);
   let running = firstOpening;
@@ -419,7 +425,11 @@ function applyBucketScopeToBreakdown(
       .filter((entry) => String(entry.direction || "").toLowerCase() === "out")
       .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
     const net = inflow - outflow;
-    const closing = opening + net;
+    const actualRaw = Number((row as Record<string, unknown>).actualClosing);
+    const hasActualClosing = Number.isFinite(actualRaw);
+    const actualClosing = hasActualClosing ? actualRaw : null;
+    const planClosing = opening + net;
+    const closing = hasActualClosing ? actualRaw : planClosing;
     running = closing;
     return {
       ...row,
@@ -427,6 +437,9 @@ function applyBucketScopeToBreakdown(
       inflow,
       outflow,
       net,
+      planClosing,
+      actualClosing,
+      hasActualClosing,
       closing,
       entries: scopedEntries,
     };
@@ -799,6 +812,10 @@ export default function DashboardModule(): JSX.Element {
     () => visibleBreakdown.map((row) => ({ ...row })),
     [visibleBreakdown],
   );
+  const hasActualClosingData = useMemo(
+    () => simulatedBreakdown.some((row) => row.hasActualClosing),
+    [simulatedBreakdown],
+  );
 
   const inflowSplitByMonth = useMemo(() => {
     const map = new Map<string, {
@@ -1108,12 +1125,10 @@ export default function DashboardModule(): JSX.Element {
     const amazonNewSeriesName = "Amazon Neu";
     const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
-    const baseClosing = visibleBreakdown.map((row) => Number(row.closing || 0));
-    const robustMask = visibleBreakdown.map((row) => Boolean(robustness.monthMap.get(row.month)?.robust));
-    const robustPositive = baseClosing.map((value, idx) => (robustMask[idx] && value >= 0 ? value : null));
-    const robustNegative = baseClosing.map((value, idx) => (robustMask[idx] && value < 0 ? value : null));
-    const softPositive = baseClosing.map((value, idx) => (!robustMask[idx] && value >= 0 ? value : null));
-    const softNegative = baseClosing.map((value, idx) => (!robustMask[idx] && value < 0 ? value : null));
+    const planClosingSeries = visibleBreakdown.map((row) => Number(row.planClosing ?? row.closing ?? 0));
+    const istClosingSeries = hasActualClosingData
+      ? visibleBreakdown.map((row) => Number(row.closing || 0))
+      : [];
     const fixcostOutflowSeries = outflowSplitSeries.map((row) => -row.fixcost);
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
@@ -1128,10 +1143,8 @@ export default function DashboardModule(): JSX.Element {
       "FO",
       "Phantom FO",
       "Netto",
-      "Kontostand belastbar",
-      "Kontostand belastbar (<0)",
-      "Kontostand orientierend",
-      "Kontostand orientierend (<0)",
+      "Kontostand (Plan)",
+      ...(hasActualClosingData ? ["Kontostand IST"] : []),
     ];
 
     return {
@@ -1301,58 +1314,38 @@ export default function DashboardModule(): JSX.Element {
           lineStyle: { width: 2, color: v2DashboardChartColors.net },
         },
         {
-          name: "Kontostand belastbar",
+          name: "Kontostand (Plan)",
           type: "line",
           smooth: true,
           yAxisIndex: 1,
-          connectNulls: false,
+          connectNulls: true,
           showSymbol: false,
-          data: robustPositive,
-          lineStyle: { width: 2, color: v2DashboardChartColors.robustPositive },
-          itemStyle: { color: v2DashboardChartColors.robustPositive },
-        },
-        {
-          name: "Kontostand belastbar (<0)",
-          type: "line",
-          smooth: true,
-          yAxisIndex: 1,
-          connectNulls: false,
-          showSymbol: false,
-          data: robustNegative,
-          lineStyle: { width: 2, color: v2DashboardChartColors.robustNegative },
-          itemStyle: { color: v2DashboardChartColors.robustNegative },
-        },
-        {
-          name: "Kontostand orientierend",
-          type: "line",
-          smooth: true,
-          yAxisIndex: 1,
-          connectNulls: false,
-          showSymbol: false,
-          data: softPositive,
+          data: planClosingSeries,
           lineStyle: { width: 2, type: "dashed", color: v2DashboardChartColors.softPositive },
           itemStyle: { color: v2DashboardChartColors.softPositive },
         },
-        {
-          name: "Kontostand orientierend (<0)",
-          type: "line",
-          smooth: true,
-          yAxisIndex: 1,
-          connectNulls: false,
-          showSymbol: false,
-          data: softNegative,
-          lineStyle: { width: 2, type: "dashed", color: v2DashboardChartColors.softNegative },
-          itemStyle: { color: v2DashboardChartColors.softNegative },
-        },
+        ...(hasActualClosingData
+          ? [{
+            name: "Kontostand IST",
+            type: "line" as const,
+            smooth: true,
+            yAxisIndex: 1,
+            connectNulls: true,
+            showSymbol: false,
+            data: istClosingSeries,
+            lineStyle: { width: 2, color: v2DashboardChartColors.robustPositive },
+            itemStyle: { color: v2DashboardChartColors.robustPositive },
+          }]
+          : []),
       ],
     };
   }, [
     amazonCoreInflowSeries,
     amazonNewInflowSeries,
     amazonPlannedInflowSeries,
+    hasActualClosingData,
     otherInflowSeries,
     outflowSplitSeries,
-    robustness.monthMap,
     simulatedBreakdown,
     visibleBreakdown,
     visibleMonths,
@@ -1517,7 +1510,7 @@ export default function DashboardModule(): JSX.Element {
       return next;
     };
 
-    return [
+    const rows: PnlMatrixRow[] = [
       {
         key: "inflows",
         label: "Einnahmen",
@@ -1598,13 +1591,23 @@ export default function DashboardModule(): JSX.Element {
         values: values((month) => Number(byMonth.get(month)?.net || 0)),
       },
       {
-        key: "closing",
-        label: "Kontostand",
+        key: "closing-plan",
+        label: "Kontostand (Plan)",
         rowType: "total",
-        values: values((month) => Number(byMonth.get(month)?.closing || 0)),
+        values: values((month) => Number(byMonth.get(month)?.planClosing ?? byMonth.get(month)?.closing ?? 0)),
       },
     ];
-  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, simulatedBreakdown, visibleMonths]);
+
+    if (hasActualClosingData) {
+      rows.push({
+        key: "closing-ist",
+        label: "Kontostand IST",
+        rowType: "total",
+        values: values((month) => Number(byMonth.get(month)?.closing || 0)),
+      });
+    }
+    return rows;
+  }, [hasActualClosingData, inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, simulatedBreakdown, visibleMonths]);
   const allExpandablePnlRowKeys = useMemo(
     () => collectExpandableRowKeys(pnlMatrixRows),
     [pnlMatrixRows],
@@ -1679,7 +1682,11 @@ export default function DashboardModule(): JSX.Element {
             </Space>
           );
         }
-        const isTotal = row.key === "inflows" || row.key === "outflows" || row.key === "net" || row.key === "closing";
+        const isTotal = row.key === "inflows"
+          || row.key === "outflows"
+          || row.key === "net"
+          || row.key === "closing-plan"
+          || row.key === "closing-ist";
         return <Text strong={isTotal}>{row.label}</Text>;
       },
     }, ...visibleMonths.map((month) => ({
@@ -1688,12 +1695,19 @@ export default function DashboardModule(): JSX.Element {
       width: 132,
       align: "right" as const,
       render: (_value: unknown, row: PnlMatrixRow) => {
-        const value = Number(row.values[month] || 0);
-        const isBalanceRow = row.key === "closing";
-        const isNegative = !isBalanceRow && value < 0;
+        const value = Number(row.values[month]);
+        const hasFiniteValue = Number.isFinite(value);
+        const isBalanceRow = row.key === "closing-plan" || row.key === "closing-ist";
+        const isNegative = !isBalanceRow && hasFiniteValue && value < 0;
+        const displayValue = isBalanceRow
+          ? (hasFiniteValue ? formatCurrency(value) : "-")
+          : (hasFiniteValue ? formatSignedCurrency(value) : "-");
         return (
-          <Text strong={row.key === "net" || row.key === "closing"} type={isNegative ? "danger" : undefined}>
-            {isBalanceRow ? formatCurrency(value) : formatSignedCurrency(value)}
+          <Text
+            strong={row.key === "net" || row.key === "closing-plan" || row.key === "closing-ist"}
+            type={isNegative ? "danger" : undefined}
+          >
+            {displayValue}
           </Text>
         );
       },
@@ -2138,7 +2152,7 @@ export default function DashboardModule(): JSX.Element {
           rowClassName={(row) => {
             if (row.rowType === "order") return "v2-dashboard-pnl-table-row-order";
             if (row.rowType === "payment") return "v2-dashboard-pnl-table-row-payment";
-            if (row.key === "net" || row.key === "closing") return "v2-dashboard-pnl-table-row-total";
+            if (row.key === "net" || row.key === "closing-plan" || row.key === "closing-ist") return "v2-dashboard-pnl-table-row-total";
             if (Array.isArray(row.children) && row.children.length) return "v2-dashboard-pnl-table-row-group";
             return "v2-dashboard-pnl-table-row-detail";
           }}

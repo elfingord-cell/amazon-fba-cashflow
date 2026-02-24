@@ -7,11 +7,18 @@ import { currentMonthKey } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSyncSession } from "../../sync/session";
 import {
+  type PaymentExportScope,
+  type PaymentJournalRow,
+  buildPaymentJournalCsvRows,
+  buildPaymentJournalRowsFromState,
+  paymentJournalRowsToCsv,
+  sumPaymentRows,
+} from "../../domain/paymentJournal";
+import {
   buildAccountantReportData,
   buildAccountantReportBundleFromState,
 } from "../../../domain/accountantReport.js";
 import { triggerBlobDownload } from "../../../domain/accountantBundle.js";
-import { buildPoPaymentsLedgerExport } from "../../../domain/poPaymentsLedger.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -97,6 +104,43 @@ function parseOverride(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeScope(includePaid: boolean, includeOpen: boolean): PaymentExportScope {
+  if (includePaid && includeOpen) return "both";
+  if (includeOpen) return "open";
+  return "paid";
+}
+
+function isActualAmountValid(amount: number | null, planned: number | null): boolean {
+  if (!Number.isFinite(amount as number)) return false;
+  const actual = Number(amount);
+  const plannedValue = Number.isFinite(planned as number) ? Number(planned) : null;
+  if (actual > 0) return true;
+  if (actual === 0 && plannedValue != null && plannedValue === 0) return true;
+  return false;
+}
+
+const ISSUE_LABELS: Record<string, string> = {
+  DATE_UNCERTAIN: "Datum unsicher (Due-Date verwendet).",
+  AUTO_GENERATED: "Auto generiert (bitte pruefen).",
+  IST_FEHLT: "Ist fehlt (Plan als Fallback).",
+  MISSING_ACTUAL_AMOUNT: "Ist-Zahlung fehlt.",
+  PRO_RATA_ALLOCATION: "Ist wurde anteilig verteilt.",
+  GROUPED_PAYMENT: "Mehrere Positionen in einer Zahlung.",
+  PAID_WITHOUT_DATE: "Bezahlt ohne Datum.",
+};
+
+function summarizeIssues(issues: string[] | undefined): string {
+  const unique = Array.from(new Set((Array.isArray(issues) ? issues : [])
+    .map((code) => ISSUE_LABELS[String(code)] || String(code))
+    .filter(Boolean)));
+  return unique.length ? unique.join(" ") : "-";
+}
+
+function paymentDateForRow(row: PaymentJournalRow): string {
+  if (row.status === "PAID") return row.paidDate || row.dueDate || "";
+  return row.dueDate || "";
+}
+
 async function copyToClipboard(value: string): Promise<void> {
   const text = String(value || "");
   if (!text) return;
@@ -122,12 +166,15 @@ export default function AccountingExportModule(): JSX.Element {
   const [month, setMonth] = useState(() => currentMonthKey());
   const [includeJournal, setIncludeJournal] = useState(false);
   const [inventoryOverrideRaw, setInventoryOverrideRaw] = useState("");
+  const [journalIncludePaid, setJournalIncludePaid] = useState(true);
+  const [journalIncludeOpen, setJournalIncludeOpen] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [exportBusy, setExportBusy] = useState(false);
   const [lastEmailText, setLastEmailText] = useState("");
 
   const stateObject = state as unknown as Record<string, unknown>;
   const workspaceName = syncSession.workspaceId || "Workspace";
+  const journalScope = normalizeScope(journalIncludePaid, journalIncludeOpen);
 
   const preview = useMemo(() => {
     return buildAccountantReportData(
@@ -142,6 +189,22 @@ export default function AccountingExportModule(): JSX.Element {
       },
     );
   }, [includeJournal, inventoryOverrideRaw, month, stateObject, workspaceName]);
+
+  const poPaymentRows = useMemo(
+    () => buildPaymentJournalRowsFromState(stateObject, { month, scope: journalScope })
+      .filter((row) => row.entityType === "PO"),
+    [journalScope, month, stateObject],
+  );
+
+  const poPaidActualTotal = useMemo(
+    () => sumPaymentRows(poPaymentRows.filter((row) => row.status === "PAID"), "amountActualEur"),
+    [poPaymentRows],
+  );
+
+  const poOpenPlannedTotal = useMemo(
+    () => sumPaymentRows(poPaymentRows.filter((row) => row.status === "OPEN"), "amountPlannedEur"),
+    [poPaymentRows],
+  );
 
   const inventoryColumns = useMemo<ColumnDef<InventoryRow>[]>(() => [
     {
@@ -177,13 +240,74 @@ export default function AccountingExportModule(): JSX.Element {
     { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
   ], []);
 
-  const poLedgerColumns = useMemo<ColumnDef<PoLedgerRow>[]>(() => [
+  const paymentJournalColumns = useMemo<ColumnDef<PaymentJournalRow>[]>(() => [
     {
-      header: "Monat relevant",
-      cell: ({ row }) => row.original.monthMarker
-        ? <Tag color="green">{row.original.monthMarkerReason || "ja"}</Tag>
-        : <Tag color="default">nein</Tag>,
+      header: "Zahlungsdatum",
+      cell: ({ row }) => formatDate(paymentDateForRow(row.original)),
+      meta: { width: 120, minWidth: 120 },
     },
+    {
+      header: "Status",
+      cell: ({ row }) => row.original.status === "PAID"
+        ? <Tag color="green">Bezahlt</Tag>
+        : <Tag color="gold">Offen</Tag>,
+      meta: { width: 98, minWidth: 98 },
+    },
+    { header: "PO", accessorKey: "poNumber", meta: { width: 110, minWidth: 110 } },
+    { header: "Lieferant", accessorKey: "supplierName", meta: { width: 180, minWidth: 160 } },
+    {
+      header: "Item",
+      cell: ({ row }) => {
+        const label = row.original.itemSummary || row.original.skuAliases || "-";
+        const tooltip = row.original.itemTooltip || row.original.skuAliases || label;
+        return <span title={tooltip}>{label}</span>;
+      },
+      meta: { width: 160, minWidth: 140 },
+    },
+    {
+      header: "Positionen",
+      cell: ({ row }) => (
+        <span title={Array.isArray(row.original.includedPositions) ? row.original.includedPositions.join(", ") : row.original.paymentType}>
+          {row.original.paymentType || "-"}
+        </span>
+      ),
+      meta: { width: 180, minWidth: 160 },
+    },
+    {
+      header: "Ist EUR",
+      cell: ({ row }) => row.original.status === "PAID"
+        ? (
+          <span className={isActualAmountValid(row.original.amountActualEur, row.original.amountPlannedEur) ? undefined : "v2-negative"}>
+            {formatCurrency(row.original.amountActualEur)}
+          </span>
+        )
+        : "-",
+      meta: { width: 120, minWidth: 110, align: "right" },
+    },
+    {
+      header: "Plan EUR",
+      cell: ({ row }) => formatCurrency(row.original.amountPlannedEur),
+      meta: { width: 120, minWidth: 110, align: "right" },
+    },
+    { header: "Zahler", cell: ({ row }) => row.original.payer || "-", meta: { width: 120, minWidth: 110 } },
+    { header: "Methode", cell: ({ row }) => row.original.paymentMethod || "-", meta: { width: 150, minWidth: 140 } },
+    {
+      header: "Notiz",
+      cell: ({ row }) => <span title={row.original.note || "-"}>{row.original.note || "-"}</span>,
+      meta: { width: 210, minWidth: 180 },
+    },
+    {
+      header: "Hinweise",
+      cell: ({ row }) => (
+        <span title={Array.isArray(row.original.issues) ? row.original.issues.join("\n") : ""}>
+          {summarizeIssues(row.original.issues)}
+        </span>
+      ),
+      meta: { width: 240, minWidth: 200 },
+    },
+  ], []);
+
+  const poLedgerColumns = useMemo<ColumnDef<PoLedgerRow>[]>(() => [
     { header: "PO", accessorKey: "poNumber" },
     { header: "Supplier", accessorKey: "supplier" },
     { header: "SKU Alias", accessorKey: "skuAliases" },
@@ -259,14 +383,16 @@ export default function AccountingExportModule(): JSX.Element {
 
   async function handlePoPaymentsLedgerExport(): Promise<void> {
     try {
-      const exportPayload = buildPoPaymentsLedgerExport(stateObject, { month });
-      if (!exportPayload.rowCount) {
-        messageApi.warning(`Keine bezahlten PO-Zahlungen fuer ${month} gefunden.`);
+      if (!poPaymentRows.length) {
+        messageApi.warning(`Keine PO-Zahlungen fuer ${month} gefunden.`);
         return;
       }
-      const blob = new Blob([exportPayload.csv], { type: "text/csv;charset=utf-8" });
-      await triggerBlobDownload(blob, exportPayload.fileName);
-      messageApi.success(`Ledger exportiert: ${exportPayload.fileName} (${exportPayload.rowCount} Zeilen)`);
+      const csvRows = buildPaymentJournalCsvRows(poPaymentRows);
+      const csv = paymentJournalRowsToCsv(csvRows, ";");
+      const fileName = `po_payment_journal_${month}_${journalScope}.csv`;
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      await triggerBlobDownload(blob, fileName);
+      messageApi.success(`Payment-Journal exportiert: ${fileName} (${poPaymentRows.length} Zeilen)`);
     } catch (ledgerError) {
       console.error(ledgerError);
       messageApi.error(ledgerError instanceof Error ? ledgerError.message : "PO Payments Ledger Export fehlgeschlagen");
@@ -311,6 +437,15 @@ export default function AccountingExportModule(): JSX.Element {
                 style={{ width: 220, maxWidth: "100%" }}
               />
             </div>
+            <div className="v2-toolbar-field">
+              <Text>Payments Filter</Text>
+              <Checkbox checked={journalIncludePaid} onChange={(event) => setJournalIncludePaid(event.target.checked)}>
+                Nur bezahlt
+              </Checkbox>
+              <Checkbox checked={journalIncludeOpen} onChange={(event) => setJournalIncludeOpen(event.target.checked)}>
+                Offen/geplant anzeigen
+              </Checkbox>
+            </div>
           </div>
           <div className="v2-toolbar-row v2-toolbar-actions">
             <div className="v2-actions-inline">
@@ -318,7 +453,7 @@ export default function AccountingExportModule(): JSX.Element {
                 Paket erstellen
               </Button>
               <Button onClick={() => { void handlePoPaymentsLedgerExport(); }}>
-                Export PO Payments (Monat)
+                Export Payment-Journal
               </Button>
               <Button onClick={() => { void handleCopyEmail(); }}>
                 E-Mail Text kopieren
@@ -326,8 +461,9 @@ export default function AccountingExportModule(): JSX.Element {
             </div>
             <Tag color="blue">Anzahlungen: {preview.deposits.length}</Tag>
             <Tag color="blue">Wareneingaenge: {preview.arrivals.length}</Tag>
-            <Tag color="blue">Kombi-Zeilen: {(preview.poLedger || []).length}</Tag>
-            <Tag color="default">Monat markiert: {(preview.poLedger || []).filter((row: PoLedgerRow) => row.monthMarker).length}</Tag>
+            <Tag color="blue">PO Payment-Zeilen: {poPaymentRows.length}</Tag>
+            <Tag color="green">Ist (paid): {formatCurrency(poPaidActualTotal)}</Tag>
+            <Tag color="orange">Plan (open): {formatCurrency(poOpenPlannedTotal)}</Tag>
             <Tag color={preview.quality.length ? "red" : "green"}>Issues: {preview.quality.length}</Tag>
           </div>
         </div>
@@ -368,11 +504,23 @@ export default function AccountingExportModule(): JSX.Element {
         />
       </Card>
 
+      <Card title="PO Zahlungsjournal (steuerrelevant)" loading={loading}>
+        <Text type="secondary">
+          Monatsfilter basiert auf Zahlungsdatum. Fehlt das Zahlungsdatum bei bezahlten Events, wird Due-Date verwendet und als Hinweis markiert.
+        </Text>
+        <DataTable
+          data={poPaymentRows}
+          columns={paymentJournalColumns}
+          minTableWidth={1680}
+          tableLayout="auto"
+        />
+      </Card>
+
       <Card title="Anzahlungen + Wareneingang (PO)" loading={loading}>
         <DataTable
           data={(preview.poLedger || []) as PoLedgerRow[]}
           columns={poLedgerColumns}
-          minTableWidth={1600}
+          minTableWidth={1480}
           tableLayout="auto"
         />
       </Card>
