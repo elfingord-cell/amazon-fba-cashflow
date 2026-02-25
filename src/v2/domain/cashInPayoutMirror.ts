@@ -27,6 +27,10 @@ interface IncomingRow {
   revenueEur: number | null;
   payoutPct: number | null;
   source: "manual" | "forecast";
+  calibrationCutoffDate: string | null;
+  calibrationRevenueToDateEur: number | null;
+  calibrationPayoutRateToDatePct: number | null;
+  calibrationSellerboardMonthEndEur: number | null;
 }
 
 interface EffectiveCashInMonthSnapshot {
@@ -82,12 +86,18 @@ function normalizeIncomingRows(input: unknown, fallbackMonth: string): IncomingR
   if (!Array.isArray(input)) return [];
   return input.map((entry, index) => {
     const row = (entry && typeof entry === "object") ? entry as Record<string, unknown> : {};
+    const rawCutoffDate = String(row.calibrationCutoffDate || "").trim();
+    const cutoffDate = /^\d{4}-\d{2}-\d{2}$/.test(rawCutoffDate) ? rawCutoffDate : null;
     return {
       id: String(row.id || `inc-${index + 1}`),
       month: normalizeMonth(row.month, fallbackMonth),
       revenueEur: toNumber(row.revenueEur),
       payoutPct: toNumber(row.payoutPct),
       source: String(row.source || "manual") === "forecast" ? "forecast" : "manual",
+      calibrationCutoffDate: cutoffDate,
+      calibrationRevenueToDateEur: toNumber(row.calibrationRevenueToDateEur),
+      calibrationPayoutRateToDatePct: toNumber(row.calibrationPayoutRateToDatePct),
+      calibrationSellerboardMonthEndEur: toNumber(row.calibrationSellerboardMonthEndEur),
     } satisfies IncomingRow;
   });
 }
@@ -105,6 +115,10 @@ function createIncomingRow(month: string): IncomingRow {
     revenueEur: null,
     payoutPct: null,
     source: "forecast",
+    calibrationCutoffDate: null,
+    calibrationRevenueToDateEur: null,
+    calibrationPayoutRateToDatePct: null,
+    calibrationSellerboardMonthEndEur: null,
   };
 }
 
