@@ -37,7 +37,7 @@ import {
 } from "../../domain/phantomFo";
 import { ensureForecastVersioningContainers } from "../../domain/forecastVersioning";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
-import { normalizePortfolioBucket, PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
+import { PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
 import { v2ChartPalette, v2DashboardChartColors } from "../../app/chartPalette";
@@ -127,8 +127,6 @@ interface ScopedDashboardBreakdownRow extends DashboardBreakdownRow {
 }
 
 interface EffectiveCashInMonthSnapshot {
-  revenueUsedEUR?: number | null;
-  payoutPctUsed?: number | null;
   payoutEUR?: number | null;
 }
 
@@ -519,47 +517,20 @@ function splitInflowEntriesByType(
     const kind = String(entry.kind || "").toLowerCase();
     const isAmazon = source === "sales" || source === "sales-plan" || kind === "sales-payout";
     if (isAmazon) {
-      totals.amazon += amount;
-      const entryMeta = (entry.meta && typeof entry.meta === "object")
-        ? entry.meta as Record<string, unknown>
-        : {};
-      const cashInMeta = (entryMeta.cashIn && typeof entryMeta.cashIn === "object")
-        ? entryMeta.cashIn as Record<string, unknown>
-        : {};
-      const component = String(cashInMeta.component || "").trim().toLowerCase();
-      const bucketRaw = String(entry.portfolioBucket || entryMeta.portfolioBucket || "").trim();
-      const bucket = normalizePortfolioBucket(bucketRaw, PORTFOLIO_BUCKET.CORE);
-      if (source === "sales-plan" || component === "plan") {
-        totals.amazonNew += amount;
-      } else if (bucket === PORTFOLIO_BUCKET.CORE) {
-        totals.amazonCore += amount;
-      } else {
-        totals.amazonPlanned += amount;
-      }
+      // Amazon inflow is taken 1:1 from Cash-in (Einzahlungen EUR), not recomputed in Dashboard.
+      return;
     } else {
       totals.other += amount;
     }
     totals.total += amount;
   });
 
-  const effectiveRevenueUsed = Number(effectiveCashIn?.revenueUsedEUR);
-  const effectivePayoutPct = Number(effectiveCashIn?.payoutPctUsed);
-  const payoutByFormula = (
-    Number.isFinite(effectiveRevenueUsed)
-    && Number.isFinite(effectivePayoutPct)
-  )
-    ? (effectiveRevenueUsed * effectivePayoutPct) / 100
-    : null;
-  const effectivePayout = Number.isFinite(Number(payoutByFormula))
-    ? Number(payoutByFormula)
-    : Number(effectiveCashIn?.payoutEUR);
-  if (Number.isFinite(effectivePayout)) {
-    totals.amazon = Math.max(0, effectivePayout);
-    totals.amazonCore = totals.amazon;
-    totals.amazonPlanned = 0;
-    totals.amazonNew = 0;
-    totals.total = totals.amazon + totals.other;
-  }
+  const cashInPayout = Number(effectiveCashIn?.payoutEUR);
+  totals.amazon = Number.isFinite(cashInPayout) ? Math.max(0, cashInPayout) : 0;
+  totals.amazonCore = totals.amazon;
+  totals.amazonPlanned = 0;
+  totals.amazonNew = 0;
+  totals.total = totals.amazon + totals.other;
 
   return totals;
 }
