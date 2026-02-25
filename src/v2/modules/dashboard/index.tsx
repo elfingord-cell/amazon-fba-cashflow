@@ -787,11 +787,10 @@ export default function DashboardModule(): JSX.Element {
   const effectiveCashInByMonth = useMemo(() => {
     return buildEffectiveCashInByMonth(
       visibleMonths,
-      calculationState,
+      stateObject,
       null,
-      { report },
     ) as Record<string, EffectiveCashInMonthSnapshot>;
-  }, [calculationState, report, visibleMonths]);
+  }, [stateObject, visibleMonths]);
   const monthHasActualClosing = useMemo(
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
     [simulatedBreakdown],
