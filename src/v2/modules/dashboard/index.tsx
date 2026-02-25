@@ -549,7 +549,7 @@ function splitInflowEntriesByType(
   });
 
   const effectivePayout = Number(effectiveCashIn?.payoutEUR);
-  if (Number.isFinite(effectivePayout) && Math.abs(effectivePayout) > 0.000001) {
+  if (Number.isFinite(effectivePayout)) {
     totals.amazon = Math.max(0, effectivePayout);
     totals.amazonCore = totals.amazon;
     totals.amazonPlanned = 0;
