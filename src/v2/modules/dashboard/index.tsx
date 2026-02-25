@@ -18,12 +18,13 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import ReactECharts from "echarts-for-react";
-import { buildEffectiveCashInByMonth, computeSeries } from "../../../domain/cashflow.js";
+import { computeSeries } from "../../../domain/cashflow.js";
 import {
   type DashboardBreakdownRow,
   type DashboardEntry,
 } from "../../domain/dashboardMaturity";
 import { buildHybridClosingBalanceSeries } from "../../domain/closingBalanceSeries";
+import { buildCashInPayoutMirrorByMonth } from "../../domain/cashInPayoutMirror";
 import {
   buildDashboardRobustness,
   type CoverageStatusKey,
@@ -124,10 +125,6 @@ interface PnlMatrixRow {
 
 interface ScopedDashboardBreakdownRow extends DashboardBreakdownRow {
   hasActualClosing: boolean;
-}
-
-interface EffectiveCashInMonthSnapshot {
-  payoutEUR?: number | null;
 }
 
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
@@ -487,7 +484,7 @@ function splitOutflowEntriesByType(
 function splitInflowEntriesByType(
   entries: DashboardEntry[],
   bucketScope?: Set<string>,
-  effectiveCashIn?: EffectiveCashInMonthSnapshot | null,
+  cashInPayoutEur?: number | null,
 ): {
   amazon: number;
   amazonCore: number;
@@ -525,7 +522,7 @@ function splitInflowEntriesByType(
     totals.total += amount;
   });
 
-  const cashInPayout = Number(effectiveCashIn?.payoutEUR);
+  const cashInPayout = Number(cashInPayoutEur);
   totals.amazon = Number.isFinite(cashInPayout) ? Math.max(0, cashInPayout) : 0;
   totals.amazonCore = totals.amazon;
   totals.amazonPlanned = 0;
@@ -785,11 +782,10 @@ export default function DashboardModule(): JSX.Element {
     [visibleBreakdown],
   );
   const effectiveCashInByMonth = useMemo(() => {
-    return buildEffectiveCashInByMonth(
-      visibleMonths,
-      stateObject,
-      null,
-    ) as Record<string, EffectiveCashInMonthSnapshot>;
+    return buildCashInPayoutMirrorByMonth({
+      months: visibleMonths,
+      state: stateObject,
+    }) as Record<string, number>;
   }, [stateObject, visibleMonths]);
   const monthHasActualClosing = useMemo(
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
@@ -809,7 +805,7 @@ export default function DashboardModule(): JSX.Element {
       map.set(row.month, splitInflowEntriesByType(
         Array.isArray(row.entries) ? row.entries : [],
         bucketScopeSet,
-        effectiveCashInByMonth[row.month] || null,
+        effectiveCashInByMonth[row.month] ?? null,
       ));
     });
     return map;
