@@ -126,6 +126,12 @@ interface ScopedDashboardBreakdownRow extends DashboardBreakdownRow {
   hasActualClosing: boolean;
 }
 
+interface EffectiveCashInMonthSnapshot {
+  revenueUsedEUR?: number | null;
+  payoutPctUsed?: number | null;
+  payoutEUR?: number | null;
+}
+
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
   { value: "next6", label: "Nächste 6 Monate", count: 6 },
   { value: "next12", label: "Nächste 12 Monate", count: 12 },
@@ -222,24 +228,12 @@ function applyDashboardCalculationOverrides(
   if (!next.settings || typeof next.settings !== "object") {
     next.settings = {};
   }
-  if (!next.forecast || typeof next.forecast !== "object") {
-    next.forecast = {};
-  }
   const settings = next.settings as Record<string, unknown>;
-  const forecastState = next.forecast as Record<string, unknown>;
-  if (!forecastState.settings || typeof forecastState.settings !== "object") {
-    forecastState.settings = {};
-  }
-  const forecastSettings = forecastState.settings as Record<string, unknown>;
 
-  // Dashboard cockpit compares forecast-based variants; keep forecast active in simulation.
-  forecastSettings.useForecast = true;
-  settings.cashInMode = "basis";
+  // Keep all other Cash-in settings unchanged so Dashboard uses the same basis as Cash-in tab.
   settings.cashInQuoteMode = options.quoteMode;
   settings.cashInCalibrationEnabled = options.calibrationEnabled;
   settings.cashInRevenueBasisMode = options.revenueBasisMode;
-  settings.cashInRecommendationSeasonalityEnabled = true;
-  settings.cashInRecommendationIgnoreQ4 = false;
   return next;
 }
 
@@ -495,7 +489,7 @@ function splitOutflowEntriesByType(
 function splitInflowEntriesByType(
   entries: DashboardEntry[],
   bucketScope?: Set<string>,
-  effectiveCashIn?: { payoutEUR?: number | null } | null,
+  effectiveCashIn?: EffectiveCashInMonthSnapshot | null,
 ): {
   amazon: number;
   amazonCore: number;
@@ -548,7 +542,17 @@ function splitInflowEntriesByType(
     totals.total += amount;
   });
 
-  const effectivePayout = Number(effectiveCashIn?.payoutEUR);
+  const effectiveRevenueUsed = Number(effectiveCashIn?.revenueUsedEUR);
+  const effectivePayoutPct = Number(effectiveCashIn?.payoutPctUsed);
+  const payoutByFormula = (
+    Number.isFinite(effectiveRevenueUsed)
+    && Number.isFinite(effectivePayoutPct)
+  )
+    ? (effectiveRevenueUsed * effectivePayoutPct) / 100
+    : null;
+  const effectivePayout = Number.isFinite(Number(payoutByFormula))
+    ? Number(payoutByFormula)
+    : Number(effectiveCashIn?.payoutEUR);
   if (Number.isFinite(effectivePayout)) {
     totals.amazon = Math.max(0, effectivePayout);
     totals.amazonCore = totals.amazon;
@@ -815,7 +819,7 @@ export default function DashboardModule(): JSX.Element {
       calculationState,
       null,
       { report },
-    ) as Record<string, { payoutEUR?: number | null }>;
+    ) as Record<string, EffectiveCashInMonthSnapshot>;
   }, [calculationState, report, visibleMonths]);
   const monthHasActualClosing = useMemo(
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
