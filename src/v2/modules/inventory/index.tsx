@@ -1,12 +1,15 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dayjs, { type Dayjs } from "dayjs";
 import {
   Alert,
   Button,
   Card,
   Checkbox,
   Collapse,
+  DatePicker,
   Input,
+  Modal,
   Popover,
   Radio,
   Select,
@@ -14,6 +17,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  message,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
@@ -50,6 +54,7 @@ import {
 import { useWorkspaceState } from "../../state/workspace";
 import { useLocation, useNavigate } from "react-router-dom";
 import { buildPlanProductForecastRows } from "../../../domain/planProducts.js";
+import { parseVentory3plPaste } from "./ventory3plPasteParser.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -169,6 +174,17 @@ interface VirtualPlanProductEntry {
   sku: string;
   raw: Record<string, unknown>;
   plannedUnitsByMonth: Record<string, number>;
+}
+
+type ThreePlDuplicatePolicy = "block" | "sum" | "last";
+
+interface ThreePlPreviewRow {
+  sku: string;
+  units: number;
+  status: string;
+  isKnown: boolean;
+  hasDuplicate: boolean;
+  duplicateValues: number[];
 }
 
 function normalizeForecastImpactSummary(value: unknown): {
@@ -303,6 +319,21 @@ function formatDate(value: string | null): string {
     month: "2-digit",
     year: "numeric",
   });
+}
+
+function toMonthEnd(value: Dayjs | null): Dayjs | null {
+  if (!value || !value.isValid()) return null;
+  return value.endOf("month").startOf("day");
+}
+
+function toMonthKeyFromDate(value: Dayjs | null): string | null {
+  const normalized = toMonthEnd(value);
+  if (!normalized) return null;
+  return normalized.format("YYYY-MM");
+}
+
+function defaultThreePlSnapshotDate(): Dayjs {
+  return toMonthEnd(dayjs().subtract(1, "month")) || dayjs().subtract(1, "month").endOf("month").startOf("day");
 }
 
 function normalizeSnapshotItems(input: unknown): SnapshotDraftMap {
@@ -605,6 +636,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [focusSkuConsumed, setFocusSkuConsumed] = useState(false);
   const [highlightSku, setHighlightSku] = useState<string | null>(null);
   const [actionIntent, setActionIntent] = useState<ProjectionActionIntent | null>(null);
+  const [threePlImportOpen, setThreePlImportOpen] = useState(false);
+  const [threePlImportDate, setThreePlImportDate] = useState<Dayjs>(() => defaultThreePlSnapshotDate());
+  const [threePlPasteText, setThreePlPasteText] = useState("");
+  const [threePlZeroMissing, setThreePlZeroMissing] = useState(false);
+  const [threePlDuplicatePolicy, setThreePlDuplicatePolicy] = useState<ThreePlDuplicatePolicy>("block");
 
   const showSnapshot = view !== "projection";
   const showProjection = view !== "snapshot";
@@ -836,6 +872,46 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     () => new Map(productRows.map((entry) => [entry.sku, entry.raw])),
     [productRows],
   );
+  const knownSkuMap = useMemo(() => {
+    const out: Record<string, string> = {};
+    (Array.isArray(state.products) ? state.products : []).forEach((entry) => {
+      const sku = String((entry as Record<string, unknown>)?.sku || "").trim();
+      if (!sku) return;
+      out[sku.toLowerCase()] = sku;
+    });
+    return out;
+  }, [state.products]);
+  const knownSkus = useMemo(
+    () => Array.from(new Set(Object.values(knownSkuMap))),
+    [knownSkuMap],
+  );
+  const threePlParseResult = useMemo(() => parseVentory3plPaste({
+    text: threePlPasteText,
+    knownSkuMap,
+    duplicatePolicy: threePlDuplicatePolicy,
+  }), [knownSkuMap, threePlDuplicatePolicy, threePlPasteText]);
+  const threePlPreviewRows = useMemo(
+    () => (Array.isArray(threePlParseResult.previewRows) ? threePlParseResult.previewRows : []) as ThreePlPreviewRow[],
+    [threePlParseResult.previewRows],
+  );
+  const threePlImportTargetMonth = useMemo(
+    () => toMonthKeyFromDate(threePlImportDate),
+    [threePlImportDate],
+  );
+  const threePlCanApply = useMemo(() => {
+    if (saving) return false;
+    if (threePlParseResult.error) return false;
+    if (!threePlImportTargetMonth) return false;
+    if (threePlParseResult.duplicateSkuCount > 0 && threePlDuplicatePolicy === "block") return false;
+    return Number(threePlParseResult.importableSkuCount || 0) > 0;
+  }, [
+    saving,
+    threePlDuplicatePolicy,
+    threePlImportTargetMonth,
+    threePlParseResult.duplicateSkuCount,
+    threePlParseResult.error,
+    threePlParseResult.importableSkuCount,
+  ]);
 
   const previousSnapshot = useMemo(
     () => findPreviousSnapshot(stateObject, selectedMonth),
@@ -1385,6 +1461,110 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     );
   }
 
+  function openThreePlImportModal(): void {
+    setThreePlImportDate(defaultThreePlSnapshotDate());
+    setThreePlPasteText("");
+    setThreePlZeroMissing(false);
+    setThreePlDuplicatePolicy("block");
+    setThreePlImportOpen(true);
+  }
+
+  async function applyThreePlImport(): Promise<void> {
+    const targetMonth = threePlImportTargetMonth;
+    if (!targetMonth) {
+      message.error("Bitte einen gültigen Stichtag wählen.");
+      return;
+    }
+    if (threePlParseResult.error) {
+      message.error(threePlParseResult.error);
+      return;
+    }
+    const importableBySkuRaw = (threePlParseResult.importableBySku && typeof threePlParseResult.importableBySku === "object")
+      ? threePlParseResult.importableBySku as Record<string, unknown>
+      : {};
+    const importableEntries = Object.entries(importableBySkuRaw)
+      .map(([sku, units]) => [String(sku || "").trim(), parseUnits(units)] as const)
+      .filter(([sku]) => sku);
+    if (!importableEntries.length) {
+      message.warning("Keine zuordenbaren SKUs für den Import erkannt.");
+      return;
+    }
+    if (threePlParseResult.duplicateSkuCount > 0 && threePlDuplicatePolicy === "block") {
+      message.warning("Duplikate erkannt. Bitte Policy wählen oder Paste-Daten bereinigen.");
+      return;
+    }
+
+    let updatedSkuCount = 0;
+    const importableSkuSet = new Set(importableEntries.map(([sku]) => sku));
+    const unknownCount = Math.max(0, Math.round(Number(threePlParseResult.unknownSkuCount || 0)));
+
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const nextState = next as unknown as Record<string, unknown>;
+      ensureInventoryContainers(nextState);
+      const inventoryTarget = nextState.inventory as Record<string, unknown>;
+      const snapshots = (Array.isArray(inventoryTarget.snapshots)
+        ? [...(inventoryTarget.snapshots as unknown[])]
+        : []) as Record<string, unknown>[];
+      const index = snapshots.findIndex((entry) => normalizeMonthKey(entry.month) === targetMonth);
+      const previousSnapshot = index >= 0 ? (snapshots[index] || {}) as Record<string, unknown> : {};
+      const normalizedItems = normalizeSnapshotItems(previousSnapshot.items || []);
+      const draftBySku = Object.entries(normalizedItems).reduce((acc, [sku, item]) => {
+        acc[sku] = { ...item };
+        return acc;
+      }, {} as SnapshotDraftMap);
+      const changedSkus = new Set<string>();
+
+      importableEntries.forEach(([sku, threePlUnits]) => {
+        const currentItem = draftBySku[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
+        if (parseUnits(currentItem.threePLUnits) !== threePlUnits) changedSkus.add(sku);
+        draftBySku[sku] = {
+          ...currentItem,
+          threePLUnits,
+        };
+      });
+
+      if (threePlZeroMissing) {
+        knownSkus.forEach((sku) => {
+          if (importableSkuSet.has(sku)) return;
+          const currentItem = draftBySku[sku];
+          if (!currentItem) return;
+          if (parseUnits(currentItem.threePLUnits) !== 0) changedSkus.add(sku);
+          draftBySku[sku] = {
+            ...currentItem,
+            threePLUnits: 0,
+          };
+        });
+      }
+
+      const items = Object.entries(draftBySku)
+        .map(([sku, item]) => ({
+          sku,
+          amazonUnits: parseUnits(item.amazonUnits),
+          threePLUnits: parseUnits(item.threePLUnits),
+          note: String(item.note || ""),
+        }))
+        .filter((entry) => entry.amazonUnits > 0 || entry.threePLUnits > 0 || entry.note);
+
+      const payload = { month: targetMonth, items, updatedAt: nowIso() };
+      if (index >= 0) {
+        snapshots[index] = { ...(snapshots[index] || {}), ...payload };
+      } else {
+        snapshots.push(payload);
+      }
+      snapshots.sort((a, b) => String(normalizeMonthKey(a.month)).localeCompare(String(normalizeMonthKey(b.month))));
+      inventoryTarget.snapshots = snapshots;
+      updatedSkuCount = changedSkus.size;
+      return next;
+    }, "v2:inventory:3pl-paste-import");
+
+    setThreePlImportOpen(false);
+    setSelectedMonth(targetMonth);
+    setSelectedMonthTouched(true);
+    setSnapshotDirty(false);
+    message.success(`3PL-Bestände übernommen: ${updatedSkuCount} SKU(s) aktualisiert · ${unknownCount} SKU(s) nicht zugeordnet.`);
+  }
+
   const commitSnapshotUnits = useCallback((input: {
     sku: string;
     field: SnapshotUnitsField;
@@ -1404,6 +1584,32 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     });
     setSnapshotDirty(true);
   }, []);
+
+  const threePlPreviewColumns = useMemo<ColumnDef<ThreePlPreviewRow>[]>(() => [
+    {
+      header: "SKU",
+      accessorKey: "sku",
+      meta: { minWidth: 220, width: 220 },
+    },
+    {
+      header: "3PL Einheiten",
+      accessorKey: "units",
+      meta: { minWidth: 140, width: 140, align: "right" },
+      cell: ({ row }) => formatInt(row.original.units),
+    },
+    {
+      header: "Status",
+      accessorKey: "status",
+      meta: { minWidth: 280, width: 280 },
+      cell: ({ row }) => {
+        if (!row.original.isKnown) return <Tag color="red">SKU nicht bekannt</Tag>;
+        if (row.original.hasDuplicate && threePlDuplicatePolicy === "block") return <Tag color="gold">Duplikat: Entscheidung erforderlich</Tag>;
+        if (row.original.hasDuplicate && threePlDuplicatePolicy === "sum") return <Tag color="blue">zuordenbar (Duplikat: Summe)</Tag>;
+        if (row.original.hasDuplicate && threePlDuplicatePolicy === "last") return <Tag color="blue">zuordenbar (Duplikat: letzte Zeile)</Tag>;
+        return <Tag color="green">zuordenbar</Tag>;
+      },
+    },
+  ], [threePlDuplicatePolicy]);
 
   const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
     {
@@ -1843,6 +2049,9 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
           {showSnapshot ? (
             <div className="v2-toolbar-row">
+              <Button onClick={openThreePlImportModal}>
+                3PL-Bestände einfügen (VentoryOne)
+              </Button>
               <Button onClick={() => { void copyFromPreviousMonth(); }}>
                 Vorherigen Monat kopieren
               </Button>
@@ -2213,6 +2422,128 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           )}
         </Card>
       ) : null}
+
+      <Modal
+        title="3PL-Bestände einfügen (VentoryOne)"
+        open={threePlImportOpen}
+        onCancel={() => setThreePlImportOpen(false)}
+        onOk={() => { void applyThreePlImport(); }}
+        okText="Bestände übernehmen"
+        cancelText="Abbrechen"
+        okButtonProps={{ disabled: !threePlCanApply }}
+        confirmLoading={saving}
+        width={980}
+      >
+        <div className="v2-threepl-import-grid">
+          <div className="v2-toolbar-row">
+            <div className="v2-toolbar-field">
+              <Text>Stichtag</Text>
+              <DatePicker
+                value={threePlImportDate}
+                format="DD.MM.YYYY"
+                allowClear={false}
+                onChange={(value) => {
+                  const normalized = toMonthEnd(value);
+                  if (!normalized) return;
+                  setThreePlImportDate(normalized);
+                }}
+              />
+            </div>
+            <Tag color="blue">Snapshot-Monat: {threePlImportTargetMonth || "—"}</Tag>
+            {threePlImportTargetMonth ? (
+              <Tag color="default">{formatMonthEndLabel(threePlImportTargetMonth, "long")}</Tag>
+            ) : null}
+          </div>
+
+          <Checkbox checked={threePlZeroMissing} onChange={(event) => setThreePlZeroMissing(event.target.checked)}>
+            Nicht enthaltene SKUs auf 0 setzen
+          </Checkbox>
+
+          <Input.TextArea
+            value={threePlPasteText}
+            onChange={(event) => setThreePlPasteText(event.target.value)}
+            placeholder="VentoryOne-Tabellentext hier einfügen (Strg+V). Relevante Spalten: SKU, STK - Insgesamt."
+            autoSize={{ minRows: 8, maxRows: 14 }}
+          />
+
+          <div className="v2-toolbar-row">
+            <Tag color="default">Erkannte Zeilen: {Math.max(0, Math.round(Number(threePlParseResult.recognizedRows || 0)))}</Tag>
+            <Tag color="green">Zuordenbar: {Math.max(0, Math.round(Number(threePlParseResult.importableSkuCount || 0)))}</Tag>
+            <Tag color={threePlParseResult.unknownSkuCount > 0 ? "orange" : "default"}>
+              Unbekannt: {Math.max(0, Math.round(Number(threePlParseResult.unknownSkuCount || 0)))}
+            </Tag>
+            <Tag color={threePlParseResult.duplicateSkuCount > 0 ? "gold" : "default"}>
+              Duplikate: {Math.max(0, Math.round(Number(threePlParseResult.duplicateSkuCount || 0)))}
+            </Tag>
+          </div>
+
+          {threePlParseResult.error ? (
+            <Alert type="error" showIcon message={threePlParseResult.error} />
+          ) : null}
+          {Array.isArray(threePlParseResult.warnings) && threePlParseResult.warnings.length > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`${threePlParseResult.warnings.length} Hinweis(e) beim Parsing`}
+              description={threePlParseResult.warnings.slice(0, 5).join(" | ")}
+            />
+          ) : null}
+          {Number(threePlParseResult.unknownSkuCount || 0) > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`${threePlParseResult.unknownSkuCount} SKU(s) nicht bekannt`}
+              description={Array.isArray(threePlParseResult.unknownSkus)
+                ? threePlParseResult.unknownSkus.slice(0, 10).join(", ")
+                : ""}
+            />
+          ) : null}
+
+          {Number(threePlParseResult.duplicateSkuCount || 0) > 0 ? (
+            <Alert
+              type={threePlDuplicatePolicy === "block" ? "warning" : "info"}
+              showIcon
+              message={`${threePlParseResult.duplicateSkuCount} Duplikat-SKU(s) erkannt`}
+              description={(
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <Text>Bitte Duplikat-Policy wählen:</Text>
+                  <Radio.Group
+                    value={threePlDuplicatePolicy}
+                    onChange={(event) => setThreePlDuplicatePolicy(event.target.value as ThreePlDuplicatePolicy)}
+                  >
+                    <Radio.Button value="block">Blockieren</Radio.Button>
+                    <Radio.Button value="sum">Summieren</Radio.Button>
+                    <Radio.Button value="last">Letzte Zeile</Radio.Button>
+                  </Radio.Group>
+                  <div className="v2-threepl-duplicate-list">
+                    {(Array.isArray(threePlParseResult.duplicateRows) ? threePlParseResult.duplicateRows : []).map((entry) => (
+                      <div key={String(entry.sku || "")} className="v2-threepl-duplicate-row">
+                        <Text strong>{String(entry.sku || "")}</Text>
+                        <Text type="secondary">
+                          {(Array.isArray(entry.values) ? entry.values : [])
+                            .map((value) => formatInt(parseUnits(value)))
+                            .join(", ")}
+                        </Text>
+                      </div>
+                    ))}
+                  </div>
+                </Space>
+              )}
+            />
+          ) : null}
+
+          {!threePlPreviewRows.length ? (
+            <Text type="secondary">Noch keine Vorschau verfügbar. Paste-Text einfügen, um die Zuordnung zu prüfen.</Text>
+          ) : (
+            <DataTable
+              data={threePlPreviewRows}
+              columns={threePlPreviewColumns}
+              minTableWidth={760}
+              tableLayout="fixed"
+            />
+          )}
+        </div>
+      </Modal>
 
     </div>
   );

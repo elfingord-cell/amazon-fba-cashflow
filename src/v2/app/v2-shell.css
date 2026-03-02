@@ -416,6 +416,23 @@
   gap: 16px;
 }
 
+.v2-threepl-import-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.v2-threepl-duplicate-list {
+  display: grid;
+  gap: 6px;
+}
+
+.v2-threepl-duplicate-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .v2-table-shell,
 .v2-stats-table-wrap {
   width: 100%;
