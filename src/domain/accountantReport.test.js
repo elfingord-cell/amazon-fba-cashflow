@@ -10,6 +10,8 @@ function createState() {
     settings: {
       fxRate: "1,10",
       defaultCurrency: "EUR",
+      dutyRatePct: "6,50",
+      eustRatePct: "19,00",
     },
     suppliers: [
       { id: "sup-1", name: "Supplier One" },
@@ -55,6 +57,41 @@ function createState() {
         invoiceFolderDriveUrl: "https://drive.example.com/folder-1",
       },
       {
+        id: "pay-po1-bal",
+        paidDate: "2026-01-08",
+        method: "bank",
+        payer: "ops",
+        amountActualEurTotal: 240,
+      },
+      {
+        id: "pay-po1-bal2",
+        paidDate: "2026-01-10",
+        method: "bank",
+        payer: "ops",
+        amountActualEurTotal: 95,
+      },
+      {
+        id: "pay-po1-freight",
+        paidDate: "2026-01-15",
+        method: "bank",
+        payer: "ops",
+        amountActualEurTotal: 55,
+      },
+      {
+        id: "pay-po1-duty",
+        paidDate: "2026-01-18",
+        method: "bank",
+        payer: "ops",
+        amountActualEurTotal: 45,
+      },
+      {
+        id: "pay-po1-eust",
+        paidDate: "2026-01-20",
+        method: "bank",
+        payer: "ops",
+        amountActualEurTotal: 68,
+      },
+      {
         id: "pay-po2-dep",
         paidDate: "",
         method: "bank",
@@ -71,9 +108,11 @@ function createState() {
         prodDays: 20,
         transitDays: 10,
         etaManual: "2026-01-25",
+        freightEur: "55,00",
         milestones: [
           { id: "po1-ms-dep", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
-          { id: "po1-ms-bal", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+          { id: "po1-ms-bal", label: "Balance", percent: 45, anchor: "PROD_DONE", lagDays: 0 },
+          { id: "po1-ms-bal2", label: "Balance2", percent: 25, anchor: "ETA", lagDays: 0 },
         ],
         paymentLog: {
           "po1-ms-dep": {
@@ -81,8 +120,37 @@ function createState() {
             paymentId: "pay-po1-dep",
             amountActualEur: 340,
           },
+          "po1-ms-bal": {
+            status: "paid",
+            paymentId: "pay-po1-bal",
+            amountActualEur: 240,
+          },
+          "po1-ms-bal2": {
+            status: "paid",
+            paymentId: "pay-po1-bal2",
+            amountActualEur: 95,
+          },
+          "po1-auto-freight": {
+            status: "paid",
+            paymentId: "pay-po1-freight",
+            amountActualEur: 55,
+          },
+          "po1-auto-duty": {
+            status: "paid",
+            paymentId: "pay-po1-duty",
+            amountActualEur: 45,
+          },
+          "po1-auto-eust": {
+            status: "paid",
+            paymentId: "pay-po1-eust",
+            amountActualEur: 68,
+          },
         },
-        autoEvents: [],
+        autoEvents: [
+          { id: "po1-auto-freight", type: "freight", label: "Fracht", anchor: "ETA", lagDays: 0, enabled: true },
+          { id: "po1-auto-duty", type: "duty", label: "Zoll", anchor: "ETA", lagDays: 0, enabled: true },
+          { id: "po1-auto-eust", type: "eust", label: "EUSt", anchor: "ETA", lagDays: 0, enabled: true },
+        ],
         items: [
           {
             id: "po1-item-a",
@@ -91,6 +159,15 @@ function createState() {
             unitCostUsd: "4,00",
             unitExtraUsd: "0,20",
             extraFlatUsd: "10,00",
+            unitCostManuallyEdited: false,
+          },
+          {
+            id: "po1-item-b",
+            sku: "SKU-B",
+            units: "25",
+            unitCostUsd: "2,50",
+            unitExtraUsd: "0,10",
+            extraFlatUsd: "0,00",
             unitCostManuallyEdited: false,
           },
         ],
@@ -191,11 +268,21 @@ test("accountant report: applies paid and arrival month filters", () => {
     scope: "core",
   });
 
-  assert.equal(report.deposits.length, 1);
-  assert.equal(report.deposits[0].poNumber, "PO-1001");
+  assert.equal(report.deposits.length, report.paymentsInMonth.length);
+  const paymentTypes = new Set(report.paymentsInMonth.map((row) => row.paymentType));
+  assert.ok(paymentTypes.has("Deposit"));
+  assert.ok(paymentTypes.has("Balance"));
+  assert.ok(paymentTypes.has("Balance2"));
+  assert.ok(paymentTypes.has("Shipping/Freight"));
+  assert.ok(paymentTypes.has("EUSt"));
+  assert.ok(paymentTypes.has("Zoll"));
+  assert.ok(report.paymentsInMonth.every((row) => String(row.itemSummary || "").length > 0));
+  assert.ok(report.paymentsInMonth.every((row) => String(row.allItems || "").length > 0));
 
-  const arrivalPoNumbers = report.arrivals.map((row) => row.poNumber).sort();
+  const arrivalPoNumbers = report.arrivalsInMonth.map((row) => row.poNumber).sort();
   assert.deepEqual(arrivalPoNumbers, ["PO-1001", "PO-1003"]);
+  assert.ok(report.arrivalsInMonth.every((row) => String(row.itemSummary || "").length > 0));
+  assert.ok(report.arrivalsInMonth.every((row) => String(row.allItems || "").length > 0));
 
   assert.equal(report.poLedger.length, 3);
   const ledgerPo1 = report.poLedger.find((row) => row.poNumber === "PO-1001");
@@ -205,13 +292,13 @@ test("accountant report: applies paid and arrival month filters", () => {
   assert.ok(ledgerPo2);
   assert.ok(ledgerPo3);
   assert.equal(ledgerPo1?.monthMarker, true);
-  assert.equal(ledgerPo1?.monthMarkerReason, "deposit+arrival");
-  assert.equal(ledgerPo3?.monthMarkerReason, "arrival");
-  assert.equal(ledgerPo2?.monthMarker, false);
-  assert.equal(ledgerPo1?.depositActualEurMonth, 340);
-  assert.ok(Math.abs(Number(ledgerPo1?.depositAmountUsdMonth || 0) - 129) < 0.0001);
+  assert.equal(ledgerPo1?.relevanceReasonLabel, "Zahlung im Monat + Wareneingang im Monat");
+  assert.equal(ledgerPo3?.relevanceReasonLabel, "Wareneingang im Monat");
+  assert.equal(ledgerPo2?.relevanceReasonLabel, "Zahlung im Monat");
+  assert.ok((ledgerPo1?.paymentActualEurMonth || 0) > 0);
+  assert.ok(String(ledgerPo1?.paymentTypesInMonth || "").includes("Deposit"));
 
-  assert.ok(report.quality.some((issue) => issue.code === "PAID_WITHOUT_DATE"));
+  assert.ok(report.quality.some((issue) => issue.code === "DATE_UNCERTAIN"));
   assert.ok(report.quality.some((issue) => issue.code === "ARRIVAL_FROM_ETA"));
 });
 
@@ -223,7 +310,7 @@ test("accountant report: explicit arrivalDate overrides ETA in arrivals and ledg
     scope: "core",
   });
 
-  const arrivalPo1 = report.arrivals.find((row) => row.poNumber === "PO-1001");
+  const arrivalPo1 = report.arrivalsInMonth.find((row) => row.poNumber === "PO-1001");
   const ledgerPo1 = report.poLedger.find((row) => row.poNumber === "PO-1001");
   assert.ok(arrivalPo1);
   assert.ok(ledgerPo1);
@@ -266,6 +353,19 @@ test("accountant report bundle: zip contains required core files and optional jo
   assert.ok(coreNames.includes("buchhaltung_2026-01_email.txt"));
   assert.equal(coreNames.includes("buchhaltung_2026-01_zahlungsjournal.csv"), false);
 
+  const paymentsCsv = await coreBundle.files.csvDeposits.text();
+  const arrivalsCsv = await coreBundle.files.csvArrivals.text();
+  const ledgerCsv = await coreBundle.files.csvPoLedger.text();
+  const pdfText = new TextDecoder().decode(new Uint8Array(await coreBundle.files.pdfReport.arrayBuffer()));
+  assert.ok(paymentsCsv.split("\n")[0].includes("itemSummary"));
+  assert.ok(paymentsCsv.split("\n")[0].includes("allItems"));
+  assert.ok(arrivalsCsv.split("\n")[0].includes("itemSummary"));
+  assert.ok(arrivalsCsv.split("\n")[0].includes("allItems"));
+  assert.ok(ledgerCsv.split("\n")[0].includes("relevanceReasonLabel"));
+  assert.ok(pdfText.includes("Relevante Zahlungen in 2026-01"));
+  assert.ok(pdfText.includes("Relevante Wareneingaenge in 2026-01"));
+  assert.ok(pdfText.includes("Bewertung: Monatsende-Stichtag"));
+
   const journalBundle = await buildAccountantReportBundleFromState(state, {
     month: "2026-01",
     scope: "core_plus_journal",
@@ -275,4 +375,15 @@ test("accountant report bundle: zip contains required core files and optional jo
   const journalNames = parseZipEntryNames(new Uint8Array(await journalBundle.zipBlob.arrayBuffer()));
   assert.ok(journalNames.includes("buchhaltung_2026-01_zahlungsjournal.csv"));
   assert.match(journalBundle.emailDraft.subject, /Unterlagen Buchhaltung 2026-01 - Mandant WS-1/);
+});
+
+test("accountant report: smoke export for another month has no regression", () => {
+  const report = buildAccountantReportData(createState(), {
+    month: "2025-12",
+    scope: "core",
+  });
+  assert.equal(report.request.month, "2025-12");
+  assert.ok(Array.isArray(report.paymentsInMonth));
+  assert.ok(Array.isArray(report.arrivalsInMonth));
+  assert.ok(Array.isArray(report.poLedger));
 });

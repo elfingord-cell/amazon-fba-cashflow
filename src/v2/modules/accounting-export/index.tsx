@@ -32,20 +32,30 @@ type InventoryRow = {
   rowValueEur: number | null;
 };
 
-type DepositRow = {
+type PaymentInMonthRow = {
   poNumber: string;
   supplier: string;
+  itemSummary?: string;
   skuAliases: string;
+  allItems?: string;
+  paymentType: string;
+  dueDate: string | null;
   paidDate: string | null;
+  plannedEur: number | null;
   actualEur: number | null;
   amountUsd: number | null;
+  etdDate?: string | null;
+  etaDate?: string | null;
+  arrivalDate?: string | null;
   issues: string[];
 };
 
 type ArrivalRow = {
   poNumber: string;
   supplier: string;
+  itemSummary?: string;
   skuAliases: string;
+  allItems?: string;
   arrivalDate: string | null;
   units: number | null;
   goodsEur: number | null;
@@ -54,13 +64,19 @@ type ArrivalRow = {
 
 type PoLedgerRow = {
   monthMarker: boolean;
-  monthMarkerReason: string;
+  monthMarkerReason?: string;
+  relevanceReasonLabel?: string;
   poNumber: string;
   supplier: string;
+  itemSummary?: string;
   skuAliases: string;
+  allItems?: string;
   units: number | null;
+  paymentActualEurMonth?: number | null;
+  paymentAmountUsdMonth?: number | null;
   depositActualEurMonth: number | null;
   depositAmountUsdMonth: number | null;
+  paymentTypesInMonth?: string;
   etdDate: string | null;
   etaDate: string | null;
   arrivalDate: string | null;
@@ -220,20 +236,32 @@ export default function AccountingExportModule(): JSX.Element {
     { header: "Warenwert EUR", cell: ({ row }) => formatCurrency(row.original.rowValueEur) },
   ], []);
 
-  const depositColumns = useMemo<ColumnDef<DepositRow>[]>(() => [
+  const paymentInMonthColumns = useMemo<ColumnDef<PaymentInMonthRow>[]>(() => [
     { header: "PO", accessorKey: "poNumber" },
     { header: "Supplier", accessorKey: "supplier" },
-    { header: "SKU Alias", accessorKey: "skuAliases" },
+    {
+      header: "Items",
+      cell: ({ row }) => <span title={row.original.allItems || row.original.skuAliases || "-"}>{row.original.itemSummary || row.original.skuAliases || "-"}</span>,
+    },
+    { header: "Zahlungstyp", accessorKey: "paymentType" },
     { header: "Paid Date", cell: ({ row }) => formatDate(row.original.paidDate) },
+    { header: "Due Date", cell: ({ row }) => formatDate(row.original.dueDate) },
     { header: "Ist EUR", cell: ({ row }) => formatCurrency(row.original.actualEur) },
+    { header: "Plan EUR", cell: ({ row }) => formatCurrency(row.original.plannedEur) },
     { header: "USD", cell: ({ row }) => formatCurrency(row.original.amountUsd) },
+    { header: "ETD", cell: ({ row }) => formatDate(row.original.etdDate || null) },
+    { header: "ETA", cell: ({ row }) => formatDate(row.original.etaDate || null) },
+    { header: "Arrival", cell: ({ row }) => formatDate(row.original.arrivalDate || null) },
     { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
   ], []);
 
   const arrivalColumns = useMemo<ColumnDef<ArrivalRow>[]>(() => [
     { header: "PO", accessorKey: "poNumber" },
     { header: "Supplier", accessorKey: "supplier" },
-    { header: "SKU Alias", accessorKey: "skuAliases" },
+    {
+      header: "Items",
+      cell: ({ row }) => <span title={row.original.allItems || row.original.skuAliases || "-"}>{row.original.itemSummary || row.original.skuAliases || "-"}</span>,
+    },
     { header: "Arrival", cell: ({ row }) => formatDate(row.original.arrivalDate) },
     { header: "Units", cell: ({ row }) => formatInt(row.original.units || 0) },
     { header: "Goods EUR", cell: ({ row }) => formatCurrency(row.original.goodsEur) },
@@ -310,10 +338,15 @@ export default function AccountingExportModule(): JSX.Element {
   const poLedgerColumns = useMemo<ColumnDef<PoLedgerRow>[]>(() => [
     { header: "PO", accessorKey: "poNumber" },
     { header: "Supplier", accessorKey: "supplier" },
-    { header: "SKU Alias", accessorKey: "skuAliases" },
+    {
+      header: "Items",
+      cell: ({ row }) => <span title={row.original.allItems || row.original.skuAliases || "-"}>{row.original.itemSummary || row.original.skuAliases || "-"}</span>,
+    },
+    { header: "Relevanzgrund", cell: ({ row }) => row.original.relevanceReasonLabel || "-" },
     { header: "Units", cell: ({ row }) => formatInt(row.original.units || 0) },
-    { header: "Deposit EUR (Monat)", cell: ({ row }) => formatCurrency(row.original.depositActualEurMonth) },
-    { header: "Deposit USD (Monat)", cell: ({ row }) => formatCurrency(row.original.depositAmountUsdMonth) },
+    { header: "Zahlung EUR (Monat)", cell: ({ row }) => formatCurrency(row.original.paymentActualEurMonth ?? row.original.depositActualEurMonth) },
+    { header: "Zahlung USD (Monat)", cell: ({ row }) => formatCurrency(row.original.paymentAmountUsdMonth ?? row.original.depositAmountUsdMonth) },
+    { header: "Zahltypen", cell: ({ row }) => row.original.paymentTypesInMonth || "-" },
     { header: "ETD", cell: ({ row }) => formatDate(row.original.etdDate) },
     { header: "ETA", cell: ({ row }) => formatDate(row.original.etaDate) },
     { header: "Ankunft", cell: ({ row }) => formatDate(row.original.arrivalDate || row.original.etaDate) },
@@ -407,7 +440,7 @@ export default function AccountingExportModule(): JSX.Element {
           <div>
             <Title level={3}>Buchhalter Export</Title>
             <Paragraph>
-              One-Click Monats-Paket mit Preview: Warenbestand, Lieferanzahlungen, Wareneingaenge und E-Mail Text.
+              One-Click Monats-Paket mit Preview: Warenbestand, Zahlungen im Monat, Wareneingaenge im Monat und E-Mail Text.
             </Paragraph>
           </div>
         </div>
@@ -459,8 +492,8 @@ export default function AccountingExportModule(): JSX.Element {
                 E-Mail Text kopieren
               </Button>
             </div>
-            <Tag color="blue">Anzahlungen: {preview.deposits.length}</Tag>
-            <Tag color="blue">Wareneingaenge: {preview.arrivals.length}</Tag>
+            <Tag color="blue">Zahlungen im Monat: {(preview.paymentsInMonth || preview.deposits || []).length}</Tag>
+            <Tag color="blue">Wareneingaenge im Monat: {(preview.arrivalsInMonth || preview.arrivals || []).length}</Tag>
             <Tag color="blue">PO Payment-Zeilen: {poPaymentRows.length}</Tag>
             <Tag color="green">Ist (paid): {formatCurrency(poPaidActualTotal)}</Tag>
             <Tag color="orange">Plan (open): {formatCurrency(poOpenPlannedTotal)}</Tag>
@@ -495,11 +528,11 @@ export default function AccountingExportModule(): JSX.Element {
         />
       </Card>
 
-      <Card title="Lieferanzahlungen Preview" loading={loading}>
+      <Card title={`Relevante Zahlungen in ${month}`} loading={loading}>
         <DataTable
-          data={(preview.deposits || []) as DepositRow[]}
-          columns={depositColumns}
-          minTableWidth={1180}
+          data={((preview.paymentsInMonth || preview.deposits || []) as PaymentInMonthRow[])}
+          columns={paymentInMonthColumns}
+          minTableWidth={1540}
           tableLayout="auto"
         />
       </Card>
@@ -516,20 +549,20 @@ export default function AccountingExportModule(): JSX.Element {
         />
       </Card>
 
-      <Card title="Anzahlungen + Wareneingang (PO)" loading={loading}>
+      <Card title="Vollstaendige Uebersicht (PO)" loading={loading}>
         <DataTable
           data={(preview.poLedger || []) as PoLedgerRow[]}
           columns={poLedgerColumns}
-          minTableWidth={1480}
+          minTableWidth={1700}
           tableLayout="auto"
         />
       </Card>
 
-      <Card title="Wareneingang Preview" loading={loading}>
+      <Card title={`Relevante Wareneingaenge in ${month}`} loading={loading}>
         <DataTable
-          data={(preview.arrivals || []) as ArrivalRow[]}
+          data={((preview.arrivalsInMonth || preview.arrivals || []) as ArrivalRow[])}
           columns={arrivalColumns}
-          minTableWidth={1100}
+          minTableWidth={1260}
           tableLayout="auto"
         />
       </Card>

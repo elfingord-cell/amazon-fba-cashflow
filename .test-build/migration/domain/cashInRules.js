@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.REVENUE_CALIBRATION_LIVE_HORIZON_MONTHS = exports.REVENUE_CALIBRATION_LIVE_FACTOR_MAX = exports.REVENUE_CALIBRATION_LIVE_FACTOR_MIN = exports.REVENUE_CALIBRATION_DEFAULT_RISK = exports.REVENUE_CALIBRATION_DEFAULT_BIAS = exports.REVENUE_CALIBRATION_RISK_MAX = exports.REVENUE_CALIBRATION_CONSERVATIVE_MAX = exports.REVENUE_CALIBRATION_CONSERVATIVE_MIN = exports.REVENUE_CALIBRATION_BIAS_MAX = exports.REVENUE_CALIBRATION_BIAS_MIN = exports.REVENUE_CALIBRATION_GAMMA = exports.REVENUE_CALIBRATION_ALPHA = exports.CASH_IN_PLAN_EXTRA_RISK_CAP_PCT = exports.CASH_IN_PLAN_SAFETY_MARGIN_PCT = exports.CASH_IN_SHRINKAGE_MIN_SAMPLES = exports.CASH_IN_RISK_CAP_PCT = exports.CASH_IN_SEASONALITY_CAP_PCT = exports.CASH_IN_BASELINE_NORMAL_DEFAULT_PCT = exports.CASH_IN_QUOTE_MAX_PCT = exports.CASH_IN_QUOTE_MIN_PCT = void 0;
+exports.REVENUE_CALIBRATION_LIVE_HORIZON_MONTHS = exports.REVENUE_CALIBRATION_LIVE_FACTOR_MAX = exports.REVENUE_CALIBRATION_LIVE_FACTOR_MIN = exports.REVENUE_CALIBRATION_DEFAULT_RISK = exports.REVENUE_CALIBRATION_DEFAULT_BIAS = exports.REVENUE_CALIBRATION_RISK_MAX = exports.REVENUE_CALIBRATION_CONSERVATIVE_MAX = exports.REVENUE_CALIBRATION_CONSERVATIVE_MIN = exports.REVENUE_CALIBRATION_BIAS_MAX = exports.REVENUE_CALIBRATION_BIAS_MIN = exports.REVENUE_CALIBRATION_GAMMA = exports.REVENUE_CALIBRATION_ALPHA = exports.CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH = exports.CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL = exports.CASH_IN_PLAN_SAFETY_MARGIN_PCT = exports.CASH_IN_SHRINKAGE_MIN_SAMPLES = exports.CASH_IN_RISK_CAP_PCT = exports.CASH_IN_SEASONALITY_CAP_PCT = exports.CASH_IN_BASELINE_NORMAL_DEFAULT_PCT = exports.CASH_IN_QUOTE_MAX_PCT = exports.CASH_IN_QUOTE_MIN_PCT = void 0;
 exports.isMonthKey = isMonthKey;
 exports.monthIndex = monthIndex;
 exports.normalizeRevenueCalibrationMode = normalizeRevenueCalibrationMode;
@@ -17,20 +17,33 @@ const CASH_IN_CALIBRATION_HORIZON_OPTIONS = [3, 6, 12];
 exports.CASH_IN_QUOTE_MIN_PCT = 40;
 exports.CASH_IN_QUOTE_MAX_PCT = 60;
 exports.CASH_IN_BASELINE_NORMAL_DEFAULT_PCT = 51;
-exports.CASH_IN_SEASONALITY_CAP_PCT = 4;
+exports.CASH_IN_SEASONALITY_CAP_PCT = 8;
 exports.CASH_IN_RISK_CAP_PCT = 6;
 exports.CASH_IN_SHRINKAGE_MIN_SAMPLES = 3;
-exports.CASH_IN_PLAN_SAFETY_MARGIN_PCT = 0.5;
-exports.CASH_IN_PLAN_EXTRA_RISK_CAP_PCT = 0.5;
+exports.CASH_IN_PLAN_SAFETY_MARGIN_PCT = 0.3;
+exports.CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL = "Historie (Mai 2022–Jan 2026)";
+exports.CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH = Object.freeze([
+    -0.84,
+    0.71,
+    2.08,
+    -1.65,
+    -1.64,
+    -2.92,
+    2.46,
+    0.41,
+    -3.12,
+    -2.92,
+    2.11,
+    5.32,
+]);
 const CASH_IN_LEVEL_ALPHA = 0.22;
 const CASH_IN_SEASONALITY_ALPHA = 0.18;
 const CASH_IN_RISK_ALPHA = 0.30;
 const CASH_IN_MAX_RISK_HORIZON_MONTHS = 6;
 const CASH_IN_LEVEL_WINDOW_MONTHS = 12;
-const CASH_IN_LEVEL_RECENT_STRONG_MONTHS = 3;
-const CASH_IN_LEVEL_RECENT_WEIGHT = 1.0;
-const CASH_IN_LEVEL_OLDER_BASE_WEIGHT = 0.32;
-const CASH_IN_LEVEL_OLDER_DECAY = 0.92;
+const CASH_IN_LEVEL_RECENT_MONTHS = 3;
+const CASH_IN_LEVEL_RECENT_SHARE = 0.7;
+const CASH_IN_LEVEL_WINDOW_SHARE = 0.3;
 const CASH_IN_LIVE_SIGNAL_START_DAY = 10;
 const CASH_IN_LIVE_SIGNAL_MIN_WEIGHT = 0.03;
 const CASH_IN_LIVE_SIGNAL_MAX_WEIGHT = 0.15;
@@ -210,6 +223,45 @@ function toSeasonalityArray(raw, fallback = 0) {
     });
     return out;
 }
+function hasSeasonalityInput(raw) {
+    if (Array.isArray(raw)) {
+        return raw.some((value) => asFiniteNumber(value) != null);
+    }
+    if (!raw || typeof raw !== "object")
+        return false;
+    return Object.entries(raw).some(([key, value]) => normalizeMonthSlot(key) && asFiniteNumber(value) != null);
+}
+function isFlatSeasonalityProfile(values) {
+    const numeric = (Array.isArray(values) ? values : [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value));
+    if (numeric.length < 12)
+        return true;
+    const median = computeMedian(numeric);
+    if (!Number.isFinite(median))
+        return true;
+    const nearMedianCount = numeric.filter((value) => Math.abs(value - median) <= 0.35).length;
+    return nearMedianCount >= 9;
+}
+function normalizeSeasonalityOffsetsToZero(values) {
+    const base = Array.from({ length: 12 }, (_, index) => clampSeasonalityPct(Array.isArray(values) ? values[index] : 0));
+    const sum = base.reduce((acc, value) => acc + Number(value || 0), 0);
+    const correction = sum / 12;
+    const centered = base.map((value) => clampSeasonalityPct(value - correction));
+    let residual = centered.reduce((acc, value) => acc + Number(value || 0), 0);
+    if (Math.abs(residual) <= 0.000001)
+        return centered;
+    for (let idx = centered.length - 1; idx >= 0; idx -= 1) {
+        const candidate = centered[idx] - residual;
+        if (candidate < -exports.CASH_IN_SEASONALITY_CAP_PCT || candidate > exports.CASH_IN_SEASONALITY_CAP_PCT)
+            continue;
+        centered[idx] = candidate;
+        residual = centered.reduce((acc, value) => acc + Number(value || 0), 0);
+        if (Math.abs(residual) <= 0.000001)
+            break;
+    }
+    return centered;
+}
 function toCountArray(raw, fallback = 0) {
     const out = Array.from({ length: 12 }, () => Math.max(0, Math.round(Number(fallback || 0))));
     if (Array.isArray(raw)) {
@@ -287,15 +339,25 @@ function normalizeLearningState(raw, options = {}) {
         ? clampPct(Number(fallbackLevelRaw), exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT)
         : exports.CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
     const importedProfile = normalizeHistoricalImport(source.historicalImport || source.importProfile);
-    const priorFromImport = importedProfile
-        ? importedProfile.seasonalityPriorByMonth
-        : Array.from({ length: 12 }, () => 0);
-    const seasonalityPriorByMonth = toSeasonalityArray(source.seasonalityPriorByMonth, 0).map((value, index) => (Number.isFinite(Number(value))
-        ? clampSeasonalityPct(value)
-        : clampSeasonalityPct(priorFromImport[index] || 0)));
-    const seasonalityByMonth = toSeasonalityArray(source.seasonalityByMonth, 0).map((value, index) => (Number.isFinite(Number(value))
-        ? clampSeasonalityPct(value)
-        : clampSeasonalityPct(seasonalityPriorByMonth[index] || 0)));
+    const fallbackPriorOffsets = normalizeSeasonalityOffsetsToZero(exports.CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH);
+    const importedPriorOffsets = importedProfile
+        ? normalizeSeasonalityOffsetsToZero(toSeasonalityArray(importedProfile.seasonalityPriorByMonth, 0))
+        : fallbackPriorOffsets.slice();
+    const priorBase = importedPriorOffsets.length === 12
+        ? importedPriorOffsets
+        : fallbackPriorOffsets;
+    const rawPriorOffsets = normalizeSeasonalityOffsetsToZero(toSeasonalityArray(source.seasonalityPriorByMonth, 0));
+    const useFallbackPrior = !hasSeasonalityInput(source.seasonalityPriorByMonth)
+        || isFlatSeasonalityProfile(rawPriorOffsets);
+    const seasonalityPriorByMonth = useFallbackPrior
+        ? priorBase.slice()
+        : rawPriorOffsets.slice();
+    const rawSeasonalityOffsets = normalizeSeasonalityOffsetsToZero(toSeasonalityArray(source.seasonalityByMonth, 0));
+    const useFallbackSeasonality = !hasSeasonalityInput(source.seasonalityByMonth)
+        || isFlatSeasonalityProfile(rawSeasonalityOffsets);
+    const seasonalityByMonth = useFallbackSeasonality
+        ? seasonalityPriorByMonth.slice()
+        : rawSeasonalityOffsets.slice();
     const seasonalitySampleCountByMonth = toCountArray(source.seasonalitySampleCountByMonth, 0);
     const levelRaw = parsePayoutPctInput(source.levelPct ?? importedProfile?.levelPct ?? fallbackLevelPct);
     const levelPct = Number.isFinite(levelRaw)
@@ -563,16 +625,6 @@ function resolveLiveSignal(input = {}) {
         dayOfMonth,
     };
 }
-function recencyWeightForLevel(ageMonths) {
-    const age = Math.max(0, Math.round(Number(ageMonths || 0)));
-    if (age < CASH_IN_LEVEL_RECENT_STRONG_MONTHS) {
-        return CASH_IN_LEVEL_RECENT_WEIGHT;
-    }
-    if (age >= CASH_IN_LEVEL_WINDOW_MONTHS) {
-        return 0;
-    }
-    return CASH_IN_LEVEL_OLDER_BASE_WEIGHT * Math.pow(CASH_IN_LEVEL_OLDER_DECAY, age - CASH_IN_LEVEL_RECENT_STRONG_MONTHS);
-}
 function computeWeightedLevelForMonth({ points, referenceMonth, fallbackLevelPct, }) {
     const fallback = clampPct(Number.isFinite(Number(fallbackLevelPct))
         ? Number(fallbackLevelPct)
@@ -581,6 +633,10 @@ function computeWeightedLevelForMonth({ points, referenceMonth, fallbackLevelPct
     if (refMonthIndex == null) {
         return {
             levelPct: fallback,
+            avg3Pct: fallback,
+            avg12Pct: fallback,
+            recentSamples: [],
+            windowSamples: [],
             sampleCount: 0,
             recentSampleCount: 0,
             sourceTag: "fallback",
@@ -597,70 +653,67 @@ function computeWeightedLevelForMonth({ points, referenceMonth, fallbackLevelPct
         const quotePct = Number(point?.quotePct);
         if (!Number.isFinite(quotePct))
             return;
-        const weight = recencyWeightForLevel(ageMonths);
-        if (!(weight > 0))
-            return;
         samples.push({
-            ageMonths,
-            weight,
+            month: String(point.month),
+            monthIndex: pointMonthIndex,
             quotePct: clampPct(quotePct, exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT),
         });
     });
+    samples.sort((left, right) => left.monthIndex - right.monthIndex);
     if (!samples.length) {
         return {
             levelPct: fallback,
+            avg3Pct: fallback,
+            avg12Pct: fallback,
+            recentSamples: [],
+            windowSamples: [],
             sampleCount: 0,
             recentSampleCount: 0,
             sourceTag: "fallback",
         };
     }
-    const rawMedian = computeMedian(samples.map((sample) => sample.quotePct));
-    const median = Number.isFinite(rawMedian) ? Number(rawMedian) : fallback;
-    const robustLow = Math.max(exports.CASH_IN_QUOTE_MIN_PCT, median - 5);
-    const robustHigh = Math.min(exports.CASH_IN_QUOTE_MAX_PCT, median + 5);
-    let weightedSum = 0;
-    let weightSum = 0;
-    samples.forEach((sample) => {
-        const robustQuote = Math.min(robustHigh, Math.max(robustLow, sample.quotePct));
-        weightedSum += robustQuote * sample.weight;
-        weightSum += sample.weight;
-    });
-    const weightedLevel = weightSum > 0 ? (weightedSum / weightSum) : fallback;
-    const confidence = Math.min(1, samples.length / 4);
-    const levelPct = clampPct((weightedLevel * confidence) + (fallback * (1 - confidence)), exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT);
-    const recentSampleCount = samples.filter((sample) => sample.ageMonths < CASH_IN_LEVEL_RECENT_STRONG_MONTHS).length;
+    const recentSamples = samples.slice(-CASH_IN_LEVEL_RECENT_MONTHS);
+    const avg3Raw = computeAverage(recentSamples.map((sample) => sample.quotePct));
+    const avg12Raw = computeAverage(samples.map((sample) => sample.quotePct));
+    const avg3Pct = Number.isFinite(avg3Raw) ? Number(avg3Raw) : null;
+    const avg12Pct = Number.isFinite(avg12Raw) ? Number(avg12Raw) : null;
+    const levelRaw = Number.isFinite(avg3Pct) && Number.isFinite(avg12Pct)
+        ? (Number(avg3Pct) * CASH_IN_LEVEL_RECENT_SHARE) + (Number(avg12Pct) * CASH_IN_LEVEL_WINDOW_SHARE)
+        : Number.isFinite(avg3Pct)
+            ? Number(avg3Pct)
+            : Number.isFinite(avg12Pct)
+                ? Number(avg12Pct)
+                : fallback;
+    const levelPct = clampPct(levelRaw, exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT);
+    const normalizedRecentSamples = recentSamples.map((sample) => ({
+        month: sample.month,
+        quotePct: sample.quotePct,
+    }));
+    const normalizedWindowSamples = samples.map((sample) => ({
+        month: sample.month,
+        quotePct: sample.quotePct,
+    }));
     return {
         levelPct,
+        avg3Pct: Number.isFinite(avg3Pct) ? Number(avg3Pct) : null,
+        avg12Pct: Number.isFinite(avg12Pct) ? Number(avg12Pct) : null,
+        recentSamples: normalizedRecentSamples,
+        windowSamples: normalizedWindowSamples,
         sampleCount: samples.length,
-        recentSampleCount,
-        sourceTag: recentSampleCount >= 2 ? "recent_12m" : "stabilized_12m",
+        recentSampleCount: normalizedRecentSamples.length,
+        sourceTag: samples.length ? "ist_window_12m" : "fallback",
     };
 }
-function yearRecencyWeight(ageMonths) {
-    const yearAge = Math.max(0, Math.floor(Math.max(0, Number(ageMonths || 0)) / 12));
-    if (yearAge <= 0)
-        return 1;
-    if (yearAge === 1)
-        return 0.55;
-    if (yearAge === 2)
-        return 0.30;
-    return 0.18;
-}
-function centerSeasonalityOffsets(values) {
-    const offsets = Array.isArray(values)
-        ? values.map((value) => clampSeasonalityPct(value))
-        : Array.from({ length: 12 }, () => 0);
-    const mean = offsets.length
-        ? offsets.reduce((sum, value) => sum + Number(value || 0), 0) / offsets.length
-        : 0;
-    return offsets.map((value) => clampSeasonalityPct(Number(value || 0) - mean));
-}
-function computeSeasonalityProfile({ points, currentMonth, enabled, levelAnchorPct, priorOffsets, priorSampleCounts, }) {
+function computeSeasonalityProfile({ points, currentMonth, enabled, priorOffsets, priorSampleCounts, }) {
     const fallbackOffsets = Array.from({ length: 12 }, () => 0);
     const fallbackCounts = Array.from({ length: 12 }, () => 0);
-    const normalizedPriorOffsets = Array.isArray(priorOffsets)
-        ? priorOffsets.map((value) => clampSeasonalityPct(value))
-        : fallbackOffsets.slice();
+    const fallbackPriorOffsets = normalizeSeasonalityOffsetsToZero(exports.CASH_IN_SEASONALITY_PRIOR_DEFAULT_BY_MONTH);
+    let normalizedPriorOffsets = Array.isArray(priorOffsets)
+        ? normalizeSeasonalityOffsetsToZero(priorOffsets.map((value) => clampSeasonalityPct(value)))
+        : fallbackPriorOffsets.slice();
+    if (isFlatSeasonalityProfile(normalizedPriorOffsets)) {
+        normalizedPriorOffsets = fallbackPriorOffsets.slice();
+    }
     const normalizedPriorCounts = Array.isArray(priorSampleCounts)
         ? priorSampleCounts.map((value) => Math.max(0, Math.round(Number(value || 0))))
         : fallbackCounts.slice();
@@ -672,84 +725,84 @@ function computeSeasonalityProfile({ points, currentMonth, enabled, levelAnchorP
             sampleCounts: normalizedPriorCounts,
             shrinkWeights: fallbackOffsets,
             sourceTags: Array.from({ length: 12 }, () => "disabled"),
+            overallMeanPct: null,
+            monthMeanBySlot: Array.from({ length: 12 }, () => null),
+            recentSampleCountsBySlot: fallbackCounts.slice(),
         };
     }
     const anchorMonth = isMonthKey(currentMonth)
         ? currentMonth
         : ((Array.isArray(points) && points.length) ? points[points.length - 1].month : null);
     const anchorMonthIndex = monthIndex(anchorMonth);
-    if (anchorMonthIndex == null) {
-        return {
-            offsets: centerSeasonalityOffsets(normalizedPriorOffsets),
-            rawOffsets: centerSeasonalityOffsets(normalizedPriorOffsets),
-            priorOffsets: normalizedPriorOffsets,
-            sampleCounts: normalizedPriorCounts,
-            shrinkWeights: fallbackOffsets,
-            sourceTags: Array.from({ length: 12 }, () => "prior_only"),
-        };
-    }
-    const centerLevel = Number.isFinite(Number(levelAnchorPct))
-        ? Number(levelAnchorPct)
-        : exports.CASH_IN_BASELINE_NORMAL_DEFAULT_PCT;
-    const weightedResidualSumBySlot = Array.from({ length: 12 }, () => 0);
-    const weightSumBySlot = Array.from({ length: 12 }, () => 0);
-    const latestYearWeightBySlot = Array.from({ length: 12 }, () => 0);
+    const referenceMonthIndex = anchorMonthIndex != null
+        ? anchorMonthIndex
+        : (() => {
+            const lastPoint = Array.isArray(points) && points.length ? points[points.length - 1] : null;
+            return monthIndex(lastPoint?.month);
+        })();
+    const eligiblePoints = (Array.isArray(points) ? points : []).filter((point) => {
+        const pointMonthIndex = monthIndex(point?.month);
+        if (pointMonthIndex == null)
+            return false;
+        if (referenceMonthIndex == null)
+            return true;
+        return pointMonthIndex <= referenceMonthIndex;
+    });
+    const overallMeanRaw = computeAverage(eligiblePoints.map((point) => Number(point?.quotePct)));
+    const overallMeanPct = Number.isFinite(overallMeanRaw) ? Number(overallMeanRaw) : null;
+    const monthlyQuotes = Array.from({ length: 12 }, () => []);
     const sampleCountBySlot = Array.from({ length: 12 }, () => 0);
-    (Array.isArray(points) ? points : []).forEach((point) => {
+    const recentSampleCountsBySlot = Array.from({ length: 12 }, () => 0);
+    eligiblePoints.forEach((point) => {
         const pointMonthIndex = monthIndex(point?.month);
         const slotIndex = toMonthSlotIndex(point?.month);
-        if (pointMonthIndex == null || slotIndex == null || pointMonthIndex > anchorMonthIndex)
+        if (pointMonthIndex == null || slotIndex == null)
             return;
         const quotePct = Number(point?.quotePct);
         if (!Number.isFinite(quotePct))
             return;
-        const ageMonths = anchorMonthIndex - pointMonthIndex;
-        const weight = yearRecencyWeight(ageMonths);
-        const residual = clampPct(quotePct, exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT) - centerLevel;
-        weightedResidualSumBySlot[slotIndex] += residual * weight;
-        weightSumBySlot[slotIndex] += weight;
+        monthlyQuotes[slotIndex].push(clampPct(quotePct, exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT));
         sampleCountBySlot[slotIndex] += 1;
-        if (ageMonths < 12) {
-            latestYearWeightBySlot[slotIndex] += weight;
+        if (referenceMonthIndex != null && (referenceMonthIndex - pointMonthIndex) < 12) {
+            recentSampleCountsBySlot[slotIndex] += 1;
         }
     });
-    const rawOffsets = Array.from({ length: 12 }, (_, slotIndex) => {
-        if (weightSumBySlot[slotIndex] <= 0)
-            return 0;
-        return weightedResidualSumBySlot[slotIndex] / weightSumBySlot[slotIndex];
+    const monthMeanBySlot = monthlyQuotes.map((quotes) => {
+        const mean = computeAverage(quotes);
+        return Number.isFinite(mean) ? Number(mean) : null;
     });
-    const blendedOffsets = Array.from({ length: 12 }, (_, slotIndex) => {
+    const rawOffsetsUnbalanced = Array.from({ length: 12 }, (_, slotIndex) => {
         const sampleCount = sampleCountBySlot[slotIndex];
-        const rawOffset = rawOffsets[slotIndex];
+        const monthMean = monthMeanBySlot[slotIndex];
         const priorOffset = Number(normalizedPriorOffsets[slotIndex] || 0);
-        const shrinkWeight = Math.min(1, sampleCount / 2);
-        if (sampleCount <= 0) {
-            return priorOffset * 0.35;
+        if (sampleCount > 0 && Number.isFinite(overallMeanPct) && Number.isFinite(monthMean)) {
+            return Number(monthMean) - Number(overallMeanPct);
         }
-        return (rawOffset * shrinkWeight) + (priorOffset * (1 - shrinkWeight) * 0.35);
+        return priorOffset;
     });
-    const centeredOffsets = centerSeasonalityOffsets(blendedOffsets);
-    const centeredRawOffsets = centerSeasonalityOffsets(rawOffsets);
-    const shrinkWeights = Array.from({ length: 12 }, (_, slotIndex) => (Math.min(1, sampleCountBySlot[slotIndex] / 2)));
+    const rawOffsets = rawOffsetsUnbalanced.map((offset) => clampSeasonalityPct(offset));
+    const offsets = normalizeSeasonalityOffsetsToZero(rawOffsets);
+    const shrinkWeights = sampleCountBySlot.map((count) => (count > 0 ? 1 : 0));
     const sourceTags = Array.from({ length: 12 }, (_, slotIndex) => {
         const sampleCount = sampleCountBySlot[slotIndex];
-        const priorOffset = Number(normalizedPriorOffsets[slotIndex] || 0);
-        if (sampleCount <= 0) {
-            return Math.abs(priorOffset) > 0.001 ? "stabilized_prior" : "no_data";
+        if (sampleCount > 0) {
+            return recentSampleCountsBySlot[slotIndex] > 0
+                ? "ist_month"
+                : "history_month";
         }
-        const totalWeight = weightSumBySlot[slotIndex];
-        const latestShare = totalWeight > 0 ? (latestYearWeightBySlot[slotIndex] / totalWeight) : 0;
-        if (latestShare >= 0.6)
-            return "recent_dominant";
-        return "stabilized_history";
+        const priorOffset = Number(normalizedPriorOffsets[slotIndex] || 0);
+        return Math.abs(priorOffset) > 0.001 ? "history_month" : "no_data";
     });
     return {
-        offsets: centeredOffsets,
-        rawOffsets: centeredRawOffsets,
+        offsets,
+        rawOffsets,
         priorOffsets: normalizedPriorOffsets,
         sampleCounts: sampleCountBySlot,
         shrinkWeights,
         sourceTags,
+        overallMeanPct,
+        monthMeanBySlot,
+        recentSampleCountsBySlot,
     };
 }
 function buildPayoutRecommendation(input = {}) {
@@ -796,11 +849,6 @@ function buildPayoutRecommendation(input = {}) {
         points: istPoints,
         currentMonth,
         enabled: seasonalityEnabled,
-        levelAnchorPct: computeWeightedLevelForMonth({
-            points: istPoints,
-            referenceMonth: currentMonth,
-            fallbackLevelPct,
-        }).levelPct,
         priorOffsets: learningState.seasonalityPriorByMonth,
         priorSampleCounts: learningState.seasonalitySampleCountByMonth,
     });
@@ -818,9 +866,6 @@ function buildPayoutRecommendation(input = {}) {
     const appliedModelPoints = [];
     const currentMonthIndex = monthIndex(currentMonth);
     const levelByReferenceMonth = new Map();
-    const dynamicRiskExtraPct = Number(learningState.positiveErrorCount || 0) > 0
-        ? Math.min(exports.CASH_IN_PLAN_EXTRA_RISK_CAP_PCT, Math.max(0, Number(learningState.riskBasePct || 0)) * 0.1)
-        : 0;
     const fixedSafetyMarginPct = exports.CASH_IN_PLAN_SAFETY_MARGIN_PCT;
     function getLevelForReferenceMonth(referenceMonth) {
         const key = isMonthKey(referenceMonth) ? referenceMonth : "__fallback__";
@@ -854,7 +899,11 @@ function buildPayoutRecommendation(input = {}) {
                 explanation: "IST: Auszahlungsquote aus Monats-Istwerten.",
                 mode: "ist",
                 levelPct: levelInfo.levelPct,
-                riskBasePct: dynamicRiskExtraPct,
+                levelAvg3Pct: levelInfo.avg3Pct,
+                levelAvg12Pct: levelInfo.avg12Pct,
+                levelRecentMonths: levelInfo.recentSamples,
+                levelWindowMonths: levelInfo.windowSamples,
+                riskBasePct: 0,
                 riskAdjustmentPct: 0,
                 safetyMarginPct: 0,
                 horizonMonths,
@@ -864,6 +913,11 @@ function buildPayoutRecommendation(input = {}) {
                 seasonalityWeight: monthSlotIndex != null ? Number(seasonalityProfile.shrinkWeights[monthSlotIndex] || 0) : 0,
                 seasonalitySampleCount: monthSlotIndex != null ? Number(seasonalityProfile.sampleCounts[monthSlotIndex] || 0) : 0,
                 seasonalitySourceTag: monthSlotIndex != null ? String(seasonalityProfile.sourceTags[monthSlotIndex] || "") : "no_data",
+                seasonalityMonthMeanPct: monthSlotIndex != null
+                    ? Number(seasonalityProfile.monthMeanBySlot?.[monthSlotIndex])
+                    : null,
+                seasonalityOverallMeanPct: Number(seasonalityProfile.overallMeanPct),
+                seasonalityProfileSource: exports.CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL,
                 shrinkageActive: false,
                 capsApplied: [],
                 capApplied: false,
@@ -892,7 +946,7 @@ function buildPayoutRecommendation(input = {}) {
         const seasonalitySourceTag = monthSlotIndex != null
             ? String(seasonalityProfile.sourceTags[monthSlotIndex] || "")
             : "no_data";
-        const riskAdjustmentPct = fixedSafetyMarginPct + dynamicRiskExtraPct;
+        const riskAdjustmentPct = fixedSafetyMarginPct;
         const baseRawPct = Number(levelInfo.levelPct || fallbackLevelPct) + seasonalityPct;
         let quoteBeforeClampPct = baseRawPct - riskAdjustmentPct;
         let liveSignalUsed = false;
@@ -912,9 +966,9 @@ function buildPayoutRecommendation(input = {}) {
             capsApplied.push("quote_band_40_60");
         }
         if (Math.abs(seasonalityRawPct) >= exports.CASH_IN_SEASONALITY_CAP_PCT - 0.000001) {
-            capsApplied.push("seasonality_cap_4pp");
+            capsApplied.push("seasonality_cap_8pp");
         }
-        const explanationBase = "Empfohlen (Plan): aktuelles Niveau + Saisonmuster - Sicherheitsmarge.";
+        const explanationBase = "Empfohlen (Plan): Level + Saisonalitätsfaktor - Sicherheitsmarge.";
         const explanation = liveSignalUsed
             ? `${explanationBase} Live-Signal wird schwach beigemischt.`
             : explanationBase;
@@ -925,13 +979,17 @@ function buildPayoutRecommendation(input = {}) {
             explanation,
             mode: "plan",
             levelPct: levelInfo.levelPct,
+            levelAvg3Pct: levelInfo.avg3Pct,
+            levelAvg12Pct: levelInfo.avg12Pct,
+            levelRecentMonths: levelInfo.recentSamples,
+            levelWindowMonths: levelInfo.windowSamples,
             levelSampleCount: levelInfo.sampleCount,
             levelRecentSampleCount: levelInfo.recentSampleCount,
             levelSourceTag: levelInfo.sourceTag,
-            riskBasePct: dynamicRiskExtraPct,
+            riskBasePct: 0,
             riskAdjustmentPct,
             safetyMarginPct: fixedSafetyMarginPct,
-            riskExtraPct: dynamicRiskExtraPct,
+            riskExtraPct: 0,
             horizonMonths,
             seasonalityPct,
             seasonalityRawPct,
@@ -939,6 +997,11 @@ function buildPayoutRecommendation(input = {}) {
             seasonalityWeight,
             seasonalitySampleCount,
             seasonalitySourceTag,
+            seasonalityMonthMeanPct: monthSlotIndex != null
+                ? Number(seasonalityProfile.monthMeanBySlot?.[monthSlotIndex])
+                : null,
+            seasonalityOverallMeanPct: Number(seasonalityProfile.overallMeanPct),
+            seasonalityProfileSource: exports.CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL,
             shrinkageActive: seasonalityWeight < 1,
             capsApplied,
             capApplied: capsApplied.length > 0,
@@ -973,7 +1036,7 @@ function buildPayoutRecommendation(input = {}) {
         mode: "plan",
         seasonalityEnabled,
         safetyMarginPct: fixedSafetyMarginPct,
-        riskExtraPct: dynamicRiskExtraPct,
+        riskExtraPct: 0,
         baselineNormalPct: currentLevelInfo.levelPct,
         baselineQ4Pct: currentLevelInfo.levelPct,
         baselineQ4SuggestedPct: currentLevelInfo.levelPct,
@@ -997,7 +1060,7 @@ function buildPayoutRecommendation(input = {}) {
             ? clampPct(modelObservedAverageRaw, exports.CASH_IN_QUOTE_MIN_PCT, exports.CASH_IN_QUOTE_MAX_PCT)
             : null,
         observedNormalWithForecastSampleCount: appliedModelPoints.length,
-        riskBasePct: dynamicRiskExtraPct,
+        riskBasePct: 0,
         levelPct: currentLevelInfo.levelPct,
         seasonalityByMonth: buildMonthMapFromArray(seasonalityProfile.offsets, (value) => value),
         seasonalityPriorByMonth: buildMonthMapFromArray(seasonalityProfile.priorOffsets, (value) => value),

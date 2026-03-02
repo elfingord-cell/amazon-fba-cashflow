@@ -100,8 +100,8 @@ function mapIssueRows(issues) {
 function buildSheets(report) {
   const inventory = report.inventory || {};
   const inventoryRows = report.inventoryRows || [];
-  const deposits = report.deposits || [];
-  const arrivals = report.arrivals || [];
+  const paymentsInMonth = report.paymentsInMonth || report.deposits || [];
+  const arrivalsInMonth = report.arrivalsInMonth || report.arrivals || [];
   const poLedger = report.poLedger || [];
 
   const summaryRows = [
@@ -111,8 +111,8 @@ function buildSheets(report) {
     ["Amazon Units", inventory.totalAmazonUnits],
     ["3PL Units", inventory.total3plUnits],
     ["In Transit Units", inventory.totalInTransitUnits],
-    ["Anzahlungen PO", deposits.length],
-    ["Wareneingaenge PO", arrivals.length],
+    ["Zahlungen im Monat PO", paymentsInMonth.length],
+    ["Wareneingaenge im Monat PO", arrivalsInMonth.length],
     ["Anzahlungen+Ankunft PO", poLedger.length],
     ["Manual Override Used", inventory.manualOverrideUsed ? "yes" : "no"],
     ["Quality Issues", (report.quality || []).length],
@@ -148,7 +148,9 @@ function buildSheets(report) {
   const depositRows = [[
     "PO Number",
     "Supplier",
+    "Items (Kurz)",
     "SKU Aliases",
+    "Alle Items",
     "Payment Type",
     "Planned EUR",
     "Actual EUR",
@@ -162,11 +164,13 @@ function buildSheets(report) {
     "Folder URL",
     "Issues",
   ]];
-  deposits.forEach((row) => {
+  paymentsInMonth.forEach((row) => {
     depositRows.push([
       row.poNumber || "",
       row.supplier || "",
+      row.itemSummary || "",
       row.skuAliases || "",
+      row.allItems || "",
       row.paymentType || "",
       row.plannedEur,
       row.actualEur,
@@ -185,7 +189,9 @@ function buildSheets(report) {
   const arrivalRows = [[
     "PO Number",
     "Supplier",
+    "Items (Kurz)",
     "SKU Aliases",
+    "Alle Items",
     "Units",
     "Goods USD",
     "Goods EUR",
@@ -195,11 +201,13 @@ function buildSheets(report) {
     "Transport",
     "Issues",
   ]];
-  arrivals.forEach((row) => {
+  arrivalsInMonth.forEach((row) => {
     arrivalRows.push([
       row.poNumber || "",
       row.supplier || "",
+      row.itemSummary || "",
       row.skuAliases || "",
+      row.allItems || "",
       row.units,
       row.goodsUsd,
       row.goodsEur,
@@ -213,13 +221,17 @@ function buildSheets(report) {
 
   const poLedgerRows = [[
     "Month Marker",
-    "Month Marker Reason",
+    "Relevanzgrund",
+    "Relevanzgrund Label",
     "PO Number",
     "Supplier",
+    "Items (Kurz)",
     "SKU Aliases",
+    "Alle Items",
     "Units",
-    "Deposit Actual EUR (Month)",
-    "Deposit Amount USD (Month)",
+    "Payment Actual EUR (Month)",
+    "Payment Amount USD (Month)",
+    "Payment Types (Month)",
     "ETD Date",
     "ETA Date",
     "Arrival Date",
@@ -229,13 +241,17 @@ function buildSheets(report) {
   poLedger.forEach((row) => {
     poLedgerRows.push([
       row.monthMarker ? "yes" : "no",
-      row.monthMarkerReason || "",
+      row.relevanceReason || row.monthMarkerReason || "",
+      row.relevanceReasonLabel || "",
       row.poNumber || "",
       row.supplier || "",
+      row.itemSummary || "",
       row.skuAliases || "",
+      row.allItems || "",
       row.units,
-      row.depositActualEurMonth,
-      row.depositAmountUsdMonth,
+      row.paymentActualEurMonth ?? row.depositActualEurMonth,
+      row.paymentAmountUsdMonth ?? row.depositAmountUsdMonth,
+      row.paymentTypesInMonth || "",
       row.etdDate || "",
       row.etaDate || "",
       row.arrivalDate || "",

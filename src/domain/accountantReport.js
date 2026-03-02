@@ -148,13 +148,74 @@ function buildProductMaps(state) {
   };
 }
 
-function resolveSkuAliases(record, aliasBySku) {
+function buildPoItemAliasMeta(record, aliasBySku) {
   const items = Array.isArray(record?.items) ? record.items.filter(Boolean) : [];
   const skus = items.length
     ? items.map((item) => String(item?.sku || "").trim()).filter(Boolean)
     : [String(record?.sku || "").trim()].filter(Boolean);
-  const aliases = Array.from(new Set(skus.map((sku) => aliasBySku.get(normalizeKey(sku)) || sku)));
-  return aliases.join(", ") || "-";
+  const aliases = Array.from(new Set(skus.map((sku) => aliasBySku.get(normalizeKey(sku)) || sku))).filter(Boolean);
+  const skuAliases = aliases.join(", ") || "-";
+  const itemSummary = aliases.length > 1 ? `${aliases[0]}, …` : (aliases[0] || "-");
+  const allItems = (items.length ? items : [{ sku: record?.sku, units: record?.units }])
+    .map((item) => {
+      const sku = String(item?.sku || "").trim();
+      const alias = sku ? (aliasBySku.get(normalizeKey(sku)) || sku) : "-";
+      const units = parseUnits(item?.units);
+      return `${alias} (${sku || "-"}) x${units}`;
+    })
+    .join(" | ");
+  return {
+    skuAliases,
+    itemSummary,
+    allItems: allItems || skuAliases,
+  };
+}
+
+function resolveSkuAliases(record, aliasBySku) {
+  return buildPoItemAliasMeta(record, aliasBySku).skuAliases;
+}
+
+function normalizeAccountantPaymentType(typeLabel, eventType, eventId = "") {
+  const label = String(typeLabel || "").toLowerCase();
+  const type = String(eventType || "").toLowerCase();
+  const id = String(eventId || "").toLowerCase();
+  if (type === "fx_fee" || label.includes("fx")) return null;
+  if (type === "freight" || label.includes("shipping") || label.includes("fracht")) return "Shipping/Freight";
+  if (type === "eust" || label.includes("eust")) return "EUSt";
+  if (type === "duty" || label.includes("zoll") || label.includes("custom") || label.includes("duty")) return "Zoll";
+  if (label.includes("balance2") || label.includes("balance 2") || label.includes("second balance") || id.includes("balance2") || id.includes("bal2")) return "Balance2";
+  if (label.includes("balance") || label.includes("rest")) return "Balance";
+  if (label.includes("deposit") || label.includes("anzahlung")) return "Deposit";
+  return "Other";
+}
+
+function isUsdRelevantPaymentType(type) {
+  return type === "Deposit" || type === "Balance" || type === "Balance2";
+}
+
+function resolvePaidDateInMonth(payment, month, rowIssues) {
+  const paidDate = toIsoDate(payment?.paidDate);
+  const dueDate = toIsoDate(payment?.dueDate);
+  let effectivePaidDate = paidDate;
+  let usedDueDateFallback = false;
+  if (!effectivePaidDate && dueDate) {
+    effectivePaidDate = dueDate;
+    usedDueDateFallback = true;
+  }
+  if (!effectivePaidDate) {
+    rowIssues.push("PAID_WITHOUT_DATE");
+    return null;
+  }
+  if (monthFromDate(effectivePaidDate) !== month) return null;
+  if (usedDueDateFallback) rowIssues.push("DATE_UNCERTAIN");
+  return { paidDate: effectivePaidDate, dueDate };
+}
+
+function mapRelevanceReasonLabel(reason) {
+  if (reason === "payment+arrival") return "Zahlung im Monat + Wareneingang im Monat";
+  if (reason === "payment") return "Zahlung im Monat";
+  if (reason === "arrival") return "Wareneingang im Monat";
+  return "Nicht relevant im Monat";
 }
 
 function parseUnits(value) {
@@ -418,7 +479,7 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
   return { summary, rows };
 }
 
-function buildDepositsSection(state, request, productMaps, supplierMap, quality, qualitySeen) {
+function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, quality, qualitySeen) {
   const settings = buildSettings(state);
   const month = request.month;
   const rows = [];
@@ -430,61 +491,71 @@ function buildDepositsSection(state, request, productMaps, supplierMap, quality,
     const workingRecord = structuredClone(record);
     const paymentRows = buildPaymentRows(workingRecord, PO_CONFIG, settings, state?.payments || []);
     const goodsUsd = computeGoodsUsd(record);
+    const arrivalInfo = resolveArrivalDate(record);
+    const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
+    const poNumber = String(record.poNo || record.id || "");
+    const supplier = resolveSupplierName(record, supplierMap);
 
     paymentRows.forEach((payment) => {
       const status = String(payment?.status || "").toUpperCase();
-      const typeLabel = String(payment?.typeLabel || "");
-      const isDeposit = /deposit|anzahlung/i.test(typeLabel);
-      if (!isDeposit) return;
+      if (status !== "PAID") return;
+      const paymentType = normalizeAccountantPaymentType(payment?.typeLabel || payment?.label, payment?.eventType, payment?.id);
+      if (!paymentType) return;
 
-      if (status === "PAID" && !payment?.paidDate) {
-        addQualityIssue(quality, qualitySeen, {
-          code: "PAID_WITHOUT_DATE",
-          severity: "warning",
-          message: `PO ${record.poNo || record.id || "-"}: Deposit ist bezahlt, aber paidDate fehlt.`,
-          entityType: "PO",
-          entityId: String(record.id || record.poNo || ""),
+      const rowIssues = [];
+      const paidMeta = resolvePaidDateInMonth(payment, month, rowIssues);
+      if (!paidMeta) {
+        rowIssues.forEach((code) => {
+          addQualityIssue(quality, qualitySeen, {
+            code,
+            severity: "warning",
+            message: `PO ${poNumber || "-"}: ${code}`,
+            entityType: "PO",
+            entityId: String(record.id || poNumber || ""),
+          });
         });
+        return;
       }
 
-      if (status !== "PAID") return;
-      if (monthFromDate(payment?.paidDate) !== month) return;
-
-      const milestone = (Array.isArray(record?.milestones) ? record.milestones : []).find((entry) => entry?.id === payment?.id);
+      const milestone = (Array.isArray(record?.milestones) ? record.milestones : [])
+        .find((entry) => entry?.id === payment?.id);
       const percent = parseMoney(milestone?.percent);
-      const amountUsd = Number.isFinite(goodsUsd) && Number.isFinite(percent)
-        ? (goodsUsd * percent) / 100
-        : null;
+      let amountUsd = null;
+      if (isUsdRelevantPaymentType(paymentType)) {
+        amountUsd = Number.isFinite(goodsUsd) && Number.isFinite(percent)
+          ? (goodsUsd * percent) / 100
+          : null;
+      }
 
       const actualEur = Number.isFinite(Number(payment?.paidEurActual)) ? Number(payment.paidEurActual) : null;
       const plannedEur = Number.isFinite(Number(payment?.plannedEur)) ? Number(payment.plannedEur) : null;
 
-      const rowIssues = [];
-      if (!Number.isFinite(amountUsd)) rowIssues.push("MISSING_USD");
+      if (paymentType === "Other") rowIssues.push("PAYMENT_TYPE_UNCLEAR");
+      if (isUsdRelevantPaymentType(paymentType) && !Number.isFinite(amountUsd)) rowIssues.push("MISSING_USD");
       if (!Number.isFinite(actualEur)) rowIssues.push("MISSING_ACTUAL_EUR");
       if (!payment?.invoiceDriveUrl && !payment?.invoiceFolderDriveUrl) rowIssues.push("MISSING_INVOICE_LINK");
 
       rowIssues.forEach((code) => {
         addQualityIssue(quality, qualitySeen, {
-          code,
-          severity: code === "MISSING_ACTUAL_EUR" ? "warning" : "info",
-          message: `PO ${record.poNo || record.id || "-"}: ${code}`,
+          code: code || "PAYMENT_WARNING",
+          severity: code === "MISSING_ACTUAL_EUR" || code === "PAYMENT_TYPE_UNCLEAR" ? "warning" : "info",
+          message: `PO ${poNumber || "-"}: ${code || "PAYMENT_WARNING"}`,
           entityType: "PO",
-          entityId: String(record.id || record.poNo || ""),
+          entityId: String(record.id || poNumber || ""),
         });
       });
 
-      const arrivalInfo = resolveArrivalDate(record);
-
       rows.push({
-        poNumber: String(record.poNo || record.id || ""),
-        supplier: resolveSupplierName(record, supplierMap),
-        skuAliases: resolveSkuAliases(record, productMaps.aliasBySku),
-        paymentType: "Deposit",
+        poNumber,
+        supplier,
+        skuAliases: itemMeta.skuAliases,
+        itemSummary: itemMeta.itemSummary,
+        allItems: itemMeta.allItems,
+        paymentType,
         plannedEur,
         actualEur,
-        paidDate: toIsoDate(payment?.paidDate),
-        dueDate: toIsoDate(payment?.dueDate),
+        paidDate: paidMeta.paidDate,
+        dueDate: paidMeta.dueDate,
         amountUsd,
         etdDate: resolveEtdDate(record),
         etaDate: resolveEtaDate(record),
@@ -496,7 +567,11 @@ function buildDepositsSection(state, request, productMaps, supplierMap, quality,
     });
   });
 
-  return rows.sort((a, b) => String(a.paidDate || "").localeCompare(String(b.paidDate || "")));
+  return rows.sort((a, b) => {
+    const dateCompare = String(a.paidDate || "").localeCompare(String(b.paidDate || ""));
+    if (dateCompare !== 0) return dateCompare;
+    return String(a.poNumber || "").localeCompare(String(b.poNumber || ""));
+  });
 }
 
 function buildArrivalsSection(state, request, productMaps, supplierMap, quality, qualitySeen) {
@@ -526,6 +601,7 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     const units = items.reduce((sum, item) => sum + parseUnits(item?.units), 0);
     const goodsUsd = computeGoodsUsd(record);
     const goodsEur = computeGoodsEur(record, settings, goodsUsd);
+    const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
 
     const rowIssues = [];
     if (!Number.isFinite(goodsUsd)) rowIssues.push("MISSING_GOODS_USD");
@@ -547,7 +623,9 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     rows.push({
       poNumber: String(record.poNo || record.id || ""),
       supplier: resolveSupplierName(record, supplierMap),
-      skuAliases: resolveSkuAliases(record, productMaps.aliasBySku),
+      skuAliases: itemMeta.skuAliases,
+      itemSummary: itemMeta.itemSummary,
+      allItems: itemMeta.allItems,
       units,
       goodsUsd,
       goodsEur,
@@ -576,47 +654,68 @@ function buildPoLedgerSection(state, request, productMaps, supplierMap, quality,
     const goodsUsd = computeGoodsUsd(record);
     const arrivalInfo = resolveArrivalDate(record);
     const units = getPoItems(record).reduce((sum, item) => sum + parseUnits(item?.units), 0);
+    const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
 
-    let depositActualEurMonth = 0;
-    let hasDepositActual = false;
-    let depositAmountUsdMonth = 0;
-    let hasDepositUsd = false;
+    let paymentActualEurMonth = 0;
+    let hasPaymentActual = false;
+    let paymentAmountUsdMonth = 0;
+    let hasPaymentUsd = false;
+    const paymentTypesInMonth = new Set();
+    const rowIssues = [];
 
     paymentRows.forEach((payment) => {
       const status = String(payment?.status || "").toUpperCase();
-      const typeLabel = String(payment?.typeLabel || "");
-      const isDeposit = /deposit|anzahlung/i.test(typeLabel);
-      if (!isDeposit) return;
       if (status !== "PAID") return;
-      if (monthFromDate(payment?.paidDate) !== month) return;
+      const paymentType = normalizeAccountantPaymentType(payment?.typeLabel || payment?.label, payment?.eventType, payment?.id);
+      if (!paymentType) return;
+      const paidMeta = resolvePaidDateInMonth(payment, month, rowIssues);
+      if (!paidMeta) return;
+
+      paymentTypesInMonth.add(paymentType);
 
       const actualEur = Number(payment?.paidEurActual);
       if (Number.isFinite(actualEur)) {
-        depositActualEurMonth += actualEur;
-        hasDepositActual = true;
+        paymentActualEurMonth += actualEur;
+        hasPaymentActual = true;
       }
 
-      const milestone = (Array.isArray(record?.milestones) ? record.milestones : []).find((entry) => entry?.id === payment?.id);
+      const milestone = (Array.isArray(record?.milestones) ? record.milestones : [])
+        .find((entry) => entry?.id === payment?.id);
       const percent = parseMoney(milestone?.percent);
-      if (Number.isFinite(goodsUsd) && Number.isFinite(percent)) {
-        depositAmountUsdMonth += (goodsUsd * percent) / 100;
-        hasDepositUsd = true;
+      if (isUsdRelevantPaymentType(paymentType)) {
+        const amountUsd = Number.isFinite(goodsUsd) && Number.isFinite(percent)
+          ? (goodsUsd * percent) / 100
+          : null;
+        if (Number.isFinite(amountUsd)) {
+          paymentAmountUsdMonth += amountUsd;
+          hasPaymentUsd = true;
+        }
+      }
+
+      if (paymentType === "Other") {
+        rowIssues.push("PAYMENT_TYPE_UNCLEAR");
+        addQualityIssue(quality, qualitySeen, {
+          code: "PAYMENT_TYPE_UNCLEAR",
+          severity: "warning",
+          message: `PO ${record.poNo || record.id || "-"}: Zahlungstyp unklar.`,
+          entityType: "PO",
+          entityId: String(record.id || record.poNo || ""),
+        });
       }
     });
 
     const hasActualArrival = arrivalInfo.source === "arrivalDate" || arrivalInfo.source === "arrivalDateDe";
     const arrivalDate = arrivalInfo.date;
     const arrivalMonth = monthFromDate(arrivalDate);
-    const monthMarkerDeposit = hasDepositActual || hasDepositUsd;
+    const monthMarkerPayment = paymentTypesInMonth.size > 0 || hasPaymentActual || hasPaymentUsd;
     const monthMarkerArrival = arrivalMonth === month;
-    const monthMarker = monthMarkerDeposit || monthMarkerArrival;
+    const monthMarker = monthMarkerPayment || monthMarkerArrival;
 
-    let monthMarkerReason = "none";
-    if (monthMarkerDeposit && monthMarkerArrival) monthMarkerReason = "deposit+arrival";
-    else if (monthMarkerDeposit) monthMarkerReason = "deposit";
-    else if (monthMarkerArrival) monthMarkerReason = "arrival";
+    let relevanceReason = "none";
+    if (monthMarkerPayment && monthMarkerArrival) relevanceReason = "payment+arrival";
+    else if (monthMarkerPayment) relevanceReason = "payment";
+    else if (monthMarkerArrival) relevanceReason = "arrival";
 
-    const rowIssues = [];
     if (!arrivalDate) {
       rowIssues.push("MISSING_ARRIVAL_DATE");
       addQualityIssue(quality, qualitySeen, {
@@ -633,16 +732,23 @@ function buildPoLedgerSection(state, request, productMaps, supplierMap, quality,
     rows.push({
       poNumber: String(record.poNo || record.id || ""),
       supplier: resolveSupplierName(record, supplierMap),
-      skuAliases: resolveSkuAliases(record, productMaps.aliasBySku),
+      skuAliases: itemMeta.skuAliases,
+      itemSummary: itemMeta.itemSummary,
+      allItems: itemMeta.allItems,
       units,
-      depositActualEurMonth: hasDepositActual ? depositActualEurMonth : null,
-      depositAmountUsdMonth: hasDepositUsd ? depositAmountUsdMonth : null,
+      paymentActualEurMonth: hasPaymentActual ? paymentActualEurMonth : null,
+      paymentAmountUsdMonth: hasPaymentUsd ? paymentAmountUsdMonth : null,
+      depositActualEurMonth: hasPaymentActual ? paymentActualEurMonth : null,
+      depositAmountUsdMonth: hasPaymentUsd ? paymentAmountUsdMonth : null,
       etdDate: resolveEtdDate(record),
       etaDate: resolveEtaDate(record),
       arrivalDate,
       arrivalSource: hasActualArrival ? "actual" : (arrivalDate ? "eta" : "missing"),
       monthMarker,
-      monthMarkerReason,
+      monthMarkerReason: relevanceReason,
+      relevanceReason,
+      relevanceReasonLabel: mapRelevanceReasonLabel(relevanceReason),
+      paymentTypesInMonth: Array.from(paymentTypesInMonth).sort().join(" + "),
       issues: rowIssues,
     });
   });
@@ -657,15 +763,10 @@ function buildPoLedgerSection(state, request, productMaps, supplierMap, quality,
   });
 }
 
-function normalizeJournalPaymentType(typeLabel, eventType) {
-  const label = String(typeLabel || "").toLowerCase();
-  if (eventType === "fx_fee" || label.includes("fx")) return null;
-  if (eventType === "freight" || label.includes("shipping") || label.includes("fracht")) return "Fracht";
-  if (eventType === "eust" || label.includes("eust")) return "EUSt";
-  if (label.includes("balance2") || label.includes("balance 2") || label.includes("second balance")) return "Balance2";
-  if (label.includes("balance") || label.includes("rest")) return "Balance";
-  if (label.includes("deposit") || label.includes("anzahlung")) return "Deposit";
-  return "Other";
+function normalizeJournalPaymentType(typeLabel, eventType, eventId = "") {
+  const type = normalizeAccountantPaymentType(typeLabel, eventType, eventId);
+  if (!type) return null;
+  return type === "Shipping/Freight" ? "Shipping" : type;
 }
 
 function buildPoJournalRows(state, request, supplierMap, productMaps) {
@@ -682,7 +783,7 @@ function buildPoJournalRows(state, request, supplierMap, productMaps) {
     const paymentRows = buildPaymentRows(structuredClone(record), PO_CONFIG, settings, state?.payments || []);
 
     paymentRows.forEach((payment) => {
-      const paymentType = normalizeJournalPaymentType(payment?.typeLabel || payment?.label, payment?.eventType);
+      const paymentType = normalizeJournalPaymentType(payment?.typeLabel || payment?.label, payment?.eventType, payment?.id);
       if (!paymentType) return;
       const status = String(payment?.status || "").toUpperCase() === "PAID" ? "PAID" : "OPEN";
       const paidDate = toIsoDate(payment?.paidDate);
@@ -777,8 +878,8 @@ function buildEmailDraft(report, options = {}) {
     "",
     "Kurzstatus:",
     `- Warenbestand zum Monatsende (${report.inventory.snapshotAsOf || "n/a"}): ${Number.isFinite(Number(report.inventory.totalValueEur)) ? `${Number(report.inventory.totalValueEur).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR` : "kein Wert verfuegbar"}`,
-    `- Lieferanzahlungen (PO, paidDate im Monat): ${report.deposits.length} Zeilen`,
-    `- Wareneingaenge (PO, Arrival/ETA im Monat): ${report.arrivals.length} Zeilen`,
+    `- Zahlungen im Monat (PO, paidDate im Monat): ${report.paymentsInMonth.length} Zeilen`,
+    `- Wareneingaenge im Monat (PO, Arrival/ETA im Monat): ${report.arrivalsInMonth.length} Zeilen`,
     `- Kombiliste Anzahlungen + Wareneingang (PO): ${(report.poLedger || []).length} Zeilen`,
     `- Datenqualitaetshinweise: ${(report.quality || []).length}`,
     "",
@@ -817,8 +918,8 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
   const qualitySeen = new Set();
 
   const inventory = buildInventorySection(sourceState, request, options, productMaps, quality, qualitySeen);
-  const deposits = buildDepositsSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
-  const arrivals = buildArrivalsSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
+  const paymentsInMonth = buildPaymentsInMonthSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
+  const arrivalsInMonth = buildArrivalsSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
   const poLedger = buildPoLedgerSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
 
   let journalRows = [];
@@ -841,8 +942,10 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
     request,
     inventory: inventory.summary,
     inventoryRows: inventory.rows,
-    deposits,
-    arrivals,
+    paymentsInMonth,
+    arrivalsInMonth,
+    deposits: paymentsInMonth,
+    arrivals: arrivalsInMonth,
     poLedger,
     journalRows,
     quality,
@@ -850,6 +953,9 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
 }
 
 function buildCsvPayloads(report) {
+  const paymentsInMonth = Array.isArray(report.paymentsInMonth) ? report.paymentsInMonth : (report.deposits || []);
+  const arrivalsInMonth = Array.isArray(report.arrivalsInMonth) ? report.arrivalsInMonth : (report.arrivals || []);
+
   const inventoryCsv = toCsv(report.inventoryRows || [], [
     { key: "sku", label: "sku" },
     { key: "alias", label: "alias" },
@@ -863,10 +969,12 @@ function buildCsvPayloads(report) {
     { key: "note", label: "note" },
   ]);
 
-  const depositsCsv = toCsv(report.deposits || [], [
+  const depositsCsv = toCsv(paymentsInMonth, [
     { key: "poNumber", label: "poNumber" },
     { key: "supplier", label: "supplier" },
+    { key: "itemSummary", label: "itemSummary" },
     { key: "skuAliases", label: "skuAliases" },
+    { key: "allItems", label: "allItems" },
     { key: "paymentType", label: "paymentType" },
     { key: "plannedEur", label: "plannedEur", format: formatCsvNumber },
     { key: "actualEur", label: "actualEur", format: formatCsvNumber },
@@ -881,10 +989,12 @@ function buildCsvPayloads(report) {
     { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
   ]);
 
-  const arrivalsCsv = toCsv(report.arrivals || [], [
+  const arrivalsCsv = toCsv(arrivalsInMonth, [
     { key: "poNumber", label: "poNumber" },
     { key: "supplier", label: "supplier" },
+    { key: "itemSummary", label: "itemSummary" },
     { key: "skuAliases", label: "skuAliases" },
+    { key: "allItems", label: "allItems" },
     { key: "units", label: "units" },
     { key: "goodsUsd", label: "goodsUsd", format: formatCsvNumber },
     { key: "goodsEur", label: "goodsEur", format: formatCsvNumber },
@@ -897,13 +1007,16 @@ function buildCsvPayloads(report) {
 
   const poLedgerCsv = toCsv(report.poLedger || [], [
     { key: "monthMarker", label: "monthMarker", format: (value) => value ? "yes" : "no" },
-    { key: "monthMarkerReason", label: "monthMarkerReason" },
+    { key: "relevanceReason", label: "relevanceReason" },
+    { key: "relevanceReasonLabel", label: "relevanceReasonLabel" },
     { key: "poNumber", label: "poNumber" },
     { key: "supplier", label: "supplier" },
+    { key: "itemSummary", label: "itemSummary" },
     { key: "skuAliases", label: "skuAliases" },
+    { key: "allItems", label: "allItems" },
     { key: "units", label: "units" },
-    { key: "depositActualEurMonth", label: "depositActualEurMonth", format: formatCsvNumber },
-    { key: "depositAmountUsdMonth", label: "depositAmountUsdMonth", format: formatCsvNumber },
+    { key: "paymentActualEurMonth", label: "paymentActualEurMonth", format: formatCsvNumber },
+    { key: "paymentAmountUsdMonth", label: "paymentAmountUsdMonth", format: formatCsvNumber },
     { key: "etdDate", label: "etdDate" },
     { key: "etaDate", label: "etaDate" },
     { key: "arrivalDate", label: "arrivalDate" },
