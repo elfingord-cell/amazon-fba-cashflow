@@ -55,6 +55,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { useLocation, useNavigate } from "react-router-dom";
 import { buildPlanProductForecastRows } from "../../../domain/planProducts.js";
 import { parseVentory3plPaste } from "./ventory3plPasteParser.js";
+import { parseVentoryFbaPaste } from "./ventoryFbaPasteParser.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -71,6 +72,8 @@ export interface InventoryModuleProps {
 
 interface SnapshotItemDraft {
   amazonUnits: number;
+  amazonFbaUnits: number;
+  amazonAvailableUnits: number;
   threePLUnits: number;
   note: string;
 }
@@ -185,6 +188,14 @@ interface ThreePlPreviewRow {
   isKnown: boolean;
   hasDuplicate: boolean;
   duplicateValues: number[];
+}
+
+interface FbaPreviewRow {
+  sku: string;
+  fbaUnits: number;
+  fbaAvailableUnits: number;
+  status: string;
+  isKnown: boolean;
 }
 
 function normalizeForecastImpactSummary(value: unknown): {
@@ -343,8 +354,12 @@ function normalizeSnapshotItems(input: unknown): SnapshotDraftMap {
     const item = (entry || {}) as Record<string, unknown>;
     const sku = String(item.sku || "").trim();
     if (!sku) return;
+    const amazonAvailableUnits = parseUnits(item.amazonAvailableUnits ?? item.amazonUnits);
+    const amazonFbaUnits = parseUnits(item.amazonFbaUnits ?? item.amazonUnits ?? amazonAvailableUnits);
     out[sku] = {
-      amazonUnits: parseUnits(item.amazonUnits),
+      amazonUnits: amazonAvailableUnits,
+      amazonFbaUnits,
+      amazonAvailableUnits,
       threePLUnits: parseUnits(item.threePLUnits),
       note: String(item.note || ""),
     };
@@ -641,6 +656,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [threePlPasteText, setThreePlPasteText] = useState("");
   const [threePlZeroMissing, setThreePlZeroMissing] = useState(false);
   const [threePlDuplicatePolicy, setThreePlDuplicatePolicy] = useState<ThreePlDuplicatePolicy>("block");
+  const [fbaImportOpen, setFbaImportOpen] = useState(false);
+  const [fbaImportDate, setFbaImportDate] = useState<Dayjs>(() => defaultThreePlSnapshotDate());
+  const [fbaPasteText, setFbaPasteText] = useState("");
+  const [fbaZeroMissing, setFbaZeroMissing] = useState(false);
 
   const showSnapshot = view !== "projection";
   const showProjection = view !== "snapshot";
@@ -890,13 +909,25 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     knownSkuMap,
     duplicatePolicy: threePlDuplicatePolicy,
   }), [knownSkuMap, threePlDuplicatePolicy, threePlPasteText]);
+  const fbaParseResult = useMemo(() => parseVentoryFbaPaste({
+    text: fbaPasteText,
+    knownSkuMap,
+  }), [fbaPasteText, knownSkuMap]);
   const threePlPreviewRows = useMemo(
     () => (Array.isArray(threePlParseResult.previewRows) ? threePlParseResult.previewRows : []) as ThreePlPreviewRow[],
     [threePlParseResult.previewRows],
   );
+  const fbaPreviewRows = useMemo(
+    () => (Array.isArray(fbaParseResult.previewRows) ? fbaParseResult.previewRows : []) as FbaPreviewRow[],
+    [fbaParseResult.previewRows],
+  );
   const threePlImportTargetMonth = useMemo(
     () => toMonthKeyFromDate(threePlImportDate),
     [threePlImportDate],
+  );
+  const fbaImportTargetMonth = useMemo(
+    () => toMonthKeyFromDate(fbaImportDate),
+    [fbaImportDate],
   );
   const threePlCanApply = useMemo(() => {
     if (saving) return false;
@@ -914,6 +945,18 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   ]);
   const threePlOkDisabled = saving
     || (Number(threePlParseResult.duplicateSkuCount || 0) > 0 && threePlDuplicatePolicy === "block");
+  const fbaCanApply = useMemo(() => {
+    if (saving) return false;
+    if (fbaParseResult.error) return false;
+    if (!fbaImportTargetMonth) return false;
+    return Number(fbaParseResult.importableSkuCount || 0) > 0;
+  }, [
+    fbaImportTargetMonth,
+    fbaParseResult.error,
+    fbaParseResult.importableSkuCount,
+    saving,
+  ]);
+  const fbaOkDisabled = saving || Number(fbaParseResult.importableSkuCount || 0) <= 0;
 
   const previousSnapshot = useMemo(
     () => findPreviousSnapshot(stateObject, selectedMonth),
@@ -936,8 +979,20 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         const isActive = normalizeIncludeInForecast(product.includeInForecast, true)
           && (!status || status === "active" || status === "aktiv");
         const categoryLabel = categoriesById.get(String(product.categoryId || "")) || "Ohne Kategorie";
-        const item = snapshotDraft[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
-        const prevItem = previousDraft[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
+        const item = snapshotDraft[sku] || {
+          amazonUnits: 0,
+          amazonFbaUnits: 0,
+          amazonAvailableUnits: 0,
+          threePLUnits: 0,
+          note: "",
+        };
+        const prevItem = previousDraft[sku] || {
+          amazonUnits: 0,
+          amazonFbaUnits: 0,
+          amazonAvailableUnits: 0,
+          threePLUnits: 0,
+          note: "",
+        };
         const totalUnits = item.amazonUnits + item.threePLUnits;
         const prevTotal = prevItem.amazonUnits + prevItem.threePLUnits;
         const safetyDays = resolveSafetyStockDays(product, stateObject);
@@ -1471,6 +1526,139 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     setThreePlImportOpen(true);
   }
 
+  function openFbaImportModal(): void {
+    setFbaImportDate(defaultThreePlSnapshotDate());
+    setFbaPasteText("");
+    setFbaZeroMissing(false);
+    setFbaImportOpen(true);
+  }
+
+  async function applyFbaImport(): Promise<void> {
+    const targetMonth = fbaImportTargetMonth;
+    if (!targetMonth) {
+      message.error("Bitte einen gültigen Stichtag wählen.");
+      return;
+    }
+    if (fbaParseResult.error) {
+      message.error(fbaParseResult.error);
+      return;
+    }
+    const importableBySkuRaw = (fbaParseResult.importableBySku && typeof fbaParseResult.importableBySku === "object")
+      ? fbaParseResult.importableBySku as Record<string, unknown>
+      : {};
+    const importableEntries = Object.entries(importableBySkuRaw)
+      .map(([sku, values]) => {
+        const normalizedSku = String(sku || "").trim();
+        const row = (values && typeof values === "object") ? values as Record<string, unknown> : {};
+        return {
+          sku: normalizedSku,
+          fbaUnits: parseUnits(row.fbaUnits),
+          fbaAvailableUnits: parseUnits(row.fbaAvailableUnits),
+        };
+      })
+      .filter((entry) => entry.sku);
+    if (!importableEntries.length) {
+      message.warning("Keine zuordenbaren SKUs für den Import erkannt.");
+      return;
+    }
+
+    let updatedSkuCount = 0;
+    const importableSkuSet = new Set(importableEntries.map((entry) => entry.sku));
+    const unknownCount = Math.max(0, Math.round(Number(fbaParseResult.unknownSkuCount || 0)));
+
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const nextState = next as unknown as Record<string, unknown>;
+        ensureInventoryContainers(nextState);
+        const inventoryTarget = nextState.inventory as Record<string, unknown>;
+        const snapshots = (Array.isArray(inventoryTarget.snapshots)
+          ? [...(inventoryTarget.snapshots as unknown[])]
+          : []) as Record<string, unknown>[];
+        const index = snapshots.findIndex((entry) => normalizeMonthKey(entry.month) === targetMonth);
+        const previousSnapshot = index >= 0 ? (snapshots[index] || {}) as Record<string, unknown> : {};
+        const normalizedItems = normalizeSnapshotItems(previousSnapshot.items || []);
+        const draftBySku = Object.entries(normalizedItems).reduce((acc, [sku, item]) => {
+          acc[sku] = { ...item };
+          return acc;
+        }, {} as SnapshotDraftMap);
+        const changedSkus = new Set<string>();
+
+        importableEntries.forEach((entry) => {
+          const currentItem = draftBySku[entry.sku] || {
+            amazonUnits: 0,
+            amazonFbaUnits: 0,
+            amazonAvailableUnits: 0,
+            threePLUnits: 0,
+            note: "",
+          };
+          if (parseUnits(currentItem.amazonFbaUnits) !== entry.fbaUnits) changedSkus.add(entry.sku);
+          if (parseUnits(currentItem.amazonAvailableUnits) !== entry.fbaAvailableUnits) changedSkus.add(entry.sku);
+          if (parseUnits(currentItem.amazonUnits) !== entry.fbaAvailableUnits) changedSkus.add(entry.sku);
+          draftBySku[entry.sku] = {
+            ...currentItem,
+            amazonUnits: entry.fbaAvailableUnits,
+            amazonFbaUnits: entry.fbaUnits,
+            amazonAvailableUnits: entry.fbaAvailableUnits,
+          };
+        });
+
+        if (fbaZeroMissing) {
+          knownSkus.forEach((sku) => {
+            if (importableSkuSet.has(sku)) return;
+            const currentItem = draftBySku[sku];
+            if (!currentItem) return;
+            if (parseUnits(currentItem.amazonFbaUnits) !== 0) changedSkus.add(sku);
+            if (parseUnits(currentItem.amazonAvailableUnits) !== 0) changedSkus.add(sku);
+            if (parseUnits(currentItem.amazonUnits) !== 0) changedSkus.add(sku);
+            draftBySku[sku] = {
+              ...currentItem,
+              amazonUnits: 0,
+              amazonFbaUnits: 0,
+              amazonAvailableUnits: 0,
+            };
+          });
+        }
+
+        const items = Object.entries(draftBySku)
+          .map(([sku, item]) => ({
+            sku,
+            amazonUnits: parseUnits(item.amazonUnits),
+            amazonFbaUnits: parseUnits(item.amazonFbaUnits),
+            amazonAvailableUnits: parseUnits(item.amazonAvailableUnits),
+            threePLUnits: parseUnits(item.threePLUnits),
+            note: String(item.note || ""),
+          }))
+          .filter((entry) => (
+            entry.amazonUnits > 0
+            || entry.amazonFbaUnits > 0
+            || entry.amazonAvailableUnits > 0
+            || entry.threePLUnits > 0
+            || entry.note
+          ));
+
+        const payload = { month: targetMonth, items, updatedAt: nowIso() };
+        if (index >= 0) {
+          snapshots[index] = { ...(snapshots[index] || {}), ...payload };
+        } else {
+          snapshots.push(payload);
+        }
+        snapshots.sort((a, b) => String(normalizeMonthKey(a.month)).localeCompare(String(normalizeMonthKey(b.month))));
+        inventoryTarget.snapshots = snapshots;
+        updatedSkuCount = changedSkus.size;
+        return next;
+      }, "v2:inventory:fba-paste-import");
+
+      setFbaImportOpen(false);
+      setSelectedMonth(targetMonth);
+      setSelectedMonthTouched(true);
+      setSnapshotDirty(false);
+      message.success(`Amazon FBA-Bestände übernommen: ${updatedSkuCount} SKU(s) aktualisiert · ${unknownCount} SKU(s) nicht zugeordnet.`);
+    } catch (importError) {
+      message.error(importError instanceof Error ? importError.message : "Import konnte nicht gespeichert werden.");
+    }
+  }
+
   async function applyThreePlImport(): Promise<void> {
     const targetMonth = threePlImportTargetMonth;
     if (!targetMonth) {
@@ -1519,7 +1707,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         const changedSkus = new Set<string>();
 
         importableEntries.forEach(([sku, threePlUnits]) => {
-          const currentItem = draftBySku[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
+          const currentItem = draftBySku[sku] || {
+            amazonUnits: 0,
+            amazonFbaUnits: 0,
+            amazonAvailableUnits: 0,
+            threePLUnits: 0,
+            note: "",
+          };
           if (parseUnits(currentItem.threePLUnits) !== threePlUnits) changedSkus.add(sku);
           draftBySku[sku] = {
             ...currentItem,
@@ -1544,10 +1738,18 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           .map(([sku, item]) => ({
             sku,
             amazonUnits: parseUnits(item.amazonUnits),
+            amazonFbaUnits: parseUnits(item.amazonFbaUnits),
+            amazonAvailableUnits: parseUnits(item.amazonAvailableUnits),
             threePLUnits: parseUnits(item.threePLUnits),
             note: String(item.note || ""),
           }))
-          .filter((entry) => entry.amazonUnits > 0 || entry.threePLUnits > 0 || entry.note);
+          .filter((entry) => (
+            entry.amazonUnits > 0
+            || entry.amazonFbaUnits > 0
+            || entry.amazonAvailableUnits > 0
+            || entry.threePLUnits > 0
+            || entry.note
+          ));
 
         const payload = { month: targetMonth, items, updatedAt: nowIso() };
         if (index >= 0) {
@@ -1578,14 +1780,25 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   }): void => {
     const normalized = parseUnits(input.value);
     setSnapshotDraft((prev) => {
-      const current = prev[input.sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
+      const current = prev[input.sku] || {
+        amazonUnits: 0,
+        amazonFbaUnits: 0,
+        amazonAvailableUnits: 0,
+        threePLUnits: 0,
+        note: "",
+      };
       if (current[input.field] === normalized) return prev;
+      const nextItem: SnapshotItemDraft = {
+        ...current,
+        [input.field]: normalized,
+      };
+      if (input.field === "amazonUnits") {
+        nextItem.amazonAvailableUnits = normalized;
+        nextItem.amazonFbaUnits = normalized;
+      }
       return {
         ...prev,
-        [input.sku]: {
-          ...current,
-          [input.field]: normalized,
-        },
+        [input.sku]: nextItem,
       };
     });
     setSnapshotDirty(true);
@@ -1616,6 +1829,36 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       },
     },
   ], [threePlDuplicatePolicy]);
+
+  const fbaPreviewColumns = useMemo<ColumnDef<FbaPreviewRow>[]>(() => [
+    {
+      header: "SKU",
+      accessorKey: "sku",
+      meta: { minWidth: 220, width: 220 },
+    },
+    {
+      header: "FBA Bestand",
+      accessorKey: "fbaUnits",
+      meta: { minWidth: 140, width: 140, align: "right" },
+      cell: ({ row }) => formatInt(row.original.fbaUnits),
+    },
+    {
+      header: "FBA Bestand verfügbar",
+      accessorKey: "fbaAvailableUnits",
+      meta: { minWidth: 180, width: 180, align: "right" },
+      cell: ({ row }) => formatInt(row.original.fbaAvailableUnits),
+    },
+    {
+      header: "Status",
+      accessorKey: "status",
+      meta: { minWidth: 220, width: 220 },
+      cell: ({ row }) => (
+        row.original.isKnown
+          ? <Tag color="green">zuordenbar</Tag>
+          : <Tag color="red">SKU nicht bekannt</Tag>
+      ),
+    },
+  ], []);
 
   const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
     {
@@ -1917,10 +2160,18 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         .map(([sku, value]) => ({
           sku,
           amazonUnits: parseUnits(value.amazonUnits),
+          amazonFbaUnits: parseUnits(value.amazonFbaUnits),
+          amazonAvailableUnits: parseUnits(value.amazonAvailableUnits),
           threePLUnits: parseUnits(value.threePLUnits),
           note: String(value.note || ""),
         }))
-        .filter((entry) => entry.amazonUnits > 0 || entry.threePLUnits > 0 || entry.note);
+        .filter((entry) => (
+          entry.amazonUnits > 0
+          || entry.amazonFbaUnits > 0
+          || entry.amazonAvailableUnits > 0
+          || entry.threePLUnits > 0
+          || entry.note
+        ));
 
       const month = normalizeMonthKey(selectedMonth) || currentMonthKey();
       const index = snapshots.findIndex((entry) => normalizeMonthKey(entry.month) === month);
@@ -2055,6 +2306,9 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
           {showSnapshot ? (
             <div className="v2-toolbar-row">
+              <Button onClick={openFbaImportModal}>
+                Amazon FBA-Bestand einfügen (VentoryOne)
+              </Button>
               <Button onClick={openThreePlImportModal}>
                 3PL-Bestände einfügen (VentoryOne)
               </Button>
@@ -2428,6 +2682,97 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           )}
         </Card>
       ) : null}
+
+      <Modal
+        title="Amazon FBA-Bestand einfügen (VentoryOne)"
+        open={fbaImportOpen}
+        onCancel={() => setFbaImportOpen(false)}
+        onOk={() => { void applyFbaImport(); }}
+        okText="Bestände übernehmen"
+        cancelText="Abbrechen"
+        okButtonProps={{ disabled: fbaOkDisabled }}
+        confirmLoading={saving}
+        width={980}
+      >
+        <div className="v2-threepl-import-grid">
+          <div className="v2-toolbar-row">
+            <div className="v2-toolbar-field">
+              <Text>Stichtag</Text>
+              <DatePicker
+                value={fbaImportDate}
+                format="DD.MM.YYYY"
+                allowClear={false}
+                onChange={(value) => {
+                  const normalized = toMonthEnd(value);
+                  if (!normalized) return;
+                  setFbaImportDate(normalized);
+                }}
+              />
+            </div>
+            <Tag color="blue">Snapshot-Monat: {fbaImportTargetMonth || "—"}</Tag>
+            {fbaImportTargetMonth ? (
+              <Tag color="default">{formatMonthEndLabel(fbaImportTargetMonth, "long")}</Tag>
+            ) : null}
+          </div>
+
+          <Checkbox checked={fbaZeroMissing} onChange={(event) => setFbaZeroMissing(event.target.checked)}>
+            Nicht enthaltene SKUs auf 0 setzen
+          </Checkbox>
+
+          <Input.TextArea
+            value={fbaPasteText}
+            onChange={(event) => setFbaPasteText(event.target.value)}
+            placeholder="VentoryOne-Tabellentext hier einfügen (Strg+V). Relevante Spalten: SKU, FBA Bestand, FBA Bestand verfügbar."
+            autoSize={{ minRows: 8, maxRows: 14 }}
+          />
+
+          <div className="v2-toolbar-row">
+            <Tag color="default">Erkannte Zeilen: {Math.max(0, Math.round(Number(fbaParseResult.recognizedRows || 0)))}</Tag>
+            <Tag color="green">Zuordenbar: {Math.max(0, Math.round(Number(fbaParseResult.importableSkuCount || 0)))}</Tag>
+            <Tag color={fbaParseResult.unknownSkuCount > 0 ? "orange" : "default"}>
+              Unbekannt: {Math.max(0, Math.round(Number(fbaParseResult.unknownSkuCount || 0)))}
+            </Tag>
+          </div>
+          {!fbaCanApply && !saving ? (
+            <Text type="secondary">
+              Übernahme aktuell blockiert. Prüfe Fehler/Warnungen im Paste-Inhalt.
+            </Text>
+          ) : null}
+
+          {fbaParseResult.error ? (
+            <Alert type="error" showIcon message={fbaParseResult.error} />
+          ) : null}
+          {Array.isArray(fbaParseResult.warnings) && fbaParseResult.warnings.length > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`${fbaParseResult.warnings.length} Hinweis(e) beim Parsing`}
+              description={fbaParseResult.warnings.slice(0, 5).join(" | ")}
+            />
+          ) : null}
+          {Number(fbaParseResult.unknownSkuCount || 0) > 0 ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`${fbaParseResult.unknownSkuCount} SKU(s) nicht bekannt`}
+              description={Array.isArray(fbaParseResult.unknownSkus)
+                ? fbaParseResult.unknownSkus.slice(0, 10).join(", ")
+                : ""}
+            />
+          ) : null}
+
+          {!fbaPreviewRows.length ? (
+            <Text type="secondary">Noch keine Vorschau verfügbar. Paste-Text einfügen, um die Zuordnung zu prüfen.</Text>
+          ) : (
+            <DataTable
+              data={fbaPreviewRows}
+              columns={fbaPreviewColumns}
+              minTableWidth={860}
+              tableLayout="fixed"
+            />
+          )}
+        </div>
+      </Modal>
 
       <Modal
         title="3PL-Bestände einfügen (VentoryOne)"
