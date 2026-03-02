@@ -912,6 +912,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     threePlParseResult.error,
     threePlParseResult.importableSkuCount,
   ]);
+  const threePlOkDisabled = saving
+    || (Number(threePlParseResult.duplicateSkuCount || 0) > 0 && threePlDuplicatePolicy === "block");
 
   const previousSnapshot = useMemo(
     () => findPreviousSnapshot(stateObject, selectedMonth),
@@ -1498,71 +1500,75 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     const importableSkuSet = new Set(importableEntries.map(([sku]) => sku));
     const unknownCount = Math.max(0, Math.round(Number(threePlParseResult.unknownSkuCount || 0)));
 
-    await saveWith((current) => {
-      const next = ensureAppStateV2(current);
-      const nextState = next as unknown as Record<string, unknown>;
-      ensureInventoryContainers(nextState);
-      const inventoryTarget = nextState.inventory as Record<string, unknown>;
-      const snapshots = (Array.isArray(inventoryTarget.snapshots)
-        ? [...(inventoryTarget.snapshots as unknown[])]
-        : []) as Record<string, unknown>[];
-      const index = snapshots.findIndex((entry) => normalizeMonthKey(entry.month) === targetMonth);
-      const previousSnapshot = index >= 0 ? (snapshots[index] || {}) as Record<string, unknown> : {};
-      const normalizedItems = normalizeSnapshotItems(previousSnapshot.items || []);
-      const draftBySku = Object.entries(normalizedItems).reduce((acc, [sku, item]) => {
-        acc[sku] = { ...item };
-        return acc;
-      }, {} as SnapshotDraftMap);
-      const changedSkus = new Set<string>();
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const nextState = next as unknown as Record<string, unknown>;
+        ensureInventoryContainers(nextState);
+        const inventoryTarget = nextState.inventory as Record<string, unknown>;
+        const snapshots = (Array.isArray(inventoryTarget.snapshots)
+          ? [...(inventoryTarget.snapshots as unknown[])]
+          : []) as Record<string, unknown>[];
+        const index = snapshots.findIndex((entry) => normalizeMonthKey(entry.month) === targetMonth);
+        const previousSnapshot = index >= 0 ? (snapshots[index] || {}) as Record<string, unknown> : {};
+        const normalizedItems = normalizeSnapshotItems(previousSnapshot.items || []);
+        const draftBySku = Object.entries(normalizedItems).reduce((acc, [sku, item]) => {
+          acc[sku] = { ...item };
+          return acc;
+        }, {} as SnapshotDraftMap);
+        const changedSkus = new Set<string>();
 
-      importableEntries.forEach(([sku, threePlUnits]) => {
-        const currentItem = draftBySku[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
-        if (parseUnits(currentItem.threePLUnits) !== threePlUnits) changedSkus.add(sku);
-        draftBySku[sku] = {
-          ...currentItem,
-          threePLUnits,
-        };
-      });
-
-      if (threePlZeroMissing) {
-        knownSkus.forEach((sku) => {
-          if (importableSkuSet.has(sku)) return;
-          const currentItem = draftBySku[sku];
-          if (!currentItem) return;
-          if (parseUnits(currentItem.threePLUnits) !== 0) changedSkus.add(sku);
+        importableEntries.forEach(([sku, threePlUnits]) => {
+          const currentItem = draftBySku[sku] || { amazonUnits: 0, threePLUnits: 0, note: "" };
+          if (parseUnits(currentItem.threePLUnits) !== threePlUnits) changedSkus.add(sku);
           draftBySku[sku] = {
             ...currentItem,
-            threePLUnits: 0,
+            threePLUnits,
           };
         });
-      }
 
-      const items = Object.entries(draftBySku)
-        .map(([sku, item]) => ({
-          sku,
-          amazonUnits: parseUnits(item.amazonUnits),
-          threePLUnits: parseUnits(item.threePLUnits),
-          note: String(item.note || ""),
-        }))
-        .filter((entry) => entry.amazonUnits > 0 || entry.threePLUnits > 0 || entry.note);
+        if (threePlZeroMissing) {
+          knownSkus.forEach((sku) => {
+            if (importableSkuSet.has(sku)) return;
+            const currentItem = draftBySku[sku];
+            if (!currentItem) return;
+            if (parseUnits(currentItem.threePLUnits) !== 0) changedSkus.add(sku);
+            draftBySku[sku] = {
+              ...currentItem,
+              threePLUnits: 0,
+            };
+          });
+        }
 
-      const payload = { month: targetMonth, items, updatedAt: nowIso() };
-      if (index >= 0) {
-        snapshots[index] = { ...(snapshots[index] || {}), ...payload };
-      } else {
-        snapshots.push(payload);
-      }
-      snapshots.sort((a, b) => String(normalizeMonthKey(a.month)).localeCompare(String(normalizeMonthKey(b.month))));
-      inventoryTarget.snapshots = snapshots;
-      updatedSkuCount = changedSkus.size;
-      return next;
-    }, "v2:inventory:3pl-paste-import");
+        const items = Object.entries(draftBySku)
+          .map(([sku, item]) => ({
+            sku,
+            amazonUnits: parseUnits(item.amazonUnits),
+            threePLUnits: parseUnits(item.threePLUnits),
+            note: String(item.note || ""),
+          }))
+          .filter((entry) => entry.amazonUnits > 0 || entry.threePLUnits > 0 || entry.note);
 
-    setThreePlImportOpen(false);
-    setSelectedMonth(targetMonth);
-    setSelectedMonthTouched(true);
-    setSnapshotDirty(false);
-    message.success(`3PL-Bestände übernommen: ${updatedSkuCount} SKU(s) aktualisiert · ${unknownCount} SKU(s) nicht zugeordnet.`);
+        const payload = { month: targetMonth, items, updatedAt: nowIso() };
+        if (index >= 0) {
+          snapshots[index] = { ...(snapshots[index] || {}), ...payload };
+        } else {
+          snapshots.push(payload);
+        }
+        snapshots.sort((a, b) => String(normalizeMonthKey(a.month)).localeCompare(String(normalizeMonthKey(b.month))));
+        inventoryTarget.snapshots = snapshots;
+        updatedSkuCount = changedSkus.size;
+        return next;
+      }, "v2:inventory:3pl-paste-import");
+
+      setThreePlImportOpen(false);
+      setSelectedMonth(targetMonth);
+      setSelectedMonthTouched(true);
+      setSnapshotDirty(false);
+      message.success(`3PL-Bestände übernommen: ${updatedSkuCount} SKU(s) aktualisiert · ${unknownCount} SKU(s) nicht zugeordnet.`);
+    } catch (importError) {
+      message.error(importError instanceof Error ? importError.message : "Import konnte nicht gespeichert werden.");
+    }
   }
 
   const commitSnapshotUnits = useCallback((input: {
@@ -2430,7 +2436,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         onOk={() => { void applyThreePlImport(); }}
         okText="Bestände übernehmen"
         cancelText="Abbrechen"
-        okButtonProps={{ disabled: !threePlCanApply }}
+        okButtonProps={{ disabled: threePlOkDisabled }}
         confirmLoading={saving}
         width={980}
       >
@@ -2476,6 +2482,11 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
               Duplikate: {Math.max(0, Math.round(Number(threePlParseResult.duplicateSkuCount || 0)))}
             </Tag>
           </div>
+          {!threePlCanApply && !saving ? (
+            <Text type="secondary">
+              Übernahme aktuell blockiert. Prüfe Fehler/Warnungen oder wähle bei Duplikaten eine Policy.
+            </Text>
+          ) : null}
 
           {threePlParseResult.error ? (
             <Alert type="error" showIcon message={threePlParseResult.error} />
