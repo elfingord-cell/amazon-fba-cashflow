@@ -1523,7 +1523,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           if (parseUnits(currentItem.threePLUnits) !== threePlUnits) changedSkus.add(sku);
           draftBySku[sku] = {
             ...currentItem,
-            threePLUnits,
+            threePLUnits: threePlUnits,
           };
         });
 
