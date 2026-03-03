@@ -814,6 +814,21 @@ export default function DashboardModule(): JSX.Element {
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
     [simulatedBreakdown],
   );
+  const closingLineReliability = useMemo(() => {
+    const reliabilityByIndex = visibleBreakdown.map((row) => {
+      const isLockedActual = monthHasActualClosing.get(row.month) === true;
+      const isRobust = robustness.monthMap.get(row.month)?.robust === true;
+      return isLockedActual || isRobust;
+    });
+    const firstUnreliableIndex = reliabilityByIndex.findIndex((reliable) => !reliable);
+    const dashedChainByIndex = reliabilityByIndex.map((_reliable, index) => (
+      firstUnreliableIndex >= 0 && index >= firstUnreliableIndex
+    ));
+    return {
+      firstUnreliableIndex,
+      dashedChainByIndex,
+    };
+  }, [monthHasActualClosing, robustness, visibleBreakdown]);
 
   const inflowSplitByMonth = useMemo(() => {
     const map = new Map<string, {
@@ -1123,8 +1138,17 @@ export default function DashboardModule(): JSX.Element {
     const amazonPlannedSeriesName = "Amazon Plan";
     const amazonNewSeriesName = "Amazon Neu";
     const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
+    const { firstUnreliableIndex, dashedChainByIndex } = closingLineReliability;
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
     const closingSeries = visibleBreakdown.map((row) => Number(row.closing || 0));
+    const closingSeriesSolid = closingSeries.map((value, index) => (
+      firstUnreliableIndex >= 0 && index >= firstUnreliableIndex ? null : value
+    ));
+    const closingSeriesDashed = closingSeries.map((value, index) => {
+      if (firstUnreliableIndex < 0) return null;
+      if (firstUnreliableIndex === 0) return value;
+      return index >= firstUnreliableIndex - 1 ? value : null;
+    });
     const fixcostOutflowSeries = outflowSplitSeries.map((row) => -row.fixcost);
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
@@ -1151,10 +1175,24 @@ export default function DashboardModule(): JSX.Element {
           const lines = [`<div><strong>${first?.axisValueLabel || ""}</strong></div>`];
           let amazonSubtotal = 0;
           let hasAmazonBreakdown = false;
+          let hoveredDataIndex: number | null = null;
+          const seenSeriesNames = new Set<string>();
           rows.forEach((entryRaw) => {
-            const entry = entryRaw as { marker?: string; seriesName?: string; value?: number | null };
+            const entry = entryRaw as {
+              marker?: string;
+              seriesName?: string;
+              value?: number | null;
+              dataIndex?: number | null;
+            };
+            const dataIndex = Number(entry?.dataIndex);
+            if (hoveredDataIndex == null && Number.isInteger(dataIndex) && dataIndex >= 0) {
+              hoveredDataIndex = dataIndex;
+            }
             const value = Number(entry?.value);
             if (!Number.isFinite(value)) return;
+            const seriesName = String(entry?.seriesName || "");
+            if (seenSeriesNames.has(seriesName)) return;
+            seenSeriesNames.add(seriesName);
             if (amazonSeriesNames.has(String(entry?.seriesName || ""))) {
               amazonSubtotal += value;
               hasAmazonBreakdown = true;
@@ -1163,6 +1201,13 @@ export default function DashboardModule(): JSX.Element {
           });
           if (hasAmazonBreakdown) {
             lines.push(`<div><strong>Amazon gesamt: ${formatCurrency(amazonSubtotal)}</strong></div>`);
+          }
+          if (
+            firstUnreliableIndex >= 0
+            && hoveredDataIndex != null
+            && dashedChainByIndex[hoveredDataIndex] === true
+          ) {
+            lines.push("<div><em>Hinweis: Ab hier unvollständig geplant.</em></div>");
           }
           return lines.join("");
         },
@@ -1321,8 +1366,22 @@ export default function DashboardModule(): JSX.Element {
           showAllSymbol: true,
           symbol: "emptyCircle",
           symbolSize: 7,
-          data: closingSeries,
-          lineStyle: { width: 2, color: v2DashboardChartColors.robustPositive },
+          data: closingSeriesSolid,
+          lineStyle: { width: 2, type: "solid", color: v2DashboardChartColors.robustPositive },
+          itemStyle: { color: v2DashboardChartColors.robustPositive },
+        },
+        {
+          name: "Kontostand",
+          type: "line",
+          smooth: true,
+          yAxisIndex: 1,
+          connectNulls: true,
+          showSymbol: true,
+          showAllSymbol: true,
+          symbol: "emptyCircle",
+          symbolSize: 7,
+          data: closingSeriesDashed,
+          lineStyle: { width: 2, type: "dashed", color: v2DashboardChartColors.robustPositive },
           itemStyle: { color: v2DashboardChartColors.robustPositive },
         },
       ],
@@ -1331,6 +1390,7 @@ export default function DashboardModule(): JSX.Element {
     amazonCoreInflowSeries,
     amazonNewInflowSeries,
     amazonPlannedInflowSeries,
+    closingLineReliability,
     otherInflowSeries,
     outflowSplitSeries,
     simulatedBreakdown,
