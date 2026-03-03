@@ -6,7 +6,7 @@ import {
 import { parseDeNumber } from "../../lib/dataHealth.js";
 import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
 import { resolveMasterDataHierarchy } from "./masterDataHierarchy";
-import { addMonths, currentMonthKey } from "./months";
+import { addMonths, currentMonthKey, normalizeMonthKey } from "./months";
 import { evaluateProductCompletenessV2 } from "./productCompletenessV2";
 
 export type RobustnessSeverity = "error" | "warning";
@@ -15,6 +15,7 @@ export type RobustnessCheckKey = "sku_coverage" | "cash_in" | "fixcost" | "vat" 
 export type CoverageStatusKey = "full" | "wide" | "partial" | "insufficient";
 export type ProjectionSafetyIssueType = "forecast_missing" | "stock_oos" | "stock_under_safety";
 export type ProjectionModeForCoverage = "units" | "doh";
+type ShortageIssueType = "stock_oos" | "stock_under_safety";
 
 const COVERAGE_THRESHOLDS = {
   wide: 0.95,
@@ -75,6 +76,7 @@ export interface RobustnessCoverageOrderDutyIssue {
   sku: string;
   alias: string;
   abcClass: "A" | "B" | "C";
+  issueType: ShortageIssueType;
   firstRiskMonth: string;
   latestOrderDate: string;
   orderMonth: string;
@@ -196,6 +198,7 @@ interface LeadTimeResolution {
 
 interface OrderDutyProfile {
   sku: string;
+  issueType: ShortageIssueType;
   firstRiskMonth: string;
   latestOrderDate: string;
   orderMonth: string;
@@ -208,12 +211,83 @@ interface OrderDutyProfile {
 
 type ProjectionRiskClass = "" | "safety-negative" | "safety-low";
 
+interface ShortageAcceptanceOverride {
+  sku: string;
+  reason: ShortageIssueType;
+  acceptedFromMonth: string;
+  acceptedUntilMonth: string;
+  durationMonths: number;
+}
+
 function normalizeSku(value: unknown): string {
   return String(value || "").trim();
 }
 
 function normalizeSkuKey(value: unknown): string {
   return normalizeSku(value).toLowerCase();
+}
+
+function normalizeShortageIssueType(value: unknown): ShortageIssueType | null {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "stock_oos") return "stock_oos";
+  if (text === "stock_under_safety") return "stock_under_safety";
+  return null;
+}
+
+function mapRiskClassToShortageIssueType(riskClass: ProjectionRiskClass): ShortageIssueType | null {
+  if (riskClass === "safety-negative") return "stock_oos";
+  if (riskClass === "safety-low") return "stock_under_safety";
+  return null;
+}
+
+function resolveShortageAcceptancesBySku(state: Record<string, unknown>): Map<string, ShortageAcceptanceOverride> {
+  const settings = (state.settings && typeof state.settings === "object")
+    ? state.settings as Record<string, unknown>
+    : {};
+  const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
+    ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
+    : {};
+  const map = new Map<string, ShortageAcceptanceOverride>();
+  Object.entries(rawBySku).forEach(([key, raw]) => {
+    if (!raw || typeof raw !== "object") return;
+    const entry = raw as Record<string, unknown>;
+    const sku = normalizeSku(entry.sku || key);
+    const skuKey = normalizeSkuKey(sku);
+    if (!sku || !skuKey) return;
+    const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
+    if (!reason) return;
+    const acceptedFromMonth = normalizeMonthKey(entry.acceptedFromMonth || entry.startMonth || entry.firstRiskMonth);
+    if (!acceptedFromMonth) return;
+    const rawDuration = Math.max(1, Math.round(Number(entry.durationMonths || 1)));
+    const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
+      || addMonths(acceptedFromMonth, rawDuration - 1);
+    if (!acceptedUntilMonth) return;
+    map.set(skuKey, {
+      sku,
+      reason,
+      acceptedFromMonth,
+      acceptedUntilMonth,
+      durationMonths: rawDuration,
+    });
+  });
+  return map;
+}
+
+function resolveActiveShortageAcceptance(input: {
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride>;
+  sku: string;
+  month: string;
+  issueType?: ShortageIssueType | null;
+}): ShortageAcceptanceOverride | null {
+  const skuKey = normalizeSkuKey(input.sku);
+  if (!skuKey) return null;
+  const acceptance = input.acceptanceBySku.get(skuKey);
+  if (!acceptance) return null;
+  if (input.month < acceptance.acceptedFromMonth || input.month > acceptance.acceptedUntilMonth) {
+    return null;
+  }
+  if (input.issueType && acceptance.reason !== input.issueType) return null;
+  return acceptance;
 }
 
 function isActiveProduct(product: Record<string, unknown>): boolean {
@@ -619,6 +693,7 @@ function buildOrderDutyProfiles(input: {
   projection: ProjectionCoverageLookup;
   projectionMode: ProjectionModeForCoverage;
   nowMonth: string;
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride>;
 }): Map<string, OrderDutyProfile> {
   const profiles = new Map<string, OrderDutyProfile>();
   const futureMonths = input.months
@@ -634,18 +709,27 @@ function buildOrderDutyProfiles(input: {
     if (!skuProjection) return;
     let firstRiskMonth: string | null = null;
     let firstRiskData: ProjectionMonthData | null = null;
+    let firstRiskIssueType: ShortageIssueType | null = null;
 
     for (let i = 0; i < futureMonths.length; i += 1) {
       const month = futureMonths[i];
       const monthData = skuProjection.get(month);
       const riskClass = projectionRiskClass(monthData, input.projectionMode);
-      if (riskClass === "safety-negative" || riskClass === "safety-low") {
-        firstRiskMonth = month;
-        firstRiskData = monthData || null;
-        break;
-      }
+      const issueType = mapRiskClassToShortageIssueType(riskClass);
+      if (!issueType) continue;
+      const isAccepted = resolveActiveShortageAcceptance({
+        acceptanceBySku: input.acceptanceBySku,
+        sku,
+        month,
+        issueType,
+      });
+      if (isAccepted) continue;
+      firstRiskMonth = month;
+      firstRiskData = monthData || null;
+      firstRiskIssueType = issueType;
+      break;
     }
-    if (!firstRiskMonth) return;
+    if (!firstRiskMonth || !firstRiskIssueType) return;
 
     const riskMonthStart = toMonthStartDate(firstRiskMonth);
     if (!(riskMonthStart instanceof Date) || Number.isNaN(riskMonthStart.getTime())) return;
@@ -661,6 +745,7 @@ function buildOrderDutyProfiles(input: {
       : null;
     profiles.set(skuKey, {
       sku,
+      issueType: firstRiskIssueType,
       firstRiskMonth,
       latestOrderDate,
       orderMonth,
@@ -816,6 +901,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
     }) as ProjectionCoverageLookup
     : emptyProjection;
   const abcBySku = computeAbcClassification(state).bySku;
+  const shortageAcceptanceBySku = resolveShortageAcceptancesBySku(state);
   const orderDutyBySku = buildOrderDutyProfiles({
     state,
     products: activeProducts,
@@ -823,6 +909,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
     projection: futureProjection,
     projectionMode,
     nowMonth,
+    acceptanceBySku: shortageAcceptanceBySku,
   });
   const lookaheadWindowCache = new Map<string, string[]>();
 
@@ -845,6 +932,23 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       const skuKey = normalizeSkuKey(sku);
       const alias = String(product.alias || sku);
       const abcClass = resolveAbcClass(abcBySku, sku);
+      const monthData = resolveProjectionMonthData({
+        month,
+        nowMonth,
+        pastProjection,
+        futureProjection,
+        sku,
+        skuKey,
+      });
+      const monthIssueType = mapRiskClassToShortageIssueType(projectionRiskClassByDoh(monthData));
+      const shortageAcceptedForMonth = monthIssueType
+        ? Boolean(resolveActiveShortageAcceptance({
+          acceptanceBySku: shortageAcceptanceBySku,
+          sku,
+          month,
+          issueType: monthIssueType,
+        }))
+        : false;
       const lookaheadDays = resolveStockLookaheadDays(state, product);
       const lookaheadMonths = resolveLookaheadWindowMonths({
         month,
@@ -857,29 +961,31 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       let firstRiskClass: ProjectionRiskClass = "";
       let minDohInWindow: number | null = null;
 
-      lookaheadMonths.forEach((checkMonth) => {
-        if (firstBreachMonth) return;
-        const checkMonthData = resolveProjectionMonthData({
-          month: checkMonth,
-          nowMonth,
-          pastProjection,
-          futureProjection,
-          sku,
-          skuKey,
+      if (!shortageAcceptedForMonth) {
+        lookaheadMonths.forEach((checkMonth) => {
+          if (firstBreachMonth) return;
+          const checkMonthData = resolveProjectionMonthData({
+            month: checkMonth,
+            nowMonth,
+            pastProjection,
+            futureProjection,
+            sku,
+            skuKey,
+          });
+          const checkDoh = Number(checkMonthData?.doh);
+          if (Number.isFinite(checkDoh)) {
+            minDohInWindow = minDohInWindow == null ? checkDoh : Math.min(minDohInWindow, checkDoh);
+          }
+          const checkRiskClass = projectionRiskClassByDoh(checkMonthData);
+          if (!checkMonthData?.hasForecast || checkRiskClass) {
+            firstBreachMonth = checkMonth;
+            firstBreachData = checkMonthData;
+            firstRiskClass = checkRiskClass;
+          }
         });
-        const checkDoh = Number(checkMonthData?.doh);
-        if (Number.isFinite(checkDoh)) {
-          minDohInWindow = minDohInWindow == null ? checkDoh : Math.min(minDohInWindow, checkDoh);
-        }
-        const checkRiskClass = projectionRiskClassByDoh(checkMonthData);
-        if (!checkMonthData?.hasForecast || checkRiskClass) {
-          firstBreachMonth = checkMonth;
-          firstBreachData = checkMonthData;
-          firstRiskClass = checkRiskClass;
-        }
-      });
+      }
 
-      const stockOk = firstBreachMonth == null;
+      const stockOk = shortageAcceptedForMonth || firstBreachMonth == null;
 
       if (!stockOk) {
         const issueType = stockIssueType(firstBreachData, firstRiskClass);
@@ -915,12 +1021,19 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       }
 
       const orderDuty = orderDutyBySku.get(skuKey) || null;
-      const orderDutyTriggered = Boolean(orderDuty && orderDuty.orderMonth <= month);
+      const orderDutyAcceptedForMonth = Boolean(orderDuty && resolveActiveShortageAcceptance({
+        acceptanceBySku: shortageAcceptanceBySku,
+        sku,
+        month,
+        issueType: orderDuty.issueType,
+      }));
+      const orderDutyTriggered = Boolean(orderDuty && orderDuty.orderMonth <= month && !orderDutyAcceptedForMonth);
       if (orderDuty && orderDutyTriggered) {
         orderDutyIssues.push({
           sku,
           alias,
           abcClass,
+          issueType: orderDuty.issueType,
           firstRiskMonth: orderDuty.firstRiskMonth,
           latestOrderDate: orderDuty.latestOrderDate,
           orderMonth: orderDuty.orderMonth,

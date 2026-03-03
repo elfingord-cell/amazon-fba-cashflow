@@ -1,6 +1,6 @@
 import { parseDeNumber } from "../../lib/dataHealth.js";
 import { resolveMasterDataHierarchy } from "./masterDataHierarchy";
-import { currentMonthKey, monthRange, normalizeMonthKey } from "./months";
+import { addMonths, currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 import {
   buildFoPayments,
   buildFoRecommendationContext,
@@ -28,11 +28,20 @@ interface PhantomLeadTime {
   eustRatePct: number;
 }
 
+interface ShortageAcceptanceOverride {
+  sku: string;
+  reason: "stock_oos" | "stock_under_safety";
+  acceptedFromMonth: string;
+  acceptedUntilMonth: string;
+  durationMonths: number;
+}
+
 export interface PhantomFoSuggestion {
   id: string;
   sku: string;
   alias: string;
   abcClass: "A" | "B" | "C";
+  issueType: "stock_oos" | "stock_under_safety";
   supplierId: string;
   orderMonth: string;
   firstRiskMonth: string;
@@ -76,6 +85,58 @@ function localTodayIso(): string {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function normalizeShortageIssueType(value: unknown): "stock_oos" | "stock_under_safety" | null {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "stock_oos") return "stock_oos";
+  if (text === "stock_under_safety") return "stock_under_safety";
+  return null;
+}
+
+function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride> {
+  const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
+    ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
+    : {};
+  const map = new Map<string, ShortageAcceptanceOverride>();
+  Object.entries(rawBySku).forEach(([key, raw]) => {
+    if (!raw || typeof raw !== "object") return;
+    const entry = raw as Record<string, unknown>;
+    const sku = normalizeSku(entry.sku || key);
+    const skuKey = normalizeSkuKey(sku);
+    if (!sku || !skuKey) return;
+    const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
+    if (!reason) return;
+    const acceptedFromMonth = normalizeMonthKey(entry.acceptedFromMonth || entry.startMonth || entry.firstRiskMonth);
+    if (!acceptedFromMonth) return;
+    const durationMonths = Math.max(1, Math.round(Number(entry.durationMonths || 1)));
+    const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
+      || addMonths(acceptedFromMonth, durationMonths - 1);
+    if (!acceptedUntilMonth) return;
+    map.set(skuKey, {
+      sku,
+      reason,
+      acceptedFromMonth,
+      acceptedUntilMonth,
+      durationMonths,
+    });
+  });
+  return map;
+}
+
+function hasActiveShortageAcceptance(input: {
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride>;
+  sku: string;
+  month: string;
+  issueType: "stock_oos" | "stock_under_safety";
+}): boolean {
+  const skuKey = normalizeSkuKey(input.sku);
+  if (!skuKey) return false;
+  const acceptance = input.acceptanceBySku.get(skuKey);
+  if (!acceptance) return false;
+  if (acceptance.reason !== input.issueType) return false;
+  if (input.month < acceptance.acceptedFromMonth || input.month > acceptance.acceptedUntilMonth) return false;
+  return true;
 }
 
 function asNumber(value: unknown, fallback = 0): number {
@@ -425,6 +486,7 @@ function buildSuggestionForIssue(input: {
     sku,
     alias: String(issue.alias || product?.alias || sku),
     abcClass: issue.abcClass,
+    issueType: issue.issueType,
     supplierId,
     orderMonth: String(issue.orderMonth || "").trim(),
     firstRiskMonth: String(issue.firstRiskMonth || "").trim(),
@@ -475,6 +537,7 @@ function buildSuggestionForIssue(input: {
         recommendedOrderDate: issue.recommendedOrderDate,
         leadTimeDays: leadTime.totalDays,
         abcClass: issue.abcClass,
+        issueType: issue.issueType,
         shortageUnits: issue.shortageUnits,
         reason: issue.reason,
       },
@@ -515,6 +578,8 @@ export function buildPhantomFoSuggestions(input: {
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
+  const shortageAcceptancesBySku = resolveShortageAcceptancesBySku(settings);
+  const todayMonth = currentMonthKey();
 
   const liveProducts = (Array.isArray(state.products) ? state.products : [])
     .map((entry) => entry as Record<string, unknown>)
@@ -646,7 +711,22 @@ export function buildPhantomFoSuggestions(input: {
       .filter((issue) => {
         const orderMonth = normalizeMonthKey(issue.orderMonth);
         if (!orderMonth) return false;
-        return orderMonth <= targetMonth;
+        if (orderMonth > targetMonth) return false;
+        const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth) || todayMonth;
+        const suppressedByActiveWindow = hasActiveShortageAcceptance({
+          acceptanceBySku: shortageAcceptancesBySku,
+          sku: issue.sku,
+          month: todayMonth,
+          issueType: issue.issueType,
+        });
+        if (suppressedByActiveWindow) return false;
+        const suppressedByRiskMonth = hasActiveShortageAcceptance({
+          acceptanceBySku: shortageAcceptancesBySku,
+          sku: issue.sku,
+          month: firstRiskMonth,
+          issueType: issue.issueType,
+        });
+        return !suppressedByRiskMonth;
       });
     if (!scopedIssues.length) break;
 
