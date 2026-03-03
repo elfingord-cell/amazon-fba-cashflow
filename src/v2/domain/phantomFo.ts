@@ -70,6 +70,14 @@ function monthStartIso(month: string): string | null {
   return `${normalized}-01`;
 }
 
+function localTodayIso(): string {
+  const now = new Date();
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function asNumber(value: unknown, fallback = 0): number {
   const parsed = parseDeNumber(value);
   if (!Number.isFinite(parsed as number)) return fallback;
@@ -342,6 +350,7 @@ function buildSuggestionForIssue(input: {
   settings: Record<string, unknown>;
   recommendationContext: ReturnType<typeof buildFoRecommendationContext>;
   horizonMonths: number;
+  todayIso: string;
 }): PhantomFoSuggestion | null {
   const issue = input.issue;
   const sku = normalizeSku(issue.sku);
@@ -380,6 +389,12 @@ function buildSuggestionForIssue(input: {
     logisticsLeadTimeDays: leadTime.transitDays,
     bufferDays: 0,
   });
+  const derivedOrderDate = normalizeIsoDate(schedule.orderDate)
+    || normalizeIsoDate(issue.recommendedOrderDate)
+    || normalizeIsoDate(issue.latestOrderDate);
+  if (derivedOrderDate && derivedOrderDate < input.todayIso) {
+    return null;
+  }
 
   const unitPrice = resolveUnitPriceUsd(product);
   const freightPerUnit = resolveFreightPerUnitEur(product);
@@ -623,6 +638,7 @@ export function buildPhantomFoSuggestions(input: {
   let workingState = planningState;
   const maxSuggestions = asPositiveInt(input.maxSuggestions);
   const maxIterations = Math.max(1, months.length * 2);
+  const todayIso = localTodayIso();
 
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
     const recommendationContext = buildFoRecommendationContext(workingState);
@@ -650,6 +666,7 @@ export function buildPhantomFoSuggestions(input: {
         settings,
         recommendationContext,
         horizonMonths: months.length,
+        todayIso,
       });
       if (!suggestion) return;
       if (seenSuggestionIds.has(suggestion.id) || existingFoIds.has(suggestion.id)) return;

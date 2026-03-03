@@ -667,6 +667,7 @@ export default function DashboardModule(): JSX.Element {
     ? "forecast_direct"
     : "hybrid";
   const quoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
+  const showPhantomFoInChart = settings.dashboardShowPhantomFoInChart === true;
   const persistDashboardCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
     await saveWith((current) => {
       const next = structuredClone(current);
@@ -1137,6 +1138,7 @@ export default function DashboardModule(): JSX.Element {
     const amazonCoreSeriesName = "Amazon Kern";
     const amazonPlannedSeriesName = "Amazon Plan";
     const amazonNewSeriesName = "Amazon Neu";
+    const phantomFoSeriesName = "Phantom FO";
     const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
     const { firstUnreliableIndex, dashedChainByIndex } = closingLineReliability;
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
@@ -1161,7 +1163,7 @@ export default function DashboardModule(): JSX.Element {
       "Fixkosten",
       "PO",
       "FO",
-      "Phantom FO",
+      ...(showPhantomFoInChart ? [phantomFoSeriesName] : []),
       "Netto",
       "Kontostand",
     ];
@@ -1337,13 +1339,15 @@ export default function DashboardModule(): JSX.Element {
           data: foOutflowSeries,
           itemStyle: { color: v2DashboardChartColors.fo },
         },
-        {
-          name: "Phantom FO",
-          type: "bar",
-          stack: "cash",
-          data: phantomFoOutflowSeries,
-          itemStyle: { color: v2DashboardChartColors.phantomFo },
-        },
+        ...(showPhantomFoInChart
+          ? [{
+            name: phantomFoSeriesName,
+            type: "bar",
+            stack: "cash",
+            data: phantomFoOutflowSeries,
+            itemStyle: { color: v2DashboardChartColors.phantomFo },
+          }]
+          : []),
         {
           name: "Netto",
           type: "line",
@@ -1393,6 +1397,7 @@ export default function DashboardModule(): JSX.Element {
     closingLineReliability,
     otherInflowSeries,
     outflowSplitSeries,
+    showPhantomFoInChart,
     simulatedBreakdown,
     visibleBreakdown,
     visibleMonths,
@@ -2193,6 +2198,18 @@ export default function DashboardModule(): JSX.Element {
           {phantomFoSuggestions.length ? <Tag color="gold">PFO: {phantomFoSuggestions.length}</Tag> : null}
           {resolvedPhantomTargetMonth ? <Tag color="gold">bis {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
         </div>
+        <Space size={8} align="center" style={{ marginBottom: 8 }} wrap>
+          <Text>Simulation: Phantom-FO anzeigen</Text>
+          <Switch
+            size="small"
+            checked={showPhantomFoInChart}
+            onChange={(checked) => {
+              void persistDashboardCashInSettings({
+                dashboardShowPhantomFoInChart: checked,
+              }).catch(() => {});
+            }}
+          />
+        </Space>
         <Text type="secondary" className="v2-dashboard-chart-hint">
           Klick auf Monat oder Balken für Details. Legende ist scrollbar.
         </Text>
