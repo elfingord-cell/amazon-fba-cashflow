@@ -707,13 +707,17 @@ export default function DashboardModule(): JSX.Element {
     () => buildStateWithPhantomFos({ state: stateObject, suggestions: phantomFoSuggestions }),
     [phantomFoSuggestions, stateObject],
   );
+  const dashboardSeriesState = useMemo(
+    () => (showPhantomFoInChart ? planningState : stateObject),
+    [planningState, showPhantomFoInChart, stateObject],
+  );
   const calculationState = useMemo(
-    () => applyDashboardCalculationOverrides(planningState, {
+    () => applyDashboardCalculationOverrides(dashboardSeriesState, {
       quoteMode,
       revenueBasisMode,
       calibrationEnabled,
     }),
-    [calibrationEnabled, planningState, quoteMode, revenueBasisMode],
+    [calibrationEnabled, dashboardSeriesState, quoteMode, revenueBasisMode],
   );
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
@@ -1615,13 +1619,15 @@ export default function DashboardModule(): JSX.Element {
             values: values((month) => -(outflowSplitByMonth.get(month)?.fo || 0)),
             children: outflowOrderRowsByCategory.fo.length ? outflowOrderRowsByCategory.fo : undefined,
           },
-          {
-            key: "outflows-phantom-fo",
-            label: "Phantom FO",
-            rowType: "category",
-            values: values((month) => -(outflowSplitByMonth.get(month)?.phantomFo || 0)),
-            children: outflowOrderRowsByCategory.phantom.length ? outflowOrderRowsByCategory.phantom : undefined,
-          },
+          ...(showPhantomFoInChart
+            ? [{
+              key: "outflows-phantom-fo",
+              label: "Phantom FO",
+              rowType: "category" as const,
+              values: values((month) => -(outflowSplitByMonth.get(month)?.phantomFo || 0)),
+              children: outflowOrderRowsByCategory.phantom.length ? outflowOrderRowsByCategory.phantom : undefined,
+            }]
+            : []),
           {
             key: "outflows-fixcost",
             label: "Fixkosten",
@@ -1650,7 +1656,7 @@ export default function DashboardModule(): JSX.Element {
       },
     ];
     return rows;
-  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, simulatedBreakdown, visibleMonths]);
+  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, showPhantomFoInChart, simulatedBreakdown, visibleMonths]);
   const allExpandablePnlRowKeys = useMemo(
     () => collectExpandableRowKeys(pnlMatrixRows),
     [pnlMatrixRows],
@@ -2213,7 +2219,7 @@ export default function DashboardModule(): JSX.Element {
         <Text type="secondary" className="v2-dashboard-chart-hint">
           Klick auf Monat oder Balken für Details. Legende ist scrollbar.
         </Text>
-        <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} />
+        <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} notMerge />
       </Card>
 
       <Card>
