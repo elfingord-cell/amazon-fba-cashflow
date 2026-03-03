@@ -6,6 +6,8 @@ import {
   Card,
   Col,
   Drawer,
+  InputNumber,
+  Modal,
   Row,
   Segmented,
   Select,
@@ -188,6 +190,19 @@ function formatPercent(value: unknown): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   return `${number.toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} %`;
+}
+
+function toFiniteNumberOrNull(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function round4(value: number): number {
+  return Math.round(value * 10000) / 10000;
 }
 
 function formatIsoDate(value: string | null | undefined): string {
@@ -645,8 +660,17 @@ export default function DashboardModule(): JSX.Element {
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
   const [expandedPnlRowKeys, setExpandedPnlRowKeys] = useState<string[]>(["inflows", "outflows"]);
+  const [closeMonthModalMonth, setCloseMonthModalMonth] = useState<string | null>(null);
+  const [closeMonthRevenueEur, setCloseMonthRevenueEur] = useState<number | null>(null);
+  const [closeMonthPayoutRatePct, setCloseMonthPayoutRatePct] = useState<number | null>(null);
+  const [closeMonthClosingBalanceEur, setCloseMonthClosingBalanceEur] = useState<number | null>(null);
+  const [closingMonthSavePending, setClosingMonthSavePending] = useState(false);
 
   const stateObject = state as unknown as Record<string, unknown>;
+  const monthlyActualsMap = useMemo(() => {
+    if (!stateObject.monthlyActuals || typeof stateObject.monthlyActuals !== "object") return {} as Record<string, Record<string, unknown>>;
+    return stateObject.monthlyActuals as Record<string, Record<string, unknown>>;
+  }, [state.monthlyActuals, stateObject]);
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
@@ -708,6 +732,30 @@ export default function DashboardModule(): JSX.Element {
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
   const breakdown = report.breakdown || [];
+  const currentMonthIdx = useMemo(() => monthIndex(currentMonthKey()), []);
+  const monthCloseStatusByMonth = useMemo(() => {
+    const map = new Map<string, { closed: boolean; canClose: boolean }>();
+    months.forEach((month) => {
+      const entry = monthlyActualsMap[month];
+      const realRevenueEUR = toFiniteNumberOrNull(entry?.realRevenueEUR);
+      const realPayoutRatePct = toFiniteNumberOrNull(entry?.realPayoutRatePct);
+      const realClosingBalanceEUR = toFiniteNumberOrNull(entry?.realClosingBalanceEUR);
+      const closed = Number.isFinite(realRevenueEUR as number)
+        && Number.isFinite(realPayoutRatePct as number)
+        && Number.isFinite(realClosingBalanceEUR as number);
+      const idx = monthIndex(month);
+      const canClose = idx != null && currentMonthIdx != null && idx <= currentMonthIdx;
+      map.set(month, { closed, canClose });
+    });
+    return map;
+  }, [currentMonthIdx, monthlyActualsMap, months]);
+  const closableMonths = useMemo(
+    () => months.filter((month) => {
+      const status = monthCloseStatusByMonth.get(month);
+      return status?.canClose === true && status.closed !== true;
+    }),
+    [monthCloseStatusByMonth, months],
+  );
 
   const visibleMonths = useMemo(() => {
     const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
@@ -1584,6 +1632,67 @@ export default function DashboardModule(): JSX.Element {
       return currentlyAllExpanded ? [] : allExpandablePnlRowKeys.slice();
     });
   }, [allExpandablePnlRowKeys]);
+  const closeMonthModalCanSave = useMemo(
+    () => Number.isFinite(closeMonthRevenueEur)
+      && Number.isFinite(closeMonthPayoutRatePct)
+      && Number.isFinite(closeMonthClosingBalanceEur),
+    [closeMonthClosingBalanceEur, closeMonthPayoutRatePct, closeMonthRevenueEur],
+  );
+  const openCloseMonthModal = useCallback((month: string) => {
+    if (!month) return;
+    const existing = (monthlyActualsMap[month] && typeof monthlyActualsMap[month] === "object")
+      ? monthlyActualsMap[month]
+      : {};
+    setCloseMonthModalMonth(month);
+    setCloseMonthRevenueEur(toFiniteNumberOrNull(existing.realRevenueEUR));
+    setCloseMonthPayoutRatePct(toFiniteNumberOrNull(existing.realPayoutRatePct));
+    setCloseMonthClosingBalanceEur(toFiniteNumberOrNull(existing.realClosingBalanceEUR));
+  }, [monthlyActualsMap]);
+  const closeCloseMonthModal = useCallback(() => {
+    if (closingMonthSavePending) return;
+    setCloseMonthModalMonth(null);
+    setCloseMonthRevenueEur(null);
+    setCloseMonthPayoutRatePct(null);
+    setCloseMonthClosingBalanceEur(null);
+  }, [closingMonthSavePending]);
+  const saveClosedMonthActuals = useCallback(async () => {
+    if (!closeMonthModalMonth || !closeMonthModalCanSave) return;
+    const month = closeMonthModalMonth;
+    const realRevenueEUR = round2(Number(closeMonthRevenueEur));
+    const realPayoutRatePct = round4(Number(closeMonthPayoutRatePct));
+    const realClosingBalanceEUR = round2(Number(closeMonthClosingBalanceEur));
+    setClosingMonthSavePending(true);
+    try {
+      await saveWith((current) => {
+        const next = structuredClone(current);
+        const existing = (next.monthlyActuals && typeof next.monthlyActuals === "object")
+          ? next.monthlyActuals as Record<string, Record<string, unknown>>
+          : {};
+        const monthEntry = (existing[month] && typeof existing[month] === "object")
+          ? { ...existing[month] }
+          : {};
+        monthEntry.realRevenueEUR = realRevenueEUR;
+        monthEntry.realPayoutRatePct = realPayoutRatePct;
+        monthEntry.realClosingBalanceEUR = realClosingBalanceEUR;
+        next.monthlyActuals = {
+          ...existing,
+          [month]: monthEntry,
+        };
+        return next;
+      }, "v2:dashboard:month-close");
+      closeCloseMonthModal();
+    } finally {
+      setClosingMonthSavePending(false);
+    }
+  }, [
+    closeCloseMonthModal,
+    closeMonthClosingBalanceEur,
+    closeMonthModalCanSave,
+    closeMonthModalMonth,
+    closeMonthPayoutRatePct,
+    closeMonthRevenueEur,
+    saveWith,
+  ]);
   const pnlMatrixColumns = useMemo<ColumnsType<PnlMatrixRow>>(() => {
     return [{
       title: "Position",
@@ -1643,11 +1752,33 @@ export default function DashboardModule(): JSX.Element {
           || row.key === "closing";
         return <Text strong={isTotal}>{row.label}</Text>;
       },
-    }, ...visibleMonths.map((month) => ({
-      title: formatMonthLabel(month),
+    }, ...visibleMonths.map((month) => {
+      const monthCloseStatus = monthCloseStatusByMonth.get(month);
+      const monthClosed = monthCloseStatus?.closed === true;
+      const showCloseButton = monthCloseStatus?.canClose === true && monthClosed !== true;
+      return {
+      title: (
+        <Space size={6} align="center" wrap>
+          <Text>{formatMonthLabel(month)}</Text>
+          {monthClosed ? (
+            <Tooltip title="Monat abgeschlossen (IST-Werte gespeichert).">
+              <LockFilled style={{ fontSize: 12, color: "rgba(15, 23, 42, 0.62)" }} />
+            </Tooltip>
+          ) : null}
+          {showCloseButton ? (
+            <Button size="small" onClick={() => openCloseMonthModal(month)}>
+              Monat abschließen
+            </Button>
+          ) : null}
+        </Space>
+      ),
       key: month,
       width: 132,
       align: "right" as const,
+      className: monthClosed ? "v2-dashboard-pnl-month-closed" : undefined,
+      onHeaderCell: () => ({
+        className: monthClosed ? "v2-dashboard-pnl-month-closed" : "",
+      }),
       render: (_value: unknown, row: PnlMatrixRow) => {
         const value = Number(row.values[month]);
         const hasFiniteValue = Number.isFinite(value);
@@ -1681,8 +1812,9 @@ export default function DashboardModule(): JSX.Element {
           </span>
         );
       },
-    }))];
-  }, [monthHasActualClosing, visibleMonths]);
+    };
+    })];
+  }, [monthCloseStatusByMonth, monthHasActualClosing, openCloseMonthModal, visibleMonths]);
 
   function resetCalculationCockpit(): void {
     setRange("next6");
@@ -1838,6 +1970,22 @@ export default function DashboardModule(): JSX.Element {
           )}
         />
       ) : null}
+      <Card size="small" title="Monatsabschluss">
+        {closableMonths.length ? (
+          <Space wrap>
+            {closableMonths.map((month) => (
+              <Space key={month} size={6}>
+                <Tag>{formatMonthLabel(month)}</Tag>
+                <Button size="small" onClick={() => openCloseMonthModal(month)}>
+                  Monat abschließen
+                </Button>
+              </Space>
+            ))}
+          </Space>
+        ) : (
+          <Text type="secondary">Alle Monate bis einschließlich aktueller Monat sind abgeschlossen.</Text>
+        )}
+      </Card>
 
       <Drawer
         title={selectedMonthData ? `Monats-Check: ${formatMonthLabel(selectedMonthData.month)}` : "Monats-Check"}
@@ -2133,6 +2281,46 @@ export default function DashboardModule(): JSX.Element {
           scroll={{ x: "max-content" }}
         />
       </Card>
+      <Modal
+        title={closeMonthModalMonth ? `Monat abschließen: ${formatMonthLabel(closeMonthModalMonth)}` : "Monat abschließen"}
+        open={Boolean(closeMonthModalMonth)}
+        onCancel={closeCloseMonthModal}
+        onOk={() => { void saveClosedMonthActuals(); }}
+        okText="Speichern"
+        cancelText="Abbrechen"
+        okButtonProps={{ disabled: !closeMonthModalCanSave, loading: closingMonthSavePending }}
+        maskClosable={!closingMonthSavePending}
+      >
+        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+          <div className="v2-toolbar-field">
+            <Text>Realer Umsatz (EUR)</Text>
+            <InputNumber
+              value={closeMonthRevenueEur ?? undefined}
+              onChange={(value) => setCloseMonthRevenueEur(toFiniteNumberOrNull(value))}
+              style={{ width: "100%" }}
+              controls={false}
+            />
+          </div>
+          <div className="v2-toolbar-field">
+            <Text>Reale Auszahlungsquote (%)</Text>
+            <InputNumber
+              value={closeMonthPayoutRatePct ?? undefined}
+              onChange={(value) => setCloseMonthPayoutRatePct(toFiniteNumberOrNull(value))}
+              style={{ width: "100%" }}
+              controls={false}
+            />
+          </div>
+          <div className="v2-toolbar-field">
+            <Text>Realer Kontostand zum Monatsende (EUR)</Text>
+            <InputNumber
+              value={closeMonthClosingBalanceEur ?? undefined}
+              onChange={(value) => setCloseMonthClosingBalanceEur(toFiniteNumberOrNull(value))}
+              style={{ width: "100%" }}
+              controls={false}
+            />
+          </div>
+        </Space>
+      </Modal>
     </div>
   );
 }

@@ -2237,6 +2237,11 @@
   white-space: normal;
 }
 
+.v2-dashboard-pnl-table .ant-table-thead > tr > th.v2-dashboard-pnl-month-closed,
+.v2-dashboard-pnl-table .ant-table-tbody > tr > td.v2-dashboard-pnl-month-closed {
+  background: rgba(226, 232, 240, 0.45) !important;
+}
+
 .v2-dashboard-pnl-table .ant-table-tbody > tr.v2-dashboard-pnl-table-row-group > td {
   background: rgba(240, 253, 250, 0.55);
 }
@@ -3246,11 +3251,21 @@
 .v2-shell[data-v2-skin="clean"] .ant-btn-primary {
   background: var(--v2-clean-primary);
   border-color: var(--v2-clean-primary);
+  color: #ffffff;
 }
 
 .v2-shell[data-v2-skin="clean"] .ant-btn-primary:hover {
   background: #223b5f;
   border-color: #223b5f;
+  color: #ffffff;
+}
+
+.v2-shell[data-v2-skin="clean"] .ant-btn-primary:disabled,
+.v2-shell[data-v2-skin="clean"] .ant-btn-primary.ant-btn-disabled {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  color: #6b7280;
+  opacity: 1;
 }
 
 .v2-shell[data-v2-skin="clean"] .ant-input,
