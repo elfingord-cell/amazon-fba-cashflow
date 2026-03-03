@@ -193,7 +193,6 @@ interface ThreePlPreviewRow {
 interface FbaPreviewRow {
   sku: string;
   fbaUnits: number;
-  fbaAvailableUnits: number;
   status: string;
   isKnown: boolean;
 }
@@ -1553,7 +1552,6 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         return {
           sku: normalizedSku,
           fbaUnits: parseUnits(row.fbaUnits),
-          fbaAvailableUnits: parseUnits(row.fbaAvailableUnits),
         };
       })
       .filter((entry) => entry.sku);
@@ -1593,13 +1591,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             note: "",
           };
           if (parseUnits(currentItem.amazonFbaUnits) !== entry.fbaUnits) changedSkus.add(entry.sku);
-          if (parseUnits(currentItem.amazonAvailableUnits) !== entry.fbaAvailableUnits) changedSkus.add(entry.sku);
-          if (parseUnits(currentItem.amazonUnits) !== entry.fbaAvailableUnits) changedSkus.add(entry.sku);
+          if (parseUnits(currentItem.amazonAvailableUnits) !== entry.fbaUnits) changedSkus.add(entry.sku);
+          if (parseUnits(currentItem.amazonUnits) !== entry.fbaUnits) changedSkus.add(entry.sku);
           draftBySku[entry.sku] = {
             ...currentItem,
-            amazonUnits: entry.fbaAvailableUnits,
+            amazonUnits: entry.fbaUnits,
             amazonFbaUnits: entry.fbaUnits,
-            amazonAvailableUnits: entry.fbaAvailableUnits,
+            amazonAvailableUnits: entry.fbaUnits,
           };
         });
 
@@ -1837,16 +1835,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       meta: { minWidth: 220, width: 220 },
     },
     {
-      header: "FBA Bestand",
+      header: "FBA Bestand (importiert)",
       accessorKey: "fbaUnits",
       meta: { minWidth: 140, width: 140, align: "right" },
       cell: ({ row }) => formatInt(row.original.fbaUnits),
-    },
-    {
-      header: "FBA Bestand verfügbar",
-      accessorKey: "fbaAvailableUnits",
-      meta: { minWidth: 180, width: 180, align: "right" },
-      cell: ({ row }) => formatInt(row.original.fbaAvailableUnits),
     },
     {
       header: "Status",
@@ -2722,7 +2714,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           <Input.TextArea
             value={fbaPasteText}
             onChange={(event) => setFbaPasteText(event.target.value)}
-            placeholder="VentoryOne-Tabellentext hier einfügen (Strg+V). Relevante Spalten: SKU, FBA Bestand, FBA Bestand verfügbar."
+            placeholder="VentoryOne-Tabellentext hier einfügen (Strg+V). Relevante Spalten: SKU, FBA Bestand."
             autoSize={{ minRows: 8, maxRows: 14 }}
           />
 

@@ -24,11 +24,6 @@ function isFbaStockHeader(value) {
   return sanitizeHeaderKey(value) === "fbabestand";
 }
 
-function isFbaAvailableHeader(value) {
-  const key = sanitizeHeaderKey(value);
-  return key === "fbabestandverfugbar" || key === "fbabestandverfuegbar";
-}
-
 function parseUnits(value) {
   if (value == null) return null;
   if (typeof value === "number") {
@@ -108,18 +103,15 @@ function detectHeader(rows) {
     const row = rows[rowIndex] || [];
     let skuIndex = -1;
     let fbaStockIndex = -1;
-    let fbaAvailableIndex = -1;
     row.forEach((cell, idx) => {
       if (skuIndex < 0 && isSkuHeader(cell)) skuIndex = idx;
       if (fbaStockIndex < 0 && isFbaStockHeader(cell)) fbaStockIndex = idx;
-      if (fbaAvailableIndex < 0 && isFbaAvailableHeader(cell)) fbaAvailableIndex = idx;
     });
-    if (skuIndex >= 0 && fbaStockIndex >= 0 && fbaAvailableIndex >= 0) {
+    if (skuIndex >= 0 && fbaStockIndex >= 0) {
       return {
         rowIndex,
         skuIndex,
         fbaStockIndex,
-        fbaAvailableIndex,
       };
     }
   }
@@ -168,7 +160,7 @@ export function parseVentoryFbaPaste(input) {
   const header = detectHeader(rows);
   if (!header) {
     return {
-      error: "Header nicht erkannt. Erwartet werden die Spalten SKU, FBA Bestand und FBA Bestand verfuegbar.",
+      error: "Header nicht erkannt. Erwartet werden die Spalten SKU und FBA Bestand.",
       warnings: [],
       previewRows: [],
       unknownSkus: [],
@@ -193,9 +185,8 @@ export function parseVentoryFbaPaste(input) {
     if (isSkuHeader(skuRaw)) continue;
 
     const fbaUnits = parseUnits(cleanCellText(row[header.fbaStockIndex]));
-    const fbaAvailableUnits = parseUnits(cleanCellText(row[header.fbaAvailableIndex]));
-    if (fbaUnits == null || fbaAvailableUnits == null) {
-      warnings.push(`Zeile ${rowIndex + 1}: FBA Bestand/FBA Bestand verfuegbar ist ungueltig fuer SKU ${skuRaw}.`);
+    if (fbaUnits == null) {
+      warnings.push(`Zeile ${rowIndex + 1}: FBA Bestand ist ungueltig fuer SKU ${skuRaw}.`);
       continue;
     }
 
@@ -212,7 +203,7 @@ export function parseVentoryFbaPaste(input) {
         values: [],
       });
     }
-    grouped.get(key).values.push({ fbaUnits, fbaAvailableUnits });
+    grouped.get(key).values.push(fbaUnits);
   }
 
   const importableBySku = {};
@@ -224,7 +215,7 @@ export function parseVentoryFbaPaste(input) {
       const values = Array.isArray(entry.values) ? entry.values.slice() : [];
       const isKnown = entry.isKnown === true;
       const sku = String(entry.sku || "").trim();
-      const latest = values[values.length - 1] || { fbaUnits: 0, fbaAvailableUnits: 0 };
+      const latest = parseUnits(values[values.length - 1]);
       const hasDuplicate = values.length > 1;
 
       if (hasDuplicate) {
@@ -234,15 +225,13 @@ export function parseVentoryFbaPaste(input) {
         unknownSkus.push(sku);
       } else {
         importableBySku[sku] = {
-          fbaUnits: Math.max(0, Math.round(Number(latest.fbaUnits || 0))),
-          fbaAvailableUnits: Math.max(0, Math.round(Number(latest.fbaAvailableUnits || 0))),
+          fbaUnits: Math.max(0, Math.round(Number(latest || 0))),
         };
       }
 
       return {
         sku,
-        fbaUnits: Math.max(0, Math.round(Number(latest.fbaUnits || 0))),
-        fbaAvailableUnits: Math.max(0, Math.round(Number(latest.fbaAvailableUnits || 0))),
+        fbaUnits: Math.max(0, Math.round(Number(latest || 0))),
         status: isKnown ? "zuordenbar" : "SKU nicht bekannt",
         isKnown,
       };
