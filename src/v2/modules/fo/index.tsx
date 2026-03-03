@@ -62,6 +62,8 @@ import {
 const { Paragraph, Text, Title } = Typography;
 const FO_MISSED_BADGE_LABEL = "VERPASST";
 const FO_MISSED_TOOLTIP_TEXT = "Bestelldatum liegt in der Vergangenheit und FO wurde nicht in PO umgewandelt.";
+const FO_CATCH_UP_ARCHIVE_REASON = "verpasst – nachgeholt";
+const FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT = "FO unvollständig – bitte zuerst vervollständigen.";
 
 interface FoFormValues {
   id?: string;
@@ -107,6 +109,7 @@ interface FoRow {
   recommendationText: string;
   recommendationUnits: number | null;
   isMissed: boolean;
+  archiveReason: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -497,6 +500,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [onlyMissedFos, setOnlyMissedFos] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [catchUpOpen, setCatchUpOpen] = useState(false);
+  const [catchUpSourceId, setCatchUpSourceId] = useState<string | null>(null);
+  const [catchUpOrderDate, setCatchUpOrderDate] = useState("");
   const [convertOpen, setConvertOpen] = useState(false);
   const [convertTargetId, setConvertTargetId] = useState<string | null>(null);
   const [convertPoNo, setConvertPoNo] = useState("");
@@ -677,6 +683,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         recommendationText,
         recommendationUnits,
         isMissed: isFoMissed(fo, rowOrderDate, todayIso),
+        archiveReason: String(fo.catchUpReason || fo.archiveReason || "").trim() || null,
         raw: fo,
       } satisfies FoRow;
     });
@@ -784,6 +791,108 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     setConvertOpen(true);
   }
 
+  function isCatchUpCandidate(row: FoRow): boolean {
+    return row.isMissed && isFoConvertibleStatus(row.status) && !row.convertedPoNo;
+  }
+
+  function isCatchUpFoComplete(row: FoRow): boolean {
+    const sku = String(row.sku || "").trim();
+    const supplierId = String(row.supplierId || "").trim();
+    if (!sku || !supplierId) return false;
+    return productBySku.has(sku) && supplierById.has(supplierId);
+  }
+
+  function openCatchUpModalForRow(row: FoRow): void {
+    setCatchUpSourceId(row.id);
+    setCatchUpOrderDate(todayIsoLocal());
+    setCatchUpOpen(true);
+  }
+
+  function closeCatchUpModal(): void {
+    setCatchUpOpen(false);
+    setCatchUpSourceId(null);
+    setCatchUpOrderDate("");
+  }
+
+  const catchUpSourceFo = useMemo(
+    () => (catchUpSourceId ? foById.get(catchUpSourceId) || null : null),
+    [catchUpSourceId, foById],
+  );
+  const catchUpSourceIsComplete = useMemo(() => {
+    if (!catchUpSourceFo) return false;
+    const sku = String(catchUpSourceFo.sku || "").trim();
+    const supplierId = String(catchUpSourceFo.supplierId || "").trim();
+    if (!sku || !supplierId) return false;
+    return productBySku.has(sku) && supplierById.has(supplierId);
+  }, [catchUpSourceFo, productBySku, supplierById]);
+  const catchUpOrderDateIso = useMemo(
+    () => toIsoDateStrict(catchUpOrderDate),
+    [catchUpOrderDate],
+  );
+  const catchUpPreview = useMemo(() => {
+    if (!catchUpSourceFo || !catchUpOrderDateIso) return null;
+    const computedSchedule = computeScheduleFromOrderDate({
+      orderDate: catchUpOrderDateIso,
+      productionLeadTimeDays: catchUpSourceFo.productionLeadTimeDays,
+      logisticsLeadTimeDays: catchUpSourceFo.logisticsLeadTimeDays,
+      bufferDays: catchUpSourceFo.bufferDays,
+      deliveryDate: null,
+    });
+    const schedule = {
+      ...computedSchedule,
+      deliveryDate: computedSchedule.etaDate || computedSchedule.deliveryDate,
+    };
+    const supplier = supplierById.get(String(catchUpSourceFo.supplierId || "")) || null;
+    const supplierTerms = extractSupplierTerms(catchUpSourceFo.payments, supplier || undefined);
+    const payments = buildFoPayments({
+      supplierTerms,
+      schedule,
+      unitPrice: catchUpSourceFo.unitPrice,
+      units: catchUpSourceFo.units,
+      currency: catchUpSourceFo.currency,
+      freight: catchUpSourceFo.freight,
+      freightCurrency: catchUpSourceFo.freightCurrency,
+      dutyRatePct: catchUpSourceFo.dutyRatePct,
+      eustRatePct: catchUpSourceFo.eustRatePct,
+      fxRate: catchUpSourceFo.fxRate,
+      incoterm: catchUpSourceFo.incoterm,
+      vatRefundLagMonths: settings.vatRefundLagMonths,
+      paymentDueDefaults: settings.paymentDueDefaults,
+    });
+    const previewRows: FoPaymentPreviewRow[] = payments.map((entry, index) => {
+      const row = entry as Record<string, unknown>;
+      const categoryRaw = String(row.category || "supplier");
+      const category: FoPaymentPreviewRow["category"] =
+        categoryRaw === "freight"
+        || categoryRaw === "duty"
+        || categoryRaw === "eust"
+        || categoryRaw === "eust_refund"
+          ? categoryRaw
+          : "supplier";
+      const currency = String(row.currency || "EUR").toUpperCase();
+      const amount = Number(row.amount || 0);
+      const plannedEur = currency === "EUR"
+        ? amount
+        : convertToEur(amount, currency, catchUpSourceFo.fxRate);
+      return {
+        id: String(row.id || `catchup-${index + 1}`),
+        label: String(row.label || "Milestone"),
+        category,
+        currency,
+        amount,
+        plannedEur: Number.isFinite(plannedEur) ? plannedEur : 0,
+        dueDate: row.dueDate ? String(row.dueDate) : null,
+        triggerEvent: String(row.triggerEvent || "ORDER_DATE"),
+        offsetDays: Number(row.offsetDays || 0),
+        offsetMonths: Number(row.offsetMonths || 0),
+      };
+    });
+    return {
+      schedule,
+      previewRows,
+    };
+  }, [catchUpOrderDateIso, catchUpSourceFo, settings.paymentDueDefaults, settings.vatRefundLagMonths, supplierById]);
+
   const foTimelineWindow = useMemo(
     () => timelineRangeFromIsoDates({
       state: stateObj,
@@ -815,6 +924,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               {row.isMissed ? (
                 <Tag color="orange" style={{ marginInlineEnd: 0 }}>{FO_MISSED_BADGE_LABEL}</Tag>
               ) : null}
+              {row.archiveReason ? (
+                <Tag color="default" style={{ marginInlineEnd: 0 }}>{row.archiveReason}</Tag>
+              ) : null}
             </div>
             <div className="v2-orders-gantt-subline">
               {row.alias} ({row.sku}) · {row.supplierName}
@@ -833,6 +945,19 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               >
                 Convert
               </Button>
+              {isCatchUpCandidate(row) ? (
+                <Tooltip title={isCatchUpFoComplete(row) ? undefined : FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT}>
+                  <span>
+                    <Button
+                      size="small"
+                      disabled={!isCatchUpFoComplete(row)}
+                      onClick={() => openCatchUpModalForRow(row)}
+                    >
+                      Nachholen
+                    </Button>
+                  </span>
+                </Tooltip>
+              ) : null}
               {row.convertedPoNo ? (
                 <Button
                   size="small"
@@ -896,7 +1021,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     });
 
     return { groups, items, itemRowMap };
-  }, [mergeSelection, navigate, rows, state.pos]);
+  }, [mergeSelection, navigate, productBySku, rows, state.pos, supplierById]);
 
   useEffect(() => {
     setMergeSelection((current) =>
@@ -931,6 +1056,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           <span>{row.original.displayNumber}</span>
           {row.original.isMissed ? (
             <Tag color="orange" style={{ marginInlineEnd: 0 }}>{FO_MISSED_BADGE_LABEL}</Tag>
+          ) : null}
+          {row.original.archiveReason ? (
+            <Tag color="default" style={{ marginInlineEnd: 0 }}>{row.original.archiveReason}</Tag>
           ) : null}
         </Space>
       ),
@@ -1007,6 +1135,19 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           >
             Convert
           </Button>
+          {isCatchUpCandidate(row.original) ? (
+            <Tooltip title={isCatchUpFoComplete(row.original) ? undefined : FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT}>
+              <span>
+                <Button
+                  size="small"
+                  disabled={!isCatchUpFoComplete(row.original)}
+                  onClick={() => openCatchUpModalForRow(row.original)}
+                >
+                  Nachholen
+                </Button>
+              </span>
+            </Tooltip>
+          ) : null}
           {row.original.convertedPoNo ? (
             <Button
               size="small"
@@ -1043,7 +1184,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         </div>
       ),
     },
-  ], [mergeSelection, navigate, saveWith, state.pos]);
+  ], [mergeSelection, navigate, productBySku, saveWith, state.pos, supplierById]);
 
   const draftValues = Form.useWatch([], form) as FoFormValues | undefined;
   const editingRow = useMemo(
@@ -1591,6 +1732,120 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     form.resetFields();
   }
 
+  async function catchUpFo(): Promise<void> {
+    const sourceId = String(catchUpSourceId || "").trim();
+    if (!sourceId) return;
+    const selectedOrderDate = toIsoDateStrict(catchUpOrderDate);
+    if (!selectedOrderDate) {
+      throw new Error("Bitte ein gültiges Bestelldatum wählen.");
+    }
+
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const fos = Array.isArray(next.fos) ? [...next.fos] as Record<string, unknown>[] : [];
+      const sourceIndex = fos.findIndex((entry) => String(entry.id || "") === sourceId);
+      if (sourceIndex < 0) {
+        throw new Error("FO nicht gefunden.");
+      }
+      const sourceFo = { ...(fos[sourceIndex] as Record<string, unknown>) };
+      const sourceScheduleFromTarget = computeFoSchedule({
+        targetDeliveryDate: sourceFo.targetDeliveryDate,
+        productionLeadTimeDays: sourceFo.productionLeadTimeDays,
+        logisticsLeadTimeDays: sourceFo.logisticsLeadTimeDays,
+        bufferDays: sourceFo.bufferDays,
+      });
+      const sourceOrderDate = String(sourceFo.orderDate || sourceScheduleFromTarget.orderDate || "").trim() || null;
+      if (!isFoMissed(sourceFo, sourceOrderDate, todayIsoLocal())) {
+        throw new Error("FO ist nicht als verpasst markiert.");
+      }
+
+      const sku = String(sourceFo.sku || "").trim();
+      const supplierId = String(sourceFo.supplierId || "").trim();
+      if (!sku || !supplierId) {
+        throw new Error(FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT);
+      }
+      const hasSku = (Array.isArray(next.products) ? next.products : [])
+        .some((entry) => String((entry as Record<string, unknown>).sku || "").trim() === sku);
+      const hasSupplier = (Array.isArray(next.suppliers) ? next.suppliers : [])
+        .some((entry) => String((entry as Record<string, unknown>).id || "").trim() === supplierId);
+      if (!hasSku || !hasSupplier) {
+        throw new Error(FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT);
+      }
+
+      const supplierMap = new Map(
+        (Array.isArray(next.suppliers) ? next.suppliers : [])
+          .map((entry) => entry as Record<string, unknown>)
+          .map((entry) => [String(entry.id || ""), entry]),
+      );
+      const supplier = supplierMap.get(supplierId) || null;
+      const supplierTerms = extractSupplierTerms(sourceFo.payments, supplier || undefined);
+      const schedule = computeScheduleFromOrderDate({
+        orderDate: selectedOrderDate,
+        productionLeadTimeDays: sourceFo.productionLeadTimeDays,
+        logisticsLeadTimeDays: sourceFo.logisticsLeadTimeDays,
+        bufferDays: sourceFo.bufferDays,
+        deliveryDate: null,
+      });
+      const nextTargetDeliveryDate = schedule.etaDate || selectedOrderDate;
+      const normalized = normalizeFoRecord({
+        existing: null,
+        supplierTerms,
+        values: {
+          ...sourceFo,
+          id: undefined,
+          status: "ACTIVE",
+          targetDeliveryDate: nextTargetDeliveryDate,
+          convertedPoId: null,
+          convertedPoNo: null,
+          forecastBasisVersionId: activeForecastVersion?.id || null,
+          forecastBasisVersionName: activeForecastVersion?.name || null,
+          forecastBasisSetAt: nowIso(),
+          forecastConflictState: null,
+          catchUpReason: null,
+          archiveReason: null,
+        },
+        schedule: {
+          ...schedule,
+          deliveryDate: nextTargetDeliveryDate,
+        },
+        vatRefundLagMonths: (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths,
+        paymentDueDefaults: (next.settings as Record<string, unknown> | undefined)?.paymentDueDefaults,
+      });
+      const nextRecord = { ...(normalized as Record<string, unknown>) };
+      if (!String(nextRecord.foNo || "").trim() || !String(nextRecord.foNumber || "").trim()) {
+        const suggestion = suggestNextFoNumber(fos, nextRecord.createdAt || nextRecord.updatedAt || nowIso());
+        if (!String(nextRecord.foNo || "").trim()) {
+          nextRecord.foNo = suggestion.foNo;
+        }
+        if (!String(nextRecord.foNumber || "").trim()) {
+          nextRecord.foNumber = suggestion.foNumber;
+        }
+      }
+
+      fos[sourceIndex] = {
+        ...sourceFo,
+        status: "ARCHIVED",
+        catchUpReason: FO_CATCH_UP_ARCHIVE_REASON,
+        archiveReason: FO_CATCH_UP_ARCHIVE_REASON,
+        updatedAt: nowIso(),
+      };
+      fos.push(nextRecord);
+      next.fos = fos;
+      return next;
+    }, "v2:fo:catch-up");
+
+    closeCatchUpModal();
+    if (editingId === sourceId) {
+      modalCollab.clearDraft();
+      setModalOpen(false);
+      setEditingId(null);
+      setReturnContext(null);
+      form.resetFields();
+    }
+    setMergeSelection((current) => current.filter((entry) => entry !== sourceId));
+    message.success("Neue FO erstellt. Alte FO archiviert.");
+  }
+
   async function convertFo(): Promise<void> {
     const targetId = convertTargetId;
     if (!targetId) return;
@@ -2045,6 +2300,26 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           {editingIsMissed ? (
             <Tooltip title={FO_MISSED_TOOLTIP_TEXT}>
               <Tag color="orange">{FO_MISSED_BADGE_LABEL}</Tag>
+            </Tooltip>
+          ) : null}
+          {editingRow?.archiveReason ? (
+            <Tag color="default">{editingRow.archiveReason}</Tag>
+          ) : null}
+          {editingRow && isCatchUpCandidate(editingRow) ? (
+            <Tooltip
+              title={!isCatchUpFoComplete(editingRow)
+                ? FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT
+                : undefined}
+            >
+              <span>
+                <Button
+                  size="small"
+                  disabled={!isCatchUpFoComplete(editingRow) || modalCollab.readOnly}
+                  onClick={() => openCatchUpModalForRow(editingRow)}
+                >
+                  Nachholen
+                </Button>
+              </span>
             </Tooltip>
           ) : null}
           {isFoConvertibleStatus(draftStatus) ? (
@@ -2515,6 +2790,71 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             </div>
           </Card>
         </Form>
+      </Modal>
+
+      <Modal
+        title="FO nachholen"
+        open={catchUpOpen}
+        onCancel={closeCatchUpModal}
+        okText="Nachholen & neue FO erstellen"
+        cancelText="Abbrechen"
+        okButtonProps={{ disabled: !catchUpOrderDateIso || !catchUpSourceFo || !catchUpSourceIsComplete }}
+        onOk={() => {
+          void catchUpFo().catch((catchUpError: unknown) => {
+            Modal.error({
+              title: "Nachholen fehlgeschlagen",
+              content: catchUpError instanceof Error ? catchUpError.message : String(catchUpError),
+            });
+          });
+        }}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Text>Die aktuelle FO wird archiviert und eine neue FO ab heute erstellt.</Text>
+          <div>
+            <Text strong>Bestelldatum</Text>
+            <Input
+              type="date"
+              value={catchUpOrderDate}
+              onChange={(event) => setCatchUpOrderDate(event.target.value)}
+            />
+          </div>
+          {catchUpPreview ? (
+            <Card size="small">
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Text strong>Vorschau</Text>
+                <Text>Neue ETA: {formatDate(catchUpPreview.schedule.etaDate)}</Text>
+                <StatsTableShell>
+                  <table className="v2-stats-table" data-layout="auto">
+                    <thead>
+                      <tr>
+                        <th>Typ</th>
+                        <th>Label</th>
+                        <th>Soll (EUR)</th>
+                        <th>Fällig</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catchUpPreview.previewRows.length ? (
+                        catchUpPreview.previewRows.map((row) => (
+                          <tr key={row.id}>
+                            <td>{formatFoPaymentCategory(row.category)}</td>
+                            <td>{row.label}</td>
+                            <td>{formatCurrency(row.plannedEur)}</td>
+                            <td>{formatDate(row.dueDate)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4}>Keine Zahlungszeilen.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </StatsTableShell>
+              </Space>
+            </Card>
+          ) : null}
+        </Space>
       </Modal>
 
       <Modal
