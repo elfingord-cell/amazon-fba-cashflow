@@ -63,7 +63,15 @@ const { Paragraph, Text, Title } = Typography;
 const FO_MISSED_BADGE_LABEL = "VERPASST";
 const FO_MISSED_TOOLTIP_TEXT = "Bestelldatum liegt in der Vergangenheit und FO wurde nicht in PO umgewandelt.";
 const FO_CATCH_UP_ARCHIVE_REASON = "verpasst – nachgeholt";
+const FO_MISSED_CONVERT_ARCHIVE_REASON = "verpasst – in PO umgewandelt";
+const FO_MISSED_IGNORE_ARCHIVE_REASON = "verpasst – ignoriert";
 const FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT = "FO unvollständig – bitte zuerst vervollständigen.";
+const FO_IGNORE_REASON_OPTIONS = [
+  { value: "forecast_changed", label: "Forecast geändert" },
+  { value: "product_not_relevant", label: "Produkt nicht mehr relevant" },
+  { value: "order_later_on_purpose", label: "Bewusst später bestellen" },
+  { value: "other", label: "Sonstiges" },
+] as const;
 
 interface FoFormValues {
   id?: string;
@@ -504,9 +512,13 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [catchUpSourceId, setCatchUpSourceId] = useState<string | null>(null);
   const [catchUpOrderDate, setCatchUpOrderDate] = useState("");
   const [convertOpen, setConvertOpen] = useState(false);
+  const [convertMode, setConvertMode] = useState<"standard" | "missed_now">("standard");
   const [convertTargetId, setConvertTargetId] = useState<string | null>(null);
   const [convertPoNo, setConvertPoNo] = useState("");
   const [convertOrderDate, setConvertOrderDate] = useState("");
+  const [ignoreOpen, setIgnoreOpen] = useState(false);
+  const [ignoreTargetId, setIgnoreTargetId] = useState<string | null>(null);
+  const [ignoreReason, setIgnoreReason] = useState<string | undefined>(undefined);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergePoNo, setMergePoNo] = useState("");
@@ -784,15 +796,48 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     });
   }
 
+  function closeConvertModal(): void {
+    setConvertOpen(false);
+    setConvertMode("standard");
+    setConvertTargetId(null);
+    setConvertPoNo("");
+    setConvertOrderDate("");
+  }
+
   function openConvertModalForRow(row: FoRow): void {
+    setConvertMode("standard");
     setConvertTargetId(row.id);
     setConvertPoNo(suggestNextPoNo(Array.isArray(state.pos) ? state.pos : []));
     setConvertOrderDate(row.orderDate || "");
     setConvertOpen(true);
   }
 
-  function isCatchUpCandidate(row: FoRow): boolean {
+  function openNowOrderModalForRow(row: FoRow): void {
+    setConvertMode("missed_now");
+    setConvertTargetId(row.id);
+    setConvertPoNo("");
+    setConvertOrderDate(todayIsoLocal());
+    setConvertOpen(true);
+  }
+
+  function closeIgnoreModal(): void {
+    setIgnoreOpen(false);
+    setIgnoreTargetId(null);
+    setIgnoreReason(undefined);
+  }
+
+  function openIgnoreModalForRow(row: FoRow): void {
+    setIgnoreTargetId(row.id);
+    setIgnoreReason(undefined);
+    setIgnoreOpen(true);
+  }
+
+  function isMissedActionCandidate(row: FoRow): boolean {
     return row.isMissed && isFoConvertibleStatus(row.status) && !row.convertedPoNo;
+  }
+
+  function isCatchUpCandidate(row: FoRow): boolean {
+    return isMissedActionCandidate(row);
   }
 
   function isCatchUpFoComplete(row: FoRow): boolean {
@@ -813,6 +858,35 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     setCatchUpSourceId(null);
     setCatchUpOrderDate("");
   }
+
+  const convertTargetFo = useMemo(
+    () => (convertTargetId ? foById.get(convertTargetId) || null : null),
+    [convertTargetId, foById],
+  );
+  const convertTargetRow = useMemo(
+    () => (convertTargetId ? rows.find((entry) => entry.id === convertTargetId) || null : null),
+    [convertTargetId, rows],
+  );
+  const convertOrderDateIso = useMemo(
+    () => toIsoDateStrict(convertOrderDate),
+    [convertOrderDate],
+  );
+  const convertRequiresOrderDate = convertMode === "missed_now";
+  const convertPreviewSchedule = useMemo(() => {
+    if (!convertTargetFo || !convertOrderDateIso) return null;
+    return computeScheduleFromOrderDate({
+      orderDate: convertOrderDateIso,
+      productionLeadTimeDays: convertTargetFo.productionLeadTimeDays,
+      logisticsLeadTimeDays: convertTargetFo.logisticsLeadTimeDays,
+      bufferDays: convertTargetFo.bufferDays,
+      deliveryDate: null,
+    });
+  }, [convertOrderDateIso, convertTargetFo]);
+  const convertCanSubmit = useMemo(() => {
+    if (!String(convertPoNo || "").trim()) return false;
+    if (convertRequiresOrderDate && !convertOrderDateIso) return false;
+    return true;
+  }, [convertOrderDateIso, convertPoNo, convertRequiresOrderDate]);
 
   const catchUpSourceFo = useMemo(
     () => (catchUpSourceId ? foById.get(catchUpSourceId) || null : null),
@@ -909,6 +983,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
     rows.forEach((row) => {
       const canSelectForMerge = isFoConvertibleStatus(row.status);
+      const missedActionCandidate = isMissedActionCandidate(row);
       groups.push({
         id: row.id,
         title: (
@@ -938,13 +1013,33 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               <Button size="small" onClick={() => openEditModal(row.raw)}>
                 {canSelectForMerge ? "Bearbeiten" : "Details"}
               </Button>
-              <Button
-                size="small"
-                disabled={!canSelectForMerge}
-                onClick={() => openConvertModalForRow(row)}
-              >
-                Convert
-              </Button>
+              {!missedActionCandidate ? (
+                <Button
+                  size="small"
+                  disabled={!canSelectForMerge}
+                  onClick={() => openConvertModalForRow(row)}
+                >
+                  Convert
+                </Button>
+              ) : null}
+              {missedActionCandidate ? (
+                <Button
+                  size="small"
+                  disabled={!canSelectForMerge}
+                  onClick={() => openNowOrderModalForRow(row)}
+                >
+                  Jetzt bestellen
+                </Button>
+              ) : null}
+              {missedActionCandidate ? (
+                <Button
+                  size="small"
+                  disabled={!canSelectForMerge}
+                  onClick={() => openIgnoreModalForRow(row)}
+                >
+                  Ignorieren
+                </Button>
+              ) : null}
               {isCatchUpCandidate(row) ? (
                 <Tooltip title={isCatchUpFoComplete(row) ? undefined : FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT}>
                   <span>
@@ -1116,73 +1211,96 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     {
       header: "Aktionen",
       meta: { width: 250, minWidth: 250 },
-      cell: ({ row }) => (
-        <div className="v2-actions-nowrap">
-          <Button
-            size="small"
-            onClick={() => {
-              openEditModal(row.original.raw);
-            }}
-          >
-            {isFoConvertibleStatus(row.original.status) ? "Bearbeiten" : "Details"}
-          </Button>
-          <Button
-            size="small"
-            disabled={!isFoConvertibleStatus(row.original.status)}
-            onClick={() => {
-              openConvertModalForRow(row.original);
-            }}
-          >
-            Convert
-          </Button>
-          {isCatchUpCandidate(row.original) ? (
-            <Tooltip title={isCatchUpFoComplete(row.original) ? undefined : FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT}>
-              <span>
-                <Button
-                  size="small"
-                  disabled={!isCatchUpFoComplete(row.original)}
-                  onClick={() => openCatchUpModalForRow(row.original)}
-                >
-                  Nachholen
-                </Button>
-              </span>
-            </Tooltip>
-          ) : null}
-          {row.original.convertedPoNo ? (
+      cell: ({ row }) => {
+        const missedActionCandidate = isMissedActionCandidate(row.original);
+        return (
+          <div className="v2-actions-nowrap">
             <Button
               size="small"
               onClick={() => {
-                const params = new URLSearchParams();
-                params.set("source", "fo_convert");
-                params.set("poNo", String(row.original.convertedPoNo || ""));
-                navigate(`/v2/orders/po?${params.toString()}`);
+                openEditModal(row.original.raw);
               }}
             >
-              PO öffnen
+              {isFoConvertibleStatus(row.original.status) ? "Bearbeiten" : "Details"}
             </Button>
-          ) : null}
-          <Button
-            size="small"
-            danger
-            disabled={!isFoConvertibleStatus(row.original.status)}
-            onClick={() => {
-              Modal.confirm({
-                title: "FO loeschen?",
-                onOk: async () => {
-                  await saveWith((current) => {
-                    const next = ensureAppStateV2(current);
-                    next.fos = (Array.isArray(next.fos) ? next.fos : [])
-                      .filter((entry) => String((entry as Record<string, unknown>).id || "") !== row.original.id);
-                    return next;
-                  }, "v2:fo:delete");
-                },
-              });
-            }}
-          >
-            Loeschen
-          </Button>
-        </div>
-      ),
+            {!missedActionCandidate ? (
+              <Button
+                size="small"
+                disabled={!isFoConvertibleStatus(row.original.status)}
+                onClick={() => {
+                  openConvertModalForRow(row.original);
+                }}
+              >
+                Convert
+              </Button>
+            ) : null}
+            {missedActionCandidate ? (
+              <Button
+                size="small"
+                disabled={!isFoConvertibleStatus(row.original.status)}
+                onClick={() => openNowOrderModalForRow(row.original)}
+              >
+                Jetzt bestellen
+              </Button>
+            ) : null}
+            {missedActionCandidate ? (
+              <Button
+                size="small"
+                disabled={!isFoConvertibleStatus(row.original.status)}
+                onClick={() => openIgnoreModalForRow(row.original)}
+              >
+                Ignorieren
+              </Button>
+            ) : null}
+            {isCatchUpCandidate(row.original) ? (
+              <Tooltip title={isCatchUpFoComplete(row.original) ? undefined : FO_CATCH_UP_INCOMPLETE_TOOLTIP_TEXT}>
+                <span>
+                  <Button
+                    size="small"
+                    disabled={!isCatchUpFoComplete(row.original)}
+                    onClick={() => openCatchUpModalForRow(row.original)}
+                  >
+                    Nachholen
+                  </Button>
+                </span>
+              </Tooltip>
+            ) : null}
+            {row.original.convertedPoNo ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  params.set("source", "fo_convert");
+                  params.set("poNo", String(row.original.convertedPoNo || ""));
+                  navigate(`/v2/orders/po?${params.toString()}`);
+                }}
+              >
+                PO öffnen
+              </Button>
+            ) : null}
+            <Button
+              size="small"
+              danger
+              disabled={!isFoConvertibleStatus(row.original.status)}
+              onClick={() => {
+                Modal.confirm({
+                  title: "FO loeschen?",
+                  onOk: async () => {
+                    await saveWith((current) => {
+                      const next = ensureAppStateV2(current);
+                      next.fos = (Array.isArray(next.fos) ? next.fos : [])
+                        .filter((entry) => String((entry as Record<string, unknown>).id || "") !== row.original.id);
+                      return next;
+                    }, "v2:fo:delete");
+                  },
+                });
+              }}
+            >
+              Loeschen
+            </Button>
+          </div>
+        );
+      },
     },
   ], [mergeSelection, navigate, productBySku, saveWith, state.pos, supplierById]);
 
@@ -1851,6 +1969,13 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (!targetId) return;
     const poNo = String(convertPoNo || "").trim();
     if (!poNo) throw new Error("PO Nummer ist erforderlich.");
+    if (convertRequiresOrderDate && !convertOrderDateIso) {
+      throw new Error("Bitte ein gültiges Bestelldatum wählen.");
+    }
+    const selectedOrderDate = convertOrderDateIso || null;
+    const missedNowMode = convertMode === "missed_now";
+    let createdPoNo = poNo;
+
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
       const pos = Array.isArray(next.pos) ? [...next.pos] : [];
@@ -1866,62 +1991,163 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       if (!isFoConvertibleStatus(fo.status)) {
         throw new Error("Nur aktive FOs (Draft/Active) koennen konvertiert werden.");
       }
+      if (missedNowMode) {
+        const sourceScheduleFromTarget = computeFoSchedule({
+          targetDeliveryDate: fo.targetDeliveryDate,
+          productionLeadTimeDays: fo.productionLeadTimeDays,
+          logisticsLeadTimeDays: fo.logisticsLeadTimeDays,
+          bufferDays: fo.bufferDays,
+        });
+        const sourceOrderDate = String(fo.orderDate || sourceScheduleFromTarget.orderDate || "").trim() || null;
+        if (!isFoMissed(fo, sourceOrderDate, todayIsoLocal())) {
+          throw new Error("FO ist nicht als verpasst markiert.");
+        }
+      }
+      const orderDateForPo = selectedOrderDate || String(fo.orderDate || "");
       const po = createPoFromFo({
         fo,
         poNumber: poNo,
-        orderDateOverride: convertOrderDate || String(fo.orderDate || ""),
+        orderDateOverride: orderDateForPo,
       });
       pos.push(po);
+      createdPoNo = String(po.poNo || poNo);
 
-      const supplierMap = new Map(
-        (Array.isArray(next.suppliers) ? next.suppliers : [])
-          .map((entry) => entry as Record<string, unknown>)
-          .map((entry) => [String(entry.id || ""), entry]),
-      );
-      const supplier = supplierMap.get(String(fo.supplierId || "")) || null;
-      const supplierTerms = extractSupplierTerms(fo.payments, supplier || undefined);
-      const schedule = computeScheduleFromOrderDate({
-        orderDate: convertOrderDate || fo.orderDate,
-        productionLeadTimeDays: fo.productionLeadTimeDays,
-        logisticsLeadTimeDays: fo.logisticsLeadTimeDays,
-        bufferDays: fo.bufferDays,
-        deliveryDate: fo.targetDeliveryDate,
-      });
-      const payments = buildFoPayments({
-        supplierTerms,
-        schedule,
-        unitPrice: fo.unitPrice,
-        units: fo.units,
-        currency: fo.currency,
-        freight: fo.freight,
-        freightCurrency: fo.freightCurrency,
-        dutyRatePct: fo.dutyRatePct,
-        eustRatePct: fo.eustRatePct,
-        fxRate: fo.fxRate,
-        incoterm: fo.incoterm,
-        vatRefundLagMonths: (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths,
-        paymentDueDefaults: (next.settings as Record<string, unknown> | undefined)?.paymentDueDefaults,
-      });
+      if (missedNowMode) {
+        fos[foIndex] = {
+          ...fo,
+          status: "ARCHIVED",
+          convertedPoId: po.id,
+          convertedPoNo: po.poNo,
+          catchUpReason: FO_MISSED_CONVERT_ARCHIVE_REASON,
+          archiveReason: FO_MISSED_CONVERT_ARCHIVE_REASON,
+          updatedAt: nowIso(),
+        };
+      } else {
+        const supplierMap = new Map(
+          (Array.isArray(next.suppliers) ? next.suppliers : [])
+            .map((entry) => entry as Record<string, unknown>)
+            .map((entry) => [String(entry.id || ""), entry]),
+        );
+        const supplier = supplierMap.get(String(fo.supplierId || "")) || null;
+        const supplierTerms = extractSupplierTerms(fo.payments, supplier || undefined);
+        const schedule = computeScheduleFromOrderDate({
+          orderDate: selectedOrderDate || fo.orderDate,
+          productionLeadTimeDays: fo.productionLeadTimeDays,
+          logisticsLeadTimeDays: fo.logisticsLeadTimeDays,
+          bufferDays: fo.bufferDays,
+          deliveryDate: fo.targetDeliveryDate,
+        });
+        const payments = buildFoPayments({
+          supplierTerms,
+          schedule,
+          unitPrice: fo.unitPrice,
+          units: fo.units,
+          currency: fo.currency,
+          freight: fo.freight,
+          freightCurrency: fo.freightCurrency,
+          dutyRatePct: fo.dutyRatePct,
+          eustRatePct: fo.eustRatePct,
+          fxRate: fo.fxRate,
+          incoterm: fo.incoterm,
+          vatRefundLagMonths: (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths,
+          paymentDueDefaults: (next.settings as Record<string, unknown> | undefined)?.paymentDueDefaults,
+        });
 
-      fos[foIndex] = {
-        ...fo,
-        ...schedule,
-        payments,
-        status: "CONVERTED",
-        convertedPoId: po.id,
-        convertedPoNo: po.poNo,
-        updatedAt: nowIso(),
-      };
+        fos[foIndex] = {
+          ...fo,
+          ...schedule,
+          payments,
+          status: "CONVERTED",
+          convertedPoId: po.id,
+          convertedPoNo: po.poNo,
+          updatedAt: nowIso(),
+        };
+      }
 
       next.pos = pos;
       next.fos = fos;
       return next;
     }, "v2:fo:convert");
 
-    setConvertOpen(false);
-    setConvertTargetId(null);
+    closeConvertModal();
     setMergeSelection((current) => current.filter((entry) => entry !== targetId));
+    if (missedNowMode) {
+      message.success({
+        content: (
+          <Space size={8} wrap>
+            <span>{`PO ${createdPoNo} erstellt. FO archiviert.`}</span>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => {
+                const params = new URLSearchParams();
+                params.set("source", "fo_convert");
+                params.set("poNo", createdPoNo);
+                navigate(`/v2/orders/po?${params.toString()}`);
+              }}
+            >
+              PO öffnen
+            </Button>
+          </Space>
+        ),
+      });
+      return;
+    }
     message.success(`FO wurde in PO ${poNo} konvertiert.`);
+  }
+
+  async function ignoreMissedFo(): Promise<void> {
+    const targetId = String(ignoreTargetId || "").trim();
+    if (!targetId) return;
+    const optionalReason = FO_IGNORE_REASON_OPTIONS
+      .find((entry) => entry.value === ignoreReason)?.label;
+    const archiveReason = optionalReason
+      ? `${FO_MISSED_IGNORE_ARCHIVE_REASON} (${optionalReason})`
+      : FO_MISSED_IGNORE_ARCHIVE_REASON;
+
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const fos = Array.isArray(next.fos) ? [...next.fos] as Record<string, unknown>[] : [];
+      const foIndex = fos.findIndex((entry) => String(entry.id || "") === targetId);
+      if (foIndex < 0) {
+        throw new Error("FO nicht gefunden.");
+      }
+      const fo = { ...(fos[foIndex] as Record<string, unknown>) };
+      if (!isFoConvertibleStatus(fo.status)) {
+        throw new Error("Nur aktive FOs (Draft/Active) koennen ignoriert werden.");
+      }
+      const scheduleFromTarget = computeFoSchedule({
+        targetDeliveryDate: fo.targetDeliveryDate,
+        productionLeadTimeDays: fo.productionLeadTimeDays,
+        logisticsLeadTimeDays: fo.logisticsLeadTimeDays,
+        bufferDays: fo.bufferDays,
+      });
+      const sourceOrderDate = String(fo.orderDate || scheduleFromTarget.orderDate || "").trim() || null;
+      if (!isFoMissed(fo, sourceOrderDate, todayIsoLocal())) {
+        throw new Error("FO ist nicht als verpasst markiert.");
+      }
+
+      fos[foIndex] = {
+        ...fo,
+        status: "ARCHIVED",
+        catchUpReason: archiveReason,
+        archiveReason,
+        updatedAt: nowIso(),
+      };
+      next.fos = fos;
+      return next;
+    }, "v2:fo:ignore");
+
+    closeIgnoreModal();
+    if (editingId === targetId) {
+      modalCollab.clearDraft();
+      setModalOpen(false);
+      setEditingId(null);
+      setReturnContext(null);
+      form.resetFields();
+    }
+    setMergeSelection((current) => current.filter((entry) => entry !== targetId));
+    message.success("FO archiviert.");
   }
 
   async function convertFoMerge(): Promise<void> {
@@ -2304,6 +2530,24 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           ) : null}
           {editingRow?.archiveReason ? (
             <Tag color="default">{editingRow.archiveReason}</Tag>
+          ) : null}
+          {editingRow && isMissedActionCandidate(editingRow) ? (
+            <Button
+              size="small"
+              disabled={modalCollab.readOnly}
+              onClick={() => openNowOrderModalForRow(editingRow)}
+            >
+              Jetzt bestellen
+            </Button>
+          ) : null}
+          {editingRow && isMissedActionCandidate(editingRow) ? (
+            <Button
+              size="small"
+              disabled={modalCollab.readOnly}
+              onClick={() => openIgnoreModalForRow(editingRow)}
+            >
+              Ignorieren
+            </Button>
           ) : null}
           {editingRow && isCatchUpCandidate(editingRow) ? (
             <Tooltip
@@ -2858,9 +3102,12 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       </Modal>
 
       <Modal
-        title="Einzel-FO in PO konvertieren"
+        title={convertMode === "missed_now" ? "In PO umwandeln" : "Einzel-FO in PO konvertieren"}
         open={convertOpen}
-        onCancel={() => setConvertOpen(false)}
+        onCancel={closeConvertModal}
+        okText={convertMode === "missed_now" ? "In PO umwandeln" : "Konvertieren"}
+        cancelText="Abbrechen"
+        okButtonProps={{ disabled: !convertCanSubmit }}
         onOk={() => {
           void convertFo().catch((convertError: unknown) => {
             Modal.error({
@@ -2873,8 +3120,53 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         <Space direction="vertical" style={{ width: "100%" }}>
           <Text>PO Nummer</Text>
           <Input value={convertPoNo} onChange={(event) => setConvertPoNo(event.target.value)} />
-          <Text>Order Date (optional)</Text>
+          <Text>{convertMode === "missed_now" ? "Bestelldatum" : "Order Date (optional)"}</Text>
           <Input type="date" value={convertOrderDate} onChange={(event) => setConvertOrderDate(event.target.value)} />
+          {convertMode === "missed_now" && convertTargetRow ? (
+            <Card size="small">
+              <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                <Text strong>Vorschau</Text>
+                <Text>Supplier: {convertTargetRow.supplierName}</Text>
+                <Text>Produkt: {convertTargetRow.alias} ({convertTargetRow.sku})</Text>
+                <Text>Units: {formatNumber(convertTargetRow.units, 0)}</Text>
+                <Text>
+                  Unit Price: {formatNumber(convertTargetFo?.unitPrice || 0, 2)} {String(convertTargetFo?.currency || "USD").toUpperCase()}
+                </Text>
+                <Text>Neue ETA: {formatDate(convertPreviewSchedule?.etaDate || null)}</Text>
+              </Space>
+            </Card>
+          ) : null}
+        </Space>
+      </Modal>
+
+      <Modal
+        title="FO ignorieren"
+        open={ignoreOpen}
+        onCancel={closeIgnoreModal}
+        okText="Ignorieren & archivieren"
+        cancelText="Abbrechen"
+        onOk={() => {
+          void ignoreMissedFo().catch((ignoreError: unknown) => {
+            Modal.error({
+              title: "Archivierung fehlgeschlagen",
+              content: ignoreError instanceof Error ? ignoreError.message : String(ignoreError),
+            });
+          });
+        }}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Text>Die FO wird archiviert und nicht weiter berücksichtigt.</Text>
+          <div>
+            <Text strong>Grund (optional)</Text>
+            <Select
+              allowClear
+              placeholder="Grund auswählen"
+              value={ignoreReason}
+              options={FO_IGNORE_REASON_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
+              onChange={(value) => setIgnoreReason(typeof value === "string" ? value : undefined)}
+              style={{ width: "100%", marginTop: 6 }}
+            />
+          </div>
         </Space>
       </Modal>
 
