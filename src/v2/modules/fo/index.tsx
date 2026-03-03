@@ -12,6 +12,7 @@ import {
   Select,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -59,6 +60,8 @@ import {
 } from "../../domain/orderUtils";
 
 const { Paragraph, Text, Title } = Typography;
+const FO_MISSED_BADGE_LABEL = "VERPASST";
+const FO_MISSED_TOOLTIP_TEXT = "Bestelldatum liegt in der Vergangenheit und FO wurde nicht in PO umgewandelt.";
 
 interface FoFormValues {
   id?: string;
@@ -103,6 +106,7 @@ interface FoRow {
   forecastConflictState: string | null;
   recommendationText: string;
   recommendationUnits: number | null;
+  isMissed: boolean;
   raw: Record<string, unknown>;
 }
 
@@ -235,6 +239,34 @@ function normalizeFoNumberToken(value: unknown): string {
   return compact.startsWith("FO") ? compact.slice(2) : compact;
 }
 
+function toIsoDateStrict(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function todayIsoLocal(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isTruthyFlag(value: unknown): boolean {
+  if (value === true) return true;
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
 function resolveFoDisplayNumber(input: {
   foNo?: unknown;
   foNumber?: unknown;
@@ -248,12 +280,7 @@ function resolveFoDisplayNumber(input: {
 }
 
 function normalizeIsoDate(value: unknown): string | null {
-  const text = String(value || "").trim();
-  if (!text) return null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  const date = new Date(`${text}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return null;
-  return text;
+  return toIsoDateStrict(value);
 }
 
 function normalizeReturnPath(value: unknown): string | null {
@@ -285,6 +312,26 @@ function resolveFoTargetDeliveryDate(fo: Record<string, unknown>): string | null
     || normalizeIsoDate(fo.deliveryDate)
     || normalizeIsoDate(fo.etaDate)
   );
+}
+
+function isFoMissed(foRaw: Record<string, unknown>, rowOrderDate: string | null, todayIso: string): boolean {
+  const status = normalizeFoStatus(foRaw.status);
+  if (status !== "DRAFT" && status !== "ACTIVE") return false;
+
+  const rawStatus = String(foRaw.status || "").trim().toUpperCase();
+  if (rawStatus === "CANCELLED") return false;
+  if (isTruthyFlag(foRaw.archived) || isTruthyFlag(foRaw.deleted) || isTruthyFlag(foRaw.isDeleted) || isTruthyFlag(foRaw.cancelled)) {
+    return false;
+  }
+  if (String(foRaw.deletedAt || "").trim()) return false;
+
+  const convertedPoId = String(foRaw.convertedPoId || "").trim();
+  const convertedPoNo = String(foRaw.convertedPoNo || "").trim();
+  if (convertedPoId || convertedPoNo) return false;
+
+  const orderDate = toIsoDateStrict(rowOrderDate);
+  if (!orderDate) return false;
+  return orderDate < todayIso;
 }
 
 function round2(value: number): number {
@@ -447,6 +494,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const syncSession = useSyncSession();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | FoStatus>("ALL");
+  const [onlyMissedFos, setOnlyMissedFos] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [convertOpen, setConvertOpen] = useState(false);
@@ -546,6 +594,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   );
 
   const rows = useMemo(() => {
+    const todayIso = todayIsoLocal();
     const allRows = (Array.isArray(state.fos) ? state.fos : []).map((entry) => {
       const fo = entry as Record<string, unknown>;
       const sku = String(fo.sku || "");
@@ -562,6 +611,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         etdDate: String(fo.etdDate || scheduleFromTarget.etdDate || ""),
         etaDate: String(fo.etaDate || scheduleFromTarget.etaDate || ""),
       };
+      const rowOrderDate = schedule.orderDate || null;
+      const normalizedStatus = normalizeFoStatus(fo.status);
       const costs = computeFoCostValues({
         units: fo.units,
         unitPrice: fo.unitPrice,
@@ -615,16 +666,17 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         supplierName: supplier?.name || "—",
         units: Number(fo.units || 0),
         targetDeliveryDate: fo.targetDeliveryDate ? String(fo.targetDeliveryDate) : null,
-        orderDate: schedule.orderDate || null,
+        orderDate: rowOrderDate,
         etdDate: schedule.etdDate || null,
         etaDate: schedule.etaDate || null,
         landedCostEur: round2(costs.landedCostEur),
-        status: normalizeFoStatus(fo.status),
+        status: normalizedStatus,
         convertedPoNo: fo.convertedPoNo ? String(fo.convertedPoNo) : null,
         forecastBasisLabel: String(fo.forecastBasisVersionName || fo.forecastBasisVersionId || "—"),
         forecastConflictState: String(fo.forecastConflictState || "").trim() || null,
         recommendationText,
         recommendationUnits,
+        isMissed: isFoMissed(fo, rowOrderDate, todayIso),
         raw: fo,
       } satisfies FoRow;
     });
@@ -633,6 +685,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     return allRows
       .filter((row) => {
         if (statusFilter !== "ALL" && row.status !== statusFilter) return false;
+        if (onlyMissedFos && !row.isMissed) return false;
         if (!needle) return true;
         return [
           row.displayNumber,
@@ -653,6 +706,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     settings,
     state.fos,
     statusFilter,
+    onlyMissedFos,
     supplierRows,
   ]);
 
@@ -758,6 +812,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               />
               <Text strong>FO {row.displayNumber}</Text>
               {statusTag(row.status)}
+              {row.isMissed ? (
+                <Tag color="orange" style={{ marginInlineEnd: 0 }}>{FO_MISSED_BADGE_LABEL}</Tag>
+              ) : null}
             </div>
             <div className="v2-orders-gantt-subline">
               {row.alias} ({row.sku}) · {row.supplierName}
@@ -869,7 +926,14 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     },
     {
       header: "FO",
-      cell: ({ row }) => row.original.displayNumber,
+      cell: ({ row }) => (
+        <Space size={6} wrap>
+          <span>{row.original.displayNumber}</span>
+          {row.original.isMissed ? (
+            <Tag color="orange" style={{ marginInlineEnd: 0 }}>{FO_MISSED_BADGE_LABEL}</Tag>
+          ) : null}
+        </Space>
+      ),
     },
     {
       header: "Produkt",
@@ -986,6 +1050,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     () => (editingId ? rows.find((entry) => entry.id === editingId) || null : null),
     [editingId, rows],
   );
+  const editingIsMissed = Boolean(editingRow?.isMissed);
   const draftStatus = useMemo<FoStatus>(() => {
     return normalizeFoStatus(draftValues?.status || editingRow?.status || "DRAFT");
   }, [draftValues?.status, editingRow?.status]);
@@ -1891,6 +1956,9 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
             ]}
             style={{ width: 190 }}
           />
+          <Checkbox checked={onlyMissedFos} onChange={(event) => setOnlyMissedFos(event.target.checked)}>
+            Nur verpasste FOs
+          </Checkbox>
           <Button
             onClick={openMergeModalFromSelection}
             disabled={mergeSelectedFos.length < 2}
@@ -1974,6 +2042,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         <Space style={{ width: "100%", marginBottom: 10 }} wrap>
           <Text type="secondary">Status:</Text>
           {statusTag(draftStatus)}
+          {editingIsMissed ? (
+            <Tooltip title={FO_MISSED_TOOLTIP_TEXT}>
+              <Tag color="orange">{FO_MISSED_BADGE_LABEL}</Tag>
+            </Tooltip>
+          ) : null}
           {isFoConvertibleStatus(draftStatus) ? (
             <Button
               size="small"
