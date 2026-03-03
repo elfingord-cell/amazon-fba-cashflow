@@ -6,7 +6,7 @@ import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
 import { DataTable } from "../../components/DataTable";
 import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
-import { addMonths, currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
+import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
 import { v2SollIstChartColors } from "../../app/chartPalette";
 import { DeNumberInput } from "../../components/DeNumberInput";
@@ -263,23 +263,33 @@ export default function SollIstModule(): JSX.Element {
   }, [stateObject]);
 
   const closableWindowMonths = useMemo(() => {
-    const monthSet = new Set<string>();
-    rows.forEach((row) => {
-      const index = monthIndex(row.month);
-      if (!row.month || index == null || currentMonthIdx == null) return;
-      if (index <= currentMonthIdx) monthSet.add(row.month);
-    });
-    Object.keys(monthlyActualRaw).forEach((month) => {
-      const index = monthIndex(month);
-      if (index == null || currentMonthIdx == null) return;
-      if (index <= currentMonthIdx) monthSet.add(month);
-    });
-    if (!monthSet.size) {
-      const fallback = Array.from({ length: 12 }, (_, idx) => addMonths(currentMonth, -idx));
-      fallback.forEach((month) => monthSet.add(month));
+    if (currentMonthIdx == null) return [currentMonth];
+
+    const settings = (stateObject.settings && typeof stateObject.settings === "object")
+      ? stateObject.settings as Record<string, unknown>
+      : {};
+    const configuredStartMonth = String(settings.startMonth || "").trim();
+    const configuredStartIndex = monthIndex(configuredStartMonth);
+
+    const knownMonths = [
+      ...rows.map((row) => String(row.month || "").trim()),
+      ...Object.keys(monthlyActualRaw),
+    ]
+      .map((month) => ({ month, index: monthIndex(month) }))
+      .filter((entry): entry is { month: string; index: number } => Boolean(entry.month) && entry.index != null)
+      .sort((left, right) => left.index - right.index);
+
+    const fallbackStartIndex = knownMonths.length ? knownMonths[0].index : currentMonthIdx;
+    const startIndex = Math.min(configuredStartIndex ?? fallbackStartIndex, currentMonthIdx);
+
+    const out: string[] = [];
+    for (let index = startIndex; index <= currentMonthIdx; index += 1) {
+      const year = Math.floor(index / 12);
+      const month = (index % 12) + 1;
+      out.push(`${year}-${String(month).padStart(2, "0")}`);
     }
-    return Array.from(monthSet).sort((a, b) => b.localeCompare(a));
-  }, [currentMonth, currentMonthIdx, monthlyActualRaw, rows]);
+    return out.reverse();
+  }, [currentMonth, currentMonthIdx, monthlyActualRaw, rows, stateObject.settings]);
 
   const monthlyActualByMonth = useMemo<Record<string, SellerboardActualRow>>(() => {
     const byMonth = new Map(rows.map((row) => [row.month, row]));
