@@ -248,15 +248,25 @@ function toIssueMapBySku(issues: RobustnessCoverageOrderDutyIssue[]): Map<string
 
 function collectOrderDutyIssues(state: Record<string, unknown>, months: string[]): RobustnessCoverageOrderDutyIssue[] {
   const robustness = buildDashboardRobustness({ state, months });
-  const dedup = new Map<string, RobustnessCoverageOrderDutyIssue>();
+  const seenIssueKeys = new Set<string>();
+  const orderedIssues: RobustnessCoverageOrderDutyIssue[] = [];
   robustness.months.forEach((monthRow) => {
     const issueMap = toIssueMapBySku(monthRow.coverage.orderDutyIssues);
-    issueMap.forEach((issue, skuKey) => {
-      if (dedup.has(skuKey)) return;
-      dedup.set(skuKey, issue);
+    issueMap.forEach((issue) => {
+      const selectionKey = issueSelectionKey(issue);
+      if (!selectionKey || seenIssueKeys.has(selectionKey)) return;
+      seenIssueKeys.add(selectionKey);
+      orderedIssues.push(issue);
     });
   });
-  return Array.from(dedup.values());
+  orderedIssues.sort((left, right) => {
+    const byOrderMonth = (normalizeMonthKey(left.orderMonth) || "").localeCompare(normalizeMonthKey(right.orderMonth) || "");
+    if (byOrderMonth !== 0) return byOrderMonth;
+    const byRiskMonth = (normalizeMonthKey(left.firstRiskMonth) || "").localeCompare(normalizeMonthKey(right.firstRiskMonth) || "");
+    if (byRiskMonth !== 0) return byRiskMonth;
+    return normalizeSku(left.sku).localeCompare(normalizeSku(right.sku), "de-DE");
+  });
+  return orderedIssues;
 }
 
 function buildScopedOrderDutyIssues(input: {
@@ -860,15 +870,30 @@ export function buildPhantomFoSuggestions(input: {
             blockedSkuKeys.add(skuKey);
             return;
           }
-          const acceptedFromMonth = firstRiskMonth < todayMonth ? todayMonth : firstRiskMonth;
+          const acceptedMonth = firstRiskMonth < todayMonth ? todayMonth : firstRiskMonth;
+          const existingTemporaryAcceptance = temporaryAcceptancesBySku.get(skuKey);
+          const sameReason = existingTemporaryAcceptance?.reason === issue.issueType;
+          const acceptedFromMonth = sameReason
+            ? (
+              existingTemporaryAcceptance!.acceptedFromMonth < acceptedMonth
+                ? existingTemporaryAcceptance!.acceptedFromMonth
+                : acceptedMonth
+            )
+            : acceptedMonth;
+          const acceptedUntilMonth = sameReason
+            ? (
+              existingTemporaryAcceptance!.acceptedUntilMonth > acceptedMonth
+                ? existingTemporaryAcceptance!.acceptedUntilMonth
+                : acceptedMonth
+            )
+            : acceptedMonth;
           const nextAcceptance: ShortageAcceptanceOverride = {
             sku: normalizeSku(issue.sku),
             reason: issue.issueType,
             acceptedFromMonth,
-            acceptedUntilMonth: acceptedFromMonth,
+            acceptedUntilMonth,
             durationMonths: 1,
           };
-          const existingTemporaryAcceptance = temporaryAcceptancesBySku.get(skuKey);
           const hasChanged = !existingTemporaryAcceptance
             || existingTemporaryAcceptance.reason !== nextAcceptance.reason
             || existingTemporaryAcceptance.acceptedFromMonth !== nextAcceptance.acceptedFromMonth
