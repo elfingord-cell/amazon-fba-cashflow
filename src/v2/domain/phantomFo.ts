@@ -36,6 +36,11 @@ interface ShortageAcceptanceOverride {
   durationMonths: number;
 }
 
+interface SuggestionBuildResult {
+  suggestion: PhantomFoSuggestion | null;
+  rejectedByPastOrderDate: boolean;
+}
+
 export interface PhantomFoSuggestion {
   id: string;
   sku: string;
@@ -254,6 +259,79 @@ function collectOrderDutyIssues(state: Record<string, unknown>, months: string[]
   return Array.from(dedup.values());
 }
 
+function buildScopedOrderDutyIssues(input: {
+  state: Record<string, unknown>;
+  months: string[];
+  targetMonth: string;
+  todayMonth: string;
+  shortageAcceptancesBySku: Map<string, ShortageAcceptanceOverride>;
+}): RobustnessCoverageOrderDutyIssue[] {
+  return collectOrderDutyIssues(input.state, input.months)
+    .filter((issue) => {
+      const orderMonth = normalizeMonthKey(issue.orderMonth);
+      if (!orderMonth) return false;
+      if (orderMonth > input.targetMonth) return false;
+      const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth) || input.todayMonth;
+      const suppressedByActiveWindow = hasActiveShortageAcceptance({
+        acceptanceBySku: input.shortageAcceptancesBySku,
+        sku: issue.sku,
+        month: input.todayMonth,
+        issueType: issue.issueType,
+      });
+      if (suppressedByActiveWindow) return false;
+      const suppressedByRiskMonth = hasActiveShortageAcceptance({
+        acceptanceBySku: input.shortageAcceptancesBySku,
+        sku: issue.sku,
+        month: firstRiskMonth,
+        issueType: issue.issueType,
+      });
+      return !suppressedByRiskMonth;
+    });
+}
+
+function buildTemporaryAcceptanceState(input: {
+  state: Record<string, unknown>;
+  temporaryAcceptancesBySku: Map<string, ShortageAcceptanceOverride>;
+}): Record<string, unknown> {
+  if (!input.temporaryAcceptancesBySku.size) return input.state;
+  const settings = (input.state.settings && typeof input.state.settings === "object")
+    ? input.state.settings as Record<string, unknown>
+    : {};
+  const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
+    ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
+    : {};
+  const mergedBySku: Record<string, unknown> = { ...rawBySku };
+  input.temporaryAcceptancesBySku.forEach((entry, skuKey) => {
+    const currentRaw = rawBySku[skuKey];
+    const current = (currentRaw && typeof currentRaw === "object")
+      ? currentRaw as Record<string, unknown>
+      : {};
+    mergedBySku[skuKey] = {
+      ...current,
+      sku: entry.sku,
+      reason: entry.reason,
+      acceptedFromMonth: entry.acceptedFromMonth,
+      acceptedUntilMonth: entry.acceptedUntilMonth,
+      durationMonths: entry.durationMonths,
+    };
+  });
+  return {
+    ...input.state,
+    settings: {
+      ...settings,
+      phantomFoShortageAcceptBySku: mergedBySku,
+    },
+  };
+}
+
+function issueSelectionKey(issue: RobustnessCoverageOrderDutyIssue): string {
+  const sku = normalizeSkuKey(issue.sku);
+  const issueType = String(issue.issueType || "").trim().toLowerCase();
+  const orderMonth = normalizeMonthKey(issue.orderMonth) || "";
+  const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth) || "";
+  return `${sku}|${issueType}|${orderMonth}|${firstRiskMonth}`;
+}
+
 function resolveProductTemplateFields(product: Record<string, unknown> | null): Record<string, unknown> {
   const template = (product?.template && typeof product.template === "object")
     ? product.template as Record<string, unknown>
@@ -412,10 +490,12 @@ function buildSuggestionForIssue(input: {
   recommendationContext: ReturnType<typeof buildFoRecommendationContext>;
   horizonMonths: number;
   todayIso: string;
-}): PhantomFoSuggestion | null {
+}): SuggestionBuildResult {
   const issue = input.issue;
   const sku = normalizeSku(issue.sku);
-  if (!sku) return null;
+  if (!sku) {
+    return { suggestion: null, rejectedByPastOrderDate: false };
+  }
   const skuKey = normalizeSkuKey(sku);
   const product = input.productBySkuKey.get(skuKey) || null;
   const supplierId = String(product?.supplierId || "").trim();
@@ -427,7 +507,9 @@ function buildSuggestionForIssue(input: {
     settings: input.settings,
   });
   const requiredArrivalDate = normalizeIsoDate(issue.requiredArrivalDate) || monthStartIso(issue.firstRiskMonth);
-  if (!requiredArrivalDate) return null;
+  if (!requiredArrivalDate) {
+    return { suggestion: null, rejectedByPastOrderDate: false };
+  }
 
   const recommendation = computeFoRecommendationForSku({
     context: input.recommendationContext,
@@ -442,7 +524,9 @@ function buildSuggestionForIssue(input: {
   const recommendationUnits = recommendationUnitsToInt(recommendation?.recommendedUnits);
   const shortageUnits = recommendationUnitsToInt(issue.shortageUnits);
   const suggestedUnits = Math.max(recommendationUnits || 0, shortageUnits || 0);
-  if (!(suggestedUnits > 0)) return null;
+  if (!(suggestedUnits > 0)) {
+    return { suggestion: null, rejectedByPastOrderDate: false };
+  }
 
   const schedule = computeFoSchedule({
     targetDeliveryDate: requiredArrivalDate,
@@ -454,7 +538,7 @@ function buildSuggestionForIssue(input: {
     || normalizeIsoDate(issue.recommendedOrderDate)
     || normalizeIsoDate(issue.latestOrderDate);
   if (derivedOrderDate && derivedOrderDate < input.todayIso) {
-    return null;
+    return { suggestion: null, rejectedByPastOrderDate: true };
   }
 
   const unitPrice = resolveUnitPriceUsd(product);
@@ -482,66 +566,69 @@ function buildSuggestionForIssue(input: {
   const foNumber = buildPhantomFoNumber(issue);
 
   return {
-    id,
-    sku,
-    alias: String(issue.alias || product?.alias || sku),
-    abcClass: issue.abcClass,
-    issueType: issue.issueType,
-    supplierId,
-    orderMonth: String(issue.orderMonth || "").trim(),
-    firstRiskMonth: String(issue.firstRiskMonth || "").trim(),
-    latestOrderDate: normalizeIsoDate(issue.latestOrderDate) || (schedule.orderDate || ""),
-    requiredArrivalDate,
-    recommendedOrderDate: normalizeIsoDate(issue.recommendedOrderDate) || (schedule.orderDate || ""),
-    leadTimeDays: leadTime.totalDays,
-    overdue: issue.overdue === true,
-    suggestedUnits,
-    shortageUnits: shortageUnits != null ? shortageUnits : null,
-    recommendationStatus: recommendation ? String(recommendation.status || "") : null,
-    recommendationUnits: recommendationUnits != null ? recommendationUnits : null,
-    foRecord: {
+    suggestion: {
       id,
-      foNo: foNumber,
-      foNumber,
       sku,
+      alias: String(issue.alias || product?.alias || sku),
+      abcClass: issue.abcClass,
+      issueType: issue.issueType,
       supplierId,
-      targetDeliveryDate: requiredArrivalDate,
-      units: suggestedUnits,
-      transportMode: leadTime.transportMode,
-      incoterm: leadTime.incoterm,
-      unitPrice,
-      currency: "USD",
-      freight: freightTotal,
-      freightCurrency: "EUR",
-      dutyRatePct: leadTime.dutyRatePct,
-      eustRatePct: leadTime.eustRatePct,
-      fxRate,
-      productionLeadTimeDays: leadTime.productionDays,
-      logisticsLeadTimeDays: leadTime.transitDays,
-      bufferDays: 0,
-      orderDate: schedule.orderDate || null,
-      productionEndDate: schedule.productionEndDate || null,
-      etdDate: schedule.etdDate || null,
-      etaDate: schedule.etaDate || requiredArrivalDate,
-      deliveryDate: schedule.deliveryDate || requiredArrivalDate,
-      payments,
-      status: "ACTIVE",
-      phantom: true,
-      phantomSource: PHANTOM_FO_SOURCE,
-      phantomStatus: "suggested",
-      phantomGeneratedAt: new Date().toISOString(),
-      phantomMeta: {
-        firstRiskMonth: issue.firstRiskMonth,
-        orderMonth: issue.orderMonth,
-        latestOrderDate: issue.latestOrderDate,
-        recommendedOrderDate: issue.recommendedOrderDate,
-        leadTimeDays: leadTime.totalDays,
-        abcClass: issue.abcClass,
-        issueType: issue.issueType,
-        shortageUnits: issue.shortageUnits,
-        reason: issue.reason,
+      orderMonth: String(issue.orderMonth || "").trim(),
+      firstRiskMonth: String(issue.firstRiskMonth || "").trim(),
+      latestOrderDate: normalizeIsoDate(issue.latestOrderDate) || (schedule.orderDate || ""),
+      requiredArrivalDate,
+      recommendedOrderDate: normalizeIsoDate(issue.recommendedOrderDate) || (schedule.orderDate || ""),
+      leadTimeDays: leadTime.totalDays,
+      overdue: issue.overdue === true,
+      suggestedUnits,
+      shortageUnits: shortageUnits != null ? shortageUnits : null,
+      recommendationStatus: recommendation ? String(recommendation.status || "") : null,
+      recommendationUnits: recommendationUnits != null ? recommendationUnits : null,
+      foRecord: {
+        id,
+        foNo: foNumber,
+        foNumber,
+        sku,
+        supplierId,
+        targetDeliveryDate: requiredArrivalDate,
+        units: suggestedUnits,
+        transportMode: leadTime.transportMode,
+        incoterm: leadTime.incoterm,
+        unitPrice,
+        currency: "USD",
+        freight: freightTotal,
+        freightCurrency: "EUR",
+        dutyRatePct: leadTime.dutyRatePct,
+        eustRatePct: leadTime.eustRatePct,
+        fxRate,
+        productionLeadTimeDays: leadTime.productionDays,
+        logisticsLeadTimeDays: leadTime.transitDays,
+        bufferDays: 0,
+        orderDate: schedule.orderDate || null,
+        productionEndDate: schedule.productionEndDate || null,
+        etdDate: schedule.etdDate || null,
+        etaDate: schedule.etaDate || requiredArrivalDate,
+        deliveryDate: schedule.deliveryDate || requiredArrivalDate,
+        payments,
+        status: "ACTIVE",
+        phantom: true,
+        phantomSource: PHANTOM_FO_SOURCE,
+        phantomStatus: "suggested",
+        phantomGeneratedAt: new Date().toISOString(),
+        phantomMeta: {
+          firstRiskMonth: issue.firstRiskMonth,
+          orderMonth: issue.orderMonth,
+          latestOrderDate: issue.latestOrderDate,
+          recommendedOrderDate: issue.recommendedOrderDate,
+          leadTimeDays: leadTime.totalDays,
+          abcClass: issue.abcClass,
+          issueType: issue.issueType,
+          shortageUnits: issue.shortageUnits,
+          reason: issue.reason,
+        },
       },
     },
+    rejectedByPastOrderDate: false,
   };
 }
 
@@ -700,6 +787,7 @@ export function buildPhantomFoSuggestions(input: {
 
   const suggestions: PhantomFoSuggestion[] = [];
   const seenSuggestionIds = new Set<string>();
+  const selectedSkuKeys = new Set<string>();
   let workingState = planningState;
   const maxSuggestions = asPositiveInt(input.maxSuggestions);
   const maxIterations = Math.max(1, months.length * 2);
@@ -707,29 +795,6 @@ export function buildPhantomFoSuggestions(input: {
 
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
     const recommendationContext = buildFoRecommendationContext(workingState);
-    const scopedIssues = collectOrderDutyIssues(workingState, months)
-      .filter((issue) => {
-        const orderMonth = normalizeMonthKey(issue.orderMonth);
-        if (!orderMonth) return false;
-        if (orderMonth > targetMonth) return false;
-        const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth) || todayMonth;
-        const suppressedByActiveWindow = hasActiveShortageAcceptance({
-          acceptanceBySku: shortageAcceptancesBySku,
-          sku: issue.sku,
-          month: todayMonth,
-          issueType: issue.issueType,
-        });
-        if (suppressedByActiveWindow) return false;
-        const suppressedByRiskMonth = hasActiveShortageAcceptance({
-          acceptanceBySku: shortageAcceptancesBySku,
-          sku: issue.sku,
-          month: firstRiskMonth,
-          issueType: issue.issueType,
-        });
-        return !suppressedByRiskMonth;
-      });
-    if (!scopedIssues.length) break;
-
     const existingFoIds = new Set(
       (Array.isArray(workingState.fos) ? workingState.fos : [])
         .map((entry) => String((entry as Record<string, unknown>)?.id || "").trim())
@@ -737,22 +802,88 @@ export function buildPhantomFoSuggestions(input: {
     );
 
     const iterationSuggestions: PhantomFoSuggestion[] = [];
-    scopedIssues.forEach((issue) => {
-      const suggestion = buildSuggestionForIssue({
+    const temporaryAcceptancesBySku = new Map<string, ShortageAcceptanceOverride>();
+    const blockedSkuKeys = new Set<string>();
+    const skippedIssueKeys = new Set<string>();
+    const maxIssueSelectionRounds = Math.max(1, months.length);
+
+    for (let issueRound = 0; issueRound < maxIssueSelectionRounds; issueRound += 1) {
+      const issueState = buildTemporaryAcceptanceState({
         state: workingState,
-        issue,
-        productBySkuKey,
-        supplierById,
-        settings,
-        recommendationContext,
-        horizonMonths: months.length,
-        todayIso,
+        temporaryAcceptancesBySku,
       });
-      if (!suggestion) return;
-      if (seenSuggestionIds.has(suggestion.id) || existingFoIds.has(suggestion.id)) return;
-      seenSuggestionIds.add(suggestion.id);
-      iterationSuggestions.push(suggestion);
-    });
+      const scopedIssues = buildScopedOrderDutyIssues({
+        state: issueState,
+        months,
+        targetMonth,
+        todayMonth,
+        shortageAcceptancesBySku,
+      })
+        .filter((issue) => {
+          const skuKey = normalizeSkuKey(issue.sku);
+          if (!skuKey) return false;
+          if (selectedSkuKeys.has(skuKey)) return false;
+          if (blockedSkuKeys.has(skuKey)) return false;
+          return !skippedIssueKeys.has(issueSelectionKey(issue));
+        });
+      if (!scopedIssues.length) break;
+
+      let progressed = false;
+      scopedIssues.forEach((issue) => {
+        const skuKey = normalizeSkuKey(issue.sku);
+        if (!skuKey || blockedSkuKeys.has(skuKey)) return;
+        const selectionKey = issueSelectionKey(issue);
+        if (skippedIssueKeys.has(selectionKey)) return;
+
+        const attempt = buildSuggestionForIssue({
+          state: workingState,
+          issue,
+          productBySkuKey,
+          supplierById,
+          settings,
+          recommendationContext,
+          horizonMonths: months.length,
+          todayIso,
+        });
+        const suggestion = attempt.suggestion;
+        if (suggestion && !seenSuggestionIds.has(suggestion.id) && !existingFoIds.has(suggestion.id)) {
+          seenSuggestionIds.add(suggestion.id);
+          selectedSkuKeys.add(skuKey);
+          iterationSuggestions.push(suggestion);
+          blockedSkuKeys.add(skuKey);
+          progressed = true;
+          return;
+        }
+        if (attempt.rejectedByPastOrderDate) {
+          const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth);
+          if (!firstRiskMonth) {
+            blockedSkuKeys.add(skuKey);
+            return;
+          }
+          const acceptedFromMonth = firstRiskMonth < todayMonth ? todayMonth : firstRiskMonth;
+          const nextAcceptance: ShortageAcceptanceOverride = {
+            sku: normalizeSku(issue.sku),
+            reason: issue.issueType,
+            acceptedFromMonth,
+            acceptedUntilMonth: acceptedFromMonth,
+            durationMonths: 1,
+          };
+          const existingTemporaryAcceptance = temporaryAcceptancesBySku.get(skuKey);
+          const hasChanged = !existingTemporaryAcceptance
+            || existingTemporaryAcceptance.reason !== nextAcceptance.reason
+            || existingTemporaryAcceptance.acceptedFromMonth !== nextAcceptance.acceptedFromMonth
+            || existingTemporaryAcceptance.acceptedUntilMonth !== nextAcceptance.acceptedUntilMonth;
+          if (hasChanged) {
+            temporaryAcceptancesBySku.set(skuKey, nextAcceptance);
+            skippedIssueKeys.add(selectionKey);
+            progressed = true;
+            return;
+          }
+        }
+        blockedSkuKeys.add(skuKey);
+      });
+      if (!progressed) break;
+    }
 
     if (!iterationSuggestions.length) break;
     suggestions.push(...iterationSuggestions);
