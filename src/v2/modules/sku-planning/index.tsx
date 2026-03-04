@@ -531,12 +531,10 @@ export default function SkuPlanningModule(): JSX.Element {
     return buildPhantomFoSuggestions({
       state: stateObject,
       months: planningMonths,
-      targetMonth: planningMonths[planningMonths.length - 1] || null,
-      maxSuggestions: Math.max(20, productRows.length * planningSettings.maxPhantomSuggestionsPerSku * 2),
+      maxSuggestions: Math.max(120, productRows.length * 12),
     });
   }, [
     planningMonths,
-    planningSettings.maxPhantomSuggestionsPerSku,
     productRows.length,
     state.fos,
     state.forecast,
@@ -556,14 +554,12 @@ export default function SkuPlanningModule(): JSX.Element {
       .filter((entry): entry is PhantomOverlayEntry => Boolean(entry))
       .filter((entry) => entry.sku === selectedSku)
       .filter((entry) => matchesAbcScope(entry.abcClass, planningSettings.abcScope))
-      .filter((entry) => !dismissedAutoIdSet.has(entry.id) && !adoptedIdSet.has(entry.id))
-      .slice(0, planningSettings.maxPhantomSuggestionsPerSku);
+      .filter((entry) => !dismissedAutoIdSet.has(entry.id) && !adoptedIdSet.has(entry.id));
   }, [
     adoptedIdSet,
     allAutoSuggestions,
     dismissedAutoIdSet,
     planningSettings.abcScope,
-    planningSettings.maxPhantomSuggestionsPerSku,
     selectedSku,
   ]);
 

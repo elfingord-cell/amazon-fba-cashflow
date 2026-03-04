@@ -17,6 +17,8 @@ import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
 import { buildPlanProductForecastRows } from "../../domain/planProducts.js";
 
 const PHANTOM_FO_SOURCE = "robustness_order_duty_v2";
+const PHANTOM_FO_ROLLING_MONTHS = 12;
+const PHANTOM_FO_MAX_SUGGESTIONS_PER_SKU = 12;
 
 interface PhantomLeadTime {
   productionDays: number;
@@ -272,7 +274,7 @@ function collectOrderDutyIssues(state: Record<string, unknown>, months: string[]
 function buildScopedOrderDutyIssues(input: {
   state: Record<string, unknown>;
   months: string[];
-  targetMonth: string;
+  horizonEndMonth: string;
   todayMonth: string;
   shortageAcceptancesBySku: Map<string, ShortageAcceptanceOverride>;
 }): RobustnessCoverageOrderDutyIssue[] {
@@ -280,7 +282,7 @@ function buildScopedOrderDutyIssues(input: {
     .filter((issue) => {
       const orderMonth = normalizeMonthKey(issue.orderMonth);
       if (!orderMonth) return false;
-      if (orderMonth > input.targetMonth) return false;
+      if (orderMonth > input.horizonEndMonth) return false;
       const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth) || input.todayMonth;
       const suppressedByActiveWindow = hasActiveShortageAcceptance({
         acceptanceBySku: input.shortageAcceptancesBySku,
@@ -477,20 +479,6 @@ function compareSuggestionPriority(left: PhantomFoSuggestion, right: PhantomFoSu
   return left.sku.localeCompare(right.sku, "de-DE");
 }
 
-function resolvePhantomTargetMonth(months: string[], targetMonth?: string | null): string | null {
-  if (!months.length) return null;
-  const normalizedTarget = normalizeMonthKey(targetMonth);
-  if (!normalizedTarget) return months[months.length - 1];
-  let candidate: string | null = null;
-  months.forEach((month) => {
-    if (month <= normalizedTarget) {
-      candidate = month;
-    }
-  });
-  if (candidate) return candidate;
-  return months[0];
-}
-
 function buildSuggestionForIssue(input: {
   state: Record<string, unknown>;
   issue: RobustnessCoverageOrderDutyIssue;
@@ -664,19 +652,18 @@ export function resolvePlanningMonthsFromState(
 export function buildPhantomFoSuggestions(input: {
   state: Record<string, unknown>;
   months?: string[] | null;
-  targetMonth?: string | null;
   maxSuggestions?: number;
 }): PhantomFoSuggestion[] {
   const state = input.state || {};
-  const months = resolveMonthList({ state, months: input.months });
+  const todayMonth = currentMonthKey();
+  const rollingMonths = monthRange(todayMonth, PHANTOM_FO_ROLLING_MONTHS);
+  const months = rollingMonths.length ? rollingMonths : resolveMonthList({ state, months: input.months });
   if (!months.length) return [];
-  const targetMonth = resolvePhantomTargetMonth(months, input.targetMonth);
-  if (!targetMonth) return [];
+  const horizonEndMonth = months[months.length - 1] || todayMonth;
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
   const shortageAcceptancesBySku = resolveShortageAcceptancesBySku(settings);
-  const todayMonth = currentMonthKey();
 
   const liveProducts = (Array.isArray(state.products) ? state.products : [])
     .map((entry) => entry as Record<string, unknown>)
@@ -797,7 +784,7 @@ export function buildPhantomFoSuggestions(input: {
 
   const suggestions: PhantomFoSuggestion[] = [];
   const seenSuggestionIds = new Set<string>();
-  const selectedSkuKeys = new Set<string>();
+  const suggestionCountBySku = new Map<string, number>();
   let workingState = planningState;
   const maxSuggestions = asPositiveInt(input.maxSuggestions);
   const maxIterations = Math.max(1, months.length * 2);
@@ -825,14 +812,14 @@ export function buildPhantomFoSuggestions(input: {
       const scopedIssues = buildScopedOrderDutyIssues({
         state: issueState,
         months,
-        targetMonth,
+        horizonEndMonth,
         todayMonth,
         shortageAcceptancesBySku,
       })
         .filter((issue) => {
           const skuKey = normalizeSkuKey(issue.sku);
           if (!skuKey) return false;
-          if (selectedSkuKeys.has(skuKey)) return false;
+          if ((suggestionCountBySku.get(skuKey) || 0) >= PHANTOM_FO_MAX_SUGGESTIONS_PER_SKU) return false;
           if (blockedSkuKeys.has(skuKey)) return false;
           return !skippedIssueKeys.has(issueSelectionKey(issue));
         });
@@ -858,7 +845,7 @@ export function buildPhantomFoSuggestions(input: {
         const suggestion = attempt.suggestion;
         if (suggestion && !seenSuggestionIds.has(suggestion.id) && !existingFoIds.has(suggestion.id)) {
           seenSuggestionIds.add(suggestion.id);
-          selectedSkuKeys.add(skuKey);
+          suggestionCountBySku.set(skuKey, (suggestionCountBySku.get(skuKey) || 0) + 1);
           iterationSuggestions.push(suggestion);
           blockedSkuKeys.add(skuKey);
           progressed = true;

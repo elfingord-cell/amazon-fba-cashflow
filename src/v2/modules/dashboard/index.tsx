@@ -33,7 +33,6 @@ import {
 import {
   buildPhantomFoSuggestions,
   buildStateWithPhantomFos,
-  resolvePlanningMonthsFromState,
   type PhantomFoSuggestion,
 } from "../../domain/phantomFo";
 import { ensureForecastVersioningContainers } from "../../domain/forecastVersioning";
@@ -646,7 +645,6 @@ export default function DashboardModule(): JSX.Element {
   const navigate = useNavigate();
   const [range, setRange] = useState<DashboardRange>("next6");
   const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
-  const [phantomTargetMonth, setPhantomTargetMonth] = useState<string>("");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
   const [expandedPnlRowKeys, setExpandedPnlRowKeys] = useState<string[]>(["inflows", "outflows"]);
@@ -683,21 +681,11 @@ export default function DashboardModule(): JSX.Element {
       return next;
     }, "v2:dashboard:cashin-cockpit");
   }, [saveWith]);
-  const planningMonths = useMemo(
-    () => resolvePlanningMonthsFromState(stateObject, 18),
-    [state.settings],
-  );
-  const resolvedPhantomTargetMonth = useMemo(() => {
-    if (phantomTargetMonth && planningMonths.includes(phantomTargetMonth)) return phantomTargetMonth;
-    return planningMonths[planningMonths.length - 1] || "";
-  }, [phantomTargetMonth, planningMonths]);
   const phantomFoSuggestions = useMemo<PhantomFoSuggestion[]>(
     () => buildPhantomFoSuggestions({
       state: stateObject,
-      months: planningMonths,
-      targetMonth: resolvedPhantomTargetMonth || null,
     }),
-    [planningMonths, resolvedPhantomTargetMonth, stateObject],
+    [stateObject],
   );
   const phantomFoIdSet = useMemo(
     () => new Set(phantomFoSuggestions.map((entry) => entry.id)),
@@ -760,18 +748,6 @@ export default function DashboardModule(): JSX.Element {
       months: visibleMonths,
     });
   }, [stateObject, visibleMonths]);
-
-  useEffect(() => {
-    if (!planningMonths.length) {
-      setPhantomTargetMonth("");
-      return;
-    }
-    setPhantomTargetMonth((current) => (
-      current && planningMonths.includes(current)
-        ? current
-        : planningMonths[planningMonths.length - 1]
-    ));
-  }, [planningMonths]);
 
   useEffect(() => {
     if (!robustness.months.length) {
@@ -1916,21 +1892,12 @@ export default function DashboardModule(): JSX.Element {
             </div>
           </Col>
           <Col xs={24} md={12} xl={6}>
-            <div className="v2-toolbar-field">
-              <Text>PFO bis</Text>
-              <Select
-                value={resolvedPhantomTargetMonth || undefined}
-                onChange={(value) => setPhantomTargetMonth(String(value || ""))}
-                options={planningMonths.map((month) => ({ value: month, label: formatMonthLabel(month) }))}
-                style={{ width: 220, maxWidth: "100%" }}
-                disabled={!planningMonths.length}
-              />
-            </div>
+            <div />
           </Col>
         </Row>
         <div className="v2-toolbar">
           <Text type="secondary">
-            Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate) · PFO bis: {resolvedPhantomTargetMonth ? formatMonthLabel(resolvedPhantomTargetMonth) : "—"}
+            Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate)
           </Text>
         </div>
       </Card>
@@ -2202,7 +2169,6 @@ export default function DashboardModule(): JSX.Element {
           <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
           <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
           {phantomFoSuggestions.length ? <Tag color="gold">PFO: {phantomFoSuggestions.length}</Tag> : null}
-          {resolvedPhantomTargetMonth ? <Tag color="gold">bis {formatMonthLabel(resolvedPhantomTargetMonth)}</Tag> : null}
         </div>
         <Space size={8} align="center" style={{ marginBottom: 8 }} wrap>
           <Text>Simulation: Phantom-FO anzeigen</Text>
