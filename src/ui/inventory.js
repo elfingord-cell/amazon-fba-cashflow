@@ -978,6 +978,7 @@ function buildProjectionTable({
         const forecastMissing = data?.forecastMissing ?? true;
         const safetyUnits = Number.isFinite(data?.safetyUnits) ? data.safetyUnits : null;
         const safetyDays = Number.isFinite(data?.safetyDays) ? data.safetyDays : null;
+        const daysToOos = Number.isFinite(data?.daysToOos) ? data.daysToOos : null;
         const inboundClasses = inboundEntry?.hasPo && inboundEntry?.hasFo
           ? "inventory-cell inbound-both"
           : inboundEntry?.hasPo
@@ -1007,6 +1008,7 @@ function buildProjectionTable({
             safetyUnits,
             doh: dohValue,
             safetyDays,
+            daysToOos,
             projectionMode: view.projectionMode,
           });
         const incompleteClass = showPlan ? "" : (forecastMissing ? "incomplete" : "");
@@ -1291,7 +1293,7 @@ export function render(root) {
       <div class="inventory-legend">
         ${isPlanView ? "" : `
           <span class="inventory-legend-item"><span class="legend-swatch safety-negative"></span> Stockout / unter Safety</span>
-          <span class="inventory-legend-item"><span class="legend-swatch safety-low"></span> Unter Safety (Units)</span>
+          <span class="inventory-legend-item"><span class="legend-swatch safety-low"></span> Unter Safety (OOS &lt; Safety-Tage)</span>
         `}
         <span class="inventory-legend-item"><span class="legend-swatch inbound-po"></span> Inbound PO</span>
         <span class="inventory-legend-item"><span class="legend-swatch inbound-fo"></span> Inbound FO</span>
@@ -1690,6 +1692,7 @@ export function render(root) {
         doh: Number.isFinite(data?.doh) ? Number(data.doh) : null,
         safetyUnits: Number.isFinite(data?.safetyUnits) ? Number(data.safetyUnits) : null,
         safetyDays: Number.isFinite(data?.safetyDays) ? Number(data.safetyDays) : null,
+        daysToOos: Number.isFinite(data?.daysToOos) ? Number(data.daysToOos) : null,
         forecastUnits: Number.isFinite(data?.forecastUnits) ? Number(data.forecastUnits) : null,
         events: Array.isArray(inboundEntry?.events) ? inboundEntry.events : [],
       };
@@ -1774,6 +1777,7 @@ export function render(root) {
           safetyUnits: entry.safetyUnits,
           doh: entry.doh,
           safetyDays: entry.safetyDays,
+          daysToOos: entry.daysToOos,
           projectionMode: drilldownMode === "doh" ? "doh" : "units",
         })
         : "";

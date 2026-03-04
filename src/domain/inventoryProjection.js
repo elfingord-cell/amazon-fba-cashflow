@@ -1,6 +1,8 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
 import { normalizeIncludeInForecast } from "./portfolioBuckets.js";
 
+const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
+
 function normalizeMonthKey(value) {
   if (!value) return null;
   const raw = String(value);
@@ -51,6 +53,32 @@ function addMonthsToMonthKey(monthKey, offset) {
   const date = new Date(parsed.year, parsed.monthIndex, 1);
   date.setMonth(date.getMonth() + Number(offset || 0));
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthStartDateUtc(monthKey) {
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return null;
+  return new Date(Date.UTC(parsed.year, parsed.monthIndex, 1));
+}
+
+function nextMonthStartDateUtc(monthKey) {
+  const parsed = parseMonthKey(monthKey);
+  if (!parsed) return null;
+  return new Date(Date.UTC(parsed.year, parsed.monthIndex + 1, 1));
+}
+
+function addUtcDays(date, days) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + Number(days || 0));
+  return copy;
+}
+
+function diffDaysUtc(startDate, endDate) {
+  if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime())) return null;
+  if (!(endDate instanceof Date) || Number.isNaN(endDate.getTime())) return null;
+  const diffRaw = Math.ceil((endDate.getTime() - startDate.getTime()) / MILLIS_PER_DAY);
+  return Math.max(0, diffRaw);
 }
 
 function monthRangeAfter(startMonthExclusive, endMonthInclusive) {
@@ -355,18 +383,35 @@ export function getProjectionSafetyClass({
   safetyUnits,
   doh,
   safetyDays,
+  daysToOos,
   projectionMode = "units",
 }) {
   const mode = projectionMode === "doh" ? "doh" : "units";
+  const hasDaysToOosValue = Number.isFinite(daysToOos);
+  const hasDaysToOosSignal = typeof daysToOos !== "undefined";
+
+  if (Number.isFinite(endAvailable)) {
+    if (endAvailable <= 0) return "safety-negative";
+    if (Number.isFinite(safetyDays) && hasDaysToOosValue && daysToOos < safetyDays) return "safety-low";
+    // If daysToOos was explicitly provided (including null), avoid legacy threshold fallbacks.
+    if (hasDaysToOosSignal) return "";
+    if (mode === "doh" && Number.isFinite(doh) && Number.isFinite(safetyDays) && doh < safetyDays) {
+      return "safety-low";
+    }
+    if (Number.isFinite(safetyUnits) && endAvailable < safetyUnits) return "safety-low";
+    return "";
+  }
+
   if (mode === "doh") {
     if (!Number.isFinite(doh)) return "";
     if (doh <= 0) return "safety-negative";
+    if (Number.isFinite(safetyDays) && hasDaysToOosValue && daysToOos < safetyDays) return "safety-low";
+    if (hasDaysToOosSignal) return "";
     if (Number.isFinite(safetyDays) && doh < safetyDays) return "safety-low";
     return "";
   }
-  if (!Number.isFinite(endAvailable)) return "";
-  if (endAvailable <= 0) return "safety-negative";
-  if (Number.isFinite(safetyUnits) && endAvailable < safetyUnits) return "safety-low";
+  if (Number.isFinite(safetyDays) && hasDaysToOosValue && daysToOos < safetyDays) return "safety-low";
+  if (hasDaysToOosSignal) return "";
   return "";
 }
 
@@ -486,12 +531,14 @@ export function computeInventoryProjection({
     let previousUnknown = false;
     const monthMap = new Map();
     const safetyDays = resolveSafetyStockDays(product, stateWithForecastOverride);
+    const monthRows = [];
 
     monthKeys.forEach(month => {
       const forecastUnits = getForecastUnits(stateWithForecastOverride, sku, month);
       const hasForecast = Number.isFinite(forecastUnits);
       const inboundDetails = inboundDetailsMap.get(sku)?.get(month) || null;
       const inboundUnits = inboundDetails?.totalUnits || inboundUnitsMap.get(sku)?.get(month) || 0;
+      const startAvailable = previousUnknown ? null : prevAvailable;
       let endAvailable = null;
       if (!previousUnknown && hasForecast) {
         endAvailable = prevAvailable + inboundUnits - forecastUnits;
@@ -509,11 +556,8 @@ export function computeInventoryProjection({
       const safetyUnits = Number.isFinite(forecastUnits) && Number.isFinite(safetyDays)
         ? Math.round((forecastUnits / daysInMonth(month)) * safetyDays)
         : null;
-      const passesDoh = Number.isFinite(doh) && Number.isFinite(safetyDays) && doh >= safetyDays;
-      const passesUnits = Number.isFinite(endAvailable) && Number.isFinite(safetyUnits) && endAvailable >= safetyUnits;
-      const isCovered = normalizedMode === "doh" ? passesDoh : passesUnits;
-
-      monthMap.set(month, {
+      const row = {
+        startAvailable,
         forecastUnits,
         hasForecast,
         inboundUnits,
@@ -522,12 +566,65 @@ export function computeInventoryProjection({
         safetyDays,
         safetyUnits,
         doh,
-        passesDoh,
-        passesUnits,
-        isCovered,
+        daysToOos: null,
+        oosDate: null,
+        passesDoh: false,
+        passesUnits: false,
+        isCovered: false,
         forecastMissing,
-      });
+      };
+      monthRows.push({ month, row });
+      monthMap.set(month, row);
     });
+
+    const oosDateByIndex = monthRows.map(({ month, row }) => {
+      if (!row?.hasForecast) return null;
+      if (!Number.isFinite(row?.endAvailable) || row.endAvailable > 0) return null;
+      const monthStart = monthStartDateUtc(month);
+      if (!monthStart) return null;
+
+      const monthlyDemand = Number(row?.forecastUnits);
+      const monthDays = daysInMonth(month);
+      const startAvailable = Number(row?.startAvailable);
+      let dayOffset = 0;
+      if (Number.isFinite(startAvailable) && startAvailable > 0 && Number.isFinite(monthlyDemand) && monthlyDemand > 0) {
+        const dailyDemand = monthlyDemand / monthDays;
+        if (dailyDemand > 0) {
+          dayOffset = Math.floor(startAvailable / dailyDemand);
+          dayOffset = Math.max(0, Math.min(monthDays, dayOffset));
+        }
+      }
+      return addUtcDays(monthStart, dayOffset);
+    });
+
+    let nextOosIndex = null;
+    for (let idx = monthRows.length - 1; idx >= 0; idx -= 1) {
+      const oosDate = oosDateByIndex[idx];
+      if (oosDate) nextOosIndex = idx;
+      const entry = monthRows[idx];
+      const row = entry?.row;
+      if (!row) continue;
+      const monthAnchorDate = nextMonthStartDateUtc(entry.month);
+      const nextOosDate = nextOosIndex != null ? oosDateByIndex[nextOosIndex] : null;
+      const daysToOos = monthAnchorDate && nextOosDate
+        ? diffDaysUtc(monthAnchorDate, nextOosDate)
+        : null;
+      const stockout = Number.isFinite(row.endAvailable) && row.endAvailable <= 0;
+      const underSafetyByTime = Number.isFinite(row.safetyDays)
+        && Number.isFinite(daysToOos)
+        && daysToOos < row.safetyDays;
+      const isCovered = Boolean(
+        row.hasForecast
+        && Number.isFinite(row.endAvailable)
+        && row.endAvailable > 0
+        && !underSafetyByTime,
+      );
+      row.daysToOos = Number.isFinite(daysToOos) ? Number(daysToOos) : null;
+      row.oosDate = nextOosDate ? nextOosDate.toISOString().slice(0, 10) : null;
+      row.passesDoh = isCovered && !stockout;
+      row.passesUnits = isCovered && !stockout;
+      row.isCovered = isCovered;
+    }
     perSkuMonth.set(sku, monthMap);
     startAvailableBySku.set(sku, anchorAvailable);
   });

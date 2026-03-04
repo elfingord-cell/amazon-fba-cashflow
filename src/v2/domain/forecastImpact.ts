@@ -277,6 +277,7 @@ function buildSkuRiskMeta(stateWithForecast: Record<string, unknown>, nowMonth: 
         safetyUnits: row.safetyUnits,
         doh: row.doh,
         safetyDays: row.safetyDays,
+        daysToOos: row.daysToOos,
       });
       if (riskClass === "safety-low" || riskClass === "safety-negative") {
         firstSafetyMonth = month;

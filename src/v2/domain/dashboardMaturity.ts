@@ -104,6 +104,7 @@ interface ProjectionCellData {
   safetyUnits?: number | null;
   doh?: number | null;
   safetyDays?: number | null;
+  daysToOos?: number | null;
 }
 
 interface ProductLike {
@@ -303,6 +304,7 @@ export function buildInventoryMonthRiskIndex(input: {
         safetyUnits: monthData?.safetyUnits,
         doh: monthData?.doh,
         safetyDays: monthData?.safetyDays,
+        daysToOos: monthData?.daysToOos,
       }));
 
       rows.push({

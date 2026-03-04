@@ -29,22 +29,146 @@ test("resolves safety stock and coverage days with overrides and defaults", () =
 });
 
 test("projection safety class prioritizes red stockout over orange safety", () => {
-  assert.strictEqual(getProjectionSafetyClass({ endAvailable: 0, safetyUnits: 10 }), "safety-negative");
-  assert.strictEqual(getProjectionSafetyClass({ endAvailable: -4, safetyUnits: 10 }), "safety-negative");
-  assert.strictEqual(getProjectionSafetyClass({ endAvailable: 5, safetyUnits: 10 }), "safety-low");
-  assert.strictEqual(getProjectionSafetyClass({ endAvailable: 5, safetyUnits: null }), "");
+  assert.strictEqual(getProjectionSafetyClass({ endAvailable: 0, safetyDays: 60, daysToOos: 15 }), "safety-negative");
+  assert.strictEqual(getProjectionSafetyClass({ endAvailable: -4, safetyDays: 60, daysToOos: 15 }), "safety-negative");
+  assert.strictEqual(getProjectionSafetyClass({ endAvailable: 5, safetyDays: 60, daysToOos: 59 }), "safety-low");
+  assert.strictEqual(getProjectionSafetyClass({ endAvailable: 5, safetyDays: 60, daysToOos: 60 }), "");
 });
 
-test("defaults apply in DOH mode and orange when below safety days", () => {
+test("defaults apply in DOH mode and trigger by days-to-oos threshold", () => {
   const product = {};
   const state = { settings: { safetyStockDohDefault: 60, foCoverageDohDefault: 90 } };
 
   assert.strictEqual(resolveSafetyStockDays(product, state), 60);
   assert.strictEqual(resolveCoverageDays(product, state), 90);
   assert.strictEqual(
-    getProjectionSafetyClass({ projectionMode: "doh", doh: 45, safetyDays: 60 }),
+    getProjectionSafetyClass({ projectionMode: "doh", doh: 120, safetyDays: 60, daysToOos: 45 }),
     "safety-low",
   );
+});
+
+test("under-safety trigger follows days-to-oos threshold with constant demand", () => {
+  const months = ["2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"];
+  const state = {
+    settings: { safetyStockDohDefault: 60 },
+    inventory: {
+      snapshots: [
+        {
+          month: "2026-01",
+          items: [{ sku: "SKU-C", units: 180 }],
+        },
+      ],
+    },
+    forecast: {
+      forecastManual: {
+        "SKU-C": {
+          "2026-02": 30,
+          "2026-03": 30,
+          "2026-04": 30,
+          "2026-05": 30,
+          "2026-06": 30,
+          "2026-07": 30,
+          "2026-08": 30,
+        },
+      },
+    },
+    products: [{ sku: "SKU-C", status: "active" }],
+  };
+
+  const projection = computeInventoryProjection({
+    state,
+    months,
+    products: state.products,
+    snapshotMonth: "2026-01",
+  });
+  const sku = projection.perSkuMonth.get("SKU-C");
+  assert.ok(sku);
+
+  const firstLowMonth = months.find((month) => {
+    const row = sku.get(month);
+    const riskClass = getProjectionSafetyClass({
+      projectionMode: "units",
+      endAvailable: row?.endAvailable,
+      safetyUnits: row?.safetyUnits,
+      doh: row?.doh,
+      safetyDays: row?.safetyDays,
+      daysToOos: row?.daysToOos,
+    });
+    return riskClass === "safety-low";
+  });
+
+  assert.equal(firstLowMonth, "2026-06");
+  assert.equal(sku.get("2026-05").daysToOos >= 60, true);
+  assert.equal(sku.get("2026-06").daysToOos < 60, true);
+});
+
+test("seasonal peak does not trigger under-safety long before oos window", () => {
+  const months = ["2026-08", "2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02"];
+  const state = {
+    settings: { safetyStockDohDefault: 60 },
+    inventory: {
+      snapshots: [
+        {
+          month: "2026-07",
+          items: [{ sku: "OBERROHRTASCHE", units: 288 }],
+        },
+      ],
+    },
+    forecast: {
+      forecastManual: {
+        OBERROHRTASCHE: {
+          "2026-08": 171,
+          "2026-09": 20,
+          "2026-10": 20,
+          "2026-11": 20,
+          "2026-12": 20,
+          "2027-01": 20,
+          "2027-02": 40,
+        },
+      },
+    },
+    products: [{ sku: "OBERROHRTASCHE", status: "active" }],
+  };
+
+  const projection = computeInventoryProjection({
+    state,
+    months,
+    products: state.products,
+    snapshotMonth: "2026-07",
+  });
+  const sku = projection.perSkuMonth.get("OBERROHRTASCHE");
+  assert.ok(sku);
+
+  const firstLowMonth = months.find((month) => {
+    const row = sku.get(month);
+    const riskClass = getProjectionSafetyClass({
+      projectionMode: "units",
+      endAvailable: row?.endAvailable,
+      safetyUnits: row?.safetyUnits,
+      doh: row?.doh,
+      safetyDays: row?.safetyDays,
+      daysToOos: row?.daysToOos,
+    });
+    return riskClass === "safety-low";
+  });
+
+  assert.equal(firstLowMonth, "2026-12");
+  assert.equal(getProjectionSafetyClass({
+    projectionMode: "units",
+    endAvailable: sku.get("2026-08")?.endAvailable,
+    safetyUnits: sku.get("2026-08")?.safetyUnits,
+    doh: sku.get("2026-08")?.doh,
+    safetyDays: sku.get("2026-08")?.safetyDays,
+    daysToOos: sku.get("2026-08")?.daysToOos,
+  }), "");
+  assert.equal(getProjectionSafetyClass({
+    projectionMode: "units",
+    endAvailable: sku.get("2026-12")?.endAvailable,
+    safetyUnits: sku.get("2026-12")?.safetyUnits,
+    doh: sku.get("2026-12")?.doh,
+    safetyDays: sku.get("2026-12")?.safetyDays,
+    daysToOos: sku.get("2026-12")?.daysToOos,
+  }), "safety-low");
 });
 
 test("projection resolves latest snapshot fallback and exposes PO/FO inbound details", () => {

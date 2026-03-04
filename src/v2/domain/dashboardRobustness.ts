@@ -182,6 +182,7 @@ interface ProjectionMonthData {
   safetyUnits?: number | null;
   doh?: number | null;
   safetyDays?: number | null;
+  daysToOos?: number | null;
 }
 
 interface ProjectionCoverageLookup {
@@ -454,6 +455,7 @@ function projectionRiskClass(
     safetyUnits: monthData.safetyUnits,
     doh: monthData.doh,
     safetyDays: monthData.safetyDays,
+    daysToOos: monthData.daysToOos,
   }) as ProjectionRiskClass;
 }
 
@@ -463,8 +465,11 @@ function projectionRiskClassByDoh(
   if (!monthData || !monthData.hasForecast) return "";
   return getProjectionSafetyClass({
     projectionMode: "doh",
+    endAvailable: monthData.endAvailable,
+    safetyUnits: monthData.safetyUnits,
     doh: monthData.doh,
     safetyDays: monthData.safetyDays,
+    daysToOos: monthData.daysToOos,
   }) as ProjectionRiskClass;
 }
 

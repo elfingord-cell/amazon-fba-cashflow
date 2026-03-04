@@ -105,6 +105,7 @@ interface ProjectionCellData {
   safetyDays: number | null;
   safetyUnits: number | null;
   doh: number | null;
+  daysToOos: number | null;
   passesDoh: boolean;
   passesUnits: boolean;
   isCovered: boolean;
@@ -1118,6 +1119,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           safetyUnits: data.safetyUnits,
           doh: data.doh,
           safetyDays: data.safetyDays,
+          daysToOos: data.daysToOos,
         });
         if (!riskClass) return;
         underSafetySet.add(row.sku);
@@ -1159,6 +1161,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           safetyUnits: data.safetyUnits,
           doh: data.doh,
           safetyDays: data.safetyDays,
+          daysToOos: data.daysToOos,
         }) as "" | "safety-negative" | "safety-low";
         if (!riskClass) return;
         const bucket = map.get(month);
@@ -1192,6 +1195,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           safetyUnits: data.safetyUnits,
           doh: data.doh,
           safetyDays: data.safetyDays,
+          daysToOos: data.daysToOos,
         }) as "" | "safety-negative" | "safety-low";
         if (!riskClass) return;
         hasUnderSafety = true;
@@ -1294,6 +1298,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           safetyUnits: data.safetyUnits,
           doh: data.doh,
           safetyDays: data.safetyDays,
+          daysToOos: data.daysToOos,
         });
         if (riskClass === "safety-negative" || riskClass === "safety-low") {
           firstRiskMonth = month;
@@ -1320,6 +1325,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           safetyUnits: intent.data.safetyUnits,
           doh: intent.data.doh,
           safetyDays: intent.data.safetyDays,
+          daysToOos: intent.data.daysToOos,
         }) as "" | "safety-negative" | "safety-low";
         if (riskClass !== "safety-negative" && riskClass !== "safety-low") return null;
         const abcClass = normalizeAbcClass(intent.row.abcClass);
@@ -2059,6 +2065,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           safetyUnits: data.safetyUnits,
           doh: data.doh,
           safetyDays: data.safetyDays,
+          daysToOos: data.daysToOos,
         }) as "" | "safety-negative" | "safety-low";
 
         const isActionable = projectionMode !== "plan";

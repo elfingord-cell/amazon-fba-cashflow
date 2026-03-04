@@ -506,12 +506,17 @@ function computeSkuCoverage(state, months) {
       const abcClass = abcBySku?.get(sku.toLowerCase())?.abcClass || "—";
       const isDohMode = inventoryView.projectionMode === "doh";
       const value = isDohMode ? skuData?.doh : skuData?.endAvailable;
-      const safetyValue = isDohMode ? skuData?.safetyDays : skuData?.safetyUnits;
+      const safetyValue = skuData?.safetyDays;
+      const daysToOos = Number.isFinite(skuData?.daysToOos) ? Number(skuData.daysToOos) : null;
       let problem = "Forecast fehlt";
       if (hasForecast) {
-        problem = isDohMode
-          ? `DOH ${formatInt(skuData?.doh)} < ${formatInt(skuData?.safetyDays)}`
-          : `Units ${formatInt(skuData?.endAvailable)} < ${formatInt(skuData?.safetyUnits)}`;
+        if (Number.isFinite(skuData?.endAvailable) && Number(skuData.endAvailable) <= 0) {
+          problem = "OOS erreicht";
+        } else if (Number.isFinite(daysToOos) && Number.isFinite(skuData?.safetyDays)) {
+          problem = `OOS in ${formatInt(daysToOos)} Tagen < ${formatInt(skuData?.safetyDays)} Safety-Tage`;
+        } else {
+          problem = "Unter Safety (OOS innerhalb Safety-Tage)";
+        }
       }
 
       problemSkus.push({
@@ -1578,7 +1583,7 @@ function buildMonthHealthPanelHTML(result) {
   const taxesActive = Boolean(result.taxesActive);
   const projectionMode = result.projectionMode === "doh" ? "doh" : "units";
   const valueLabel = projectionMode === "doh" ? "DOH" : "Units";
-  const safetyLabel = projectionMode === "doh" ? "Safety DOH" : "Safety Units";
+  const safetyLabel = "Safety-Tage";
   const inventoryCoverageOk = activeSkus > 0 && coverageRatio >= COVERAGE_THRESHOLDS.full;
   const checklist = [
     {
