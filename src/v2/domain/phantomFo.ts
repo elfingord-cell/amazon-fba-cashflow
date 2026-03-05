@@ -80,6 +80,21 @@ function normalizeIsoDate(value: unknown): string | null {
   return text;
 }
 
+function resolveSuggestionOrderDateIso(input: {
+  recommendedOrderDate?: unknown;
+  latestOrderDate?: unknown;
+  foRecord?: Record<string, unknown> | null;
+}): string | null {
+  return normalizeIsoDate(input.recommendedOrderDate)
+    || normalizeIsoDate(input.latestOrderDate)
+    || normalizeIsoDate(input.foRecord?.orderDate);
+}
+
+function isOrderDateBeforeLocalToday(orderDateIso: string | null, todayIso: string): boolean {
+  if (!orderDateIso) return false;
+  return orderDateIso < todayIso;
+}
+
 function monthStartIso(month: string): string | null {
   const normalized = normalizeMonthKey(month);
   if (!normalized) return null;
@@ -101,15 +116,24 @@ function normalizeShortageIssueType(value: unknown): "stock_oos" | "stock_under_
   return null;
 }
 
-function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride> {
+function buildShortageAcceptanceStorageKey(input: {
+  sku: string;
+  reason: "stock_oos" | "stock_under_safety";
+  acceptedFromMonth: string;
+}): string {
+  return `${normalizeSkuKey(input.sku)}::${input.reason}::${input.acceptedFromMonth}`;
+}
+
+function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride[]> {
   const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
     ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
     : {};
-  const map = new Map<string, ShortageAcceptanceOverride>();
+  const map = new Map<string, ShortageAcceptanceOverride[]>();
   Object.entries(rawBySku).forEach(([key, raw]) => {
     if (!raw || typeof raw !== "object") return;
     const entry = raw as Record<string, unknown>;
-    const sku = normalizeSku(entry.sku || key);
+    const keySku = String(key || "").includes("::") ? String(key).split("::")[0] : key;
+    const sku = normalizeSku(entry.sku || keySku);
     const skuKey = normalizeSkuKey(sku);
     if (!sku || !skuKey) return;
     const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
@@ -120,30 +144,46 @@ function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map
     const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
       || addMonths(acceptedFromMonth, durationMonths - 1);
     if (!acceptedUntilMonth) return;
-    map.set(skuKey, {
+    const list = map.get(skuKey) || [];
+    const duplicateIndex = list.findIndex((current) => (
+      current.reason === reason
+      && current.acceptedFromMonth === acceptedFromMonth
+    ));
+    const nextEntry: ShortageAcceptanceOverride = {
       sku,
       reason,
       acceptedFromMonth,
       acceptedUntilMonth,
       durationMonths,
+    };
+    if (duplicateIndex >= 0) list[duplicateIndex] = nextEntry;
+    else list.push(nextEntry);
+    list.sort((left, right) => {
+      const byStart = left.acceptedFromMonth.localeCompare(right.acceptedFromMonth);
+      if (byStart !== 0) return byStart;
+      const byEnd = left.acceptedUntilMonth.localeCompare(right.acceptedUntilMonth);
+      if (byEnd !== 0) return byEnd;
+      return left.reason.localeCompare(right.reason);
     });
+    map.set(skuKey, list);
   });
   return map;
 }
 
 function hasActiveShortageAcceptance(input: {
-  acceptanceBySku: Map<string, ShortageAcceptanceOverride>;
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride[]>;
   sku: string;
   month: string;
   issueType: "stock_oos" | "stock_under_safety";
 }): boolean {
   const skuKey = normalizeSkuKey(input.sku);
   if (!skuKey) return false;
-  const acceptance = input.acceptanceBySku.get(skuKey);
-  if (!acceptance) return false;
-  if (acceptance.reason !== input.issueType) return false;
-  if (input.month < acceptance.acceptedFromMonth || input.month > acceptance.acceptedUntilMonth) return false;
-  return true;
+  const acceptances = input.acceptanceBySku.get(skuKey) || [];
+  return acceptances.some((acceptance) => {
+    if (acceptance.reason !== input.issueType) return false;
+    if (input.month < acceptance.acceptedFromMonth || input.month > acceptance.acceptedUntilMonth) return false;
+    return true;
+  });
 }
 
 function asNumber(value: unknown, fallback = 0): number {
@@ -276,7 +316,7 @@ function buildScopedOrderDutyIssues(input: {
   months: string[];
   horizonEndMonth: string;
   todayMonth: string;
-  shortageAcceptancesBySku: Map<string, ShortageAcceptanceOverride>;
+  shortageAcceptancesBySku: Map<string, ShortageAcceptanceOverride[]>;
 }): RobustnessCoverageOrderDutyIssue[] {
   return collectOrderDutyIssues(input.state, input.months)
     .filter((issue) => {
@@ -313,12 +353,17 @@ function buildTemporaryAcceptanceState(input: {
     ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
     : {};
   const mergedBySku: Record<string, unknown> = { ...rawBySku };
-  input.temporaryAcceptancesBySku.forEach((entry, skuKey) => {
-    const currentRaw = rawBySku[skuKey];
+  input.temporaryAcceptancesBySku.forEach((entry) => {
+    const acceptanceKey = `tmp::${buildShortageAcceptanceStorageKey({
+      sku: entry.sku,
+      reason: entry.reason,
+      acceptedFromMonth: entry.acceptedFromMonth,
+    })}`;
+    const currentRaw = rawBySku[acceptanceKey];
     const current = (currentRaw && typeof currentRaw === "object")
       ? currentRaw as Record<string, unknown>
       : {};
-    mergedBySku[skuKey] = {
+    mergedBySku[acceptanceKey] = {
       ...current,
       sku: entry.sku,
       reason: entry.reason,
@@ -449,7 +494,20 @@ function resolveMonthList(input: {
     .filter((month) => /^\d{4}-\d{2}$/.test(month))
     .sort((a, b) => a.localeCompare(b));
   if (fromInput.length) return fromInput;
-  return resolvePlanningMonthsFromState(input.state);
+  const settings = (input.state.settings && typeof input.state.settings === "object")
+    ? input.state.settings as Record<string, unknown>
+    : {};
+  const horizonRaw = asPositiveInt(settings.skuPlanningHorizonMonths);
+  const horizon = horizonRaw && [6, 12, 18].includes(horizonRaw)
+    ? horizonRaw
+    : PHANTOM_FO_ROLLING_MONTHS;
+  return monthRange(currentMonthKey(), horizon);
+}
+
+function resolveMaxSuggestionsPerSku(settings: Record<string, unknown>): number {
+  const configured = asPositiveInt(settings.skuPlanningMaxPhantomSuggestionsPerSku);
+  if (configured != null) return configured;
+  return PHANTOM_FO_MAX_SUGGESTIONS_PER_SKU;
 }
 
 function resolveSupplierTerms(supplier: Record<string, unknown> | null): SupplierPaymentTermDraft[] {
@@ -532,10 +590,11 @@ function buildSuggestionForIssue(input: {
     logisticsLeadTimeDays: leadTime.transitDays,
     bufferDays: 0,
   });
-  const derivedOrderDate = normalizeIsoDate(schedule.orderDate)
-    || normalizeIsoDate(issue.recommendedOrderDate)
-    || normalizeIsoDate(issue.latestOrderDate);
-  if (derivedOrderDate && derivedOrderDate < input.todayIso) {
+  const derivedOrderDate = resolveSuggestionOrderDateIso({
+    recommendedOrderDate: schedule.orderDate,
+    latestOrderDate: normalizeIsoDate(issue.recommendedOrderDate) || normalizeIsoDate(issue.latestOrderDate),
+  });
+  if (isOrderDateBeforeLocalToday(derivedOrderDate, input.todayIso)) {
     return { suggestion: null, rejectedByPastOrderDate: true };
   }
 
@@ -656,13 +715,13 @@ export function buildPhantomFoSuggestions(input: {
 }): PhantomFoSuggestion[] {
   const state = input.state || {};
   const todayMonth = currentMonthKey();
-  const rollingMonths = monthRange(todayMonth, PHANTOM_FO_ROLLING_MONTHS);
-  const months = rollingMonths.length ? rollingMonths : resolveMonthList({ state, months: input.months });
+  const months = resolveMonthList({ state, months: input.months });
   if (!months.length) return [];
   const horizonEndMonth = months[months.length - 1] || todayMonth;
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
+  const maxSuggestionsPerSku = resolveMaxSuggestionsPerSku(settings);
   const shortageAcceptancesBySku = resolveShortageAcceptancesBySku(settings);
 
   const liveProducts = (Array.isArray(state.products) ? state.products : [])
@@ -787,7 +846,7 @@ export function buildPhantomFoSuggestions(input: {
   const suggestionCountBySku = new Map<string, number>();
   let workingState = planningState;
   const maxSuggestions = asPositiveInt(input.maxSuggestions);
-  const maxIterations = Math.max(1, months.length * 2);
+  const maxIterations = Math.max(1, months.length * 2, maxSuggestionsPerSku + 2);
   const todayIso = localTodayIso();
 
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
@@ -819,7 +878,7 @@ export function buildPhantomFoSuggestions(input: {
         .filter((issue) => {
           const skuKey = normalizeSkuKey(issue.sku);
           if (!skuKey) return false;
-          if ((suggestionCountBySku.get(skuKey) || 0) >= PHANTOM_FO_MAX_SUGGESTIONS_PER_SKU) return false;
+          if ((suggestionCountBySku.get(skuKey) || 0) >= maxSuggestionsPerSku) return false;
           if (blockedSkuKeys.has(skuKey)) return false;
           return !skippedIssueKeys.has(issueSelectionKey(issue));
         });
@@ -858,7 +917,8 @@ export function buildPhantomFoSuggestions(input: {
             return;
           }
           const acceptedMonth = firstRiskMonth < todayMonth ? todayMonth : firstRiskMonth;
-          const existingTemporaryAcceptance = temporaryAcceptancesBySku.get(skuKey);
+          const temporarySkuReasonKey = `${skuKey}::${issue.issueType}`;
+          const existingTemporaryAcceptance = temporaryAcceptancesBySku.get(temporarySkuReasonKey);
           const sameReason = existingTemporaryAcceptance?.reason === issue.issueType;
           const acceptedFromMonth = sameReason
             ? (
@@ -886,7 +946,7 @@ export function buildPhantomFoSuggestions(input: {
             || existingTemporaryAcceptance.acceptedFromMonth !== nextAcceptance.acceptedFromMonth
             || existingTemporaryAcceptance.acceptedUntilMonth !== nextAcceptance.acceptedUntilMonth;
           if (hasChanged) {
-            temporaryAcceptancesBySku.set(skuKey, nextAcceptance);
+            temporaryAcceptancesBySku.set(temporarySkuReasonKey, nextAcceptance);
             skippedIssueKeys.add(selectionKey);
             progressed = true;
             return;
@@ -906,11 +966,19 @@ export function buildPhantomFoSuggestions(input: {
     });
   }
 
-  suggestions.sort(compareSuggestionPriority);
+  const gatedSuggestions = suggestions.filter((entry) => (
+    !isOrderDateBeforeLocalToday(resolveSuggestionOrderDateIso({
+      recommendedOrderDate: entry.recommendedOrderDate,
+      latestOrderDate: entry.latestOrderDate,
+      foRecord: entry.foRecord,
+    }), todayIso)
+  ));
+
+  gatedSuggestions.sort(compareSuggestionPriority);
   if (maxSuggestions != null) {
-    return suggestions.slice(0, maxSuggestions);
+    return gatedSuggestions.slice(0, maxSuggestions);
   }
-  return suggestions;
+  return gatedSuggestions;
 }
 
 export function buildStateWithPhantomFos(input: {
@@ -918,6 +986,7 @@ export function buildStateWithPhantomFos(input: {
   suggestions: PhantomFoSuggestion[];
 }): Record<string, unknown> {
   const state = input.state || {};
+  const todayIso = localTodayIso();
   const baseFos = Array.isArray(state.fos) ? state.fos as Record<string, unknown>[] : [];
   const existingIds = new Set(
     baseFos
@@ -925,6 +994,11 @@ export function buildStateWithPhantomFos(input: {
       .filter(Boolean),
   );
   const phantomRecords = input.suggestions
+    .filter((entry) => !isOrderDateBeforeLocalToday(resolveSuggestionOrderDateIso({
+      recommendedOrderDate: entry.recommendedOrderDate,
+      latestOrderDate: entry.latestOrderDate,
+      foRecord: entry.foRecord,
+    }), todayIso))
     .map((entry) => entry.foRecord)
     .filter((record) => {
       const id = String(record.id || "").trim();

@@ -241,18 +241,19 @@ function mapRiskClassToShortageIssueType(riskClass: ProjectionRiskClass): Shorta
   return null;
 }
 
-function resolveShortageAcceptancesBySku(state: Record<string, unknown>): Map<string, ShortageAcceptanceOverride> {
+function resolveShortageAcceptancesBySku(state: Record<string, unknown>): Map<string, ShortageAcceptanceOverride[]> {
   const settings = (state.settings && typeof state.settings === "object")
     ? state.settings as Record<string, unknown>
     : {};
   const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
     ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
     : {};
-  const map = new Map<string, ShortageAcceptanceOverride>();
+  const map = new Map<string, ShortageAcceptanceOverride[]>();
   Object.entries(rawBySku).forEach(([key, raw]) => {
     if (!raw || typeof raw !== "object") return;
     const entry = raw as Record<string, unknown>;
-    const sku = normalizeSku(entry.sku || key);
+    const keySku = String(key || "").includes("::") ? String(key).split("::")[0] : key;
+    const sku = normalizeSku(entry.sku || keySku);
     const skuKey = normalizeSkuKey(sku);
     if (!sku || !skuKey) return;
     const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
@@ -263,32 +264,49 @@ function resolveShortageAcceptancesBySku(state: Record<string, unknown>): Map<st
     const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
       || addMonths(acceptedFromMonth, rawDuration - 1);
     if (!acceptedUntilMonth) return;
-    map.set(skuKey, {
+    const list = map.get(skuKey) || [];
+    const duplicateIndex = list.findIndex((current) => (
+      current.reason === reason
+      && current.acceptedFromMonth === acceptedFromMonth
+    ));
+    const nextEntry: ShortageAcceptanceOverride = {
       sku,
       reason,
       acceptedFromMonth,
       acceptedUntilMonth,
       durationMonths: rawDuration,
+    };
+    if (duplicateIndex >= 0) list[duplicateIndex] = nextEntry;
+    else list.push(nextEntry);
+    list.sort((left, right) => {
+      const byStart = left.acceptedFromMonth.localeCompare(right.acceptedFromMonth);
+      if (byStart !== 0) return byStart;
+      const byEnd = left.acceptedUntilMonth.localeCompare(right.acceptedUntilMonth);
+      if (byEnd !== 0) return byEnd;
+      return left.reason.localeCompare(right.reason);
     });
+    map.set(skuKey, list);
   });
   return map;
 }
 
 function resolveActiveShortageAcceptance(input: {
-  acceptanceBySku: Map<string, ShortageAcceptanceOverride>;
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride[]>;
   sku: string;
   month: string;
   issueType?: ShortageIssueType | null;
 }): ShortageAcceptanceOverride | null {
   const skuKey = normalizeSkuKey(input.sku);
   if (!skuKey) return null;
-  const acceptance = input.acceptanceBySku.get(skuKey);
-  if (!acceptance) return null;
-  if (input.month < acceptance.acceptedFromMonth || input.month > acceptance.acceptedUntilMonth) {
-    return null;
-  }
-  if (input.issueType && acceptance.reason !== input.issueType) return null;
-  return acceptance;
+  const acceptances = input.acceptanceBySku.get(skuKey) || [];
+  const match = acceptances.find((acceptance) => {
+    if (input.month < acceptance.acceptedFromMonth || input.month > acceptance.acceptedUntilMonth) {
+      return false;
+    }
+    if (input.issueType && acceptance.reason !== input.issueType) return false;
+    return true;
+  });
+  return match || null;
 }
 
 function isActiveProduct(product: Record<string, unknown>): boolean {
@@ -698,7 +716,7 @@ function buildOrderDutyProfiles(input: {
   projection: ProjectionCoverageLookup;
   projectionMode: ProjectionModeForCoverage;
   nowMonth: string;
-  acceptanceBySku: Map<string, ShortageAcceptanceOverride>;
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride[]>;
 }): Map<string, OrderDutyProfile> {
   const profiles = new Map<string, OrderDutyProfile>();
   const futureMonths = input.months

@@ -194,15 +194,24 @@ function normalizeShortageIssueType(value: unknown): ShortageIssueType | null {
   return null;
 }
 
-function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride> {
+function buildShortageAcceptanceStorageKey(input: {
+  sku: string;
+  reason: ShortageIssueType;
+  acceptedFromMonth: string;
+}): string {
+  return `${normalizeSku(input.sku).toLowerCase()}::${input.reason}::${input.acceptedFromMonth}`;
+}
+
+function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride[]> {
   const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
     ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
     : {};
-  const map = new Map<string, ShortageAcceptanceOverride>();
+  const map = new Map<string, ShortageAcceptanceOverride[]>();
   Object.entries(rawBySku).forEach(([key, raw]) => {
     if (!raw || typeof raw !== "object") return;
     const entry = raw as Record<string, unknown>;
-    const sku = normalizeSku(entry.sku || key);
+    const keySku = String(key || "").includes("::") ? String(key).split("::")[0] : key;
+    const sku = normalizeSku(entry.sku || keySku);
     const skuKey = sku.toLowerCase();
     if (!sku || !skuKey) return;
     const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
@@ -213,13 +222,28 @@ function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map
     const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
       || addMonths(acceptedFromMonth, durationMonths - 1);
     if (!acceptedUntilMonth) return;
-    map.set(skuKey, {
+    const list = map.get(skuKey) || [];
+    const duplicateIndex = list.findIndex((current) => (
+      current.reason === reason
+      && current.acceptedFromMonth === acceptedFromMonth
+    ));
+    const nextEntry: ShortageAcceptanceOverride = {
       sku,
       reason,
       acceptedFromMonth,
       acceptedUntilMonth,
       durationMonths,
+    };
+    if (duplicateIndex >= 0) list[duplicateIndex] = nextEntry;
+    else list.push(nextEntry);
+    list.sort((left, right) => {
+      const byStart = left.acceptedFromMonth.localeCompare(right.acceptedFromMonth);
+      if (byStart !== 0) return byStart;
+      const byEnd = left.acceptedUntilMonth.localeCompare(right.acceptedUntilMonth);
+      if (byEnd !== 0) return byEnd;
+      return left.reason.localeCompare(right.reason);
     });
+    map.set(skuKey, list);
   });
   return map;
 }
@@ -229,6 +253,10 @@ function shortageAcceptanceTagLabel(acceptance: ShortageAcceptanceOverride): str
   const duration = Math.max(1, Math.round(Number(acceptance.durationMonths || 1)));
   const durationText = duration === 1 ? "1 Monat" : `${duration} Monate`;
   return `${reasonText} (${durationText})`;
+}
+
+function shortageAcceptActionLabel(issueType: ShortageIssueType): string {
+  return issueType === "stock_oos" ? "OOS akzeptieren" : "Unter Safety akzeptieren";
 }
 
 function formatInt(value: unknown): string {
@@ -535,7 +563,6 @@ export default function SkuPlanningModule(): JSX.Element {
     return buildPhantomFoSuggestions({
       state: stateObject,
       months: planningMonths,
-      maxSuggestions: Math.max(120, productRows.length * 12),
     });
   }, [
     planningMonths,
@@ -576,11 +603,10 @@ export default function SkuPlanningModule(): JSX.Element {
     () => (showSimulation ? [...autoPhantomEntries, ...manualPhantomEntries] : []),
     [autoPhantomEntries, manualPhantomEntries, showSimulation],
   );
-  const selectedSkuShortageAcceptance = useMemo(() => {
-    if (!selectedSku) return null;
-    const acceptance = shortageAcceptancesBySku.get(selectedSku.toLowerCase()) || null;
-    if (!acceptance) return null;
-    return currentMonthKey() <= acceptance.acceptedUntilMonth ? acceptance : null;
+  const selectedSkuShortageAcceptances = useMemo(() => {
+    if (!selectedSku) return [] as ShortageAcceptanceOverride[];
+    const acceptances = shortageAcceptancesBySku.get(selectedSku.toLowerCase()) || [];
+    return acceptances.filter((entry) => currentMonthKey() <= entry.acceptedUntilMonth);
   }, [selectedSku, shortageAcceptancesBySku]);
 
   const phantomEntryById = useMemo(() => {
@@ -845,12 +871,16 @@ export default function SkuPlanningModule(): JSX.Element {
   const acceptShortageForEntry = useCallback(async (entry: PhantomOverlayEntry, durationMonths: 1 | 2): Promise<void> => {
     const sku = normalizeSku(entry.sku);
     if (!sku) return;
-    const skuKey = sku.toLowerCase();
     const todayMonth = currentMonthKey();
     const firstRiskMonth = normalizeMonthKey(entry.firstRiskMonth || entry.arrivalMonth || todayMonth) || todayMonth;
     const acceptedFromMonth = firstRiskMonth < todayMonth ? todayMonth : firstRiskMonth;
     const acceptedUntilMonth = addMonths(acceptedFromMonth, durationMonths - 1);
     const reason: ShortageIssueType = entry.issueType === "stock_oos" ? "stock_oos" : "stock_under_safety";
+    const acceptanceKey = buildShortageAcceptanceStorageKey({
+      sku,
+      reason,
+      acceptedFromMonth,
+    });
     setAcceptingEntryId(entry.id);
     try {
       await saveWith((current) => {
@@ -862,11 +892,16 @@ export default function SkuPlanningModule(): JSX.Element {
         const rawBySku = (nextSettings.phantomFoShortageAcceptBySku && typeof nextSettings.phantomFoShortageAcceptBySku === "object")
           ? nextSettings.phantomFoShortageAcceptBySku as Record<string, unknown>
           : {};
+        const currentRaw = rawBySku[acceptanceKey];
+        const currentEntry = (currentRaw && typeof currentRaw === "object")
+          ? currentRaw as Record<string, unknown>
+          : {};
         next.settings = {
           ...nextSettings,
           phantomFoShortageAcceptBySku: {
             ...rawBySku,
-            [skuKey]: {
+            [acceptanceKey]: {
+              ...currentEntry,
               sku,
               reason,
               acceptedFromMonth,
@@ -1309,10 +1344,14 @@ export default function SkuPlanningModule(): JSX.Element {
 
                 <Card size="small" style={{ marginTop: 10 }}>
                   <Title level={5} style={{ marginTop: 0 }}>Automatische Phantom-FO Vorschlaege</Title>
-                  {selectedSkuShortageAcceptance ? (
+                  {selectedSkuShortageAcceptances.length ? (
                     <Space wrap style={{ marginBottom: 8 }}>
-                      <Tag>{shortageAcceptanceTagLabel(selectedSkuShortageAcceptance)}</Tag>
-                      <Text type="secondary">gueltig bis {formatMonthLabel(selectedSkuShortageAcceptance.acceptedUntilMonth)}</Text>
+                      {selectedSkuShortageAcceptances.map((acceptance) => (
+                        <Space key={`${acceptance.reason}-${acceptance.acceptedFromMonth}-${acceptance.acceptedUntilMonth}`} size={6}>
+                          <Tag>{shortageAcceptanceTagLabel(acceptance)}</Tag>
+                          <Text type="secondary">gueltig bis {formatMonthLabel(acceptance.acceptedUntilMonth)}</Text>
+                        </Space>
+                      ))}
                     </Space>
                   ) : null}
                   {!autoPhantomEntries.length ? (
@@ -1337,7 +1376,7 @@ export default function SkuPlanningModule(): JSX.Element {
                                 void acceptShortageForEntry(entry, duration);
                               }}
                             >
-                              Engpass akzeptieren
+                              {shortageAcceptActionLabel(entry.issueType)}
                             </Button>
                             <Select
                               size="small"

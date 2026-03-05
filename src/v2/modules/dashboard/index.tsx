@@ -381,14 +381,36 @@ function isEntryInBucketScope(entry: DashboardEntry, bucketScope: Set<string>): 
   return bucketScope.has(bucket);
 }
 
+function isPhantomFoEntry(
+  entryRaw: DashboardEntry,
+  provisionalFoIds?: Set<string>,
+): boolean {
+  const source = String(entryRaw.source || "").toLowerCase();
+  if (source !== "fo") return false;
+  const sourceId = String(entryRaw.sourceId || "").trim();
+  const meta = (entryRaw.meta && typeof entryRaw.meta === "object")
+    ? entryRaw.meta as Record<string, unknown>
+    : {};
+  return entryRaw.provisional === true
+    || meta.phantom === true
+    || (sourceId ? provisionalFoIds?.has(sourceId) === true : false);
+}
+
 function applyBucketScopeToBreakdown(
   rows: DashboardBreakdownRow[],
   bucketScope: Set<string>,
+  options?: {
+    includePhantomFo?: boolean;
+    provisionalFoIds?: Set<string>;
+  },
 ): ScopedDashboardBreakdownRow[] {
   if (!rows.length) return [];
+  const includePhantomFo = options?.includePhantomFo !== false;
+  const provisionalFoIds = options?.provisionalFoIds;
   const scopedRows = rows.map((row) => {
     const scopedEntries = (Array.isArray(row.entries) ? row.entries : [])
-      .filter((entry) => isEntryInBucketScope(entry, bucketScope));
+      .filter((entry) => isEntryInBucketScope(entry, bucketScope))
+      .filter((entry) => includePhantomFo || !isPhantomFoEntry(entry, provisionalFoIds));
     const inflow = scopedEntries
       .filter((entry) => String(entry.direction || "").toLowerCase() === "in")
       .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
@@ -462,13 +484,7 @@ function splitOutflowEntriesByType(
       return;
     }
     if (source === "fo") {
-      const sourceId = String(entry.sourceId || "").trim();
-      const meta = (entry.meta && typeof entry.meta === "object")
-        ? entry.meta as Record<string, unknown>
-        : {};
-      const isPhantom = entry.provisional === true
-        || meta.phantom === true
-        || (sourceId ? provisionalFoIds?.has(sourceId) === true : false);
+      const isPhantom = isPhantomFoEntry(entry, provisionalFoIds);
       if (isPhantom) totals.phantomFo += amount;
       else totals.fo += amount;
       return;
@@ -740,8 +756,11 @@ export default function DashboardModule(): JSX.Element {
 
   const visibleBreakdown = useMemo(() => {
     const filteredByMonth = breakdown.filter((row) => visibleMonthSet.has(row.month));
-    return applyBucketScopeToBreakdown(filteredByMonth, bucketScopeSet);
-  }, [breakdown, bucketScopeSet, visibleMonthSet]);
+    return applyBucketScopeToBreakdown(filteredByMonth, bucketScopeSet, {
+      includePhantomFo: showPhantomFoInChart,
+      provisionalFoIds: phantomFoIdSet,
+    });
+  }, [breakdown, bucketScopeSet, phantomFoIdSet, showPhantomFoInChart, visibleMonthSet]);
   const robustness = useMemo(() => {
     return buildDashboardRobustness({
       state: stateObject,
@@ -1430,14 +1449,7 @@ export default function DashboardModule(): JSX.Element {
         const fallbackRef = String(entry.id || entry.label || "").trim();
         const reference = sourceNumber || sourceId || fallbackRef || "ohne-nummer";
 
-        const meta = (entry.meta && typeof entry.meta === "object")
-          ? entry.meta as Record<string, unknown>
-          : {};
-        const isPhantom = source === "fo" && (
-          entry.provisional === true
-          || meta.phantom === true
-          || (sourceId ? phantomFoIdSet.has(sourceId) : false)
-        );
+        const isPhantom = isPhantomFoEntry(entry, phantomFoIdSet);
         const categoryKey: CategoryKey = source === "po"
           ? "outflows-po"
           : (isPhantom ? "outflows-phantom-fo" : "outflows-fo");
@@ -1466,6 +1478,9 @@ export default function DashboardModule(): JSX.Element {
         else if (entry.paid === false) order.paymentMix.open += amount;
         else order.paymentMix.unknown += amount;
 
+        const meta = (entry.meta && typeof entry.meta === "object")
+          ? entry.meta as Record<string, unknown>
+          : {};
         const aliasFromMeta = String(meta.alias || "").trim();
         if (aliasFromMeta) order.aliases.add(aliasFromMeta);
         const unitsFromMeta = Number(meta.units ?? meta.qty ?? meta.quantity);
