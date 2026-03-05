@@ -142,6 +142,17 @@ interface CoverageDemandBreakdownRow {
   usedFallback: boolean;
 }
 
+type ShortageIssueType = "stock_oos" | "stock_under_safety";
+
+interface PendingPfoWorklistDecision {
+  id: string;
+  sku: string;
+  issueType: ShortageIssueType;
+  firstRiskMonth: string;
+  orderMonth: string;
+  source: "inventory_pfo_worklist";
+}
+
 function formatDate(value: unknown): string {
   if (!value) return "—";
   const [year, month, day] = String(value).split("-").map(Number);
@@ -262,6 +273,21 @@ function toIsoDateStrict(value: unknown): string | null {
   if (Number.isNaN(date.getTime())) return null;
   if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeMonthKey(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  const mmYYYY = raw.match(/^(\d{2})-(\d{4})$/);
+  if (mmYYYY) return `${mmYYYY[2]}-${mmYYYY[1]}`;
+  return null;
+}
+
+function normalizeShortageIssueType(value: unknown): ShortageIssueType | null {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "stock_oos") return "stock_oos";
+  if (raw === "stock_under_safety") return "stock_under_safety";
+  return null;
 }
 
 function todayIsoLocal(): string {
@@ -527,6 +553,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [mergeManualTargetDate, setMergeManualTargetDate] = useState("");
   const [mergeAllowMixedTerms, setMergeAllowMixedTerms] = useState(false);
   const [returnContext, setReturnContext] = useState<{ path: string; sku: string | null } | null>(null);
+  const [pendingPfoWorklistDecision, setPendingPfoWorklistDecision] = useState<PendingPfoWorklistDecision | null>(null);
   const [form] = Form.useForm<FoFormValues>();
   const foViewMode = useMemo<"table" | "timeline">(
     () => resolveFoViewMode(location.search),
@@ -1701,10 +1728,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     });
   }
 
-  function openCreateModal(prefill?: Partial<FoFormValues>, options?: { preserveReturnContext?: boolean }): void {
+  function openCreateModal(
+    prefill?: Partial<FoFormValues>,
+    options?: { preserveReturnContext?: boolean; preservePfoWorklistDecision?: boolean },
+  ): void {
     setEditingId(null);
     if (!options?.preserveReturnContext) {
       setReturnContext(null);
+    }
+    if (!options?.preservePfoWorklistDecision) {
+      setPendingPfoWorklistDecision(null);
     }
     const draft = buildDefaultDraft(null, prefill);
     form.setFieldsValue({
@@ -1719,6 +1752,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (!options?.preserveReturnContext) {
       setReturnContext(null);
     }
+    setPendingPfoWorklistDecision(null);
     form.setFieldsValue(buildDefaultDraft(existing));
     setModalOpen(true);
   }
@@ -1820,6 +1854,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       vatRefundLagMonths: settings.vatRefundLagMonths,
       paymentDueDefaults: settings.paymentDueDefaults,
     });
+    const pendingPfoDecision = pendingPfoWorklistDecision;
 
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
@@ -1841,12 +1876,43 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
         list.push(nextRecord);
       }
       next.fos = list;
+      if (pendingPfoDecision?.source === "inventory_pfo_worklist" && pendingPfoDecision.id) {
+        if (!next.settings || typeof next.settings !== "object") {
+          next.settings = {};
+        }
+        const nextSettings = next.settings as Record<string, unknown>;
+        const rawById = (nextSettings.phantomFoWorklistDecisionById && typeof nextSettings.phantomFoWorklistDecisionById === "object")
+          ? nextSettings.phantomFoWorklistDecisionById as Record<string, unknown>
+          : {};
+        const existingRaw = rawById[pendingPfoDecision.id];
+        const existingDecision = (existingRaw && typeof existingRaw === "object")
+          ? existingRaw as Record<string, unknown>
+          : {};
+        next.settings = {
+          ...nextSettings,
+          phantomFoWorklistDecisionById: {
+            ...rawById,
+            [pendingPfoDecision.id]: {
+              ...existingDecision,
+              id: pendingPfoDecision.id,
+              sku: pendingPfoDecision.sku || sku,
+              issueType: pendingPfoDecision.issueType,
+              firstRiskMonth: pendingPfoDecision.firstRiskMonth || "",
+              orderMonth: pendingPfoDecision.orderMonth || "",
+              decision: "fo_converted",
+              decidedAt: nowIso(),
+              source: pendingPfoDecision.source,
+            },
+          },
+        };
+      }
       return next;
     }, editingId ? "v2:fo:update" : "v2:fo:create");
     modalCollab.clearDraft();
     setModalOpen(false);
     setEditingId(null);
     setReturnContext(null);
+    setPendingPfoWorklistDecision(null);
     form.resetFields();
   }
 
@@ -2297,14 +2363,17 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (source === "phantom_fo") {
       const sku = String(params.get("sku") || "").trim();
       if (!sku) {
+        setPendingPfoWorklistDecision(null);
         clearHandledParams([
           "source",
+          "decisionSource",
           "phantomId",
           "sku",
           "month",
           "suggestedUnits",
           "requiredArrivalDate",
           "recommendedOrderDate",
+          "issueType",
           "firstRiskMonth",
           "orderMonth",
           "leadTimeDays",
@@ -2317,6 +2386,11 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       const product = productBySku.get(sku) || null;
       const suggestedUnits = Math.max(0, Math.round(Number(params.get("suggestedUnits") || 0)));
       const requiredArrivalDate = String(params.get("requiredArrivalDate") || "");
+      const decisionSource = String(params.get("decisionSource") || "").trim();
+      const phantomId = String(params.get("phantomId") || "").trim();
+      const issueType = normalizeShortageIssueType(params.get("issueType")) || "stock_under_safety";
+      const firstRiskMonth = normalizeMonthKey(params.get("firstRiskMonth")) || "";
+      const orderMonth = normalizeMonthKey(params.get("orderMonth")) || "";
       const prefill: Partial<FoFormValues> = {
         sku,
         units: suggestedUnits,
@@ -2324,18 +2398,32 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       };
       if (product?.supplierId) prefill.supplierId = String(product.supplierId);
       if (requiredArrivalDate) prefill.targetDeliveryDate = requiredArrivalDate;
+      if (decisionSource === "inventory_pfo_worklist" && phantomId) {
+        setPendingPfoWorklistDecision({
+          id: phantomId,
+          sku,
+          issueType,
+          firstRiskMonth,
+          orderMonth,
+          source: "inventory_pfo_worklist",
+        });
+      } else {
+        setPendingPfoWorklistDecision(null);
+      }
 
       applyReturnContext();
-      openCreateModal(prefill, { preserveReturnContext: true });
+      openCreateModal(prefill, { preserveReturnContext: true, preservePfoWorklistDecision: true });
       message.info("Phantom-FO geladen. Bitte Daten prüfen, bei Bedarf anpassen und speichern.");
       clearHandledParams([
         "source",
+        "decisionSource",
         "phantomId",
         "sku",
         "month",
         "suggestedUnits",
         "requiredArrivalDate",
         "recommendedOrderDate",
+        "issueType",
         "firstRiskMonth",
         "orderMonth",
         "leadTimeDays",
@@ -2483,6 +2571,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
           modalCollab.clearDraft();
           setModalOpen(false);
           setReturnContext(null);
+          setPendingPfoWorklistDecision(null);
         }}
         onOk={() => {
           if (modalFieldLocked) {

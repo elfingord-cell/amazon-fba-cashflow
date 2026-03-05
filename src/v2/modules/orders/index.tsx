@@ -3,6 +3,7 @@ import { Card, Tabs, Typography } from "antd";
 import { useLocation, useNavigate } from "react-router-dom";
 import FoModule from "../fo";
 import PoModule from "../po";
+import PfoListView from "./PfoListView";
 import SkuTimelineView from "./SkuTimelineView";
 import { StatsTableShell } from "../../components/StatsTableShell";
 import { useWorkspaceState } from "../../state/workspace";
@@ -20,7 +21,10 @@ export default function OrdersModule(): JSX.Element {
   const navigate = useNavigate();
   const { state } = useWorkspaceState();
 
-  const activeTab = useMemo(() => resolveOrdersTab(location.pathname), [location.pathname]);
+  const activeTab = useMemo<"po" | "fo" | "pfo" | "sku">(() => {
+    if (location.pathname.includes("/orders/pfo")) return "pfo";
+    return resolveOrdersTab(location.pathname);
+  }, [location.pathname]);
   const paymentRows = useMemo(() => {
     return (Array.isArray(state.payments) ? state.payments : [])
       .map((entry) => entry as Record<string, unknown>)
@@ -115,6 +119,11 @@ export default function OrdersModule(): JSX.Element {
             key: "fo",
             label: "Forecast Orders (FO)",
             children: <FoModule embedded />,
+          },
+          {
+            key: "pfo",
+            label: "Phantom Forecast Orders (PFO)",
+            children: <PfoListView />,
           },
           {
             key: "sku",
