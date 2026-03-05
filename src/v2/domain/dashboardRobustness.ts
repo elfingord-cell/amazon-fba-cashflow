@@ -1000,6 +1000,16 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
             minDohInWindow = minDohInWindow == null ? checkDoh : Math.min(minDohInWindow, checkDoh);
           }
           const checkRiskClass = projectionRiskClassByDoh(checkMonthData);
+          const checkIssueType = mapRiskClassToShortageIssueType(checkRiskClass);
+          const shortageAcceptedForCheckMonth = checkIssueType
+            ? Boolean(resolveActiveShortageAcceptance({
+              acceptanceBySku: shortageAcceptanceBySku,
+              sku,
+              month: checkMonth,
+              issueType: checkIssueType,
+            }))
+            : false;
+          if (shortageAcceptedForCheckMonth) return;
           if (!checkMonthData?.hasForecast || checkRiskClass) {
             firstBreachMonth = checkMonth;
             firstBreachData = checkMonthData;
