@@ -299,15 +299,15 @@ function classifyRisk(input: {
   safetyUnits: number | null;
   doh: number | null;
   safetyDays: number | null;
-  daysToOos: number | null;
 }): RiskStatus {
+  // Keep overview risk consistent with the chart thresholds (stock vs safety),
+  // not with additional time-to-OOS pre-warning logic.
   const raw = getProjectionSafetyClass({
     projectionMode: "units",
     endAvailable: input.endAvailable,
     safetyUnits: input.safetyUnits,
     doh: input.doh,
     safetyDays: input.safetyDays,
-    daysToOos: input.daysToOos,
   });
   if (raw === "safety-negative") return "oos";
   if (raw === "safety-low") return "under_safety";
@@ -463,7 +463,6 @@ export default function SkuPlanningModule(): JSX.Element {
             safetyUnits: normalizeFiniteNumber(data.safetyUnits),
             doh: normalizeFiniteNumber(data.doh),
             safetyDays: normalizeFiniteNumber(data.safetyDays),
-            daysToOos: normalizeFiniteNumber(data.daysToOos),
           });
           if (risk === "ok") continue;
           firstRiskMonth = month;
