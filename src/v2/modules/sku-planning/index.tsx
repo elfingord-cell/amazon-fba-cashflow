@@ -259,6 +259,24 @@ function shortageAcceptActionLabel(issueType: ShortageIssueType): string {
   return issueType === "stock_oos" ? "OOS akzeptieren" : "Unter Safety akzeptieren";
 }
 
+function hasActiveShortageAcceptance(input: {
+  acceptanceBySku: Map<string, ShortageAcceptanceOverride[]>;
+  sku: string;
+  month: string;
+  issueType: ShortageIssueType;
+}): boolean {
+  const skuKey = normalizeSku(input.sku).toLowerCase();
+  if (!skuKey) return false;
+  const month = normalizeMonthKey(input.month);
+  if (!month) return false;
+  const acceptances = input.acceptanceBySku.get(skuKey) || [];
+  return acceptances.some((acceptance) => {
+    if (acceptance.reason !== input.issueType) return false;
+    if (month < acceptance.acceptedFromMonth || month > acceptance.acceptedUntilMonth) return false;
+    return true;
+  });
+}
+
 function formatInt(value: unknown): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
@@ -465,6 +483,15 @@ export default function SkuPlanningModule(): JSX.Element {
             safetyDays: normalizeFiniteNumber(data.safetyDays),
           });
           if (risk === "ok") continue;
+          const issueType: ShortageIssueType = risk === "oos" ? "stock_oos" : "stock_under_safety";
+          if (hasActiveShortageAcceptance({
+            acceptanceBySku: shortageAcceptancesBySku,
+            sku: product.sku,
+            month,
+            issueType,
+          })) {
+            continue;
+          }
           firstRiskMonth = month;
           status = risk;
           break;
@@ -496,7 +523,7 @@ export default function SkuPlanningModule(): JSX.Element {
         if (byAlias !== 0) return byAlias;
         return left.sku.localeCompare(right.sku, "de-DE", { sensitivity: "base" });
       });
-  }, [planningMonths, productRows, projection.perSkuMonth, search]);
+  }, [planningMonths, productRows, projection.perSkuMonth, search, shortageAcceptancesBySku]);
 
   const selectedOverviewRow = useMemo(
     () => overviewRows.find((entry) => entry.sku === selectedSku) || null,
@@ -607,6 +634,50 @@ export default function SkuPlanningModule(): JSX.Element {
     const acceptances = shortageAcceptancesBySku.get(selectedSku.toLowerCase()) || [];
     return acceptances.filter((entry) => currentMonthKey() <= entry.acceptedUntilMonth);
   }, [selectedSku, shortageAcceptancesBySku]);
+
+  const focusedMonthBlockerIssueType = useMemo<ShortageIssueType | null>(() => {
+    if (!selectedSku || !focusedMonth) return null;
+    const monthMap = projection.perSkuMonth.get(selectedSku) as Map<string, ProjectionCellData> | undefined;
+    const data = monthMap?.get(focusedMonth) as ProjectionCellData | undefined;
+    if (!data) return null;
+    const risk = classifyRisk({
+      endAvailable: normalizeFiniteNumber(data.endAvailable),
+      safetyUnits: normalizeFiniteNumber(data.safetyUnits),
+      doh: normalizeFiniteNumber(data.doh),
+      safetyDays: normalizeFiniteNumber(data.safetyDays),
+    });
+    if (risk === "ok") return null;
+    const issueType: ShortageIssueType = risk === "oos" ? "stock_oos" : "stock_under_safety";
+    if (hasActiveShortageAcceptance({
+      acceptanceBySku: shortageAcceptancesBySku,
+      sku: selectedSku,
+      month: focusedMonth,
+      issueType,
+    })) {
+      return null;
+    }
+    return issueType;
+  }, [focusedMonth, projection.perSkuMonth, selectedSku, shortageAcceptancesBySku]);
+
+  const focusedMonthAcceptanceEntry = useMemo<PhantomOverlayEntry | null>(() => {
+    if (!selectedSku || !focusedMonth || !focusedMonthBlockerIssueType) return null;
+    return {
+      id: `focus-accept-${selectedSku}-${focusedMonth}-${focusedMonthBlockerIssueType}`,
+      sku: selectedSku,
+      alias: selectedOverviewRow?.alias || selectedSku,
+      abcClass: selectedOverviewRow?.abcClass || "C",
+      issueType: focusedMonthBlockerIssueType,
+      arrivalMonth: focusedMonth,
+      arrivalDate: monthStartIso(focusedMonth),
+      suggestedUnits: 0,
+      recommendedOrderDate: null,
+      firstRiskMonth: focusedMonth,
+      orderMonth: focusedMonth,
+      leadTimeDays: null,
+      source: "manual",
+      note: "Fokusmonat Blocker",
+    };
+  }, [focusedMonth, focusedMonthBlockerIssueType, selectedOverviewRow?.abcClass, selectedOverviewRow?.alias, selectedSku]);
 
   const phantomEntryById = useMemo(() => {
     const map = new Map<string, PhantomOverlayEntry>();
@@ -1339,6 +1410,44 @@ export default function SkuPlanningModule(): JSX.Element {
                       ))}
                     </div>
                   )}
+                  {focusedMonthAcceptanceEntry ? (
+                    <div className="v2-sku-planning-focus-list" style={{ marginTop: 8 }}>
+                      <div className="v2-sku-planning-focus-item">
+                        <Space wrap>
+                          <Tag color={focusedMonthAcceptanceEntry.issueType === "stock_oos" ? "red" : "gold"}>
+                            {focusedMonthAcceptanceEntry.issueType === "stock_oos" ? "OOS" : "Unter Safety"}
+                          </Tag>
+                          <Text type="secondary">Blocker im Fokusmonat direkt akzeptieren</Text>
+                          <Button
+                            size="small"
+                            disabled={acceptingEntryId === focusedMonthAcceptanceEntry.id}
+                            onClick={() => {
+                              const duration = acceptDurationById[focusedMonthAcceptanceEntry.id] === 2 ? 2 : 1;
+                              void acceptShortageForEntry(focusedMonthAcceptanceEntry, duration);
+                            }}
+                          >
+                            {shortageAcceptActionLabel(focusedMonthAcceptanceEntry.issueType)}
+                          </Button>
+                          <Select
+                            size="small"
+                            style={{ width: 132 }}
+                            value={acceptDurationById[focusedMonthAcceptanceEntry.id] === 2 ? 2 : 1}
+                            onChange={(value) => {
+                              const duration: 1 | 2 = Number(value) === 2 ? 2 : 1;
+                              setAcceptDurationById((current) => ({
+                                ...current,
+                                [focusedMonthAcceptanceEntry.id]: duration,
+                              }));
+                            }}
+                            options={[
+                              { value: 1, label: "fuer 1 Monat" },
+                              { value: 2, label: "fuer 2 Monate" },
+                            ]}
+                          />
+                        </Space>
+                      </div>
+                    </div>
+                  ) : null}
                 </Card>
 
                 <Card size="small" style={{ marginTop: 10 }}>
