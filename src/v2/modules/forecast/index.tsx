@@ -40,7 +40,12 @@ import {
   type ForecastVersionRecord,
 } from "../../domain/forecastVersioning";
 import { currentMonthKey, formatMonthLabel, normalizeMonthKey } from "../../domain/months";
-import { computeFoSchedule, suggestNextFoNumber } from "../../domain/orderUtils";
+import {
+  createForecastConflictDraft,
+  formatForecastConflictType,
+  ignoreForecastConflict,
+  updateForecastConflictFo,
+} from "../../domain/forecastConflictActions";
 import {
   type ForecastRecord,
   type ForecastViewMode,
@@ -100,10 +105,6 @@ interface ForecastFoConflictRow extends FoImpactConflictRow {
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function randomId(prefix = "id"): string {
-  return `${prefix}-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
 }
 
 function ensureForecastContainers(state: Record<string, unknown>): void {
@@ -189,14 +190,6 @@ function countOpenConflictsFromImpact(
   decisionsForVersion: Record<string, unknown>,
 ): number {
   return impact.foConflicts.filter((entry) => !isConflictIgnored(decisionsForVersion, entry.foId)).length;
-}
-
-function formatConflictType(type: string): string {
-  if (type === "units_too_small") return "Menge zu klein";
-  if (type === "units_too_large") return "Menge zu groß";
-  if (type === "timing_too_late") return "Timing zu spät";
-  if (type === "timing_too_early") return "Timing zu früh";
-  return type;
 }
 
 function recomputeStoredImpactSummary(stateObject: Record<string, unknown>, forecastTarget: Record<string, unknown>): void {
@@ -1017,22 +1010,7 @@ export default function ForecastModule(): JSX.Element {
     });
   }
 
-  function clearConflictIgnoreDecision(
-    forecastTarget: Record<string, unknown>,
-    versionId: string | null,
-    foId: string,
-  ): void {
-    if (!versionId) return;
-    const all = (forecastTarget.foConflictDecisionsByVersion && typeof forecastTarget.foConflictDecisionsByVersion === "object")
-      ? { ...(forecastTarget.foConflictDecisionsByVersion as Record<string, Record<string, unknown>>) }
-      : {};
-    const map = { ...(all[versionId] || {}) };
-    delete map[foId];
-    all[versionId] = map;
-    forecastTarget.foConflictDecisionsByVersion = all;
-  }
-
-  function requestUpdateFoFromConflict(conflict: ForecastFoConflictRow): void {
+function requestUpdateFoFromConflict(conflict: ForecastFoConflictRow): void {
     if (conflict.ignored) return;
     Modal.confirm({
       title: `FO ${conflict.foId} aktualisieren?`,
@@ -1047,43 +1025,7 @@ export default function ForecastModule(): JSX.Element {
       onOk: async () => {
         await saveWith((current) => {
           const next = ensureAppStateV2(current);
-          const nextState = next as unknown as Record<string, unknown>;
-          ensureForecastContainers(nextState);
-          const forecastTarget = nextState.forecast as Record<string, unknown>;
-          const active = getActiveForecastVersion(forecastTarget as Record<string, unknown>);
-          const fos = Array.isArray(next.fos) ? [...next.fos] as Record<string, unknown>[] : [];
-          const index = fos.findIndex((entry) => String(entry.id || "") === conflict.foId);
-          if (index < 0) {
-            throw new Error("FO nicht gefunden.");
-          }
-          const existing = fos[index];
-          const targetDate = conflict.recommendedArrivalDate || conflict.requiredArrivalDate || String(existing.targetDeliveryDate || "") || null;
-          const schedule = computeFoSchedule({
-            targetDeliveryDate: targetDate,
-            productionLeadTimeDays: existing.productionLeadTimeDays,
-            logisticsLeadTimeDays: existing.logisticsLeadTimeDays,
-            bufferDays: existing.bufferDays,
-          });
-          const changedAt = nowIso();
-          fos[index] = {
-            ...existing,
-            units: Math.max(0, Math.round(Number(conflict.recommendedUnits || 0))),
-            targetDeliveryDate: targetDate,
-            orderDate: schedule.orderDate,
-            productionEndDate: schedule.productionEndDate,
-            etdDate: schedule.etdDate,
-            etaDate: schedule.etaDate,
-            deliveryDate: schedule.deliveryDate,
-            forecastBasisVersionId: active?.id || null,
-            forecastBasisVersionName: active?.name || null,
-            forecastBasisSetAt: changedAt,
-            forecastConflictState: "reviewed_updated",
-            supersededByFoId: null,
-            updatedAt: changedAt,
-          };
-          next.fos = fos;
-          clearConflictIgnoreDecision(forecastTarget, active?.id || null, conflict.foId);
-          recomputeStoredImpactSummary(nextState, forecastTarget);
+          updateForecastConflictFo(next, conflict);
           return next;
         }, "v2:forecast:conflict:update");
         message.success(`FO ${conflict.foId} wurde aktualisiert.`);
@@ -1106,61 +1048,7 @@ export default function ForecastModule(): JSX.Element {
       onOk: async () => {
         await saveWith((current) => {
           const next = ensureAppStateV2(current);
-          const nextState = next as unknown as Record<string, unknown>;
-          ensureForecastContainers(nextState);
-          const forecastTarget = nextState.forecast as Record<string, unknown>;
-          const active = getActiveForecastVersion(forecastTarget as Record<string, unknown>);
-          const fos = Array.isArray(next.fos) ? [...next.fos] as Record<string, unknown>[] : [];
-          const index = fos.findIndex((entry) => String(entry.id || "") === conflict.foId);
-          if (index < 0) {
-            throw new Error("FO nicht gefunden.");
-          }
-          const existing = fos[index];
-          const targetDate = conflict.recommendedArrivalDate || conflict.requiredArrivalDate || String(existing.targetDeliveryDate || "") || null;
-          const schedule = computeFoSchedule({
-            targetDeliveryDate: targetDate,
-            productionLeadTimeDays: existing.productionLeadTimeDays,
-            logisticsLeadTimeDays: existing.logisticsLeadTimeDays,
-            bufferDays: existing.bufferDays,
-          });
-          const changedAt = nowIso();
-          const draftId = randomId("fo");
-          const foNumberSuggestion = suggestNextFoNumber(fos, changedAt);
-          const draftFo = {
-            ...existing,
-            id: draftId,
-            foNo: foNumberSuggestion.foNo,
-            foNumber: foNumberSuggestion.foNumber,
-            status: "DRAFT",
-            units: Math.max(0, Math.round(Number(conflict.recommendedUnits || 0))),
-            targetDeliveryDate: targetDate,
-            orderDate: schedule.orderDate,
-            productionEndDate: schedule.productionEndDate,
-            etdDate: schedule.etdDate,
-            etaDate: schedule.etaDate,
-            deliveryDate: schedule.deliveryDate,
-            convertedPoId: null,
-            convertedPoNo: null,
-            forecastBasisVersionId: active?.id || null,
-            forecastBasisVersionName: active?.name || null,
-            forecastBasisSetAt: changedAt,
-            forecastConflictState: "review_needed",
-            supersedesFoId: String(existing.id || conflict.foId),
-            supersededByFoId: null,
-            createdAt: changedAt,
-            updatedAt: changedAt,
-          };
-
-          fos[index] = {
-            ...existing,
-            forecastConflictState: "superseded",
-            supersededByFoId: draftId,
-            updatedAt: changedAt,
-          };
-          fos.push(draftFo);
-          next.fos = fos;
-          clearConflictIgnoreDecision(forecastTarget, active?.id || null, conflict.foId);
-          recomputeStoredImpactSummary(nextState, forecastTarget);
+          createForecastConflictDraft(next, conflict);
           return next;
         }, "v2:forecast:conflict:draft");
         message.success(`Neue Draft-FO zu ${conflict.foId} erstellt.`);
@@ -1172,21 +1060,7 @@ export default function ForecastModule(): JSX.Element {
     if (conflict.ignored || !activeVersionId) return;
     await saveWith((current) => {
       const next = ensureAppStateV2(current);
-      const nextState = next as unknown as Record<string, unknown>;
-      ensureForecastContainers(nextState);
-      const forecastTarget = nextState.forecast as Record<string, unknown>;
-      const all = (forecastTarget.foConflictDecisionsByVersion && typeof forecastTarget.foConflictDecisionsByVersion === "object")
-        ? { ...(forecastTarget.foConflictDecisionsByVersion as Record<string, Record<string, unknown>>) }
-        : {};
-      const currentDecisionMap = { ...(all[activeVersionId] || {}) };
-      currentDecisionMap[conflict.foId] = {
-        ignored: true,
-        ignoredAt: nowIso(),
-        reason: "manual_ignore",
-      };
-      all[activeVersionId] = currentDecisionMap;
-      forecastTarget.foConflictDecisionsByVersion = all;
-      recomputeStoredImpactSummary(nextState, forecastTarget);
+      ignoreForecastConflict(next, conflict);
       return next;
     }, "v2:forecast:conflict:ignore");
     message.success(`FO ${conflict.foId} für diese Forecast-Version ignoriert.`);
@@ -1252,7 +1126,7 @@ export default function ForecastModule(): JSX.Element {
         <Space wrap>
           {row.original.conflictTypes.map((type) => (
             <Tag key={`${row.original.foId}-${type}`} color={type.includes("late") || type.includes("small") ? "red" : "orange"}>
-              {formatConflictType(type)}
+              {formatForecastConflictType(type)}
             </Tag>
           ))}
         </Space>

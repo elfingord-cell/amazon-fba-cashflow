@@ -195,6 +195,12 @@ function resolveFoArrivalDate(fo: Record<string, unknown>): string | null {
   return null;
 }
 
+function isFoRelevantForConflictReview(fo: Record<string, unknown>): boolean {
+  const conflictState = String(fo.forecastConflictState || "").trim().toLowerCase();
+  if (conflictState === "superseded") return false;
+  return true;
+}
+
 function resolveFoLeadTimeDays(fo: Record<string, unknown>, product: Record<string, unknown> | null, settings: Record<string, unknown>): number {
   const fromFo = Number(fo.productionLeadTimeDays || 0) + Number(fo.logisticsLeadTimeDays || 0) + Number(fo.bufferDays || 0);
   if (Number.isFinite(fromFo) && fromFo > 0) return Math.round(fromFo);
@@ -411,7 +417,7 @@ export function computeForecastImpact(input: ComputeForecastImpactInput): Foreca
     .map((entry) => entry as Record<string, unknown>)
     .filter((fo) => {
       const status = normalizeFoStatus(fo.status);
-      return status === "ACTIVE" || status === "DRAFT";
+      return (status === "ACTIVE" || status === "DRAFT") && isFoRelevantForConflictReview(fo);
     })
     .map((fo) => {
       const foId = String(fo.id || "").trim();

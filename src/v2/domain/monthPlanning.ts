@@ -28,6 +28,7 @@ import {
   type ShortageAcceptanceOverride,
   type ShortageIssueType,
 } from "./pfoShared";
+import { buildForecastConflictSummary } from "./forecastConflictActions";
 
 export type MonthPlanningCheckKey = RobustnessCheckResult["key"] | "forecast_conflicts";
 export type MonthReviewItemType =
@@ -41,6 +42,7 @@ export type MonthReviewItemType =
   | "forecast_conflict_relevant"
   | "master_data_blocking";
 export type MonthReviewItemStatus = "open" | "accepted" | "converted";
+export type MonthReviewActionKind = "inventory_order" | "inventory_risk" | "forecast_conflict" | "specialist";
 
 export interface MonthPlanningCheckResult extends Omit<RobustnessCheckResult, "key"> {
   key: MonthPlanningCheckKey;
@@ -51,6 +53,11 @@ export interface MonthPlanningBlocker extends Omit<RobustnessBlocker, "checkKey"
   foId?: string;
   conflictTypes?: string[];
   sourceKind?: "forecast_missing" | "fo_conflict";
+  currentUnits?: number;
+  currentTargetDeliveryDate?: string;
+  currentEtaDate?: string;
+  recommendedArrivalDate?: string;
+  recommendedUnits?: number;
 }
 
 export interface MonthReviewItem {
@@ -65,6 +72,8 @@ export interface MonthReviewItem {
   route: string;
   sortDate: string;
   overdue: boolean;
+  isOverdue: boolean;
+  actionKind: MonthReviewActionKind;
   sku?: string;
   alias?: string;
   abcClass?: "A" | "B" | "C";
@@ -72,10 +81,15 @@ export interface MonthReviewItem {
   latestOrderDate?: string;
   recommendedOrderDate?: string;
   requiredArrivalDate?: string;
+  recommendedArrivalDate?: string;
   suggestedUnits?: number | null;
   foId?: string;
   conflictTypes?: string[];
+  conflictSummary?: string;
   sourceKind?: "coverage" | "fo_conflict" | "acceptance" | "converted";
+  currentUnits?: number | null;
+  currentTargetDeliveryDate?: string | null;
+  currentEtaDate?: string | null;
 }
 
 export interface MonthPlanningCard {
@@ -207,9 +221,7 @@ function issueTypeToReviewType(issueType: ProjectionSafetyIssueType): MonthRevie
 }
 
 function formatForecastConflictLabel(conflict: OpenForecastConflict): string {
-  const conflictLabel = conflict.conflictTypes.length
-    ? conflict.conflictTypes.join(", ")
-    : "Forecast-Konflikt";
+  const conflictLabel = buildForecastConflictSummary(conflict.conflictTypes) || "Forecast-Konflikt";
   return `${conflict.sku} (${conflict.alias}): ${conflictLabel}.`;
 }
 
@@ -231,7 +243,23 @@ function buildForecastConflictBlockers(month: string, conflicts: OpenForecastCon
     foId: conflict.foId,
     conflictTypes: conflict.conflictTypes.slice(),
     sourceKind: "fo_conflict",
+    currentUnits: conflict.currentUnits,
+    currentTargetDeliveryDate: conflict.currentTargetDeliveryDate || undefined,
+    currentEtaDate: conflict.currentEtaDate || undefined,
+    recommendedArrivalDate: conflict.recommendedArrivalDate || undefined,
+    recommendedUnits: conflict.recommendedUnits,
   }));
+}
+
+function resolveActionKind(type: MonthReviewItemType): MonthReviewActionKind {
+  if (type === "inventory_order_required" || type === "overdue_order_decision") return "inventory_order";
+  if (type === "inventory_risk_acceptance_required") return "inventory_risk";
+  if (type === "forecast_conflict_relevant") return "forecast_conflict";
+  return "specialist";
+}
+
+function isoToday(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function buildForecastConflictCheck(conflicts: OpenForecastConflict[]): MonthPlanningCheckResult {
@@ -282,6 +310,8 @@ function buildOpenInventoryItems(input: {
         : `/v2/inventory/projektion?sku=${encodeURIComponent(entry.sku)}&month=${encodeURIComponent(entry.firstBreachMonth || input.month)}`,
       sortDate: `${entry.firstBreachMonth || input.month}-01`,
       overdue: false,
+      isOverdue: false,
+      actionKind: resolveActionKind(issueTypeToReviewType(entry.issueType)),
       sku: entry.sku,
       alias: entry.alias,
       abcClass: entry.abcClass,
@@ -304,6 +334,8 @@ function buildWorklistReviewItem(month: string, entry: PhantomFoWorklistEntry): 
     route: "/v2/orders/fo",
     sortDate: entry.orderDateIso || entry.latestOrderDate || entry.recommendedOrderDate || entry.requiredArrivalDate || `${entry.orderMonth}-01`,
     overdue: entry.overdue,
+    isOverdue: entry.overdue,
+    actionKind: resolveActionKind(entry.overdue ? "overdue_order_decision" : "inventory_order_required"),
     sku: entry.sku,
     alias: entry.alias,
     abcClass: entry.abcClass,
@@ -329,9 +361,11 @@ function buildFinanceAndDataItems(month: string, blockers: MonthPlanningBlocker[
         title: "Cash-in Setup fehlt",
         detail: blocker.message,
         route: blocker.route,
-        sortDate: `${month}-01`,
-        overdue: false,
-      } satisfies MonthReviewItem];
+      sortDate: `${month}-01`,
+      overdue: false,
+      isOverdue: false,
+      actionKind: "specialist",
+    } satisfies MonthReviewItem];
     }
     if (blocker.checkKey === "fixcost") {
       return [{
@@ -344,9 +378,11 @@ function buildFinanceAndDataItems(month: string, blockers: MonthPlanningBlocker[
         title: "Fixkostenbasis fehlt",
         detail: blocker.message,
         route: blocker.route,
-        sortDate: `${month}-01`,
-        overdue: false,
-      } satisfies MonthReviewItem];
+      sortDate: `${month}-01`,
+      overdue: false,
+      isOverdue: false,
+      actionKind: "specialist",
+    } satisfies MonthReviewItem];
     }
     if (blocker.checkKey === "vat") {
       return [{
@@ -359,9 +395,11 @@ function buildFinanceAndDataItems(month: string, blockers: MonthPlanningBlocker[
         title: "USt-/Tax-Basis fehlt",
         detail: blocker.message,
         route: blocker.route,
-        sortDate: `${month}-01`,
-        overdue: false,
-      } satisfies MonthReviewItem];
+      sortDate: `${month}-01`,
+      overdue: false,
+      isOverdue: false,
+      actionKind: "specialist",
+    } satisfies MonthReviewItem];
     }
     if (blocker.checkKey === "revenue_inputs") {
       const type = blocker.message.includes("Stammdaten unvollständig")
@@ -377,14 +415,18 @@ function buildFinanceAndDataItems(month: string, blockers: MonthPlanningBlocker[
         title: blocker.sku ? `${blocker.sku} (${blocker.alias || blocker.sku})` : "Produktdaten prüfen",
         detail: blocker.message,
         route: blocker.route,
-        sortDate: `${month}-01`,
-        overdue: false,
-        sku: blocker.sku,
-        alias: blocker.alias,
-        abcClass: blocker.abcClass,
+      sortDate: `${month}-01`,
+      overdue: false,
+      isOverdue: false,
+      actionKind: "specialist",
+      sku: blocker.sku,
+      alias: blocker.alias,
+      abcClass: blocker.abcClass,
       } satisfies MonthReviewItem];
     }
     if (blocker.checkKey === "forecast_conflicts") {
+      const latestOrderDate = blocker.latestOrderDate;
+      const isOverdue = Boolean(latestOrderDate && latestOrderDate < isoToday());
       return [{
         id: `forecast-conflict:${month}:${blocker.foId || index}`,
         type: "forecast_conflict_relevant",
@@ -393,19 +435,27 @@ function buildFinanceAndDataItems(month: string, blockers: MonthPlanningBlocker[
         month,
         impactMonth: month,
         title: blocker.sku ? `${blocker.sku} (${blocker.alias || blocker.sku})` : "Forecast-Konflikt",
-        detail: blocker.message,
+        detail: `Bestehende FO passt nicht mehr zum Forecast. ${buildForecastConflictSummary(blocker.conflictTypes) || blocker.message}`,
         route: blocker.route,
         sortDate: blocker.recommendedOrderDate || blocker.latestOrderDate || blocker.requiredArrivalDate || `${month}-01`,
-        overdue: false,
+        overdue: isOverdue,
+        isOverdue,
+        actionKind: "forecast_conflict",
         sku: blocker.sku,
         alias: blocker.alias,
         abcClass: blocker.abcClass,
         latestOrderDate: blocker.latestOrderDate,
         recommendedOrderDate: blocker.recommendedOrderDate,
         requiredArrivalDate: blocker.requiredArrivalDate,
+        recommendedArrivalDate: blocker.recommendedArrivalDate,
         foId: blocker.foId,
         conflictTypes: blocker.conflictTypes,
+        conflictSummary: buildForecastConflictSummary(blocker.conflictTypes),
         sourceKind: blocker.sourceKind === "fo_conflict" ? "fo_conflict" : "coverage",
+        suggestedUnits: blocker.recommendedUnits != null ? blocker.recommendedUnits : null,
+        currentUnits: blocker.currentUnits ?? null,
+        currentTargetDeliveryDate: blocker.currentTargetDeliveryDate || null,
+        currentEtaDate: blocker.currentEtaDate || null,
       } satisfies MonthReviewItem];
     }
     return [];
@@ -431,6 +481,8 @@ function buildAcceptedItems(month: string, acceptances: Map<string, ShortageAcce
         route: "/v2/sku-planung",
         sortDate: `${entry.acceptedFromMonth}-01`,
         overdue: false,
+        isOverdue: false,
+        actionKind: "inventory_risk",
         sku: entry.sku,
         issueType: entry.reason,
         sourceKind: "acceptance",
@@ -456,6 +508,8 @@ function buildConvertedItems(month: string, decisions: Map<string, PfoWorklistDe
       route: "/v2/orders/fo",
       sortDate: `${entry.orderMonth || month}-01`,
       overdue: false,
+      isOverdue: false,
+      actionKind: "inventory_order",
       sku: entry.sku,
       issueType: entry.issueType,
       sourceKind: "converted",
