@@ -1137,7 +1137,7 @@ export default function DashboardModule(): JSX.Element {
     const amazonCoreSeriesName = "Amazon Kern";
     const amazonPlannedSeriesName = "Amazon Plan";
     const amazonNewSeriesName = "Amazon Neu";
-    const phantomFoSeriesName = "Phantom FO";
+    const phantomFoSeriesName = "PFO Simulation";
     const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
     const { firstUnreliableIndex, dashedChainByIndex } = closingLineReliability;
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
@@ -1613,7 +1613,7 @@ export default function DashboardModule(): JSX.Element {
           ...(showPhantomFoInChart
             ? [{
               key: "outflows-phantom-fo",
-              label: "Phantom FO",
+              label: "PFO Simulation",
               rowType: "category" as const,
               values: values((month) => -(outflowSplitByMonth.get(month)?.phantomFo || 0)),
               children: outflowOrderRowsByCategory.phantom.length ? outflowOrderRowsByCategory.phantom : undefined,
@@ -2183,10 +2183,10 @@ export default function DashboardModule(): JSX.Element {
           <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
           <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
           <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-          {phantomFoSuggestions.length ? <Tag color="gold">PFO: {phantomFoSuggestions.length}</Tag> : null}
+          {phantomFoSuggestions.length ? <Tag color="gold">Offene PFO: {phantomFoSuggestions.length}</Tag> : null}
         </div>
         <Space size={8} align="center" style={{ marginBottom: 8 }} wrap>
-          <Text>Simulation: Phantom-FO anzeigen</Text>
+          <Text>Simulation: PFOs im Cashflow anzeigen</Text>
           <Switch
             size="small"
             checked={showPhantomFoInChart}
@@ -2197,6 +2197,9 @@ export default function DashboardModule(): JSX.Element {
             }}
           />
         </Space>
+        <Text type="secondary" className="v2-dashboard-chart-hint">
+          Robustheit und Coverage bleiben immer im Realzustand; der Schalter wirkt nur auf die Cashflow-Simulation.
+        </Text>
         <Text type="secondary" className="v2-dashboard-chart-hint">
           Klick auf Monat oder Balken für Details. Legende ist scrollbar.
         </Text>

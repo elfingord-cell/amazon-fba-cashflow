@@ -42,13 +42,18 @@ import {
 import { buildCategoryOrderMap, compareCategoryLabels, sortCategoryGroups } from "../../domain/categoryOrder";
 import { ensureForecastVersioningContainers, getActiveForecastLabel } from "../../domain/forecastVersioning";
 import {
-  buildDashboardRobustness,
-  type RobustnessCoverageOrderDutyIssue,
-} from "../../domain/dashboardRobustness";
-import {
   buildFoRecommendationContext,
   computeFoRecommendationForSku,
 } from "../../domain/orderUtils";
+import {
+  buildPhantomFoWorklist,
+  type PhantomFoWorklistEntry,
+} from "../../domain/phantomFo";
+import {
+  buildShortageAcceptanceStorageKey,
+  shortageAcceptActionLabel,
+  type ShortageIssueType,
+} from "../../domain/pfoShared";
 import { ensureAppStateV2 } from "../../state/appState";
 import {
   getModuleExpandedCategoryKeys,
@@ -68,7 +73,6 @@ type InventoryView = "snapshot" | "projection" | "both";
 type ProjectionRiskFilter = "all" | "oos" | "under_safety";
 type ProjectionAbcFilter = "all" | "a" | "b" | "ab" | "abc";
 type SnapshotUnitsField = "amazonUnits" | "threePLUnits";
-type ShortageIssueType = "stock_oos" | "stock_under_safety";
 const PROJECTION_HORIZON_OPTIONS = [6, 12, 18] as const;
 
 export interface InventoryModuleProps {
@@ -163,40 +167,6 @@ interface MonthUrgencyData {
   oosCount: number;
   underSafetyCount: number;
   criticalSkus: Set<string>;
-}
-
-interface ShortageAcceptanceOverride {
-  sku: string;
-  reason: ShortageIssueType;
-  acceptedFromMonth: string;
-  acceptedUntilMonth: string;
-  durationMonths: number;
-}
-
-interface PfoWorklistDecision {
-  id: string;
-  sku: string;
-  issueType: ShortageIssueType;
-  firstRiskMonth: string;
-  orderMonth: string;
-  decision: "fo_converted";
-  decidedAt: string | null;
-  source: string;
-}
-
-interface PfoWorklistEntry {
-  key: string;
-  sku: string;
-  alias: string;
-  abcClass: "A" | "B" | "C" | null;
-  issueType: ShortageIssueType;
-  firstRiskMonth: string;
-  orderMonth: string;
-  riskClass: "safety-negative" | "safety-low";
-  suggestedUnits: number;
-  latestOrderDate: string | null;
-  requiredArrivalDate: string | null;
-  recommendedOrderDate: string | null;
 }
 
 interface VirtualPlanProductEntry {
@@ -594,150 +564,6 @@ function normalizeAbcClass(value: string | null | undefined): "A" | "B" | "C" | 
   return null;
 }
 
-function normalizeIsoDate(value: unknown): string | null {
-  const text = String(value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  return text;
-}
-
-function normalizeShortageIssueType(value: unknown): ShortageIssueType | null {
-  const text = String(value || "").trim().toLowerCase();
-  if (text === "stock_oos") return "stock_oos";
-  if (text === "stock_under_safety") return "stock_under_safety";
-  return null;
-}
-
-function buildShortageAcceptanceStorageKey(input: {
-  sku: string;
-  reason: ShortageIssueType;
-  acceptedFromMonth: string;
-}): string {
-  return `${String(input.sku || "").trim().toLowerCase()}::${input.reason}::${input.acceptedFromMonth}`;
-}
-
-function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride[]> {
-  const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
-    ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
-    : {};
-  const map = new Map<string, ShortageAcceptanceOverride[]>();
-  Object.entries(rawBySku).forEach(([key, raw]) => {
-    if (!raw || typeof raw !== "object") return;
-    const entry = raw as Record<string, unknown>;
-    const keySku = String(key || "").includes("::") ? String(key).split("::")[0] : key;
-    const sku = String(entry.sku || keySku || "").trim();
-    const skuKey = sku.toLowerCase();
-    if (!sku || !skuKey) return;
-    const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
-    if (!reason) return;
-    const acceptedFromMonth = normalizeMonthKey(entry.acceptedFromMonth || entry.startMonth || entry.firstRiskMonth);
-    if (!acceptedFromMonth) return;
-    const durationMonths = Math.max(1, Math.round(Number(entry.durationMonths || 1)));
-    const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
-      || addMonths(acceptedFromMonth, durationMonths - 1);
-    if (!acceptedUntilMonth) return;
-    const list = map.get(skuKey) || [];
-    const duplicateIndex = list.findIndex((current) => (
-      current.reason === reason
-      && current.acceptedFromMonth === acceptedFromMonth
-    ));
-    const nextEntry: ShortageAcceptanceOverride = {
-      sku,
-      reason,
-      acceptedFromMonth,
-      acceptedUntilMonth,
-      durationMonths,
-    };
-    if (duplicateIndex >= 0) list[duplicateIndex] = nextEntry;
-    else list.push(nextEntry);
-    list.sort((left, right) => {
-      const byStart = left.acceptedFromMonth.localeCompare(right.acceptedFromMonth);
-      if (byStart !== 0) return byStart;
-      const byEnd = left.acceptedUntilMonth.localeCompare(right.acceptedUntilMonth);
-      if (byEnd !== 0) return byEnd;
-      return left.reason.localeCompare(right.reason);
-    });
-    map.set(skuKey, list);
-  });
-  return map;
-}
-
-function hasActiveShortageAcceptance(input: {
-  acceptanceBySku: Map<string, ShortageAcceptanceOverride[]>;
-  sku: string;
-  month: string;
-  issueType: ShortageIssueType;
-}): boolean {
-  const skuKey = String(input.sku || "").trim().toLowerCase();
-  if (!skuKey) return false;
-  const month = normalizeMonthKey(input.month);
-  if (!month) return false;
-  const acceptances = input.acceptanceBySku.get(skuKey) || [];
-  return acceptances.some((entry) => {
-    if (entry.reason !== input.issueType) return false;
-    return month >= entry.acceptedFromMonth && month <= entry.acceptedUntilMonth;
-  });
-}
-
-function buildPfoWorklistKey(input: {
-  sku: string;
-  issueType: ShortageIssueType;
-  orderMonth: string;
-  firstRiskMonth: string;
-}): string {
-  return `${String(input.sku || "").trim().toLowerCase()}|${input.issueType}|${input.orderMonth}|${input.firstRiskMonth}`;
-}
-
-function resolvePfoWorklistDecisionById(settings: Record<string, unknown>): Map<string, PfoWorklistDecision> {
-  const rawById = (settings.phantomFoWorklistDecisionById && typeof settings.phantomFoWorklistDecisionById === "object")
-    ? settings.phantomFoWorklistDecisionById as Record<string, unknown>
-    : {};
-  const map = new Map<string, PfoWorklistDecision>();
-  Object.entries(rawById).forEach(([id, raw]) => {
-    if (!raw || typeof raw !== "object") return;
-    const entry = raw as Record<string, unknown>;
-    const normalizedId = String(entry.id || id || "").trim();
-    if (!normalizedId) return;
-    const issueType = normalizeShortageIssueType(entry.issueType || entry.reason);
-    const orderMonth = normalizeMonthKey(entry.orderMonth);
-    const firstRiskMonth = normalizeMonthKey(entry.firstRiskMonth);
-    const decision = String(entry.decision || "").trim().toLowerCase();
-    if (!issueType || !orderMonth || !firstRiskMonth || decision !== "fo_converted") return;
-    map.set(normalizedId, {
-      id: normalizedId,
-      sku: String(entry.sku || "").trim(),
-      issueType,
-      orderMonth,
-      firstRiskMonth,
-      decision: "fo_converted",
-      decidedAt: String(entry.decidedAt || "").trim() || null,
-      source: String(entry.source || ""),
-    });
-  });
-  return map;
-}
-
-function resolvePfoOrderDate(issue: RobustnessCoverageOrderDutyIssue): string | null {
-  return normalizeIsoDate(issue.recommendedOrderDate) || normalizeIsoDate(issue.latestOrderDate);
-}
-
-function comparePfoWorklistOrder(left: PfoWorklistEntry, right: PfoWorklistEntry): number {
-  const leftOrderDate = normalizeIsoDate(left.recommendedOrderDate) || normalizeIsoDate(left.latestOrderDate);
-  const rightOrderDate = normalizeIsoDate(right.recommendedOrderDate) || normalizeIsoDate(right.latestOrderDate);
-  if (leftOrderDate && rightOrderDate) {
-    const byOrderDate = leftOrderDate.localeCompare(rightOrderDate);
-    if (byOrderDate !== 0) return byOrderDate;
-  } else if (leftOrderDate) {
-    return -1;
-  } else if (rightOrderDate) {
-    return 1;
-  }
-  const byOrderMonth = left.orderMonth.localeCompare(right.orderMonth);
-  if (byOrderMonth !== 0) return byOrderMonth;
-  const byRiskMonth = left.firstRiskMonth.localeCompare(right.firstRiskMonth);
-  if (byRiskMonth !== 0) return byRiskMonth;
-  return left.sku.localeCompare(right.sku, "de-DE", { sensitivity: "base" });
-}
-
 function matchesAbcFilter(abcClass: string | null, filter: ProjectionAbcFilter): boolean {
   if (filter === "all") return true;
   const normalized = normalizeAbcClass(abcClass);
@@ -813,6 +639,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [highlightSku, setHighlightSku] = useState<string | null>(null);
   const [actionIntent, setActionIntent] = useState<ProjectionActionIntent | null>(null);
   const [acceptingPfoKey, setAcceptingPfoKey] = useState<string>("");
+  const [acceptDurationByPfoId, setAcceptDurationByPfoId] = useState<Record<string, 1 | 2>>({});
   const [threePlImportOpen, setThreePlImportOpen] = useState(false);
   const [threePlImportDate, setThreePlImportDate] = useState<Dayjs>(() => defaultThreePlSnapshotDate());
   const [threePlPasteText, setThreePlPasteText] = useState("");
@@ -1264,20 +1091,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
       plannedSalesBySku,
     };
   }, [state.forecast, state.inventory, state.pos, state.fos, stateObject, virtualPlanForecastBySku]);
-  const shortageAcceptancesBySku = useMemo(
-    () => resolveShortageAcceptancesBySku(settings),
-    [settings],
-  );
-  const pfoWorklistDecisionById = useMemo(
-    () => resolvePfoWorklistDecisionById(settings),
-    [settings],
-  );
   const pfoSourceMonths = useMemo(
     () => monthRange(projectionBaseMonth, 18),
-    [projectionBaseMonth],
-  );
-  const pfoWindowEndMonth = useMemo(
-    () => addMonths(projectionBaseMonth, 5),
     [projectionBaseMonth],
   );
 
@@ -1415,68 +1230,15 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   }, [projectionBaseGroups, projectionCriticalSkuSet, selectedUrgencyMonth]);
   const pfoWorklist = useMemo<PfoWorklistEntry[]>(() => {
     if (!showProjection || !pfoSourceMonths.length) return [];
-    const robustness = buildDashboardRobustness({
+    return buildPhantomFoWorklist({
       state: stateObject,
+      baseMonth: projectionBaseMonth,
+      windowMonths: 6,
       months: pfoSourceMonths,
     });
-    const dedupedByKey = new Map<string, PfoWorklistEntry>();
-    robustness.months.forEach((monthEntry) => {
-      monthEntry.coverage.orderDutyIssues.forEach((issue) => {
-        const sku = String(issue.sku || "").trim();
-        if (!sku) return;
-        const issueType = normalizeShortageIssueType(issue.issueType);
-        const orderMonth = normalizeMonthKey(issue.orderMonth);
-        const firstRiskMonth = normalizeMonthKey(issue.firstRiskMonth);
-        if (!issueType || !orderMonth || !firstRiskMonth) return;
-        if (orderMonth < projectionBaseMonth || orderMonth > pfoWindowEndMonth) return;
-        if (hasActiveShortageAcceptance({
-          acceptanceBySku: shortageAcceptancesBySku,
-          sku,
-          month: projectionBaseMonth,
-          issueType,
-        })) return;
-        if (hasActiveShortageAcceptance({
-          acceptanceBySku: shortageAcceptancesBySku,
-          sku,
-          month: firstRiskMonth,
-          issueType,
-        })) return;
-        const key = buildPfoWorklistKey({
-          sku,
-          issueType,
-          orderMonth,
-          firstRiskMonth,
-        });
-        if (pfoWorklistDecisionById.get(key)?.decision === "fo_converted") return;
-        if (dedupedByKey.has(key)) return;
-        const latestOrderDate = normalizeIsoDate(issue.latestOrderDate);
-        const recommendedOrderDate = resolvePfoOrderDate(issue);
-        const entry: PfoWorklistEntry = {
-          key,
-          sku,
-          alias: String(issue.alias || sku),
-          abcClass: normalizeAbcClass(issue.abcClass),
-          issueType,
-          firstRiskMonth,
-          orderMonth,
-          riskClass: issueType === "stock_oos" ? "safety-negative" : "safety-low",
-          suggestedUnits: Math.max(0, Math.round(Number(issue.shortageUnits || 0))),
-          latestOrderDate,
-          requiredArrivalDate: normalizeIsoDate(issue.requiredArrivalDate) || monthStartIso(firstRiskMonth),
-          recommendedOrderDate,
-        };
-        dedupedByKey.set(key, entry);
-      });
-    });
-    const entries = Array.from(dedupedByKey.values());
-    entries.sort(comparePfoWorklistOrder);
-    return entries;
   }, [
     pfoSourceMonths,
-    pfoWindowEndMonth,
-    pfoWorklistDecisionById,
     projectionBaseMonth,
-    shortageAcceptancesBySku,
     showProjection,
     state.fos,
     state.forecast,
@@ -1683,13 +1445,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   }, [navigate]);
   const acceptPfoRisk = useCallback(async (entry: PfoWorklistEntry): Promise<void> => {
     const sku = String(entry.sku || "").trim();
-    const issueType = normalizeShortageIssueType(entry.issueType);
+    const issueType: ShortageIssueType = entry.issueType === "stock_oos" ? "stock_oos" : "stock_under_safety";
     const firstRiskMonth = normalizeMonthKey(entry.firstRiskMonth);
-    if (!sku || !issueType || !firstRiskMonth) return;
+    const durationMonths: 1 | 2 = acceptDurationByPfoId[entry.key] === 2 ? 2 : 1;
+    if (!sku || !firstRiskMonth) return;
     const todayMonth = currentMonthKey();
     const acceptedFromMonth = firstRiskMonth < todayMonth ? todayMonth : firstRiskMonth;
-    const acceptedUntilMonth = acceptedFromMonth;
-    const durationMonths = 1;
+    const acceptedUntilMonth = addMonths(acceptedFromMonth, durationMonths - 1);
     const acceptanceKey = buildShortageAcceptanceStorageKey({
       sku,
       reason: issueType,
@@ -1730,7 +1492,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     } finally {
       setAcceptingPfoKey("");
     }
-  }, [saveWith]);
+  }, [acceptDurationByPfoId, saveWith]);
 
   function renderProjectionActionMenu(intent: ProjectionActionIntent): JSX.Element {
     return (
@@ -2839,7 +2601,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                 <Tag color={pfoWorklist.length ? "gold" : "green"}>
                   {pfoWorklist.length} PFO(s)
                 </Tag>
-                <Tag color="blue">Sortierung: Bestellen bis aufsteigend</Tag>
+                <Tag color="blue">Sortierung: Bestelldatum / Monat aufsteigend</Tag>
+                <Tag color="default">Überfällige PFOs bleiben sichtbar</Tag>
               </Space>
               {pfoWorklist.length ? (
                 <Button
@@ -2853,7 +2616,7 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             </div>
 
             {!pfoWorklist.length ? (
-              <Text type="secondary">Keine PFOs mit Bestellmonat im aktuellen 6-Monats-Fenster.</Text>
+              <Text type="secondary">Keine offenen PFOs im aktuellen 6-Monats-Fenster oder als überfälliger Fall.</Text>
             ) : (
               <StatsTableShell>
                 <table className="v2-stats-table" data-layout="auto">
@@ -2881,13 +2644,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                         <td>{entry.abcClass || "—"}</td>
                         <td>{formatMonthLabel(entry.firstRiskMonth)}</td>
                         <td>
-                          {entry.riskClass === "safety-negative"
+                          {entry.issueType === "stock_oos"
                             ? <Tag color="red">OOS / ≤ 0</Tag>
                             : <Tag color="gold">Unter Safety</Tag>}
                         </td>
                         <td>{formatInt(entry.suggestedUnits)}</td>
                         <td>{formatDate(entry.requiredArrivalDate)}</td>
-                        <td>{formatDate(entry.recommendedOrderDate || entry.latestOrderDate)}</td>
+                        <td>{formatDate(entry.orderDateIso || entry.recommendedOrderDate || entry.latestOrderDate)}</td>
                         <td>
                           <Space size={8}>
                             <Button size="small" type="primary" onClick={() => navigateToPfoWorklistFo(entry)}>
@@ -2898,8 +2661,24 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                               onClick={() => { void acceptPfoRisk(entry); }}
                               loading={acceptingPfoKey === entry.key}
                             >
-                              Risiko akzeptieren
+                              {shortageAcceptActionLabel(entry.issueType)}
                             </Button>
+                            <Select
+                              size="small"
+                              style={{ width: 132 }}
+                              value={acceptDurationByPfoId[entry.key] === 2 ? 2 : 1}
+                              onChange={(value) => {
+                                const duration: 1 | 2 = Number(value) === 2 ? 2 : 1;
+                                setAcceptDurationByPfoId((current) => ({
+                                  ...current,
+                                  [entry.key]: duration,
+                                }));
+                              }}
+                              options={[
+                                { value: 1, label: "für 1 Monat" },
+                                { value: 2, label: "für 2 Monate" },
+                              ]}
+                            />
                           </Space>
                         </td>
                       </tr>

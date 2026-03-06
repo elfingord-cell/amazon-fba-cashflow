@@ -26,6 +26,15 @@ import { normalizeIncludeInForecast } from "../../../domain/portfolioBuckets.js"
 import { buildPhantomFoSuggestions, type PhantomFoSuggestion } from "../../domain/phantomFo";
 import { addMonths, currentMonthKey, formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
 import { getActiveForecastLabel } from "../../domain/forecastVersioning";
+import {
+  buildShortageAcceptanceStorageKey,
+  hasActiveShortageAcceptance,
+  resolveShortageAcceptancesBySku,
+  shortageAcceptActionLabel,
+  shortageAcceptanceTagLabel,
+  type ShortageAcceptanceOverride,
+  type ShortageIssueType,
+} from "../../domain/pfoShared";
 import { useWorkspaceState } from "../../state/workspace";
 import { v2ChartPalette, v2SkuPlanningChartColors } from "../../app/chartPalette";
 
@@ -35,7 +44,6 @@ type PlanningViewMode = "units" | "doh";
 type PlanningAbcScope = "abc" | "ab" | "a";
 type RiskStatus = "ok" | "under_safety" | "oos";
 type PlanningEventType = "po" | "fo" | "phantom";
-type ShortageIssueType = "stock_oos" | "stock_under_safety";
 
 interface PlanningSettings {
   horizonMonths: 6 | 12 | 18;
@@ -128,14 +136,6 @@ interface MonthEvent {
   phantomEntryId: string | null;
 }
 
-interface ShortageAcceptanceOverride {
-  sku: string;
-  reason: ShortageIssueType;
-  acceptedFromMonth: string;
-  acceptedUntilMonth: string;
-  durationMonths: number;
-}
-
 function normalizeSku(value: unknown): string {
   return String(value || "").trim();
 }
@@ -185,96 +185,6 @@ function monthStartIso(month: string): string | null {
   const normalized = normalizeMonthKey(month);
   if (!normalized) return null;
   return `${normalized}-01`;
-}
-
-function normalizeShortageIssueType(value: unknown): ShortageIssueType | null {
-  const text = String(value || "").trim().toLowerCase();
-  if (text === "stock_oos") return "stock_oos";
-  if (text === "stock_under_safety") return "stock_under_safety";
-  return null;
-}
-
-function buildShortageAcceptanceStorageKey(input: {
-  sku: string;
-  reason: ShortageIssueType;
-  acceptedFromMonth: string;
-}): string {
-  return `${normalizeSku(input.sku).toLowerCase()}::${input.reason}::${input.acceptedFromMonth}`;
-}
-
-function resolveShortageAcceptancesBySku(settings: Record<string, unknown>): Map<string, ShortageAcceptanceOverride[]> {
-  const rawBySku = (settings.phantomFoShortageAcceptBySku && typeof settings.phantomFoShortageAcceptBySku === "object")
-    ? settings.phantomFoShortageAcceptBySku as Record<string, unknown>
-    : {};
-  const map = new Map<string, ShortageAcceptanceOverride[]>();
-  Object.entries(rawBySku).forEach(([key, raw]) => {
-    if (!raw || typeof raw !== "object") return;
-    const entry = raw as Record<string, unknown>;
-    const keySku = String(key || "").includes("::") ? String(key).split("::")[0] : key;
-    const sku = normalizeSku(entry.sku || keySku);
-    const skuKey = sku.toLowerCase();
-    if (!sku || !skuKey) return;
-    const reason = normalizeShortageIssueType(entry.reason || entry.issueType);
-    if (!reason) return;
-    const acceptedFromMonth = normalizeMonthKey(entry.acceptedFromMonth || entry.startMonth || entry.firstRiskMonth);
-    if (!acceptedFromMonth) return;
-    const durationMonths = Math.max(1, Math.round(Number(entry.durationMonths || 1)));
-    const acceptedUntilMonth = normalizeMonthKey(entry.acceptedUntilMonth || entry.untilMonth)
-      || addMonths(acceptedFromMonth, durationMonths - 1);
-    if (!acceptedUntilMonth) return;
-    const list = map.get(skuKey) || [];
-    const duplicateIndex = list.findIndex((current) => (
-      current.reason === reason
-      && current.acceptedFromMonth === acceptedFromMonth
-    ));
-    const nextEntry: ShortageAcceptanceOverride = {
-      sku,
-      reason,
-      acceptedFromMonth,
-      acceptedUntilMonth,
-      durationMonths,
-    };
-    if (duplicateIndex >= 0) list[duplicateIndex] = nextEntry;
-    else list.push(nextEntry);
-    list.sort((left, right) => {
-      const byStart = left.acceptedFromMonth.localeCompare(right.acceptedFromMonth);
-      if (byStart !== 0) return byStart;
-      const byEnd = left.acceptedUntilMonth.localeCompare(right.acceptedUntilMonth);
-      if (byEnd !== 0) return byEnd;
-      return left.reason.localeCompare(right.reason);
-    });
-    map.set(skuKey, list);
-  });
-  return map;
-}
-
-function shortageAcceptanceTagLabel(acceptance: ShortageAcceptanceOverride): string {
-  const reasonText = acceptance.reason === "stock_oos" ? "OOS akzeptiert" : "Unter Safety akzeptiert";
-  const duration = Math.max(1, Math.round(Number(acceptance.durationMonths || 1)));
-  const durationText = duration === 1 ? "1 Monat" : `${duration} Monate`;
-  return `${reasonText} (${durationText})`;
-}
-
-function shortageAcceptActionLabel(issueType: ShortageIssueType): string {
-  return issueType === "stock_oos" ? "OOS akzeptieren" : "Unter Safety akzeptieren";
-}
-
-function hasActiveShortageAcceptance(input: {
-  acceptanceBySku: Map<string, ShortageAcceptanceOverride[]>;
-  sku: string;
-  month: string;
-  issueType: ShortageIssueType;
-}): boolean {
-  const skuKey = normalizeSku(input.sku).toLowerCase();
-  if (!skuKey) return false;
-  const month = normalizeMonthKey(input.month);
-  if (!month) return false;
-  const acceptances = input.acceptanceBySku.get(skuKey) || [];
-  return acceptances.some((acceptance) => {
-    if (acceptance.reason !== input.issueType) return false;
-    if (month < acceptance.acceptedFromMonth || month > acceptance.acceptedUntilMonth) return false;
-    return true;
-  });
 }
 
 function formatInt(value: unknown): string {

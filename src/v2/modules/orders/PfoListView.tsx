@@ -4,7 +4,11 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "../../components/DataTable";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { formatMonthLabel, normalizeMonthKey } from "../../domain/months";
-import { buildPhantomFoSuggestions, type PhantomFoSuggestion } from "../../domain/phantomFo";
+import {
+  buildPhantomFoSuggestions,
+  resolvePhantomFoOrderDateIso,
+  type PhantomFoSuggestion,
+} from "../../domain/phantomFo";
 import { useWorkspaceState } from "../../state/workspace";
 
 const { Paragraph } = Typography;
@@ -75,12 +79,6 @@ function formatUnits(value: number): string {
   return Math.max(0, Math.round(value)).toLocaleString("de-DE");
 }
 
-function resolveOrderDateIso(suggestion: PhantomFoSuggestion): string | null {
-  return normalizeIsoDate(suggestion.recommendedOrderDate)
-    || normalizeIsoDate(suggestion.latestOrderDate)
-    || normalizeIsoDate((suggestion.foRecord || {}).orderDate);
-}
-
 function resolveStatusHint(orderDateIso: string | null, todayIso: string): string {
   if (!orderDateIso) return "Kein Bestelldatum";
   if (orderDateIso < todayIso) return "Bestelldatum in Vergangenheit";
@@ -111,7 +109,7 @@ export default function PfoListView(): JSX.Element {
     return buildPhantomFoSuggestions({ state: stateObject })
       .map((suggestion) => {
         const supplierId = String(suggestion.supplierId || (suggestion.foRecord || {}).supplierId || "").trim();
-        const orderDateIso = resolveOrderDateIso(suggestion);
+        const orderDateIso = resolvePhantomFoOrderDateIso(suggestion);
         const orderMonth = normalizeMonthKey(suggestion.orderMonth) || monthFromIsoDate(orderDateIso);
         const arrivalMonth = normalizeMonthKey(monthFromIsoDate(suggestion.requiredArrivalDate) || suggestion.firstRiskMonth);
         const units = Math.max(0, Math.round(Number(suggestion.suggestedUnits || 0)));
