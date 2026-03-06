@@ -54,7 +54,7 @@ function getForecastEntry(state, sku, month) {
   return Number.isFinite(units) ? { units } : null;
 }
 
-function buildDeBruttoItems(state, month, grossDe) {
+function collectRevenueBreakdownBase(state, month) {
   const products = Array.isArray(state?.products) ? state.products : [];
   const categories = Array.isArray(state?.productCategories) ? state.productCategories : [];
   const categoryMap = new Map(categories.map(cat => [String(cat.id), cat.name]));
@@ -86,8 +86,9 @@ function buildDeBruttoItems(state, month, grossDe) {
 
   if (!rawItems.length) {
     return {
-      items: [{ label: "Umsatz (Eingaben)", amount: grossDe }],
+      items: [],
       notes: "Keine SKU-Aufschlüsselung verfügbar.",
+      revenueBaseTotal: 0,
     };
   }
 
@@ -112,18 +113,31 @@ function buildDeBruttoItems(state, month, grossDe) {
     notes = "Zu viele SKUs – Aggregation je Kategorie.";
   }
 
-  const totalRevenue = grouped.reduce((sum, item) => sum + (item.revenue || 0), 0);
-  if (!totalRevenue) {
+  const revenueBaseTotal = grouped.reduce((sum, item) => sum + (item.revenue || 0), 0);
+  if (!revenueBaseTotal) {
     return {
-      items: [{ label: "Umsatz (Eingaben)", amount: grossDe }],
+      items: [],
       notes: "Keine SKU-Aufschlüsselung verfügbar.",
+      revenueBaseTotal: 0,
     };
   }
 
-  const items = grouped.map(item => ({
+  return { items: grouped, notes, revenueBaseTotal };
+}
+
+function buildDeBruttoItems(state, month, grossDe) {
+  const breakdownBase = collectRevenueBreakdownBase(state, month);
+  if (!breakdownBase.revenueBaseTotal) {
+    return {
+      items: [{ label: "Umsatz (Eingaben)", amount: grossDe }],
+      notes: breakdownBase.notes,
+    };
+  }
+
+  const items = breakdownBase.items.map(item => ({
     label: item.sku,
     sublabel: item.alias || "",
-    amount: grossDe * (item.revenue / totalRevenue),
+    amount: grossDe * (item.revenue / breakdownBase.revenueBaseTotal),
     meta: {
       units: item.units,
       price: item.price,
@@ -131,7 +145,7 @@ function buildDeBruttoItems(state, month, grossDe) {
     },
   }));
 
-  return { items, notes };
+  return { items, notes: breakdownBase.notes };
 }
 
 function buildRefundItems(entries) {
@@ -157,11 +171,20 @@ function buildRefundItems(entries) {
 export function computeVatPreview(state) {
   const series = computeSeries(state || {});
   const months = series.months;
+  const forecastRevenueByMonth = Object.fromEntries(
+    months.map((month) => {
+      const breakdownBase = collectRevenueBreakdownBase(state, month);
+      return [month, Number(breakdownBase.revenueBaseTotal || 0)];
+    }),
+  );
 
   const rows = months.map((m, idx) => {
     const cfg = getMonthConfig(m, state);
     const revRow = (state?.incomings || []).find(r => r.month === m);
-    const grossTotal = parseEuro(revRow?.revenueEur);
+    const manualGrossTotal = parseEuro(revRow?.revenueEur);
+    const grossTotal = manualGrossTotal > 0
+      ? manualGrossTotal
+      : Number(forecastRevenueByMonth[m] || 0);
     const grossDe = grossTotal * cfg.deShare;
     const outVat = grossDe / 1.19 * 0.19;
     const feeInputVat = (grossTotal * cfg.feeRateOfGross) / 1.19 * 0.19;

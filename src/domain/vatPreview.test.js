@@ -98,3 +98,40 @@ test("uses monthly overrides and EUSt refunds", () => {
   const refundMonth = res.rows.find(r => r.eustRefund > 0);
   assert.ok(refundMonth, "EUSt refund populated");
 });
+
+test("falls back to forecast-based gross revenue when month revenue input is missing", () => {
+  const state = cloneState();
+  state.settings.startMonth = "2026-01";
+  state.settings.horizonMonths = 4;
+  state.settings.cashInCalibrationEnabled = false;
+  state.settings.cashInRevenueBasisMode = "forecast_direct";
+  state.settings.cashInQuoteMode = "recommendation";
+  state.settings.cashInRecommendationSeasonalityEnabled = false;
+  state.settings.cashInRecommendationBaselineNormalPct = 50;
+  state.incomings = [
+    { month: "2026-01", revenueEur: "1.000" },
+    { month: "2026-02", revenueEur: "2.000" },
+    { month: "2026-04", revenueEur: "4.000" },
+  ];
+  state.products = [
+    { sku: "SKU-1", alias: "SKU-1", avgSellingPriceGrossEUR: 100 },
+  ];
+  state.forecast = {
+    forecastManual: {
+      "SKU-1": {
+        "2026-01": 10,
+        "2026-02": 20,
+        "2026-03": 30,
+        "2026-04": 40,
+      },
+    },
+  };
+
+  const res = computeVatPreview(state);
+  const march = res.rows.find(r => r.month === "2026-03");
+
+  assert.ok(march, "März 2026 vorhanden");
+  assert.ok(Math.abs(march.grossTotal - 3000) < 0.1, `Forecast-Fallback erwartet 3000 EUR Umsatz, got ${march.grossTotal}`);
+  assert.ok(Math.abs(march.grossDe - 2400) < 0.1, `DE-Brutto erwartet 2400 EUR, got ${march.grossDe}`);
+  assert.ok(march.outVat > 0, "Output-USt darf bei vorhandenem Forecast-Umsatz nicht 0 sein.");
+});
