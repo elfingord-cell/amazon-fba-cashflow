@@ -24,6 +24,7 @@ function lazyRoute(importer: () => Promise<{ default: ComponentType<any> }>): Co
 }
 
 const DashboardModule = lazyRoute(() => import("../modules/dashboard"));
+const MonthPlanningModule = lazyRoute(() => import("../modules/month-planning"));
 const SandboxModule = lazyRoute(() => import("../modules/sandbox"));
 const MethodikModule = lazyRoute(() => import("../modules/methodik"));
 const SollIstModule = lazyRoute(() => import("../modules/soll-ist"));
@@ -45,7 +46,7 @@ const ExportImportModule = lazyRoute(() => import("../modules/export-import"));
 const AccountingExportModule = lazyRoute(() => import("../modules/accounting-export"));
 const DebugModule = lazyRoute(() => import("../modules/debug"));
 
-export type V2RouteSection = "overview" | "operations" | "finance" | "mastertools";
+export type V2RouteSection = "cockpit" | "operations" | "masterdata" | "finance" | "system";
 
 export interface V2RouteItem {
   key: string;
@@ -66,23 +67,11 @@ export interface V2RouteRedirect {
 }
 
 export const V2_ROUTES: V2RouteItem[] = [
-  { key: "dashboard", path: "dashboard", label: "Dashboard", section: "overview", icon: DashboardOutlined, Component: DashboardModule },
-  { key: "sandbox", path: "sandbox", label: "Sandbox", section: "overview", icon: ExperimentOutlined, Component: SandboxModule },
-  { key: "methodik", path: "methodik", label: "Methodik & Regeln", section: "overview", icon: CalculatorOutlined, Component: MethodikModule },
-  { key: "soll-ist", path: "soll-ist", label: "Soll vs. Ist", section: "overview", icon: CreditCardOutlined, Component: SollIstModule },
-  { key: "abc-insights", path: "abc-insights", label: "ABC Insights", section: "overview", icon: PieChartOutlined, Component: AbcInsightsModule },
-  {
-    key: "closing-vat",
-    path: "abschluss/ust",
-    label: "USt Vorschau",
-    section: "overview",
-    icon: CalculatorOutlined,
-    Component: VatModule,
-    redirectFrom: ["vat"],
-  },
+  { key: "dashboard", path: "dashboard", label: "Dashboard", section: "cockpit", icon: DashboardOutlined, Component: DashboardModule },
+  { key: "monatsplanung", path: "monatsplanung", label: "Monatsplanung", section: "cockpit", icon: ProjectOutlined, Component: MonthPlanningModule },
+  { key: "soll-ist", path: "soll-ist", label: "Soll vs. Ist", section: "cockpit", icon: CreditCardOutlined, Component: SollIstModule },
 
   { key: "forecast", path: "forecast", label: "Absatzprognose", section: "operations", icon: LineChartOutlined, Component: ForecastModule },
-  { key: "inventory-snapshot", path: "inventory/snapshot", label: "Bestandsaufnahme", section: "operations", icon: InboxOutlined, Component: InventorySnapshotPage },
   {
     key: "inventory-projection",
     path: "inventory/projektion",
@@ -90,15 +79,17 @@ export const V2_ROUTES: V2RouteItem[] = [
     section: "operations",
     icon: FundProjectionScreenOutlined,
     Component: InventoryProjectionPage,
+    parentKey: "inventory",
     redirectFrom: ["inventory", "inventory/projection"],
   },
   {
-    key: "sku-planning",
-    path: "sku-planung",
-    label: "SKU Planung",
+    key: "inventory-snapshot",
+    path: "inventory/snapshot",
+    label: "Bestandsaufnahme",
     section: "operations",
-    icon: FundProjectionScreenOutlined,
-    Component: SkuPlanningModule,
+    icon: InboxOutlined,
+    Component: InventorySnapshotPage,
+    parentKey: "inventory",
   },
   {
     key: "orders",
@@ -110,17 +101,28 @@ export const V2_ROUTES: V2RouteItem[] = [
     Component: OrdersModule,
     redirectFrom: ["orders"],
   },
-  { key: "plan-products", path: "plan-products", label: "Neue Produkte", section: "operations", icon: TagsOutlined, Component: PlanProductsModule },
-
+  {
+    key: "sku-planning",
+    path: "sku-planung",
+    label: "SKU Planung",
+    section: "operations",
+    icon: FundProjectionScreenOutlined,
+    Component: SkuPlanningModule,
+  },
   {
     key: "closing-inputs",
     path: "abschluss/eingaben",
     label: "Cash-in Setup",
-    section: "finance",
+    section: "operations",
     icon: FormOutlined,
     Component: InputsModule,
     redirectFrom: ["inputs"],
   },
+  { key: "plan-products", path: "plan-products", label: "Neue Produkte", section: "operations", icon: TagsOutlined, Component: PlanProductsModule },
+
+  { key: "products", path: "products", label: "Produkte", section: "masterdata", icon: TagsOutlined, Component: ProductsModule },
+  { key: "suppliers", path: "suppliers", label: "Suppliers", section: "masterdata", icon: TeamOutlined, Component: SuppliersModule },
+
   {
     key: "closing-fixcosts",
     path: "abschluss/fixkosten",
@@ -131,12 +133,13 @@ export const V2_ROUTES: V2RouteItem[] = [
     redirectFrom: ["fixcosts"],
   },
   {
-    key: "closing-dividend-planning",
-    path: "abschluss/dividendenplanung",
-    label: "Dividendenplanung",
+    key: "closing-vat",
+    path: "abschluss/ust",
+    label: "USt Vorschau",
     section: "finance",
-    icon: PieChartOutlined,
-    Component: DividendPlanningModule,
+    icon: CalculatorOutlined,
+    Component: VatModule,
+    redirectFrom: ["vat"],
   },
   {
     key: "closing-accounting",
@@ -147,16 +150,25 @@ export const V2_ROUTES: V2RouteItem[] = [
     Component: AccountingExportModule,
     redirectFrom: ["accounting-export"],
   },
+  {
+    key: "closing-dividend-planning",
+    path: "abschluss/dividendenplanung",
+    label: "Dividendenplanung",
+    section: "finance",
+    icon: PieChartOutlined,
+    Component: DividendPlanningModule,
+  },
 
-  { key: "products", path: "products", label: "Produkte", section: "mastertools", icon: TagsOutlined, Component: ProductsModule },
-  { key: "suppliers", path: "suppliers", label: "Suppliers", section: "mastertools", icon: TeamOutlined, Component: SuppliersModule },
-  { key: "settings", path: "settings", label: "Settings", section: "mastertools", icon: SettingOutlined, Component: SettingsModule },
-  { key: "export-import", path: "export-import", label: "Export / Import", section: "mastertools", icon: UploadOutlined, Component: ExportImportModule },
+  { key: "methodik", path: "methodik", label: "Methodik & Regeln", section: "system", icon: CalculatorOutlined, Component: MethodikModule },
+  { key: "settings", path: "settings", label: "Settings", section: "system", icon: SettingOutlined, Component: SettingsModule },
+  { key: "export-import", path: "export-import", label: "Export / Import", section: "system", icon: UploadOutlined, Component: ExportImportModule },
+  { key: "sandbox", path: "sandbox", label: "Sandbox", section: "system", icon: ExperimentOutlined, Component: SandboxModule },
+  { key: "abc-insights", path: "abc-insights", label: "ABC Insights", section: "system", icon: PieChartOutlined, Component: AbcInsightsModule },
   {
     key: "debug",
     path: "tools/debug",
     label: "Debug",
-    section: "mastertools",
+    section: "system",
     icon: BugOutlined,
     Component: DebugModule,
     redirectFrom: ["debug"],

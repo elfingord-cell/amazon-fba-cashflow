@@ -26,10 +26,9 @@ import {
 import { buildHybridClosingBalanceSeries } from "../../domain/closingBalanceSeries";
 import { buildCashInPayoutMirrorByMonth } from "../../domain/cashInPayoutMirror";
 import {
-  buildDashboardRobustness,
   type CoverageStatusKey,
-  type DashboardRobustMonth,
 } from "../../domain/dashboardRobustness";
+import { buildMonthPlanningResult, type MonthPlanningMonth } from "../../domain/monthPlanning";
 import {
   buildPhantomFoSuggestions,
   buildStateWithPhantomFos,
@@ -51,7 +50,7 @@ type CashInQuoteMode = "manual" | "recommendation";
 type InventoryRiskFilterParam = "all" | "oos" | "under_safety";
 type InventoryAbcFilterParam = "all" | "a" | "b" | "ab" | "abc";
 type ProductIssueFilterParam = "all" | "needs_fix" | "revenue" | "blocked";
-type RobustMonthBlocker = DashboardRobustMonth["blockers"][number];
+type RobustMonthBlocker = MonthPlanningMonth["blockers"][number];
 
 interface DashboardSeriesRow {
   month: string;
@@ -762,7 +761,7 @@ export default function DashboardModule(): JSX.Element {
     });
   }, [breakdown, bucketScopeSet, phantomFoIdSet, showPhantomFoInChart, visibleMonthSet]);
   const robustness = useMemo(() => {
-    return buildDashboardRobustness({
+    return buildMonthPlanningResult({
       state: stateObject,
       months: visibleMonths,
     });
@@ -1797,6 +1796,16 @@ export default function DashboardModule(): JSX.Element {
   function openBlockerTarget(blocker: RobustMonthBlocker): void {
     if (!selectedMonthData) return;
     const targetMonth = blocker.month || selectedMonthData.month;
+    if (blocker.checkKey === "forecast_conflicts") {
+      const params = new URLSearchParams();
+      params.set("panel", "conflicts");
+      params.set("month", targetMonth);
+      params.set("source", "dashboard");
+      if (blocker.sku) params.set("sku", blocker.sku);
+      if (blocker.foId) params.set("foId", blocker.foId);
+      navigate(`/v2/forecast?${params.toString()}`);
+      return;
+    }
     if (blocker.checkKey === "cash_in") {
       navigate(appendRouteQuery("/v2/abschluss/eingaben", {
         source: "dashboard",
@@ -1941,6 +1950,12 @@ export default function DashboardModule(): JSX.Element {
       >
         {selectedMonthData ? (
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            <Button
+              type="primary"
+              onClick={() => navigate(`/v2/monatsplanung?month=${encodeURIComponent(selectedMonthData.month)}`)}
+            >
+              Monatsplanung öffnen
+            </Button>
             <Space wrap>
               <Tag color={selectedMonthStatusMeta?.color || "default"}>{selectedMonthData.coverage.statusLabel}</Tag>
               <Text>

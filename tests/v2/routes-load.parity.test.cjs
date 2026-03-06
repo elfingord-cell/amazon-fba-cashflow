@@ -41,6 +41,11 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
     const routes = Array.isArray(routeCatalog.V2_ROUTES) ? routeCatalog.V2_ROUTES : [];
     assert.ok(routes.length > 0, "Keine V2-Routen gefunden.");
     assert.equal(
+      routes.some((route) => String(route?.key || "") === "monatsplanung"),
+      true,
+      "Monatsplanung-Route fehlt in V2.",
+    );
+    assert.equal(
       routes.some((route) => String(route?.key || "") === "plan"),
       false,
       "Plan-Route darf nicht mehr als eigener V2-Tab erscheinen.",

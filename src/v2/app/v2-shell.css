@@ -72,6 +72,109 @@
   padding-bottom: 12px;
 }
 
+.v2-side-menu .ant-menu-item-group-title {
+  padding-top: 14px !important;
+  padding-bottom: 6px !important;
+  color: rgba(15, 27, 45, 0.56) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.v2-side-menu .ant-menu-submenu-title {
+  font-weight: 600;
+}
+
+.v2-month-planning-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.v2-month-planning-card {
+  height: 100%;
+}
+
+.v2-month-planning-grid {
+  margin-top: 16px;
+}
+
+.v2-month-planning-list,
+.v2-month-planning-list .ant-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v2-month-planning-item {
+  display: block;
+  cursor: pointer;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.96);
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.v2-month-planning-item:hover {
+  border-color: rgba(36, 99, 235, 0.42);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+}
+
+.v2-month-planning-item.is-active {
+  border-color: rgba(36, 99, 235, 0.62);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.v2-month-planning-item.is-done {
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.v2-month-planning-detail-card,
+.v2-month-planning-list-card {
+  height: 100%;
+}
+
+.v2-month-planning-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 14px;
+}
+
+.v2-month-planning-kpis > div {
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.v2-month-planning-table-wrap {
+  overflow-x: auto;
+}
+
+.v2-month-planning-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.v2-month-planning-mini-table th,
+.v2-month-planning-mini-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  text-align: left;
+}
+
+.v2-month-planning-mini-table th {
+  color: rgba(15, 23, 42, 0.58);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .v2-sider.is-collapsed .v2-brand-wrap {
   margin-inline: 10px;
   justify-content: center;

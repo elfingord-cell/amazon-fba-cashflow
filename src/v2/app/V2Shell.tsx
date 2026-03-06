@@ -12,9 +12,11 @@ import {
   Space,
   Tag,
   Typography,
+  type MenuProps,
 } from "antd";
 import {
   BankOutlined,
+  InboxOutlined,
   LoginOutlined,
   LogoutOutlined,
   MenuFoldOutlined,
@@ -29,7 +31,12 @@ import {
   signOut,
   signUpWithPassword,
 } from "../../storage/authSession.js";
-import { V2_ROUTES, V2_ROUTE_REDIRECTS } from "./routeCatalog";
+import {
+  V2_ROUTES,
+  V2_ROUTE_REDIRECTS,
+  type V2RouteItem,
+  type V2RouteSection,
+} from "./routeCatalog";
 import { useSyncSession } from "../sync/session";
 import {
   type WorkspaceConnectionState,
@@ -46,6 +53,17 @@ const { Text } = Typography;
 const V2_SIDER_WIDTH = 290;
 const V2_SIDER_COLLAPSED_WIDTH = 84;
 const V2_SIDEBAR_COLLAPSED_STORAGE_KEY = "v2.sidebar-collapsed";
+const INVENTORY_MENU_PARENT_KEY = "inventory";
+
+type MenuItem = NonNullable<MenuProps["items"]>[number];
+
+const MENU_SECTION_ORDER: V2RouteSection[] = [
+  "cockpit",
+  "operations",
+  "masterdata",
+  "finance",
+  "system",
+];
 
 interface AuthFormValues {
   email: string;
@@ -183,11 +201,37 @@ class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBo
   }
 }
 
-function sectionLabel(section: string): string {
-  if (section === "overview") return "Übersicht & Analyse";
-  if (section === "operations") return "Operatives Geschäft";
+function sectionLabel(section: V2RouteSection): string {
+  if (section === "cockpit") return "Cockpit";
+  if (section === "operations") return "Operativ";
+  if (section === "masterdata") return "Stammdaten";
   if (section === "finance") return "Finanzen & Abschluss";
-  return "Stammdaten & Tools";
+  return "System & Tools";
+}
+
+function parentMenuKey(parentKey: string): string {
+  return `group:${String(parentKey || "").trim()}`;
+}
+
+function parentMenuLabel(parentKey: string): string {
+  if (parentKey === INVENTORY_MENU_PARENT_KEY) return "Bestand";
+  return String(parentKey || "").trim();
+}
+
+function parentMenuIcon(parentKey: string): JSX.Element | null {
+  if (parentKey === INVENTORY_MENU_PARENT_KEY) return <InboxOutlined />;
+  return null;
+}
+
+function buildMenuRouteItem(route: V2RouteItem, options?: { nested?: boolean }): MenuItem {
+  const nested = options?.nested === true;
+  const Icon = route.icon;
+  return {
+    key: route.key,
+    icon: nested ? undefined : <Icon />,
+    label: route.label,
+    title: route.label,
+  };
 }
 
 function formatUserLabel(session: ReturnType<typeof useSyncSession>, compact: boolean): string {
@@ -338,32 +382,63 @@ function V2Layout(): JSX.Element {
     });
     return selected;
   }, [location.pathname, menuRoutes]);
+  const activeParentMenuKeys = useMemo(() => {
+    const route = routeByKey.get(activeKey);
+    if (!route?.parentKey) return [] as string[];
+    return [parentMenuKey(route.parentKey)];
+  }, [activeKey, routeByKey]);
+  const [menuOpenKeys, setMenuOpenKeys] = useState<string[]>([]);
+  const resolvedMenuOpenKeys = useMemo(() => {
+    return Array.from(new Set([...menuOpenKeys, ...activeParentMenuKeys]));
+  }, [activeParentMenuKeys, menuOpenKeys]);
 
   const menuItems = useMemo(() => {
-    const grouped: Record<string, unknown[]> = {
-      overview: [],
-      operations: [],
-      finance: [],
-      mastertools: [],
-    };
+    const grouped = MENU_SECTION_ORDER.reduce<Record<V2RouteSection, MenuItem[]>>((acc, section) => {
+      acc[section] = [];
+      return acc;
+    }, {} as Record<V2RouteSection, MenuItem[]>);
 
     menuRoutes.forEach((route) => {
-      const Icon = route.icon;
-      (grouped[route.section] as unknown[]).push({
-        key: route.key,
-        icon: <Icon />,
-        label: route.label,
-        title: route.label,
-      });
+      const sectionItems = grouped[route.section];
+      if (!route.parentKey) {
+        sectionItems.push(buildMenuRouteItem(route));
+        return;
+      }
+
+      const submenuKey = parentMenuKey(route.parentKey);
+      const existingSubmenu = sectionItems.find((item) => item?.key === submenuKey) as (MenuItem & { children?: MenuItem[] }) | undefined;
+
+      if (existingSubmenu) {
+        const nextChildren = Array.isArray(existingSubmenu.children) ? existingSubmenu.children.slice() : [];
+        nextChildren.push(buildMenuRouteItem(route, { nested: true }));
+        existingSubmenu.children = nextChildren;
+        return;
+      }
+
+      const icon = parentMenuIcon(route.parentKey);
+      sectionItems.push({
+        key: submenuKey,
+        icon: icon || undefined,
+        label: parentMenuLabel(route.parentKey),
+        title: parentMenuLabel(route.parentKey),
+        children: [buildMenuRouteItem(route, { nested: true })],
+      } as MenuItem);
     });
 
-    return Object.entries(grouped).map(([section, children]) => ({
-      key: section,
-      type: "group",
-      label: sectionLabel(section),
-      children,
-    }));
+    return MENU_SECTION_ORDER
+      .map((section) => ({
+        key: section,
+        type: "group",
+        label: sectionLabel(section),
+        children: grouped[section],
+      }))
+      .filter((item) => Array.isArray(item.children) && item.children.length > 0);
   }, [menuRoutes]);
+
+  useEffect(() => {
+    if (!activeParentMenuKeys.length) return;
+    setMenuOpenKeys((current) => Array.from(new Set([...current, ...activeParentMenuKeys])));
+  }, [activeParentMenuKeys]);
 
   useEffect(() => {
     const onSnapshot = (event: Event) => {
@@ -488,7 +563,9 @@ function V2Layout(): JSX.Element {
             inlineCollapsed={desktopSidebarCollapsed}
             className="v2-side-menu"
             selectedKeys={[activeKey]}
+            openKeys={resolvedMenuOpenKeys}
             items={menuItems as never}
+            onOpenChange={(keys) => setMenuOpenKeys(keys as string[])}
             onClick={({ key }) => {
               const route = routeByKey.get(String(key));
               const target = route?.menuPath || normalizeRoutePath(route?.path || "dashboard");
@@ -577,8 +654,11 @@ function V2Layout(): JSX.Element {
             </div>
             <Menu
               mode="inline"
+              className="v2-side-menu"
               selectedKeys={[activeKey]}
+              openKeys={resolvedMenuOpenKeys}
               items={menuItems as never}
+              onOpenChange={(keys) => setMenuOpenKeys(keys as string[])}
               onClick={({ key }) => {
                 const route = routeByKey.get(String(key));
                 const target = route?.menuPath || normalizeRoutePath(route?.path || "dashboard");
