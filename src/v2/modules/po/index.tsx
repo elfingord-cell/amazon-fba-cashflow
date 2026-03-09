@@ -86,6 +86,7 @@ interface PoItemDraft {
   prodDays: number;
   transitDays: number;
   freightEur: number;
+  sourceFoId?: string | null;
 }
 
 interface PoTimelineMarkerRow {
@@ -555,6 +556,7 @@ function normalizeDraftItem(input: Partial<PoItemDraft>, fallbackSku = ""): PoIt
     prodDays: Math.max(0, Math.round(Number(input.prodDays || 0))),
     transitDays: Math.max(0, Math.round(Number(input.transitDays || 0))),
     freightEur: Math.max(0, Number(input.freightEur || 0)),
+    sourceFoId: input.sourceFoId ? String(input.sourceFoId) : null,
   };
 }
 
@@ -594,6 +596,7 @@ function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | nu
     prodDays: Math.max(0, Math.round(Number(row.prodDays || 0))),
     transitDays: Math.max(0, Math.round(Number(row.transitDays || 0))),
     freightEur: Math.max(0, Number(row.freightEur || 0)),
+    sourceFoId: row.sourceFoId ? String(row.sourceFoId) : null,
   }));
   const aggregated = computePoAggregateMetrics({
     items: normalizedItems,

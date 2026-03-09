@@ -46,8 +46,9 @@ import {
   computeFoSchedule,
   computeScheduleFromOrderDate,
   convertToEur,
+  buildMultiFoPoPreflight,
+  convertFoSelectionToPo,
   createPoFromFo,
-  createPoFromFos,
   extractSupplierTerms,
   isFoConvertibleStatus,
   normalizeFoStatus,
@@ -182,6 +183,20 @@ function formatCurrency(value: unknown): string {
     style: "currency",
     currency: "EUR",
   });
+}
+
+function hierarchySourceLabel(source: string): string {
+  if (source === "order_override") return "Diese FO";
+  if (source === "product") return "Produkt";
+  if (source === "supplier") return "Lieferant";
+  if (source === "settings") return "Settings";
+  return "Fehlt";
+}
+
+function paymentTermsSourceLabel(source: string): string {
+  if (source === "order_override") return "Diese FO";
+  if (source === "supplier") return "Lieferant";
+  return "Standard";
 }
 
 function normalizeCoverageDemandBreakdown(input: unknown): CoverageDemandBreakdownRow[] {
@@ -549,9 +564,6 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergePoNo, setMergePoNo] = useState("");
   const [mergeOrderDate, setMergeOrderDate] = useState("");
-  const [mergeTargetMode, setMergeTargetMode] = useState<"earliest" | "manual">("earliest");
-  const [mergeManualTargetDate, setMergeManualTargetDate] = useState("");
-  const [mergeAllowMixedTerms, setMergeAllowMixedTerms] = useState(false);
   const [returnContext, setReturnContext] = useState<{ path: string; sku: string | null } | null>(null);
   const [pendingPfoWorklistDecision, setPendingPfoWorklistDecision] = useState<PendingPfoWorklistDecision | null>(null);
   const [form] = Form.useForm<FoFormValues>();
@@ -774,47 +786,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       .filter((entry) => isFoConvertibleStatus(entry.status));
   }, [foById, mergeSelection]);
 
-  const mergeEarliestTargetDate = useMemo(() => {
-    return mergeSelectedFos
-      .map((fo) => resolveFoTargetDeliveryDate(fo))
-      .filter((value): value is string => Boolean(value))
-      .sort((a, b) => compareIsoDate(a, b))[0] || "";
-  }, [mergeSelectedFos]);
-
-  const mergeResolvedTargetDate = useMemo(() => {
-    if (mergeTargetMode === "manual") return normalizeIsoDate(mergeManualTargetDate) || null;
-    return normalizeIsoDate(mergeEarliestTargetDate) || null;
-  }, [mergeEarliestTargetDate, mergeManualTargetDate, mergeTargetMode]);
-
-  const mergeSupplierIds = useMemo(
-    () => Array.from(new Set(mergeSelectedFos.map((fo) => String(fo.supplierId || "").trim()).filter(Boolean))),
-    [mergeSelectedFos],
-  );
-  const mergeHasSupplierMismatch = mergeSupplierIds.length > 1;
-  const mergeTransportModes = useMemo(
-    () => Array.from(new Set(mergeSelectedFos.map((fo) => String(fo.transportMode || "").trim().toUpperCase()).filter(Boolean))),
-    [mergeSelectedFos],
-  );
-  const mergeIncoterms = useMemo(
-    () => Array.from(new Set(mergeSelectedFos.map((fo) => String(fo.incoterm || "").trim().toUpperCase()).filter(Boolean))),
-    [mergeSelectedFos],
-  );
-  const mergeHasMixedTerms = mergeTransportModes.length > 1 || mergeIncoterms.length > 1;
-  const mergeTimelineRows = useMemo(() => {
-    if (!mergeResolvedTargetDate) return [];
-    return mergeSelectedFos.map((fo) => {
-      const target = resolveFoTargetDeliveryDate(fo);
-      const compare = compareIsoDate(target, mergeResolvedTargetDate);
-      const deviation = compare < 0 ? "Zu spät bei gemeinsamer PO" : compare > 0 ? "Früher als Ziel" : "Passt";
-      return {
-        id: String(fo.id || ""),
-        sku: String(fo.sku || ""),
-        targetDate: target,
-        deviation,
-        status: compare,
-      };
+  const mergePreflight = useMemo(() => {
+    return buildMultiFoPoPreflight({
+      state: stateObj,
+      fos: mergeSelectedFos,
+      orderDateOverride: mergeOrderDate || null,
     });
-  }, [mergeResolvedTargetDate, mergeSelectedFos]);
+  }, [mergeOrderDate, mergeSelectedFos, stateObj]);
+  const mergeCanSubmit = useMemo(() => {
+    return mergeSelectedFos.length >= 2 && Boolean(String(mergePoNo || "").trim()) && mergePreflight.compatible;
+  }, [mergePoNo, mergePreflight.compatible, mergeSelectedFos.length]);
 
   function toggleMergeSelectionForRow(rowId: string, checked: boolean): void {
     setMergeSelection((current) => {
@@ -1763,12 +1744,13 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       message.warning("Bitte mindestens 2 aktive FOs fuer den Merge auswaehlen.");
       return;
     }
-    const targetDate = mergeEarliestTargetDate || "";
+    const preflight = buildMultiFoPoPreflight({
+      state: stateObj,
+      fos: selected,
+      orderDateOverride: null,
+    });
     setMergePoNo(suggestNextPoNo(Array.isArray(state.pos) ? state.pos : []));
-    setMergeOrderDate("");
-    setMergeTargetMode("earliest");
-    setMergeManualTargetDate(targetDate);
-    setMergeAllowMixedTerms(false);
+    setMergeOrderDate(preflight.header.orderDate || "");
     setMergeOpen(true);
   }
 
@@ -2221,17 +2203,10 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
     if (sourceFos.length < 2) {
       throw new Error("Bitte mindestens 2 FOs auswaehlen.");
     }
-    if (mergeHasSupplierMismatch) {
-      throw new Error("Merge ist nur mit gleichem Lieferanten erlaubt.");
-    }
-    if (mergeHasMixedTerms && !mergeAllowMixedTerms) {
-      throw new Error("Bitte gemischte Transport/Incoterm explizit bestaetigen.");
-    }
     const poNo = String(mergePoNo || "").trim();
     if (!poNo) throw new Error("PO Nummer ist erforderlich.");
-    const targetDate = mergeResolvedTargetDate;
-    if (mergeTargetMode === "manual" && !targetDate) {
-      throw new Error("Bitte ein manuelles Ziel-Lieferdatum setzen.");
+    if (!mergePreflight.compatible) {
+      throw new Error(mergePreflight.blockers.map((entry) => entry.message).join(" "));
     }
 
     await saveWith((current) => {
@@ -2251,58 +2226,19 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       if (selectedFromState.some((fo) => !isFoConvertibleStatus(fo.status))) {
         throw new Error("Enthaelt bereits konvertierte oder archivierte FOs.");
       }
-      const po = createPoFromFos({
+      const conversion = convertFoSelectionToPo({
+        state: next as unknown as Record<string, unknown>,
         fos: selectedFromState,
         poNumber: poNo,
         orderDateOverride: mergeOrderDate || null,
-        targetDeliveryDate: targetDate,
       });
-      pos.push(po);
-
-      const supplierMap = new Map(
-        (Array.isArray(next.suppliers) ? next.suppliers : [])
-          .map((entry) => entry as Record<string, unknown>)
-          .map((entry) => [String(entry.id || ""), entry]),
+      pos.push(conversion.po);
+      const updatedFoById = new Map(
+        conversion.updatedFos.map((fo) => [String((fo as Record<string, unknown>).id || ""), fo]),
       );
-      const vatRefundLagMonths = (next.settings as Record<string, unknown> | undefined)?.vatRefundLagMonths;
-
       const updatedFos = fos.map((entry) => {
-        const fo = entry as Record<string, unknown>;
-        const foId = String(fo.id || "");
-        if (!sourceIds.includes(foId)) return fo;
-        const supplier = supplierMap.get(String(fo.supplierId || "")) || null;
-        const supplierTerms = extractSupplierTerms(fo.payments, supplier || undefined);
-        const schedule = computeScheduleFromOrderDate({
-          orderDate: mergeOrderDate || po.orderDate || fo.orderDate,
-          productionLeadTimeDays: fo.productionLeadTimeDays,
-          logisticsLeadTimeDays: fo.logisticsLeadTimeDays,
-          bufferDays: fo.bufferDays,
-          deliveryDate: targetDate || fo.targetDeliveryDate,
-        });
-        const payments = buildFoPayments({
-          supplierTerms,
-          schedule,
-          unitPrice: fo.unitPrice,
-          units: fo.units,
-          currency: fo.currency,
-          freight: fo.freight,
-          freightCurrency: fo.freightCurrency,
-          dutyRatePct: fo.dutyRatePct,
-          eustRatePct: fo.eustRatePct,
-          fxRate: fo.fxRate,
-          incoterm: fo.incoterm,
-          vatRefundLagMonths,
-          paymentDueDefaults: (next.settings as Record<string, unknown> | undefined)?.paymentDueDefaults,
-        });
-        return {
-          ...fo,
-          ...schedule,
-          payments,
-          status: "CONVERTED",
-          convertedPoId: po.id,
-          convertedPoNo: po.poNo,
-          updatedAt: nowIso(),
-        };
+        const foId = String((entry as Record<string, unknown>).id || "");
+        return updatedFoById.get(foId) || entry;
       });
 
       next.pos = pos;
@@ -2312,11 +2248,8 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
     setMergeOpen(false);
     setMergeSelection([]);
-    setMergeAllowMixedTerms(false);
     setMergeOrderDate("");
-    setMergeManualTargetDate("");
     setMergePoNo("");
-    setMergeTargetMode("earliest");
     message.success(`FO-Merge erstellt PO ${poNo}.`);
   }
 
@@ -3260,14 +3193,16 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       </Modal>
 
       <Modal
-        title="Mehrere FOs zu einer PO bündeln"
+        title="FO-Auswahl prüfen und in eine PO umwandeln"
         open={mergeOpen}
-        width={960}
+        width={1160}
         onCancel={() => setMergeOpen(false)}
+        okText="PO erstellen"
+        okButtonProps={{ disabled: !mergeCanSubmit }}
         onOk={() => {
           void convertFoMerge().catch((mergeError: unknown) => {
             Modal.error({
-              title: "Merge fehlgeschlagen",
+              title: "PO-Erstellung fehlgeschlagen",
               content: mergeError instanceof Error ? mergeError.message : String(mergeError),
             });
           });
@@ -3275,7 +3210,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
       >
         <Space direction="vertical" style={{ width: "100%" }} size={12}>
           <Text type="secondary">
-            {mergeSelectedFos.length} FO(s) ausgewählt. Ergebnis ist eine Multi-SKU-PO mit PO-basierten Zahlungsmeilensteinen.
+            {mergeSelectedFos.length} FO(s) ausgewählt. Die Auswahl wird zuerst fachlich geprüft und erst danach als eine echte Multi-Line-PO gespeichert.
           </Text>
           <Space align="start" wrap style={{ width: "100%" }}>
             <div style={{ minWidth: 220, flex: 1 }}>
@@ -3283,100 +3218,116 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
               <Input value={mergePoNo} onChange={(event) => setMergePoNo(event.target.value)} />
             </div>
             <div style={{ minWidth: 220, flex: 1 }}>
-              <Text>Order Date (optional)</Text>
+              <Text>Order Date</Text>
               <Input type="date" value={mergeOrderDate} onChange={(event) => setMergeOrderDate(event.target.value)} />
             </div>
           </Space>
 
-          <div>
-            <Text strong>Ziel-Liefertermin der PO</Text>
-            <Space direction="vertical" style={{ marginTop: 6, width: "100%" }}>
-              <Checkbox
-                checked={mergeTargetMode === "earliest"}
-                onChange={(event) => setMergeTargetMode(event.target.checked ? "earliest" : "manual")}
-              >
-                Frühester FO-Zieltermin verwenden ({formatDate(mergeEarliestTargetDate || null)})
-              </Checkbox>
-              <Checkbox
-                checked={mergeTargetMode === "manual"}
-                onChange={(event) => setMergeTargetMode(event.target.checked ? "manual" : "earliest")}
-              >
-                Manuelles Ziel setzen
-              </Checkbox>
-              {mergeTargetMode === "manual" ? (
-                <Input
-                  type="date"
-                  value={mergeManualTargetDate}
-                  onChange={(event) => setMergeManualTargetDate(event.target.value)}
-                  style={{ maxWidth: 240 }}
-                />
-              ) : null}
-            </Space>
-          </div>
-
-          {mergeHasSupplierMismatch ? (
+          {mergePreflight.blockers.length > 0 ? (
             <Alert
               type="error"
               showIcon
-              message="FO-Merge nur bei gleichem Lieferanten erlaubt."
+              message="Die Auswahl kann nicht als eine PO erstellt werden."
+              description={(
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {mergePreflight.blockers.map((issue) => (
+                    <li key={issue.code}>{issue.message}</li>
+                  ))}
+                </ul>
+              )}
             />
           ) : null}
-          {mergeHasMixedTerms ? (
+          {mergePreflight.warnings.length > 0 ? (
             <Alert
               type="warning"
               showIcon
-              message="Gemischte Incoterms/Transportmodi erkannt."
-              description={
-                <div>
-                  <div>Incoterms: {mergeIncoterms.join(", ") || "—"}</div>
-                  <div>Transport: {mergeTransportModes.join(", ") || "—"}</div>
-                  <Checkbox
-                    checked={mergeAllowMixedTerms}
-                    onChange={(event) => setMergeAllowMixedTerms(event.target.checked)}
-                    style={{ marginTop: 8 }}
-                  >
-                    Ich habe den Mix geprüft und möchte trotzdem bündeln.
-                  </Checkbox>
-                </div>
-              }
+              message="Bitte Timing und Defaults prüfen."
+              description={(
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {mergePreflight.warnings.map((issue) => (
+                    <li key={issue.code}>{issue.message}</li>
+                  ))}
+                </ul>
+              )}
             />
           ) : null}
+
+          <Card size="small">
+            <Space size={16} wrap>
+              <div>
+                <Text strong>Supplier</Text>
+                <div>{mergePreflight.header.supplierName || "—"}</div>
+              </div>
+              <div>
+                <Text strong>Währung</Text>
+                <div>{mergePreflight.header.currency || "—"}</div>
+              </div>
+              <div>
+                <Text strong>Incoterm</Text>
+                <div>{mergePreflight.header.incoterm || "—"}</div>
+              </div>
+              <div style={{ minWidth: 280 }}>
+                <Text strong>Payment Terms</Text>
+                <div>{mergePreflight.header.paymentTermsSummary || "—"}</div>
+              </div>
+              <div>
+                <Text strong>PO Order Date</Text>
+                <div>{formatDate(mergePreflight.header.orderDate)}</div>
+              </div>
+              <div>
+                <Text strong>PO ETD / ETA</Text>
+                <div>ETD {formatDate(mergePreflight.header.etdDate)} · ETA {formatDate(mergePreflight.header.etaDate)}</div>
+              </div>
+              <div>
+                <Text strong>Target-Spanne</Text>
+                <div>{formatDate(mergePreflight.header.earliestTargetDeliveryDate)} bis {formatDate(mergePreflight.header.latestTargetDeliveryDate)}</div>
+              </div>
+            </Space>
+            {mergePreflight.header.timingIsConservative ? (
+              <Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>
+                Unterschiedliche Lead Times erkannt. Der PO-Header verwendet konservative Timing-Werte, die Zeilen bleiben separat sichtbar.
+              </Paragraph>
+            ) : null}
+          </Card>
 
           <StatsTableShell>
             <table className="v2-stats-table" data-layout="auto">
               <thead>
                 <tr>
                   <th>FO</th>
-                  <th>SKU</th>
-                  <th>Units</th>
-                  <th>FO Ziel</th>
-                  <th>Abweichung zur PO</th>
+                  <th>Produkt</th>
+                  <th>Menge</th>
+                  <th>Commercial</th>
+                  <th>Timing</th>
+                  <th>Default-Quellen</th>
                 </tr>
               </thead>
               <tbody>
-                {mergeSelectedFos.length ? mergeSelectedFos.map((fo) => {
-                  const target = resolveFoTargetDeliveryDate(fo);
-                  const row = mergeTimelineRows.find((entry) => entry.id === String(fo.id || ""));
+                {mergePreflight.lines.length ? mergePreflight.lines.map((line) => {
                   return (
-                    <tr key={String(fo.id || "")}>
-                      <td>{resolveFoDisplayNumber({ foNo: fo.foNo, foNumber: fo.foNumber, id: fo.id })}</td>
-                      <td>{String(fo.sku || "—")}</td>
-                      <td>{formatNumber(fo.units, 0)}</td>
-                      <td>{formatDate(target)}</td>
+                    <tr key={line.foId}>
+                      <td>{line.sourceFoNumber}</td>
+                      <td>{line.alias} ({line.sku || "—"})</td>
+                      <td>{formatNumber(line.units, 0)}</td>
                       <td>
-                        {row ? (
-                          row.status < 0
-                            ? <Tag color="red">{row.deviation}</Tag>
-                            : row.status > 0
-                              ? <Tag color="gold">{row.deviation}</Tag>
-                              : <Tag color="green">{row.deviation}</Tag>
-                        ) : "—"}
+                        <div>{formatNumber(line.unitPrice, 2)} {line.currency || "—"} · {line.incoterm || "—"}</div>
+                        <div style={{ color: "rgba(0,0,0,0.45)" }}>{line.paymentTermsSummary || "—"}</div>
+                      </td>
+                      <td>
+                        <div>FO: Order {formatDate(line.orderDate)} · ETA {formatDate(line.etaDate)}</div>
+                        <div>PO: ETD {formatDate(line.previewEtdDate)} · ETA {formatDate(line.previewEtaDate)}</div>
+                        <div style={{ color: "rgba(0,0,0,0.45)" }}>Target {formatDate(line.targetDeliveryDate)}</div>
+                      </td>
+                      <td>
+                        <div>Currency: {hierarchySourceLabel(line.currencySource)}</div>
+                        <div>Incoterm: {hierarchySourceLabel(line.incotermSource)}</div>
+                        <div>Payment Terms: {paymentTermsSourceLabel(line.paymentTermsSource)}</div>
                       </td>
                     </tr>
                   );
                 }) : (
                   <tr>
-                    <td colSpan={5}>Keine FOs gewählt.</td>
+                    <td colSpan={6}>Keine FOs gewählt.</td>
                   </tr>
                 )}
               </tbody>

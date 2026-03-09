@@ -4,7 +4,10 @@ const path = require("node:path");
 const fs = require("node:fs");
 
 const {
+  buildInboundBySku,
+  buildMultiFoPoPreflight,
   computePoAggregateMetrics,
+  convertFoSelectionToPo,
   createPoFromFos,
   mapSupplierTermsToPoMilestones,
 } = require("../../.test-build/migration/v2/domain/orderUtils.js");
@@ -283,15 +286,349 @@ test("po multi-sku flow: FO merge creates a single multi-item PO with critical p
   assert.deepEqual(po.sourceFoIds, ["fo-a", "fo-b"]);
 });
 
+test("po multi-sku flow: preflight resolves earliest order date and conservative header timing", () => {
+  const state = {
+    settings: {
+      fxRate: 1.1,
+    },
+    suppliers: [
+      {
+        id: "sup-1",
+        name: "Supplier 1",
+        currencyDefault: "USD",
+        incotermDefault: "EXW",
+        paymentTermsDefault: [
+          { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+          { label: "Balance", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+        ],
+      },
+    ],
+    products: [
+      { sku: "SKU-A", alias: "Alpha", supplierId: "sup-1" },
+      { sku: "SKU-B", alias: "Beta", supplierId: "sup-1" },
+    ],
+    fos: [],
+  };
+  const fos = [
+    {
+      id: "fo-a",
+      foNo: "26001",
+      supplierId: "sup-1",
+      sku: "SKU-A",
+      units: 120,
+      unitPrice: 4.5,
+      currency: "USD",
+      incoterm: "EXW",
+      fxRate: 1.1,
+      dutyRatePct: 8,
+      eustRatePct: 19,
+      orderDate: "2026-02-10",
+      targetDeliveryDate: "2026-05-05",
+      productionLeadTimeDays: 20,
+      bufferDays: 5,
+      logisticsLeadTimeDays: 15,
+      payments: [
+        { id: "a-dep", label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        { id: "a-bal", label: "Balance", category: "supplier", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+      ],
+    },
+    {
+      id: "fo-b",
+      foNo: "26002",
+      supplierId: "sup-1",
+      sku: "SKU-B",
+      units: 80,
+      unitPrice: 6.2,
+      currency: "USD",
+      incoterm: "EXW",
+      fxRate: 1.1,
+      dutyRatePct: 8,
+      eustRatePct: 19,
+      orderDate: "2026-02-18",
+      targetDeliveryDate: "2026-05-20",
+      productionLeadTimeDays: 35,
+      bufferDays: 0,
+      logisticsLeadTimeDays: 30,
+      payments: [
+        { id: "b-dep", label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        { id: "b-bal", label: "Balance", category: "supplier", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+      ],
+    },
+  ];
+
+  const preflight = buildMultiFoPoPreflight({ state, fos });
+
+  assert.equal(preflight.compatible, true);
+  assert.equal(preflight.header.orderDate, "2026-02-10");
+  assert.equal(preflight.header.etdDate, "2026-03-17");
+  assert.equal(preflight.header.etaDate, "2026-04-16");
+  assert.equal(preflight.header.timingIsConservative, true);
+  assert.ok(preflight.warnings.some((entry) => entry.code === "timing_conservative"));
+});
+
+test("po multi-sku flow: preflight blocks incompatible supplier and commercial settings", () => {
+  const baseState = {
+    settings: { fxRate: 1.1 },
+    suppliers: [
+      {
+        id: "sup-1",
+        name: "Supplier 1",
+        currencyDefault: "USD",
+        incotermDefault: "EXW",
+        paymentTermsDefault: [
+          { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+          { label: "Balance", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+        ],
+      },
+      {
+        id: "sup-2",
+        name: "Supplier 2",
+        currencyDefault: "EUR",
+        incotermDefault: "DDP",
+      },
+    ],
+    products: [
+      { sku: "SKU-A", alias: "Alpha", supplierId: "sup-1" },
+      { sku: "SKU-B", alias: "Beta", supplierId: "sup-2" },
+    ],
+  };
+
+  const supplierConflict = buildMultiFoPoPreflight({
+    state: baseState,
+    fos: [
+      {
+        id: "fo-a",
+        supplierId: "sup-1",
+        sku: "SKU-A",
+        units: 20,
+        unitPrice: 3,
+        currency: "USD",
+        incoterm: "EXW",
+        fxRate: 1.1,
+        orderDate: "2026-02-10",
+        targetDeliveryDate: "2026-03-10",
+        productionLeadTimeDays: 10,
+        bufferDays: 0,
+        logisticsLeadTimeDays: 10,
+        payments: [{ label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 }],
+      },
+      {
+        id: "fo-b",
+        supplierId: "sup-2",
+        sku: "SKU-B",
+        units: 20,
+        unitPrice: 3,
+        currency: "EUR",
+        incoterm: "DDP",
+        fxRate: 1,
+        orderDate: "2026-02-10",
+        targetDeliveryDate: "2026-03-10",
+        productionLeadTimeDays: 10,
+        bufferDays: 0,
+        logisticsLeadTimeDays: 10,
+        payments: [{ label: "Net 100", category: "supplier", percent: 100, triggerEvent: "ETA", offsetDays: 0 }],
+      },
+    ],
+  });
+
+  assert.equal(supplierConflict.compatible, false);
+  assert.ok(supplierConflict.blockers.some((entry) => entry.code === "supplier_mismatch"));
+  assert.ok(supplierConflict.blockers.some((entry) => entry.code === "currency_mismatch"));
+  assert.ok(supplierConflict.blockers.some((entry) => entry.code === "incoterm_mismatch"));
+  assert.ok(supplierConflict.blockers.some((entry) => entry.code === "payment_terms_mismatch"));
+});
+
+test("po multi-sku flow: manual later order date is blocked by timing conflict", () => {
+  const state = {
+    settings: { fxRate: 1.1 },
+    suppliers: [
+      {
+        id: "sup-1",
+        name: "Supplier 1",
+        currencyDefault: "USD",
+        incotermDefault: "EXW",
+        paymentTermsDefault: [
+          { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+          { label: "Balance", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+        ],
+      },
+    ],
+    products: [
+      { sku: "SKU-A", alias: "Alpha", supplierId: "sup-1" },
+      { sku: "SKU-B", alias: "Beta", supplierId: "sup-1" },
+    ],
+  };
+  const fos = [
+    {
+      id: "fo-a",
+      foNo: "26001",
+      supplierId: "sup-1",
+      sku: "SKU-A",
+      units: 120,
+      unitPrice: 4.5,
+      currency: "USD",
+      incoterm: "EXW",
+      fxRate: 1.1,
+      orderDate: "2026-02-10",
+      targetDeliveryDate: "2026-05-05",
+      productionLeadTimeDays: 20,
+      bufferDays: 5,
+      logisticsLeadTimeDays: 15,
+      payments: [
+        { id: "a-dep", label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        { id: "a-bal", label: "Balance", category: "supplier", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+      ],
+    },
+    {
+      id: "fo-b",
+      foNo: "26002",
+      supplierId: "sup-1",
+      sku: "SKU-B",
+      units: 80,
+      unitPrice: 6.2,
+      currency: "USD",
+      incoterm: "EXW",
+      fxRate: 1.1,
+      orderDate: "2026-02-18",
+      targetDeliveryDate: "2026-05-20",
+      productionLeadTimeDays: 35,
+      bufferDays: 0,
+      logisticsLeadTimeDays: 30,
+      payments: [
+        { id: "b-dep", label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        { id: "b-bal", label: "Balance", category: "supplier", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+      ],
+    },
+  ];
+
+  const preflight = buildMultiFoPoPreflight({
+    state,
+    fos,
+    orderDateOverride: "2026-03-20",
+  });
+
+  assert.equal(preflight.compatible, false);
+  assert.ok(preflight.blockers.some((entry) => entry.code === "timing_conflict"));
+});
+
+test("po multi-sku flow: conversion keeps provenance and converted FOs no longer double-count inbound", () => {
+  const state = {
+    settings: { fxRate: 1.1, vatRefundLagMonths: 2, paymentDueDefaults: {} },
+    suppliers: [
+      {
+        id: "sup-1",
+        name: "Supplier 1",
+        currencyDefault: "USD",
+        incotermDefault: "EXW",
+        paymentTermsDefault: [
+          { label: "Deposit", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+          { label: "Balance", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+        ],
+      },
+    ],
+    products: [
+      { sku: "SKU-A", alias: "Alpha", supplierId: "sup-1" },
+      { sku: "SKU-B", alias: "Beta", supplierId: "sup-1" },
+    ],
+    pos: [],
+    fos: [],
+  };
+  const fos = [
+    {
+      id: "fo-a",
+      foNo: "26001",
+      supplierId: "sup-1",
+      sku: "SKU-A",
+      status: "ACTIVE",
+      units: 120,
+      unitPrice: 4.5,
+      currency: "USD",
+      incoterm: "EXW",
+      fxRate: 1.1,
+      freight: 100,
+      freightCurrency: "EUR",
+      dutyRatePct: 8,
+      eustRatePct: 19,
+      orderDate: "2026-02-10",
+      targetDeliveryDate: "2026-05-05",
+      productionLeadTimeDays: 20,
+      bufferDays: 5,
+      logisticsLeadTimeDays: 15,
+      payments: [
+        { id: "a-dep", label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        { id: "a-bal", label: "Balance", category: "supplier", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+      ],
+    },
+    {
+      id: "fo-b",
+      foNo: "26002",
+      supplierId: "sup-1",
+      sku: "SKU-B",
+      status: "ACTIVE",
+      units: 80,
+      unitPrice: 6.2,
+      currency: "USD",
+      incoterm: "EXW",
+      fxRate: 1.1,
+      freight: 80,
+      freightCurrency: "EUR",
+      dutyRatePct: 8,
+      eustRatePct: 19,
+      orderDate: "2026-02-18",
+      targetDeliveryDate: "2026-05-20",
+      productionLeadTimeDays: 35,
+      bufferDays: 0,
+      logisticsLeadTimeDays: 30,
+      payments: [
+        { id: "b-dep", label: "Deposit", category: "supplier", percent: 30, triggerEvent: "ORDER_DATE", offsetDays: 0 },
+        { id: "b-bal", label: "Balance", category: "supplier", percent: 70, triggerEvent: "PRODUCTION_END", offsetDays: 0 },
+      ],
+    },
+  ];
+
+  const conversion = convertFoSelectionToPo({
+    state,
+    fos,
+    poNumber: "PO-REVIEW-1",
+  });
+
+  assert.equal(conversion.preflight.compatible, true);
+  assert.deepEqual(conversion.po.sourceFoIds, ["fo-a", "fo-b"]);
+  assert.deepEqual(conversion.po.items.map((item) => item.sourceFoId), ["fo-a", "fo-b"]);
+  assert.equal(conversion.updatedFos.every((fo) => fo.status === "CONVERTED"), true);
+  assert.equal(conversion.updatedFos.every((fo) => fo.convertedPoNo === "PO-REVIEW-1"), true);
+
+  const inbound = buildInboundBySku({
+    ...state,
+    pos: [conversion.po],
+    fos: conversion.updatedFos,
+  });
+  const totalSkuA = Object.values(inbound.inboundBySku["SKU-A"] || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+  const totalSkuB = Object.values(inbound.inboundBySku["SKU-B"] || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+
+  assert.equal(totalSkuA, 120);
+  assert.equal(totalSkuB, 80);
+});
+
 test("po multi-sku flow: PO module enforces supplier scope and mirror fields", () => {
   const source = readPoModuleSource();
 
   assert.match(source, /SKU .*gehoert nicht zum gewaehlten Lieferanten/);
   assert.match(source, /items: normalizedItems/);
+  assert.match(source, /sourceFoId/);
   assert.match(source, /units: Math\.max\(0, Math\.round\(aggregated\.units/);
   assert.match(source, /prodDays: Number\(aggregated\.prodDays/);
   assert.match(source, /transitDays: Number\(aggregated\.transitDays/);
   assert.match(source, /freightEur: Number\(aggregated\.freightEur/);
+});
+
+test("fo multi-sku flow: FO module opens a review/preflight dialog before creating a PO", () => {
+  const source = readFoModuleSource();
+
+  assert.match(source, /buildMultiFoPoPreflight/);
+  assert.match(source, /mergePreflight\.blockers/);
+  assert.match(source, /FO-Auswahl prüfen und in eine PO umwandeln/);
+  assert.match(source, /okButtonProps=\{\{ disabled: !mergeCanSubmit \}\}/);
 });
 
 test("po timeline integration: table and timeline reuse shared filtered rows", () => {
