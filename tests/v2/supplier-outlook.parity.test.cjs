@@ -208,6 +208,16 @@ function findMaterialCell(row) {
   return Object.values(row.cells).find((cell) => Number(cell.systemQty || cell.finalQty || 0) > 0 || cell.sourceBreakdown.length > 0) || null;
 }
 
+function findPreviewRow(model, sku) {
+  return model.supplierRows.find((row) => String(row.sku || "") === sku) || null;
+}
+
+function findSupplierSheetRow(workbookModel, label) {
+  const supplierSheet = workbookModel.sheets.find((sheet) => sheet.name === "Lieferant");
+  if (!supplierSheet) return null;
+  return supplierSheet.rows.find((row) => String(row?.[0] || "") === label) || null;
+}
+
 test.before(async () => {
   server = await createServer({
     root,
@@ -250,7 +260,7 @@ test.after(async () => {
   await server.close();
 });
 
-test("supplier outlook derives PO and FO proposal rows without mutating source state", () => {
+test("supplier outlook derives PO and FO proposal rows without mutating source state and buckets supplier output by signal month", () => {
   const state = buildOperationalState();
   const snapshot = clone(state);
   const now = monthKeyFromDate(new Date());
@@ -291,9 +301,59 @@ test("supplier outlook derives PO and FO proposal rows without mutating source s
   assert.equal(poRow.cells[poMonth].systemQty, 120);
   assert.equal(poRow.cells[poMonth].finalQty, 120);
   assert.equal(poRow.cells[poMonth].sourceBreakdown[0].sourceType, "po");
+  assert.equal(poRow.cells[poMonth].sourceBreakdown[0].signalMonth, now);
   assert.equal(foRow.cells[foMonth].systemQty, 80);
   assert.equal(foRow.cells[foMonth].sourceBreakdown[0].sourceType, "fo");
+  assert.equal(foRow.cells[foMonth].sourceBreakdown[0].signalMonth, now);
   assert.equal(adhocRow.cells[now].systemQty, 0);
+
+  const exportModel = buildSupplierOutlookExportModel({ record: draft, state });
+  const supplierPoRow = findPreviewRow(exportModel, "SKU-PO");
+  const supplierFoRow = findPreviewRow(exportModel, "SKU-FO");
+
+  assert.deepEqual(exportModel.months, [now], "Die Lieferantensicht muss nach Bestell-/Signalmonat gruppieren.");
+  assert.equal(exportModel.supplierMonthAxisLabel, "Bestell-/Signalmonat");
+  assert.equal(supplierPoRow.cells[now].text, "120 · confirmed · PO-1001");
+  assert.equal(supplierFoRow.cells[now].text, "80 · planned");
+  assert.doesNotMatch(supplierFoRow.cells[now].text, /FO-2001|fo-1/i, "Geplante Zellen duerfen keine internen FO-Referenzen leaken.");
+});
+
+test("supplier outlook keeps multi-PO confirmed references readable across preview and exports", () => {
+  const state = buildOperationalState();
+  const now = monthKeyFromDate(new Date());
+  state.pos.push({
+    id: "po-2",
+    supplierId: "sup-1",
+    poNo: "PO-1002",
+    orderDate: `${now}-08`,
+    arrivalDate: `${addMonths(now, 2)}-18`,
+    items: [{ sku: "SKU-PO", units: 60 }],
+  });
+
+  const draft = buildSupplierOutlookDraft({
+    state,
+    supplierId: "sup-1",
+    startMonth: now,
+    horizonMonths: 6,
+    includedSkuIds: ["SKU-PO"],
+    includedSourceTypes: ["po"],
+    actor: { userId: "user-1", userLabel: "Alice" },
+  });
+  const exportModel = buildSupplierOutlookExportModel({ record: draft, state });
+  const supplierRow = findPreviewRow(exportModel, "SKU-PO");
+  const supplierCell = supplierRow.cells[now];
+  const workbookModel = buildSupplierOutlookWorkbookModel(exportModel);
+  const supplierSheetRow = findSupplierSheetRow(workbookModel, "Alpha");
+  const printHtml = buildSupplierOutlookPrintHtml(exportModel);
+
+  assert.equal(supplierCell.status, "confirmed");
+  assert.match(supplierCell.text, /^180 · confirmed · /);
+  assert.match(supplierCell.text, /(PO-1001, PO-1002|2 POs)/, "Mehrere bestaetigte POs muessen kompakt lesbar bleiben.");
+  assert.equal(workbookModel.sheets[0].rows[1][1], "Bestell-/Signalmonat");
+  assert.match(String(workbookModel.sheets[0].rows[6][1] || ""), /^Bestell-\/Signalmonat /);
+  assert.ok(supplierSheetRow, "Das Lieferantenblatt muss die SKU-Zeile enthalten.");
+  assert.match(String(supplierSheetRow[1] || ""), /(PO-1001, PO-1002|2 POs)/);
+  assert.match(printHtml, /(PO-1001, PO-1002|2 POs)/);
 });
 
 test("supplier outlook includes optional PFO input only when selected and marks it as indicative", () => {
@@ -348,6 +408,7 @@ test("supplier outlook includes optional PFO input only when selected and marks 
   assert.ok(previewCell, "Die Lieferantenvorschau braucht eine sichtbare indikative Zelle.");
   assert.equal(previewCell.status, "indicative");
   assert.match(previewCell.text, /\bindicative\b/i);
+  assert.doesNotMatch(previewCell.text, /\bPFO\b|phantom|supplier-outlook/i, "Die Lieferantensicht darf keine interne PFO-Taxonomie leaken.");
 });
 
 test("supplier outlook supports manual overrides, manual rows, resets, and no-op updates stay stable", async () => {
@@ -505,7 +566,7 @@ test("supplier outlook freeze keeps snapshots stable and export stays supplier-s
   changedState.pos[0].items[0].units = 999;
   const frozenExportModel = buildSupplierOutlookExportModel({ record: frozen, state: changedState });
   const frozenSupplierRow = frozenExportModel.supplierRows.find((row) => row.sku === "SKU-PO");
-  assert.equal(frozenSupplierRow.cells[addMonths(now, 1)].text, "120 · confirmed");
+  assert.equal(frozenSupplierRow.cells[now].text, "120 · confirmed · PO-1001");
   assert.equal(
     frozenExportModel.traceRows.some((row) => row.sourceSummary.includes("PO: 120")),
     true,
@@ -543,9 +604,11 @@ test("supplier outlook freeze keeps snapshots stable and export stays supplier-s
     ["Lieferant", "Intern Trace"],
     "Der XLSX Export braucht genau ein Lieferantenblatt und ein internes Trace-Blatt.",
   );
+  assert.equal(workbookModel.sheets[0].rows[1][1], "Bestell-/Signalmonat");
 
   const printHtml = buildSupplierOutlookPrintHtml(exportedModel);
   assert.match(printHtml, /confirmed|planned|indicative/i);
-  assert.doesNotMatch(printHtml, /\bPFO\b|\bPO\b|\bFO\b|Phantom/i, "Die Lieferantensicht darf keine interne Taxonomie leaken.");
+  assert.match(printHtml, /PO-1001/, "Bestaetigte PO-Mengen muessen die echte PO-Nummer zeigen.");
+  assert.doesNotMatch(printHtml, /\bPFO\b|\bFO\b|Phantom|FO-2001/i, "Die Lieferantensicht darf keine interne FO\/PFO-Taxonomie leaken.");
   assert.doesNotMatch(printHtml, /\bpo-1\b|\bfo-1\b|supplier-outlook/i, "Die Lieferantensicht darf keine internen IDs leaken.");
 });

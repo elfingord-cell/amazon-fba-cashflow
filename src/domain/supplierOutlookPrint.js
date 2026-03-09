@@ -15,11 +15,16 @@ function formatMonthLabel(month) {
   return date.toLocaleDateString("de-DE", { month: "short", year: "numeric" });
 }
 
+function resolveSupplierMonthAxisLabel(model) {
+  return String(model?.supplierMonthAxisLabel || "").trim() || "Bestell-/Signalmonat";
+}
+
 export function buildSupplierOutlookPrintHtml(model) {
   const months = Array.isArray(model?.months) ? model.months : [];
   const supplierRows = Array.isArray(model?.supplierRows) ? model.supplierRows : [];
+  const supplierMonthAxisLabel = resolveSupplierMonthAxisLabel(model);
   const headerCells = months
-    .map((month) => `<th>${escapeHtml(formatMonthLabel(month))}</th>`)
+    .map((month) => `<th><div style="font-size:11px;color:#516075;font-weight:500;">${escapeHtml(supplierMonthAxisLabel)}</div><div>${escapeHtml(formatMonthLabel(month))}</div></th>`)
     .join("");
   const bodyRows = supplierRows
     .map((row) => {
@@ -58,6 +63,8 @@ export function buildSupplierOutlookPrintHtml(model) {
 <body>
   <h1>${title}</h1>
   <div class="meta">
+    Monatsachse: ${escapeHtml(supplierMonthAxisLabel)}
+    ·
     Start: ${escapeHtml(model?.startMonth || "")}
     · Horizont: ${escapeHtml(String(model?.horizonMonths || ""))}
     · Stand: ${escapeHtml(model?.frozenAt || model?.generatedAt || "")}

@@ -138,6 +138,8 @@ export interface SupplierOutlookSourceBreakdown extends UnknownRecord {
   qty: number;
   sku: string;
   arrivalMonth: string | null;
+  signalMonth?: string | null;
+  supplierReference?: string | null;
   arrivalDate?: string | null;
   orderDate?: string | null;
   targetDate?: string | null;

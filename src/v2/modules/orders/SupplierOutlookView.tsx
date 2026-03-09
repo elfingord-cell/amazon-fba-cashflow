@@ -281,6 +281,7 @@ export default function SupplierOutlookView(): JSX.Element {
     () => workingDraft ? buildSupplierOutlookExportModel({ record: workingDraft, state: stateObj }) : null,
     [stateObj, workingDraft],
   );
+  const previewMonths = exportModel?.months || [];
   const selectedRow = useMemo(
     () => workingDraft?.rows.find((row) => row.id === selectedRowId) || null,
     [selectedRowId, workingDraft],
@@ -484,22 +485,28 @@ export default function SupplierOutlookView(): JSX.Element {
   }, [months, selectedMonth, selectedRowId]);
 
   const previewColumns = useMemo<ColumnDef<(SupplierOutlookExportModel["supplierRows"][number])>[]>(() => {
+    const supplierMonthAxisLabel = exportModel?.supplierMonthAxisLabel || "Bestell-/Signalmonat";
     const columns: ColumnDef<(SupplierOutlookExportModel["supplierRows"][number])>[] = [{
       id: "label",
       header: "Produkt",
       meta: { width: 240, minWidth: 220 },
       accessorFn: (row) => row.label,
     }];
-    months.forEach((month) => {
+    previewMonths.forEach((month) => {
       columns.push({
         id: month,
-        header: formatMonthLabel(month),
+        header: (
+          <div style={{ lineHeight: 1.25 }}>
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>{supplierMonthAxisLabel}</div>
+            <div>{formatMonthLabel(month)}</div>
+          </div>
+        ),
         meta: { width: 140, minWidth: 135 },
         cell: ({ row }) => row.original.cells[month]?.text || "—",
       });
     });
     return columns;
-  }, [months]);
+  }, [exportModel?.supplierMonthAxisLabel, previewMonths]);
 
   const traceColumns = useMemo<ColumnDef<SupplierOutlookTraceRow>[]>(() => [
     { header: "Produkt", accessorKey: "label", meta: { width: 220, minWidth: 200 } },
@@ -858,13 +865,18 @@ export default function SupplierOutlookView(): JSX.Element {
               label: "Supplier Preview",
               children: exportModel ? (
                 exportModel.supplierRows.length ? (
-                  <DataTable
-                    data={exportModel.supplierRows}
-                    columns={previewColumns}
-                    minTableWidth={Math.max(860, 240 + (months.length * 140))}
-                    tableLayout="fixed"
-                    sorting={false}
-                  />
+                  <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                    <Text type="secondary">
+                      Monatsachse: {exportModel.supplierMonthAxisLabel}. ETA-, Ankunfts- und Detailtiming bleiben in der internen Trace.
+                    </Text>
+                    <DataTable
+                      data={exportModel.supplierRows}
+                      columns={previewColumns}
+                      minTableWidth={Math.max(860, 240 + (previewMonths.length * 140))}
+                      tableLayout="fixed"
+                      sorting={false}
+                    />
+                  </Space>
                 ) : (
                   <Empty description="Keine sichtbaren Lieferantenzeilen für den aktuellen Entwurf." />
                 )

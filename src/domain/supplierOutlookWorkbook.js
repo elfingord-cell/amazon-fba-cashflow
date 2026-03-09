@@ -82,18 +82,24 @@ function formatMonthLabel(month) {
   return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleDateString("de-DE", { month: "short", year: "numeric" });
 }
 
+function resolveSupplierMonthAxisLabel(model) {
+  return String(model?.supplierMonthAxisLabel || "").trim() || "Bestell-/Signalmonat";
+}
+
 export function buildSupplierOutlookWorkbookModel(model) {
   const months = Array.isArray(model?.months) ? model.months : [];
   const supplierRows = Array.isArray(model?.supplierRows) ? model.supplierRows : [];
   const traceRows = Array.isArray(model?.traceRows) ? model.traceRows : [];
+  const supplierMonthAxisLabel = resolveSupplierMonthAxisLabel(model);
 
   const supplierSheetRows = [
     ["Lieferant", model?.supplierName || model?.supplierId || ""],
+    ["Monatsachse", supplierMonthAxisLabel],
     ["Startmonat", model?.startMonth || ""],
     ["Horizont", model?.horizonMonths || ""],
     ["Stand", model?.frozenAt || model?.generatedAt || ""],
     [],
-    ["Produkt", ...months.map((month) => formatMonthLabel(month))],
+    ["Produkt", ...months.map((month) => `${supplierMonthAxisLabel} ${formatMonthLabel(month)}`)],
   ];
   supplierRows.forEach((row) => {
     supplierSheetRows.push([

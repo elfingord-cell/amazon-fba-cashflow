@@ -81,6 +81,7 @@ export interface SupplierOutlookExportModel {
   startMonth: string;
   horizonMonths: number;
   months: string[];
+  supplierMonthAxisLabel: string;
   status: SupplierOutlookStatus;
   generatedAt: string;
   frozenAt: string | null;
@@ -217,6 +218,12 @@ function normalizeQty(value: unknown): number {
   return parsed;
 }
 
+function normalizeSupplierReference(value: unknown): string | null {
+  const raw = normalizeText(value);
+  if (!raw) return null;
+  return /^po(?:\b|-)/i.test(raw) ? raw : `PO ${raw}`;
+}
+
 function normalizeBreakdown(value: unknown): SupplierOutlookSourceBreakdown[] {
   return asArray<Record<string, unknown>>(value)
     .map((entry) => {
@@ -231,6 +238,8 @@ function normalizeBreakdown(value: unknown): SupplierOutlookSourceBreakdown[] {
         qty: normalizeQty(entry.qty),
         sku: normalizeText(entry.sku),
         arrivalMonth: normalizeMonth(entry.arrivalMonth),
+        signalMonth: normalizeMonth(entry.signalMonth),
+        supplierReference: normalizeSupplierReference(entry.supplierReference),
         arrivalDate: normalizeIsoDate(entry.arrivalDate),
         orderDate: normalizeIsoDate(entry.orderDate),
         targetDate: normalizeIsoDate(entry.targetDate),
@@ -454,6 +463,9 @@ function collectPoBreakdowns(input: {
     const arrivalDate = resolveEntityArrivalDate(po);
     const arrivalMonth = normalizeMonth(arrivalDate?.slice(0, 7));
     if (!arrivalMonth || !input.monthSet.has(arrivalMonth)) return;
+    const orderDate = resolveEntityOrderDate(po);
+    const signalMonth = normalizeMonth(orderDate?.slice(0, 7), arrivalMonth);
+    const poNumber = normalizeText(po.poNo || po.poNumber);
     extractPoItems(po).forEach((item) => {
       if (!matchesSelectedSku(input.selectedSkuKeys, item.sku)) return;
       pushBreakdown(input.target, item.sku, arrivalMonth, {
@@ -463,12 +475,14 @@ function collectPoBreakdowns(input: {
         qty: item.qty,
         sku: item.sku,
         arrivalMonth,
+        signalMonth,
+        supplierReference: normalizeSupplierReference(poNumber),
         arrivalDate,
-        orderDate: resolveEntityOrderDate(po),
+        orderDate,
         targetDate: arrivalDate,
         timingLabel: [
           arrivalDate ? `Ankunft ${arrivalDate}` : arrivalMonth ? `Ankunft ${formatMonthLabel(arrivalMonth)}` : "",
-          resolveEntityOrderDate(po) ? `Bestellung ${resolveEntityOrderDate(po)}` : "",
+          orderDate ? `Bestellung ${orderDate}` : "",
         ].filter(Boolean).join(" · "),
       });
     });
@@ -490,6 +504,7 @@ function collectFoBreakdowns(input: {
     const targetDate = normalizeIsoDate(fo.targetDeliveryDate) || normalizeIsoDate(fo.deliveryDate) || normalizeIsoDate(fo.etaDate) || normalizeIsoDate(fo.etaManual);
     const targetMonth = normalizeMonth(targetDate?.slice(0, 7));
     if (!targetMonth || !input.monthSet.has(targetMonth)) return;
+    const orderDate = resolveEntityOrderDate(fo);
     pushBreakdown(input.target, sku, targetMonth, {
       sourceType: "fo",
       sourceId: normalizeText(fo.id || fo.foNumber) || randomId("fo"),
@@ -497,12 +512,14 @@ function collectFoBreakdowns(input: {
       qty: normalizeQty(fo.units),
       sku,
       arrivalMonth: targetMonth,
+      signalMonth: normalizeMonth(orderDate?.slice(0, 7), targetMonth),
+      supplierReference: null,
       arrivalDate: targetDate,
-      orderDate: resolveEntityOrderDate(fo),
+      orderDate,
       targetDate,
       timingLabel: [
         targetDate ? `Lieferziel ${targetDate}` : targetMonth ? `Lieferziel ${formatMonthLabel(targetMonth)}` : "",
-        resolveEntityOrderDate(fo) ? `Bestellung ${resolveEntityOrderDate(fo)}` : "",
+        orderDate ? `Bestellung ${orderDate}` : "",
       ].filter(Boolean).join(" · "),
     });
   });
@@ -522,6 +539,7 @@ function collectPfoBreakdowns(input: {
     const arrivalDate = normalizeIsoDate(entry.requiredArrivalDate);
     const arrivalMonth = normalizeMonth(arrivalDate?.slice(0, 7) || entry.firstRiskMonth || entry.orderMonth);
     if (!arrivalMonth || !input.monthSet.has(arrivalMonth)) return;
+    const orderDate = normalizeIsoDate(entry.recommendedOrderDate);
     pushBreakdown(input.target, sku, arrivalMonth, {
       sourceType: "pfo",
       sourceId: normalizeText(entry.id) || randomId("pfo"),
@@ -529,12 +547,14 @@ function collectPfoBreakdowns(input: {
       qty: normalizeQty(entry.suggestedUnits),
       sku,
       arrivalMonth,
+      signalMonth: normalizeMonth(orderDate?.slice(0, 7) || entry.orderMonth, arrivalMonth),
+      supplierReference: null,
       arrivalDate,
-      orderDate: normalizeIsoDate(entry.recommendedOrderDate),
+      orderDate,
       targetDate: arrivalDate,
       timingLabel: [
         arrivalDate ? `Empfohlene Ankunft ${arrivalDate}` : arrivalMonth ? `Empfohlene Ankunft ${formatMonthLabel(arrivalMonth)}` : "",
-        normalizeIsoDate(entry.recommendedOrderDate) ? `Empfohlene Bestellung ${normalizeIsoDate(entry.recommendedOrderDate)}` : "",
+        orderDate ? `Empfohlene Bestellung ${orderDate}` : "",
       ].filter(Boolean).join(" · "),
     });
   });
@@ -936,6 +956,178 @@ function buildTimingSummary(breakdown: SupplierOutlookSourceBreakdown[]): string
   )).join(" | ");
 }
 
+function resolveSupplierFacingMonth(
+  entry: SupplierOutlookSourceBreakdown,
+  fallbackMonth: string,
+): string {
+  return normalizeMonth(entry.signalMonth)
+    || normalizeMonth(entry.orderDate?.slice(0, 7))
+    || normalizeMonth(entry.arrivalMonth)
+    || fallbackMonth;
+}
+
+function allocateQtyByWeight(
+  totalQty: number,
+  groups: Array<{ month: string; weight: number }>,
+): Map<string, number> {
+  const normalizedTotal = normalizeQty(totalQty);
+  const filteredGroups = groups.filter((entry) => entry.month && entry.weight > 0);
+  if (!normalizedTotal || !filteredGroups.length) return new Map();
+  const totalWeight = filteredGroups.reduce((sum, entry) => sum + entry.weight, 0);
+  if (!totalWeight) {
+    return new Map([[filteredGroups[0].month, normalizedTotal]]);
+  }
+
+  const allocations = filteredGroups.map((entry) => {
+    const raw = (normalizedTotal * entry.weight) / totalWeight;
+    const floor = Math.floor(raw);
+    return {
+      month: entry.month,
+      floor,
+      fraction: raw - floor,
+    };
+  });
+  let remainder = normalizedTotal - allocations.reduce((sum, entry) => sum + entry.floor, 0);
+  allocations
+    .sort((left, right) => {
+      if (right.fraction !== left.fraction) return right.fraction - left.fraction;
+      return left.month.localeCompare(right.month);
+    })
+    .forEach((entry) => {
+      if (remainder <= 0) return;
+      entry.floor += 1;
+      remainder -= 1;
+    });
+  return new Map(allocations.map((entry) => [entry.month, entry.floor]));
+}
+
+function dominantSupplierStatus(statuses: SupplierOutlookSupplierStatus[]): SupplierOutlookSupplierStatus {
+  if (statuses.includes("indicative")) return "indicative";
+  if (statuses.includes("planned")) return "planned";
+  return "confirmed";
+}
+
+function buildSupplierPoReferenceLabel(references: string[]): string {
+  const uniqueReferences = Array.from(new Set(
+    references
+      .map((entry) => normalizeSupplierReference(entry))
+      .filter(Boolean) as string[],
+  ));
+  if (!uniqueReferences.length) return "";
+  const joined = uniqueReferences.join(", ");
+  if (uniqueReferences.length <= 3 && joined.length <= 34) return joined;
+  return `${uniqueReferences.length} POs`;
+}
+
+function buildSupplierFacingCellText(input: {
+  qty: number;
+  status: SupplierOutlookSupplierStatus;
+  poReferences: string[];
+}): string {
+  const parts = [`${normalizeQty(input.qty)} · ${input.status}`];
+  if (input.status === "confirmed") {
+    const poSummary = buildSupplierPoReferenceLabel(input.poReferences);
+    if (poSummary) parts.push(poSummary);
+  }
+  return parts.join(" · ");
+}
+
+function resolveSupplierFacingBreakdownStatus(
+  row: SupplierOutlookRow,
+  cell: SupplierOutlookCell,
+  breakdown: SupplierOutlookSourceBreakdown[],
+): SupplierOutlookSupplierStatus {
+  if (row.rowType === "manual") return "indicative";
+  const sourceTypes = new Set(breakdown.map((entry) => entry.sourceType));
+  const isOverridden = cell.finalQty !== cell.systemQty || normalizeText(cell.note) || normalizeText(cell.reason);
+  if (sourceTypes.has("pfo")) return "indicative";
+  if (isOverridden) return "planned";
+  if (sourceTypes.has("fo")) return "planned";
+  if (sourceTypes.has("po")) return "confirmed";
+  return "planned";
+}
+
+function projectSupplierFacingCells(
+  row: SupplierOutlookRow,
+  months: string[],
+): Map<string, SupplierOutlookSupplierPreviewCell> {
+  const aggregates = new Map<string, {
+    qty: number;
+    statuses: SupplierOutlookSupplierStatus[];
+    poReferences: Set<string>;
+  }>();
+
+  months.forEach((month) => {
+    const cell = row.cells[month] || emptyCell(month);
+    const finalQty = normalizeQty(cell.finalQty);
+    if (cell.excluded === true || finalQty <= 0) return;
+
+    const breakdownGroups = new Map<string, SupplierOutlookSourceBreakdown[]>();
+    cell.sourceBreakdown.forEach((entry) => {
+      const supplierMonth = resolveSupplierFacingMonth(entry, month);
+      if (!breakdownGroups.has(supplierMonth)) breakdownGroups.set(supplierMonth, []);
+      (breakdownGroups.get(supplierMonth) as SupplierOutlookSourceBreakdown[]).push(entry);
+    });
+
+    if (!breakdownGroups.size) {
+      const status = resolveSupplierFacingCellStatus(row, cell);
+      aggregates.set(month, {
+        qty: (aggregates.get(month)?.qty || 0) + finalQty,
+        statuses: [...(aggregates.get(month)?.statuses || []), status],
+        poReferences: aggregates.get(month)?.poReferences || new Set<string>(),
+      });
+      return;
+    }
+
+    const allocations = allocateQtyByWeight(
+      finalQty,
+      Array.from(breakdownGroups.entries()).map(([groupMonth, entries]) => ({
+        month: groupMonth,
+        weight: systemQtyFromBreakdown(entries),
+      })),
+    );
+
+    breakdownGroups.forEach((entries, groupMonth) => {
+      const allocatedQty = allocations.get(groupMonth) || 0;
+      if (allocatedQty <= 0) return;
+      const status = resolveSupplierFacingBreakdownStatus(row, cell, entries);
+      const existing = aggregates.get(groupMonth) || {
+        qty: 0,
+        statuses: [],
+        poReferences: new Set<string>(),
+      };
+      const nextReferences = new Set(existing.poReferences);
+      entries.forEach((entry) => {
+        if (status === "confirmed" && entry.sourceType === "po" && entry.supplierReference) {
+          nextReferences.add(entry.supplierReference);
+        }
+      });
+      aggregates.set(groupMonth, {
+        qty: existing.qty + allocatedQty,
+        statuses: [...existing.statuses, status],
+        poReferences: nextReferences,
+      });
+    });
+  });
+
+  return new Map(Array.from(aggregates.entries())
+    .sort(([leftMonth], [rightMonth]) => leftMonth.localeCompare(rightMonth))
+    .map(([month, aggregate]) => {
+      const status = dominantSupplierStatus(aggregate.statuses);
+      return [month, {
+        month,
+        qty: aggregate.qty,
+        status,
+        text: buildSupplierFacingCellText({
+          qty: aggregate.qty,
+          status,
+          poReferences: Array.from(aggregate.poReferences),
+        }),
+        hidden: aggregate.qty <= 0,
+      } satisfies SupplierOutlookSupplierPreviewCell];
+    }));
+}
+
 export function resolveSupplierFacingCellStatus(
   row: SupplierOutlookRow,
   cell: SupplierOutlookCell,
@@ -955,39 +1147,39 @@ export function buildSupplierOutlookExportModel(input: {
   state: Record<string, unknown>;
 }): SupplierOutlookExportModel {
   const record = normalizeSupplierOutlookRecord(input.record) as SupplierOutlookRecord;
-  const months = monthRange(record.startMonth, record.horizonMonths);
+  const internalMonths = monthRange(record.startMonth, record.horizonMonths);
   const supplierNames = supplierNameById(input.state);
   const supplierName = supplierNames.get(record.supplierId) || record.supplierId || "Lieferant";
-
-  const supplierRows = record.rows
-    .map((row) => {
-      const label = resolveSkuLabel(row);
-      const cells = Object.fromEntries(months.map((month) => {
-        const cell = row.cells[month] || emptyCell(month);
-        const qty = normalizeQty(cell.finalQty);
-        const status = resolveSupplierFacingCellStatus(row, cell);
-        const hidden = cell.excluded === true || qty <= 0;
-        return [month, {
+  const supplierRowProjections = record.rows
+    .map((row) => ({
+      row,
+      label: resolveSkuLabel(row),
+      cells: projectSupplierFacingCells(row, internalMonths),
+    }))
+    .filter((entry) => entry.cells.size > 0);
+  const months = Array.from(new Set(
+    supplierRowProjections.flatMap((entry) => Array.from(entry.cells.keys())),
+  )).sort();
+  const supplierRows = supplierRowProjections
+    .map((entry) => ({
+      label: entry.label,
+      sku: resolveRowSku(entry.row),
+      rowType: entry.row.rowType,
+      cells: Object.fromEntries(months.map((month) => {
+        const cell = entry.cells.get(month);
+        return [month, cell || {
           month,
-          qty,
-          status,
-          text: hidden ? "" : `${qty} · ${status}`,
-          hidden,
+          qty: 0,
+          status: "planned",
+          text: "",
+          hidden: true,
         } satisfies SupplierOutlookSupplierPreviewCell];
-      }));
-      const visible = months.some((month) => !(cells[month] as SupplierOutlookSupplierPreviewCell).hidden);
-      return visible ? {
-        label,
-        sku: resolveRowSku(row),
-        rowType: row.rowType,
-        cells,
-      } satisfies SupplierOutlookSupplierPreviewRow : null;
-    })
-    .filter(Boolean) as SupplierOutlookSupplierPreviewRow[];
+      })),
+    } satisfies SupplierOutlookSupplierPreviewRow));
 
   const traceRows = record.rows.flatMap((row) => {
     const label = resolveSkuLabel(row);
-    return months.flatMap((month) => {
+    return internalMonths.flatMap((month) => {
       const cell = row.cells[month] || emptyCell(month);
       const systemQty = normalizeQty(cell.systemQty);
       const finalQty = normalizeQty(cell.finalQty);
@@ -1022,6 +1214,7 @@ export function buildSupplierOutlookExportModel(input: {
     startMonth: record.startMonth,
     horizonMonths: record.horizonMonths,
     months,
+    supplierMonthAxisLabel: "Bestell-/Signalmonat",
     status: record.status,
     generatedAt: record.generatedAt,
     frozenAt: record.frozenAt || null,
