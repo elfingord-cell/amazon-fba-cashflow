@@ -38,6 +38,7 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
 
   try {
     const routeCatalog = await server.ssrLoadModule("/src/v2/app/routeCatalog.ts");
+    const ordersTabs = await server.ssrLoadModule("/src/v2/modules/orders/tabs.ts");
     const routes = Array.isArray(routeCatalog.V2_ROUTES) ? routeCatalog.V2_ROUTES : [];
     assert.ok(routes.length > 0, "Keine V2-Routen gefunden.");
     assert.equal(
@@ -64,6 +65,18 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
       String(skuRedirect.to || ""),
       "orders/sku",
       "SKU-Redirect muss auf SKU Sicht zeigen.",
+    );
+
+    const ordersTabItems = Array.isArray(ordersTabs.ORDERS_TAB_ITEMS) ? ordersTabs.ORDERS_TAB_ITEMS : [];
+    assert.equal(
+      ordersTabItems.some((entry) => String(entry?.key || "") === "lieferantenausblick" && String(entry?.path || "") === "/v2/orders/lieferantenausblick"),
+      true,
+      "Bestellungen-Tab Lieferantenausblick fehlt.",
+    );
+    assert.equal(
+      String(ordersTabs.resolveOrdersTab("/v2/orders/lieferantenausblick")),
+      "lieferantenausblick",
+      "Lieferantenausblick-Pfad wird im Orders-Shell nicht korrekt aufgeloest.",
     );
 
     const failures = [];

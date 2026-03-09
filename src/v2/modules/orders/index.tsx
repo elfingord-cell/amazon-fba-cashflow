@@ -5,26 +5,19 @@ import FoModule from "../fo";
 import PoModule from "../po";
 import PfoListView from "./PfoListView";
 import SkuTimelineView from "./SkuTimelineView";
+import SupplierOutlookView from "./SupplierOutlookView";
 import { StatsTableShell } from "../../components/StatsTableShell";
 import { useWorkspaceState } from "../../state/workspace";
+import { ORDERS_TAB_ITEMS, resolveOrdersTab, type OrdersTabKey } from "./tabs";
 
 const { Paragraph, Title } = Typography;
-
-function resolveOrdersTab(pathname: string): "po" | "fo" | "sku" {
-  if (pathname.includes("/orders/sku")) return "sku";
-  if (pathname.includes("/orders/fo")) return "fo";
-  return "po";
-}
 
 export default function OrdersModule(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   const { state } = useWorkspaceState();
 
-  const activeTab = useMemo<"po" | "fo" | "pfo" | "sku">(() => {
-    if (location.pathname.includes("/orders/pfo")) return "pfo";
-    return resolveOrdersTab(location.pathname);
-  }, [location.pathname]);
+  const activeTab = useMemo<OrdersTabKey>(() => resolveOrdersTab(location.pathname), [location.pathname]);
   const paymentRows = useMemo(() => {
     return (Array.isArray(state.payments) ? state.payments : [])
       .map((entry) => entry as Record<string, unknown>)
@@ -109,28 +102,19 @@ export default function OrdersModule(): JSX.Element {
       <Tabs
         activeKey={activeTab}
         onChange={(next) => navigate(`/v2/orders/${next}`)}
-        items={[
-          {
-            key: "po",
-            label: "Bestellungen (PO)",
-            children: <PoModule embedded />,
-          },
-          {
-            key: "fo",
-            label: "Forecast Orders (FO)",
-            children: <FoModule embedded />,
-          },
-          {
-            key: "pfo",
-            label: "Phantom Forecast Orders (PFO)",
-            children: <PfoListView />,
-          },
-          {
-            key: "sku",
-            label: "SKU Sicht",
-            children: <SkuTimelineView />,
-          },
-        ]}
+        items={ORDERS_TAB_ITEMS.map((tab) => ({
+          key: tab.key,
+          label: tab.label,
+          children: tab.key === "po"
+            ? <PoModule embedded />
+            : tab.key === "fo"
+              ? <FoModule embedded />
+              : tab.key === "pfo"
+                ? <PfoListView />
+                : tab.key === "sku"
+                  ? <SkuTimelineView />
+                  : <SupplierOutlookView />,
+        }))}
       />
     </div>
   );

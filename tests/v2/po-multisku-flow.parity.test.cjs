@@ -31,6 +31,11 @@ function readOrdersModuleSource() {
   return fs.readFileSync(filePath, "utf8");
 }
 
+function readOrdersTabsSource() {
+  const filePath = path.resolve(__dirname, "../../src/v2/modules/orders/tabs.ts");
+  return fs.readFileSync(filePath, "utf8");
+}
+
 test("po multi-sku flow: critical path aggregation uses max lead times", () => {
   const metrics = computePoAggregateMetrics({
     items: [
@@ -327,10 +332,11 @@ test("fo timeline integration: table and timeline share filtered rows and query 
 });
 
 test("orders tabs include dedicated sku timeline view", () => {
-  const source = readOrdersModuleSource();
+  const moduleSource = readOrdersModuleSource();
+  const tabsSource = readOrdersTabsSource();
 
-  assert.match(source, /resolveOrdersTab\(pathname: string\): "po" \| "fo" \| "sku"/);
-  assert.match(source, /if \(pathname\.includes\("\/orders\/sku"\)\) return "sku"/);
-  assert.match(source, /label: "SKU Sicht"/);
-  assert.match(source, /children: <SkuTimelineView \/>/);
+  assert.match(tabsSource, /export type OrdersTabKey = "po" \| "fo" \| "pfo" \| "sku" \| "lieferantenausblick"/);
+  assert.match(tabsSource, /if \(pathname\.includes\("\/orders\/sku"\)\) return "sku"/);
+  assert.match(tabsSource, /label: "SKU Sicht"/);
+  assert.match(moduleSource, /tab\.key === "sku"\s*\n\s*\?\s*<SkuTimelineView \/>/);
 });

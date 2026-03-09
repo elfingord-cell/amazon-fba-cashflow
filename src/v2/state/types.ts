@@ -125,6 +125,74 @@ export interface PoRecordV2 extends UnknownRecord {
   paymentLog?: Record<string, UnknownRecord>;
 }
 
+export type SupplierOutlookSourceType = "po" | "fo" | "pfo" | "plan";
+export type SupplierOutlookStatus = "draft" | "frozen";
+export type SupplierOutlookRowType = "catalog" | "manual";
+export type SupplierOutlookSupplierStatus = "confirmed" | "planned" | "indicative";
+export type SupplierOutlookExportFormat = "pdf" | "xlsx";
+
+export interface SupplierOutlookSourceBreakdown extends UnknownRecord {
+  sourceType: SupplierOutlookSourceType;
+  sourceId: string;
+  sourceLabel: string;
+  qty: number;
+  sku: string;
+  arrivalMonth: string | null;
+  arrivalDate?: string | null;
+  orderDate?: string | null;
+  targetDate?: string | null;
+  timingLabel?: string | null;
+}
+
+export interface SupplierOutlookCell extends UnknownRecord {
+  month: string;
+  systemQty: number;
+  finalQty: number;
+  excluded: boolean;
+  note?: string | null;
+  reason?: string | null;
+  sourceBreakdown: SupplierOutlookSourceBreakdown[];
+}
+
+export interface SupplierOutlookRow extends UnknownRecord {
+  id: string;
+  rowType: SupplierOutlookRowType;
+  productId?: string | null;
+  sku?: string | null;
+  alias?: string | null;
+  manualLabel?: string | null;
+  linkedSku?: string | null;
+  cells: Record<string, SupplierOutlookCell>;
+}
+
+export interface SupplierOutlookRecord extends UnknownRecord {
+  id: string;
+  supplierId: string;
+  startMonth: string;
+  horizonMonths: number;
+  includedSkuIds: string[];
+  includedSourceTypes: SupplierOutlookSourceType[];
+  forecastVersionId?: string | null;
+  forecastVersionName?: string | null;
+  inventoryBaselineMonth?: string | null;
+  generatedAt: string;
+  status: SupplierOutlookStatus;
+  rows: SupplierOutlookRow[];
+  createdAt: string;
+  createdByUserId?: string | null;
+  createdByLabel?: string | null;
+  updatedAt: string;
+  updatedByUserId?: string | null;
+  updatedByLabel?: string | null;
+  frozenAt?: string | null;
+  frozenByUserId?: string | null;
+  frozenByLabel?: string | null;
+  lastExportedAt?: string | null;
+  lastExportedByUserId?: string | null;
+  lastExportedByLabel?: string | null;
+  lastExportFormat?: SupplierOutlookExportFormat | null;
+}
+
 export interface AppStateV2 extends UnknownRecord {
   schemaVersion: 2;
   legacyMeta: LegacyMeta;
@@ -146,6 +214,7 @@ export interface AppStateV2 extends UnknownRecord {
   dividends?: UnknownRecord[];
   fixcosts?: UnknownRecord[];
   fixcostOverrides?: UnknownRecord;
+  supplierOutlooks?: SupplierOutlookRecord[];
 }
 
 export type ImportMode = "replace_workspace" | "merge_upsert";
