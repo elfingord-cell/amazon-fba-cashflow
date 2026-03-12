@@ -23,10 +23,15 @@ import {
   type DashboardBreakdownRow,
   type DashboardEntry,
 } from "../../domain/dashboardMaturity";
-import { buildHybridClosingBalanceSeries } from "../../domain/closingBalanceSeries";
 import {
   type CoverageStatusKey,
 } from "../../domain/dashboardRobustness";
+import {
+  aggregateDashboardMonthEntries,
+  applyDashboardBucketScopeToBreakdown,
+  isDashboardEntryInBucketScope,
+  isDashboardPhantomFoEntry,
+} from "../../domain/dashboardCashflow";
 import { buildMonthPlanningResult, type MonthPlanningMonth } from "../../domain/monthPlanning";
 import {
   buildPhantomFoSuggestions,
@@ -118,10 +123,6 @@ interface PnlMatrixRow {
   paymentStatus?: "paid" | "open" | "mixed" | "unknown";
   paymentDueDate?: string | null;
   children?: PnlMatrixRow[];
-}
-
-interface ScopedDashboardBreakdownRow extends DashboardBreakdownRow {
-  hasActualClosing: boolean;
 }
 
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
@@ -365,87 +366,6 @@ function resolveDashboardRoute(input: {
   return route;
 }
 
-function resolveEntryBucket(entry: DashboardEntry): string | null {
-  const direct = typeof entry.portfolioBucket === "string" ? entry.portfolioBucket : null;
-  if (direct) return direct;
-  const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : {};
-  return typeof meta.portfolioBucket === "string" ? String(meta.portfolioBucket) : null;
-}
-
-function isEntryInBucketScope(entry: DashboardEntry, bucketScope: Set<string>): boolean {
-  const bucket = resolveEntryBucket(entry);
-  if (!bucket) return true;
-  if (!PORTFOLIO_BUCKET_VALUES.includes(bucket)) return true;
-  return bucketScope.has(bucket);
-}
-
-function isPhantomFoEntry(
-  entryRaw: DashboardEntry,
-  provisionalFoIds?: Set<string>,
-): boolean {
-  const source = String(entryRaw.source || "").toLowerCase();
-  if (source !== "fo") return false;
-  const sourceId = String(entryRaw.sourceId || "").trim();
-  const meta = (entryRaw.meta && typeof entryRaw.meta === "object")
-    ? entryRaw.meta as Record<string, unknown>
-    : {};
-  return entryRaw.provisional === true
-    || meta.phantom === true
-    || (sourceId ? provisionalFoIds?.has(sourceId) === true : false);
-}
-
-function applyBucketScopeToBreakdown(
-  rows: DashboardBreakdownRow[],
-  bucketScope: Set<string>,
-  options?: {
-    includePhantomFo?: boolean;
-    provisionalFoIds?: Set<string>;
-  },
-): ScopedDashboardBreakdownRow[] {
-  if (!rows.length) return [];
-  const includePhantomFo = options?.includePhantomFo !== false;
-  const provisionalFoIds = options?.provisionalFoIds;
-  const scopedRows = rows.map((row) => {
-    const scopedEntries = (Array.isArray(row.entries) ? row.entries : [])
-      .filter((entry) => isEntryInBucketScope(entry, bucketScope))
-      .filter((entry) => includePhantomFo || !isPhantomFoEntry(entry, provisionalFoIds));
-    const inflow = scopedEntries
-      .filter((entry) => String(entry.direction || "").toLowerCase() === "in")
-      .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
-    const outflow = scopedEntries
-      .filter((entry) => String(entry.direction || "").toLowerCase() === "out")
-      .reduce((sum, entry) => sum + Math.abs(Number(entry.amount || 0)), 0);
-    const net = inflow - outflow;
-    return {
-      ...row,
-      inflow,
-      outflow,
-      net,
-      entries: scopedEntries,
-    };
-  });
-
-  const firstOpening = Number(rows[0]?.opening || 0);
-  const closingSeries = buildHybridClosingBalanceSeries({
-    rows: scopedRows.map((row) => ({
-      month: row.month,
-      net: row.net,
-      actualClosing: row.actualClosing,
-    })),
-    initialOpening: firstOpening,
-  });
-
-  return scopedRows.map((row, index) => {
-    const derived = closingSeries[index];
-    return {
-      ...row,
-      opening: Number(derived?.opening ?? row.opening ?? 0),
-      closing: Number(derived?.closing ?? row.closing ?? 0),
-      hasActualClosing: derived?.lockedActual === true,
-    };
-  });
-}
-
 function splitOutflowEntriesByType(
   entries: DashboardEntry[],
   provisionalFoIds?: Set<string>,
@@ -458,45 +378,10 @@ function splitOutflowEntriesByType(
   other: number;
   total: number;
 } {
-  const totals = {
-    fixcost: 0,
-    po: 0,
-    fo: 0,
-    phantomFo: 0,
-    other: 0,
-    total: 0,
-  };
-
-  entries.forEach((entryRaw) => {
-    if (!entryRaw || typeof entryRaw !== "object") return;
-    const entry = entryRaw as DashboardEntry;
-    if (bucketScope && !isEntryInBucketScope(entry, bucketScope)) return;
-    if (String(entry.direction || "").toLowerCase() !== "out") return;
-    const amount = Math.abs(Number(entry.amount || 0));
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    totals.total += amount;
-
-    const source = String(entry.source || "").toLowerCase();
-    if (source === "po") {
-      totals.po += amount;
-      return;
-    }
-    if (source === "fo") {
-      const isPhantom = isPhantomFoEntry(entry, provisionalFoIds);
-      if (isPhantom) totals.phantomFo += amount;
-      else totals.fo += amount;
-      return;
-    }
-
-    const group = String(entry.group || "").toLowerCase();
-    if (source === "fixcosts" || group === "fixkosten") {
-      totals.fixcost += amount;
-      return;
-    }
-    totals.other += amount;
-  });
-
-  return totals;
+  return aggregateDashboardMonthEntries(entries, {
+    bucketScope,
+    provisionalFoIds,
+  }).outflow;
 }
 
 function splitInflowEntriesByType(
@@ -510,44 +395,9 @@ function splitInflowEntriesByType(
   other: number;
   total: number;
 } {
-  const totals = {
-    amazon: 0,
-    amazonCore: 0,
-    amazonPlanned: 0,
-    amazonNew: 0,
-    other: 0,
-    total: 0,
-  };
-
-  entries.forEach((entryRaw) => {
-    if (!entryRaw || typeof entryRaw !== "object") return;
-    const entry = entryRaw as DashboardEntry;
-    if (bucketScope && !isEntryInBucketScope(entry, bucketScope)) return;
-    if (String(entry.direction || "").toLowerCase() !== "in") return;
-    const amount = Math.abs(Number(entry.amount || 0));
-    if (!Number.isFinite(amount) || amount <= 0) return;
-
-    const source = String(entry.source || "").toLowerCase();
-    const kind = String(entry.kind || "").toLowerCase();
-    const isAmazon = source === "sales" || source === "sales-plan" || kind === "sales-payout";
-    if (isAmazon) {
-      const bucket = resolveEntryBucket(entry);
-      if (bucket === PORTFOLIO_BUCKET.PLAN) {
-        totals.amazonPlanned += amount;
-      } else if (bucket === PORTFOLIO_BUCKET.IDEAS) {
-        totals.amazonNew += amount;
-      } else {
-        totals.amazonCore += amount;
-      }
-      totals.amazon += amount;
-      totals.total += amount;
-      return;
-    }
-    totals.other += amount;
-    totals.total += amount;
-  });
-
-  return totals;
+  return aggregateDashboardMonthEntries(entries, {
+    bucketScope,
+  }).inflow;
 }
 
 function createMonthValueRecord(months: string[]): Record<string, number> {
@@ -754,7 +604,7 @@ export default function DashboardModule(): JSX.Element {
 
   const visibleBreakdown = useMemo(() => {
     const filteredByMonth = breakdown.filter((row) => visibleMonthSet.has(row.month));
-    return applyBucketScopeToBreakdown(filteredByMonth, bucketScopeSet, {
+    return applyDashboardBucketScopeToBreakdown(filteredByMonth, bucketScopeSet, {
       includePhantomFo: showPhantomFoInChart,
       provisionalFoIds: phantomFoIdSet,
     });
@@ -1427,7 +1277,7 @@ export default function DashboardModule(): JSX.Element {
       entries.forEach((entryRaw) => {
         if (!entryRaw || typeof entryRaw !== "object") return;
         const entry = entryRaw as DashboardEntry;
-        if (!isEntryInBucketScope(entry, bucketScopeSet)) return;
+        if (!isDashboardEntryInBucketScope(entry, bucketScopeSet)) return;
         if (String(entry.direction || "").toLowerCase() !== "out") return;
         const amount = Math.abs(Number(entry.amount || 0));
         if (!Number.isFinite(amount) || amount <= 0) return;
@@ -1440,7 +1290,7 @@ export default function DashboardModule(): JSX.Element {
         const fallbackRef = String(entry.id || entry.label || "").trim();
         const reference = sourceNumber || sourceId || fallbackRef || "ohne-nummer";
 
-        const isPhantom = isPhantomFoEntry(entry, phantomFoIdSet);
+        const isPhantom = isDashboardPhantomFoEntry(entry, phantomFoIdSet);
         const categoryKey: CategoryKey = source === "po"
           ? "outflows-po"
           : (isPhantom ? "outflows-phantom-fo" : "outflows-fo");

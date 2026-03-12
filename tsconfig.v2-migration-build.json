@@ -14,6 +14,7 @@
     "src/v2/domain/paymentJournal.ts",
     "src/v2/domain/orderUtils.ts",
     "src/v2/domain/closingBalanceSeries.ts",
+    "src/v2/domain/dashboardCashflow.ts",
     "src/v2/domain/dashboardOrderTimeline.ts",
     "src/v2/domain/tableModels.ts",
     "src/v2/state/**/*.ts",
