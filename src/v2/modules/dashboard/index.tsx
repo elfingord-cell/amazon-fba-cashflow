@@ -24,7 +24,6 @@ import {
   type DashboardEntry,
 } from "../../domain/dashboardMaturity";
 import { buildHybridClosingBalanceSeries } from "../../domain/closingBalanceSeries";
-import { buildCashInPayoutMirrorByMonth } from "../../domain/cashInPayoutMirror";
 import {
   type CoverageStatusKey,
 } from "../../domain/dashboardRobustness";
@@ -503,7 +502,6 @@ function splitOutflowEntriesByType(
 function splitInflowEntriesByType(
   entries: DashboardEntry[],
   bucketScope?: Set<string>,
-  cashInPayoutEur?: number | null,
 ): {
   amazon: number;
   amazonCore: number;
@@ -533,20 +531,21 @@ function splitInflowEntriesByType(
     const kind = String(entry.kind || "").toLowerCase();
     const isAmazon = source === "sales" || source === "sales-plan" || kind === "sales-payout";
     if (isAmazon) {
-      // Amazon inflow is taken 1:1 from Cash-in (Einzahlungen EUR), not recomputed in Dashboard.
+      const bucket = resolveEntryBucket(entry);
+      if (bucket === PORTFOLIO_BUCKET.PLAN) {
+        totals.amazonPlanned += amount;
+      } else if (bucket === PORTFOLIO_BUCKET.IDEAS) {
+        totals.amazonNew += amount;
+      } else {
+        totals.amazonCore += amount;
+      }
+      totals.amazon += amount;
+      totals.total += amount;
       return;
-    } else {
-      totals.other += amount;
     }
+    totals.other += amount;
     totals.total += amount;
   });
-
-  const cashInPayout = Number(cashInPayoutEur);
-  totals.amazon = Number.isFinite(cashInPayout) ? Math.max(0, cashInPayout) : 0;
-  totals.amazonCore = totals.amazon;
-  totals.amazonPlanned = 0;
-  totals.amazonNew = 0;
-  totals.total = totals.amazon + totals.other;
 
   return totals;
 }
@@ -803,12 +802,6 @@ export default function DashboardModule(): JSX.Element {
     () => visibleBreakdown.map((row) => ({ ...row })),
     [visibleBreakdown],
   );
-  const effectiveCashInByMonth = useMemo(() => {
-    return buildCashInPayoutMirrorByMonth({
-      months: visibleMonths,
-      state: stateObject,
-    }) as Record<string, number>;
-  }, [stateObject, visibleMonths]);
   const monthHasActualClosing = useMemo(
     () => new Map(simulatedBreakdown.map((row) => [row.month, row.hasActualClosing === true])),
     [simulatedBreakdown],
@@ -842,11 +835,10 @@ export default function DashboardModule(): JSX.Element {
       map.set(row.month, splitInflowEntriesByType(
         Array.isArray(row.entries) ? row.entries : [],
         bucketScopeSet,
-        effectiveCashInByMonth[row.month] ?? null,
       ));
     });
     return map;
-  }, [bucketScopeSet, effectiveCashInByMonth, simulatedBreakdown]);
+  }, [bucketScopeSet, simulatedBreakdown]);
 
   const inflowSplitSeries = useMemo(
     () => simulatedBreakdown.map((row) => inflowSplitByMonth.get(row.month) || {
