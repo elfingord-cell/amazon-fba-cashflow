@@ -768,7 +768,7 @@ export default function InputsModule(): JSX.Element {
       const factorApplied = Number.isFinite(factor) ? factor : 1;
 
       const manualRevenue = toNumber(row.revenueEur);
-      const isManualRevenueOverride = row.source === "manual" && Number.isFinite(forecastRevenue) && forecastRevenue > 0;
+      const isManualRevenueOverride = hasManualRevenueOverride(row) && Number.isFinite(forecastRevenue) && forecastRevenue > 0;
       const baseRevenue = isManualRevenueOverride ? Number(manualRevenue || 0) : forecastRevenue;
       const revenueWithCalibration = isManualRevenueOverride ? baseRevenue : (forecastRevenue * factorApplied);
       baseRevenueTotal += Number(baseRevenue || 0);

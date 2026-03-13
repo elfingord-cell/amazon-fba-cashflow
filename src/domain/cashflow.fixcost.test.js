@@ -227,6 +227,76 @@ test("hybrid mode keeps forecast-sourced months on live forecast revenue", () =>
   assert.equal(salesPayoutAmountForMonth(report, "2026-03"), 2000);
 });
 
+test("hybrid mode ignores legacy manual zero revenue and falls back to forecast", () => {
+  const state = {
+    settings: {
+      startMonth: "2026-01",
+      horizonMonths: 4,
+      openingBalance: 1000,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-1": {
+          "2026-03": { revenueEur: "5.000,00" },
+        },
+      },
+    },
+    products: [
+      {
+        sku: "SKU-1",
+        alias: "Hero SKU",
+        includeInForecast: true,
+      },
+    ],
+    incomings: [
+      {
+        id: "inc-mar",
+        month: "2026-03",
+        revenueEur: "0",
+        payoutPct: "40",
+        source: "manual",
+      },
+    ],
+    fixcosts: [
+      {
+        id: "fc-mar",
+        name: "Tooling",
+        category: "Tools",
+        amount: "130,00",
+        frequency: "monthly",
+        anchor: "LAST",
+        startMonth: "2026-03",
+        proration: { enabled: false, method: "none" },
+      },
+    ],
+    fixcostOverrides: {},
+    status: { autoManualCheck: false, events: {} },
+  };
+
+  const { report, effectiveCashIn } = withMockedNow(new Date("2026-03-12T12:00:00Z"), () => ({
+    report: computeSeries(state),
+    effectiveCashIn: buildEffectiveCashInByMonth(["2026-03"], state),
+  }));
+
+  assert.equal(effectiveCashIn["2026-03"].revenueUsedEUR, 5000);
+  assert.equal(effectiveCashIn["2026-03"].revenueSource, "forecast_raw");
+  assert.equal(effectiveCashIn["2026-03"].payoutPctUsed, 40);
+  assert.equal(effectiveCashIn["2026-03"].payoutSource, "manual");
+  assert.equal(effectiveCashIn["2026-03"].payoutEUR, 2000);
+
+  const march = report.breakdown.find((entry) => entry.month === "2026-03");
+  assert.ok(march);
+  assert.equal(march.inflow, 2000);
+  assert.equal(march.outflow, 130);
+  assert.equal(march.net, 1870);
+  assert.equal(march.net, march.inflow - march.outflow);
+  assert.equal(salesPayoutAmountForMonth(report, "2026-03"), 2000);
+});
+
 test("expandFixcostInstances respects overrides and auto-paid", () => {
   const state = {
     settings: { startMonth: "2025-01", horizonMonths: 6 },

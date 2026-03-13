@@ -82,6 +82,11 @@ function normalizeIncomingRevenueSource(value) {
     : 'manual';
 }
 
+function hasPositiveRevenueOverride(value) {
+  const revenue = Number(value);
+  return Number.isFinite(revenue) && revenue > 0;
+}
+
 function normalizeBucketScopeSet(input) {
   if (!input) return null;
   if (input instanceof Set) return input.size ? input : null;
@@ -1518,7 +1523,7 @@ export function computeSeries(state) {
     const hasCashInSetupRevenueOverride = forecastEnabled
       && cashInRevenueBasisMode === 'hybrid'
       && incomingRevenueSource !== 'forecast'
-      && Number.isFinite(cashInSetupRevenue);
+      && hasPositiveRevenueOverride(cashInSetupRevenue);
     const hasManualPayoutInput = incoming?.payoutPct != null && String(incoming.payoutPct).trim() !== '';
     const manualPayoutPct = hasManualPayoutInput
       ? parsePayoutPctInput(incoming.payoutPct)
