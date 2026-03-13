@@ -107,6 +107,13 @@ function formatPercent(value: number): string {
   })} %`;
 }
 
+function formatDate(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("de-DE");
+}
+
 function shiftMonthKey(monthKey: string, offset: number): string {
   if (!/^\d{4}-\d{2}$/.test(String(monthKey || ""))) return "";
   const [year, month] = monthKey.split("-").map(Number);
