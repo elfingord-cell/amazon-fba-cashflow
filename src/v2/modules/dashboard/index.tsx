@@ -28,6 +28,7 @@ import {
 } from "../../domain/dashboardRobustness";
 import {
   aggregateDashboardMonthEntries,
+  alignDashboardCashInToMirror,
   applyDashboardBucketScopeToBreakdown,
   applyTaxInstancesToBreakdown,
   buildDashboardTaxMatrixGroup,
@@ -35,6 +36,7 @@ import {
   isDashboardEntryInBucketScope,
   isDashboardPhantomFoEntry,
 } from "../../domain/dashboardCashflow";
+import { buildCashInPayoutMirrorByMonth } from "../../domain/cashInPayoutMirror";
 import { buildMonthPlanningResult, type MonthPlanningMonth } from "../../domain/monthPlanning";
 import {
   buildPhantomFoSuggestions,
@@ -579,9 +581,16 @@ export default function DashboardModule(): JSX.Element {
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
   const breakdown = report.breakdown || [];
+  const cashInMirrorByMonth = useMemo(
+    () => buildCashInPayoutMirrorByMonth({ months, state: calculationState }),
+    [calculationState, months],
+  );
   const dashboardBreakdown = useMemo(
-    () => applyTaxInstancesToBreakdown(breakdown, stateObject),
-    [breakdown, stateObject],
+    () => alignDashboardCashInToMirror(
+      applyTaxInstancesToBreakdown(breakdown, stateObject),
+      cashInMirrorByMonth,
+    ),
+    [breakdown, cashInMirrorByMonth, stateObject],
   );
   const monthCloseStatusByMonth = useMemo(() => {
     const map = new Map<string, { closed: boolean }>();

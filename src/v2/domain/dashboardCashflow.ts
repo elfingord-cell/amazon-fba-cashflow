@@ -73,6 +73,120 @@ export const DASHBOARD_TAX_LABELS = DASHBOARD_TAX_TYPE_CONFIG.reduce((acc, entry
   return acc;
 }, {} as Record<string, string>);
 
+function roundCurrencyAmount(value: number): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.round(numeric * 100) / 100;
+}
+
+function isDashboardSalesPayoutEntry(entry: DashboardCashflowEntry): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  return String(entry.kind || "").toLowerCase() === "sales-payout";
+}
+
+function resolveDashboardSalesEntryWeight(entry: DashboardCashflowEntry): number {
+  const directAmount = Math.abs(Number(entry.amount || 0));
+  if (Number.isFinite(directAmount) && directAmount > 0) return directAmount;
+  const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : {};
+  const cashIn = (meta.cashIn && typeof meta.cashIn === "object") ? meta.cashIn as Record<string, unknown> : {};
+  const componentRevenueRaw = Math.abs(Number(cashIn.componentRevenueRaw || 0));
+  if (Number.isFinite(componentRevenueRaw) && componentRevenueRaw > 0) return componentRevenueRaw;
+  const revenue = Math.abs(Number(cashIn.revenue || 0));
+  if (Number.isFinite(revenue) && revenue > 0) return revenue;
+  return 0;
+}
+
+function allocateMirroredSalesEntries(
+  salesEntries: DashboardCashflowEntry[],
+  totalPayout: number,
+): DashboardCashflowEntry[] {
+  if (!Array.isArray(salesEntries) || !salesEntries.length) return [];
+  const target = roundCurrencyAmount(Math.max(0, totalPayout));
+  if (!(target > 0)) return [];
+
+  const weights = salesEntries.map((entry) => resolveDashboardSalesEntryWeight(entry));
+  const weightSum = weights.reduce((sum, value) => sum + value, 0);
+  let remaining = target;
+
+  return salesEntries.map((entry, index) => {
+    const isLast = index === salesEntries.length - 1;
+    const weight = weights[index];
+    const allocated = isLast
+      ? remaining
+      : roundCurrencyAmount(
+        weightSum > 0
+          ? (target * weight) / weightSum
+          : (target / salesEntries.length),
+      );
+    remaining = roundCurrencyAmount(remaining - allocated);
+    return {
+      ...entry,
+      direction: "in",
+      amount: roundCurrencyAmount(Math.max(0, allocated)),
+    };
+  }).filter((entry) => Number(entry.amount || 0) > 0);
+}
+
+export function alignDashboardCashInToMirror(
+  rows: DashboardCashflowBreakdownRow[],
+  cashInByMonth: Record<string, number>,
+): DashboardCashflowBreakdownRow[] {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  const mirror = (cashInByMonth && typeof cashInByMonth === "object") ? cashInByMonth : {};
+
+  return rows.map((row) => {
+    const month = String(row.month || "").trim();
+    const mirroredPayout = Number(mirror[month]);
+    if (!Number.isFinite(mirroredPayout)) {
+      return {
+        ...row,
+        entries: Array.isArray(row.entries) ? row.entries.slice() : [],
+      };
+    }
+
+    const entries = Array.isArray(row.entries) ? row.entries : [];
+    const salesEntries = entries.filter((entry) => isDashboardSalesPayoutEntry(entry));
+    const mirroredSalesEntries = allocateMirroredSalesEntries(salesEntries, mirroredPayout);
+
+    if (!salesEntries.length && mirroredPayout > 0) {
+      return {
+        ...row,
+        entries: [
+          {
+            id: `dashboard-cashin-mirror-${month}`,
+            direction: "in",
+            amount: roundCurrencyAmount(mirroredPayout),
+            label: "Amazon Payout",
+            kind: "sales-payout",
+            group: "Sales × Payout",
+            source: "sales",
+            portfolioBucket: PORTFOLIO_BUCKET.CORE,
+            meta: {
+              cashIn: {
+                payoutAmount: roundCurrencyAmount(mirroredPayout),
+                source: "dashboard_cashin_mirror",
+              },
+              portfolioBucket: PORTFOLIO_BUCKET.CORE,
+            },
+          },
+          ...entries,
+        ],
+      };
+    }
+
+    let salesIndex = 0;
+    return {
+      ...row,
+      entries: entries.flatMap((entry) => {
+        if (!isDashboardSalesPayoutEntry(entry)) return [entry];
+        const replacement = mirroredSalesEntries[salesIndex] || null;
+        salesIndex += 1;
+        return replacement ? [replacement] : [];
+      }),
+    };
+  });
+}
+
 function createEmptyTaxBreakdown(): Record<string, number> {
   return DASHBOARD_TAX_TYPE_CONFIG.reduce((acc, entry) => {
     acc[entry.key] = 0;

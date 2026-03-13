@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   aggregateDashboardMonthEntries,
+  alignDashboardCashInToMirror,
   applyTaxInstancesToBreakdown,
   applyDashboardBucketScopeToBreakdown,
   buildDashboardTaxMatrixGroup,
@@ -175,6 +176,36 @@ test("dashboard chart and matrix ignore legacy manual zero revenue in hybrid mod
   assert.equal(marchAggregation.totals.cashIn, 2000);
   assert.equal(marchAggregation.totals.cashOut, 130);
   assert.equal(marchAggregation.totals.net, 1870);
+});
+
+test("dashboard mirror injects cash-in table payout when sales entries are missing", () => {
+  const bucketScope = new Set(["Kernportfolio", "Planprodukte"]);
+  const rows = alignDashboardCashInToMirror([
+    {
+      month: "2026-03",
+      opening: 1130,
+      closing: 1130,
+      inflow: 0,
+      outflow: 130,
+      net: -130,
+      entries: [
+        { id: "mar-fix", direction: "out", amount: 130, source: "fixcosts", group: "Fixkosten" },
+      ],
+    },
+  ], {
+    "2026-03": 2000,
+  });
+
+  const march = rows[0];
+  const aggregation = aggregateDashboardMonthEntries(march.entries, {
+    bucketScope,
+    includePhantomFo: true,
+  });
+
+  assert.equal(aggregation.totals.cashIn, 2000);
+  assert.equal(aggregation.totals.cashOut, 130);
+  assert.equal(aggregation.totals.net, 1870);
+  assert.equal(aggregation.inflow.amazonCore, 2000);
 });
 
 test("dashboard cashflow aggregation keeps March income non-zero and consumers numerically aligned", () => {
