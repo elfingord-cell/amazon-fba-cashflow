@@ -8,6 +8,96 @@ const {
   buildDashboardTaxMatrixGroup,
 } = require("../../.test-build/migration/v2/domain/dashboardCashflow.js");
 
+test("dashboard chart and matrix reuse the corrected March cash-in from Cash-in Setup", async () => {
+  const [{ computeSeries }, { PORTFOLIO_BUCKET }] = await Promise.all([
+    import("../../src/domain/cashflow.js"),
+    import("../../src/domain/portfolioBuckets.js"),
+  ]);
+  const state = {
+    settings: {
+      startMonth: "2026-01",
+      horizonMonths: 4,
+      openingBalance: 1000,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "SKU-1": {
+          "2026-03": { revenueEur: "5.000,00" },
+        },
+      },
+    },
+    products: [
+      {
+        sku: "SKU-1",
+        alias: "Hero SKU",
+        includeInForecast: true,
+      },
+    ],
+    incomings: [
+      {
+        id: "inc-mar",
+        month: "2026-03",
+        revenueEur: "1.000,00",
+        payoutPct: "40",
+        source: "forecast",
+      },
+    ],
+    fixcosts: [
+      {
+        id: "fc-mar",
+        name: "Tooling",
+        category: "Tools",
+        amount: "130,00",
+        frequency: "monthly",
+        anchor: "LAST",
+        startMonth: "2026-03",
+        proration: { enabled: false, method: "none" },
+      },
+    ],
+    fixcostOverrides: {},
+    extras: [],
+    dividends: [],
+    fos: [],
+    pos: [],
+    status: { autoManualCheck: false, events: {} },
+  };
+  const bucketScope = new Set([PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN]);
+
+  const report = computeSeries(state);
+  const scoped = applyDashboardBucketScopeToBreakdown(report.breakdown, bucketScope, {
+    includePhantomFo: true,
+  });
+  const march = scoped.find((row) => row.month === "2026-03");
+  assert.ok(march);
+
+  const marchAggregation = aggregateDashboardMonthEntries(march.entries, {
+    bucketScope,
+    includePhantomFo: true,
+  });
+
+  const chartIncome = marchAggregation.inflow.amazonCore
+    + marchAggregation.inflow.amazonPlanned
+    + marchAggregation.inflow.amazonNew
+    + marchAggregation.inflow.other;
+  const matrixIncome = marchAggregation.inflow.total;
+
+  assert.equal(march.inflow, 400);
+  assert.equal(march.outflow, 130);
+  assert.equal(march.net, 270);
+  assert.equal(march.net, march.inflow - march.outflow);
+  assert.equal(marchAggregation.totals.cashIn, 400);
+  assert.equal(marchAggregation.totals.cashOut, 130);
+  assert.equal(marchAggregation.totals.net, 270);
+  assert.equal(chartIncome, 400);
+  assert.equal(matrixIncome, 400);
+  assert.equal(chartIncome, matrixIncome);
+  assert.equal(chartIncome, march.inflow);
+});
+
 test("dashboard cashflow aggregation keeps March income non-zero and consumers numerically aligned", () => {
   const bucketScope = new Set(["core", "plan"]);
   const rows = [

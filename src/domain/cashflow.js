@@ -41,6 +41,16 @@ export function parsePct(p) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function readExplicitEuroInput(value) {
+  if (value == null) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/\./g, '').replace(',', '.');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function readOptionalNumber(value, parser = parseEuro) {
   if (value == null) return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -1494,13 +1504,12 @@ export function computeSeries(state) {
 
   Object.keys(bucket).forEach(m => {
     const incoming = incomingByMonth.get(m) || null;
-    const incomingSource = String(incoming?.source || '').trim().toLowerCase();
-    const hasManualRevenueInput = incoming?.revenueEur != null && String(incoming.revenueEur).trim() !== '';
-    const manualRevenue = hasManualRevenueInput ? parseEuro(incoming.revenueEur) : null;
-    const hasManualRevenueOverride = forecastEnabled
+    const cashInSetupRevenue = readExplicitEuroInput(incoming?.revenueEur);
+    // Forecast transfers persist revenue with source="forecast"; the explicit monthly value in Cash-in
+    // Setup must still stay authoritative in hybrid mode.
+    const hasCashInSetupRevenueOverride = forecastEnabled
       && cashInRevenueBasisMode === 'hybrid'
-      && incomingSource === 'manual'
-      && Number.isFinite(manualRevenue);
+      && Number.isFinite(cashInSetupRevenue);
     const hasManualPayoutInput = incoming?.payoutPct != null && String(incoming.payoutPct).trim() !== '';
     const manualPayoutPct = hasManualPayoutInput
       ? parsePayoutPctInput(incoming.payoutPct)
@@ -1559,11 +1568,11 @@ export function computeSeries(state) {
     let revenue = null;
     let revenueSource = null;
     if (!forecastEnabled) {
-      if (!Number.isFinite(manualRevenue)) return;
-      revenue = Number(manualRevenue);
+      if (!Number.isFinite(cashInSetupRevenue)) return;
+      revenue = Number(cashInSetupRevenue);
       revenueSource = 'manual_no_forecast';
-    } else if (hasManualRevenueOverride) {
-      revenue = Number(manualRevenue);
+    } else if (hasCashInSetupRevenueOverride) {
+      revenue = Number(cashInSetupRevenue);
       revenueSource = 'manual_override';
     } else {
       revenue = Number(cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw);
@@ -1576,7 +1585,7 @@ export function computeSeries(state) {
     const isFutureMonth = horizonFromCurrentMonth > 0;
     const payoutPct = clampPct(basePayoutPct, cashInQuoteMinPct, cashInQuoteMaxPct);
     const planRevenueAfterCalibration = forecastEnabled
-      ? (hasManualRevenueOverride ? Number(manualRevenue) : (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw))
+      ? (hasCashInSetupRevenueOverride ? Number(cashInSetupRevenue) : (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw))
       : revenue;
     const forecastRevenueForTooltip = forecastEnabled ? forecastRevenueRaw : revenue;
     const recommendationCapsApplied = Array.isArray(recommendationByMonth?.capsApplied)
@@ -1722,7 +1731,7 @@ export function computeSeries(state) {
     }
 
     const salesComponents = [];
-    if (hasManualRevenueOverride) {
+    if (hasCashInSetupRevenueOverride) {
       const weightedComponents = [];
       PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
         const liveRevenueRaw = Number(forecastMapLiveByBucket[bucketName]?.[m] || 0);
