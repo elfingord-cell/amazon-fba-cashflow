@@ -76,6 +76,12 @@ function normalizeCashInRevenueBasisMode(value) {
     : 'hybrid';
 }
 
+function normalizeIncomingRevenueSource(value) {
+  return String(value || '').trim().toLowerCase() === 'forecast'
+    ? 'forecast'
+    : 'manual';
+}
+
 function normalizeBucketScopeSet(input) {
   if (!input) return null;
   if (input instanceof Set) return input.size ? input : null;
@@ -1505,10 +1511,13 @@ export function computeSeries(state) {
   Object.keys(bucket).forEach(m => {
     const incoming = incomingByMonth.get(m) || null;
     const cashInSetupRevenue = readExplicitEuroInput(incoming?.revenueEur);
-    // Forecast transfers persist revenue with source="forecast"; the explicit monthly value in Cash-in
-    // Setup must still stay authoritative in hybrid mode.
+    // In hybrid mode only true manual months may override the forecast revenue.
+    // Forecast transfers persist a helper value with source="forecast", but they
+    // must keep following the live forecast in Dashboard/Cash-In.
+    const incomingRevenueSource = normalizeIncomingRevenueSource(incoming?.source);
     const hasCashInSetupRevenueOverride = forecastEnabled
       && cashInRevenueBasisMode === 'hybrid'
+      && incomingRevenueSource !== 'forecast'
       && Number.isFinite(cashInSetupRevenue);
     const hasManualPayoutInput = incoming?.payoutPct != null && String(incoming.payoutPct).trim() !== '';
     const manualPayoutPct = hasManualPayoutInput

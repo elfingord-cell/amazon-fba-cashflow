@@ -8,7 +8,7 @@ const {
   buildDashboardTaxMatrixGroup,
 } = require("../../.test-build/migration/v2/domain/dashboardCashflow.js");
 
-test("dashboard chart and matrix reuse the corrected March cash-in from Cash-in Setup", async () => {
+test("dashboard chart and matrix keep forecast-sourced hybrid months on live forecast revenue", async () => {
   const [{ computeSeries }, { PORTFOLIO_BUCKET }] = await Promise.all([
     import("../../src/domain/cashflow.js"),
     import("../../src/domain/portfolioBuckets.js"),
@@ -85,15 +85,15 @@ test("dashboard chart and matrix reuse the corrected March cash-in from Cash-in 
     + marchAggregation.inflow.other;
   const matrixIncome = marchAggregation.inflow.total;
 
-  assert.equal(march.inflow, 400);
+  assert.equal(march.inflow, 2000);
   assert.equal(march.outflow, 130);
-  assert.equal(march.net, 270);
+  assert.equal(march.net, 1870);
   assert.equal(march.net, march.inflow - march.outflow);
-  assert.equal(marchAggregation.totals.cashIn, 400);
+  assert.equal(marchAggregation.totals.cashIn, 2000);
   assert.equal(marchAggregation.totals.cashOut, 130);
-  assert.equal(marchAggregation.totals.net, 270);
-  assert.equal(chartIncome, 400);
-  assert.equal(matrixIncome, 400);
+  assert.equal(marchAggregation.totals.net, 1870);
+  assert.equal(chartIncome, 2000);
+  assert.equal(matrixIncome, 2000);
   assert.equal(chartIncome, matrixIncome);
   assert.equal(chartIncome, march.inflow);
 });

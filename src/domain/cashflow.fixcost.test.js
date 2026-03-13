@@ -157,7 +157,7 @@ test("cash-in setup monthly override takes precedence for March 2026 and net sta
   assert.equal(salesPayoutAmountForMonth(report, "2026-03"), 400);
 });
 
-test("cash-in setup revenue remains authoritative in hybrid mode even after forecast transfer", () => {
+test("hybrid mode keeps forecast-sourced months on live forecast revenue", () => {
   const state = {
     settings: {
       startMonth: "2026-01",
@@ -212,19 +212,19 @@ test("cash-in setup revenue remains authoritative in hybrid mode even after fore
     effectiveCashIn: buildEffectiveCashInByMonth(["2026-03"], state),
   }));
 
-  assert.equal(effectiveCashIn["2026-03"].revenueUsedEUR, 1000);
-  assert.equal(effectiveCashIn["2026-03"].revenueSource, "manual_override");
+  assert.equal(effectiveCashIn["2026-03"].revenueUsedEUR, 5000);
+  assert.equal(effectiveCashIn["2026-03"].revenueSource, "forecast_raw");
   assert.equal(effectiveCashIn["2026-03"].payoutPctUsed, 40);
   assert.equal(effectiveCashIn["2026-03"].payoutSource, "manual");
-  assert.equal(effectiveCashIn["2026-03"].payoutEUR, 400);
+  assert.equal(effectiveCashIn["2026-03"].payoutEUR, 2000);
 
   const march = report.breakdown.find((entry) => entry.month === "2026-03");
   assert.ok(march);
-  assert.equal(march.inflow, 400);
+  assert.equal(march.inflow, 2000);
   assert.equal(march.outflow, 130);
-  assert.equal(march.net, 270);
+  assert.equal(march.net, 1870);
   assert.equal(march.net, march.inflow - march.outflow);
-  assert.equal(salesPayoutAmountForMonth(report, "2026-03"), 400);
+  assert.equal(salesPayoutAmountForMonth(report, "2026-03"), 2000);
 });
 
 test("expandFixcostInstances respects overrides and auto-paid", () => {
