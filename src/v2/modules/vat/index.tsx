@@ -13,6 +13,7 @@ import {
 import { expandVatTaxInstances } from "../../../domain/taxPlanner.js";
 import { computeVatPreview } from "../../../domain/vatPreview.js";
 import { StatsTableShell } from "../../components/StatsTableShell";
+import { formatMonthLabel as sharedFormatMonthLabel } from "../../domain/months";
 import { ensureAppStateV2 } from "../../state/appState";
 import { useWorkspaceState } from "../../state/workspace";
 
@@ -113,6 +114,31 @@ function formatDate(value: string): string {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString("de-DE");
 }
+
+function fallbackVatMonthLabel(month: string): string {
+  if (!/^\d{4}-\d{2}$/.test(String(month || ""))) return String(month || "—") || "—";
+  const [year, monthNumber] = String(month).split("-").map(Number);
+  const date = new Date(Date.UTC(year, monthNumber - 1, 1));
+  return date.toLocaleDateString("de-DE", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+export function resolveVatMonthLabelFormatter(
+  formatter: unknown,
+): (month: string) => string {
+  return typeof formatter === "function"
+    ? (month: string) => String(formatter(month))
+    : fallbackVatMonthLabel;
+}
+
+export function formatVatPaymentMonthLabel(
+  paymentMonth: string | null | undefined,
+  formatter: unknown = sharedFormatMonthLabel,
+): string {
+  if (!paymentMonth) return "—";
+  return resolveVatMonthLabelFormatter(formatter)(paymentMonth);
+}
+
+const formatVatMonthLabel = resolveVatMonthLabelFormatter(sharedFormatMonthLabel);
 
 function shiftMonthKey(monthKey: string, offset: number): string {
   if (!/^\d{4}-\d{2}$/.test(String(monthKey || ""))) return "";
@@ -519,7 +545,7 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
             {
               title: "Zahlungsmonat",
               key: "paymentMonth",
-              render: (_, row) => row.paymentMonth ? formatMonthLabel(row.paymentMonth) : "—",
+              render: (_, row) => formatVatPaymentMonthLabel(row.paymentMonth, formatVatMonthLabel),
             },
             {
               title: "Steuer-Cashflow",

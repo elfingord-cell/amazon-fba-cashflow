@@ -40,6 +40,7 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
     const routeCatalog = await server.ssrLoadModule("/src/v2/app/routeCatalog.ts");
     const ordersTabs = await server.ssrLoadModule("/src/v2/modules/orders/tabs.ts");
     const taxesTabs = await server.ssrLoadModule("/src/v2/modules/taxes/tabs.ts");
+    const vatModule = await server.ssrLoadModule("/src/v2/modules/vat/index.tsx");
     const routes = Array.isArray(routeCatalog.V2_ROUTES) ? routeCatalog.V2_ROUTES : [];
     assert.ok(routes.length > 0, "Keine V2-Routen gefunden.");
     assert.equal(
@@ -110,6 +111,48 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
       String(taxesTabs.buildTaxesTabRoute("oss", { month: "2026-04", source: "dashboard" })),
       "/v2/abschluss/steuern?tab=oss&month=2026-04&source=dashboard",
       "Dashboard-Deep-Link fuer OSS muss in den Steuern-Shell mit Tab und Monatskontext zeigen.",
+    );
+    assert.equal(
+      typeof vatModule.resolveVatMonthLabelFormatter,
+      "function",
+      "USt DE muss einen robusten Formatter-Resolver exportieren.",
+    );
+    assert.equal(
+      typeof vatModule.formatVatPaymentMonthLabel,
+      "function",
+      "USt DE muss das Zahlungsmonat-Label ueber einen testbaren Helper rendern.",
+    );
+    const safeVatMonthLabel = vatModule.resolveVatMonthLabelFormatter(undefined);
+    assert.equal(
+      typeof safeVatMonthLabel,
+      "function",
+      "USt DE muss auch ohne durchgereichten Formatter eine Funktions-Fallback haben.",
+    );
+    assert.match(
+      String(safeVatMonthLabel("2026-04")),
+      /2026/,
+      "Fallback-Monatslabel fuer USt DE muss ein renderbares Monatslabel liefern.",
+    );
+    const customVatMonthLabel = vatModule.resolveVatMonthLabelFormatter((month) => `Monat ${month}`);
+    assert.equal(
+      customVatMonthLabel("2026-04"),
+      "Monat 2026-04",
+      "USt DE darf einen gueltigen Formatter nicht ueberschreiben.",
+    );
+    assert.equal(
+      vatModule.formatVatPaymentMonthLabel(undefined, undefined),
+      "—",
+      "USt DE muss ohne Zahlungsmonat ein stabiles Placeholder-Label rendern.",
+    );
+    assert.match(
+      String(vatModule.formatVatPaymentMonthLabel("2026-04", undefined)),
+      /2026/,
+      "USt DE muss fuer das Zahlungsmonat auch ohne Formatter ein renderbares Monatslabel liefern.",
+    );
+    assert.equal(
+      vatModule.formatVatPaymentMonthLabel("2026-04", (month) => `Monat ${month}`),
+      "Monat 2026-04",
+      "USt DE muss einen gueltigen Zahlungsmonat-Formatter direkt im Renderpfad respektieren.",
     );
 
     const failures = [];
