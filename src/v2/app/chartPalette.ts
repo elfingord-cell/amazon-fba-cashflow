@@ -36,6 +36,7 @@ export const v2DashboardChartColors = {
   amazonNew: v2ChartPalette.successSoft,
   otherInflow: v2ChartPalette.tealSoft,
   fixcost: v2ChartPalette.dangerDark,
+  tax: v2ChartPalette.warning,
   po: v2ChartPalette.danger,
   fo: v2ChartPalette.dangerSoft,
   phantomFo: v2ChartPalette.warningDark,

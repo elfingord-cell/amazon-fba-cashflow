@@ -131,6 +131,7 @@ function mergeUpsert(currentState, incomingState) {
     next.forecast = mergeObjectExistingWins(currentState.forecast, incomingState.forecast);
     next.inventory = mergeObjectExistingWins(currentState.inventory, incomingState.inventory);
     next.fixcostOverrides = mergeObjectExistingWins(currentState.fixcostOverrides, incomingState.fixcostOverrides);
+    next.taxes = mergeObjectExistingWins(currentState.taxes, incomingState.taxes);
     next.monthlyActuals = mergeObjectExistingWins(currentState.monthlyActuals, incomingState.monthlyActuals);
     const legacyMetaCurrent = (0, appState_1.ensureAppStateV2)(currentState).legacyMeta;
     const legacyMetaIncoming = (0, appState_1.ensureAppStateV2)(incomingState).legacyMeta;

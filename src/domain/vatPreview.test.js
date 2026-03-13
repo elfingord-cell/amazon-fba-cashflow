@@ -20,6 +20,8 @@ const baseState = {
       deShareDefault: 0.8,
       feeRateDefault: 0.38,
       fixInputDefault: 0,
+      paymentLagMonths: 1,
+      paymentDayOfMonth: 10,
     },
   },
   incomings: [],
@@ -134,4 +136,23 @@ test("falls back to forecast-based gross revenue when month revenue input is mis
   assert.ok(Math.abs(march.grossTotal - 3000) < 0.1, `Forecast-Fallback erwartet 3000 EUR Umsatz, got ${march.grossTotal}`);
   assert.ok(Math.abs(march.grossDe - 2400) < 0.1, `DE-Brutto erwartet 2400 EUR, got ${march.grossDe}`);
   assert.ok(march.outVat > 0, "Output-USt darf bei vorhandenem Forecast-Umsatz nicht 0 sein.");
+});
+
+test("payment-month settings do not change the underlying USt preview payable calculation", () => {
+  const state = cloneState();
+  state.incomings = [
+    { month: "2025-10", revenueEur: "100.000" },
+  ];
+
+  const baseline = computeVatPreview(state);
+  state.settings.vatPreview.paymentLagMonths = 2;
+  state.settings.vatPreview.paymentDayOfMonth = 27;
+  const shifted = computeVatPreview(state);
+
+  const baselineRow = baseline.rows.find((row) => row.month === "2025-10");
+  const shiftedRow = shifted.rows.find((row) => row.month === "2025-10");
+
+  assert.ok(baselineRow);
+  assert.ok(shiftedRow);
+  assert.ok(Math.abs(Number(baselineRow.payable || 0) - Number(shiftedRow.payable || 0)) < 0.000001);
 });

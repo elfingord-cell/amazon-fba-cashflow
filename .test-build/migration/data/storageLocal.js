@@ -33,6 +33,7 @@ exports.getRecentProducts = getRecentProducts;
 const dataHealth_js_1 = require("../lib/dataHealth.js");
 const portfolioBuckets_js_1 = require("../domain/portfolioBuckets.js");
 const cashInRules_js_1 = require("../domain/cashInRules.js");
+const taxPlanner_js_1 = require("../domain/taxPlanner.js");
 exports.STORAGE_KEY = "amazon_fba_cashflow_v1";
 exports.LAST_COMMIT_KEY = "amazon_fba_cashflow_last_commit";
 const CURRENCIES = ["EUR", "USD", "CNY"];
@@ -83,6 +84,8 @@ const defaults = {
             deShareDefault: 0.8,
             feeRateDefault: 0.38,
             fixInputDefault: 0,
+            paymentLagMonths: 1,
+            paymentDayOfMonth: 10,
         },
         transportLeadTimesDays: {
             air: 10,
@@ -125,6 +128,7 @@ const defaults = {
     fos: [],
     fixcosts: [],
     fixcostOverrides: {},
+    taxes: (0, taxPlanner_js_1.createDefaultTaxesState)(),
     poTemplates: [],
     products: [],
     productCategories: [],
@@ -180,6 +184,41 @@ function ensureFixcostContainers(state) {
         state.fixcostOverrides = {};
     }
 }
+function ensureTaxData(state) {
+    if (!state)
+        return;
+    const base = (0, taxPlanner_js_1.createDefaultTaxesState)();
+    if (!state.taxes || typeof state.taxes !== "object") {
+        state.taxes = structuredClone(base);
+        return;
+    }
+    if (!state.taxes.oss || typeof state.taxes.oss !== "object") {
+        state.taxes.oss = structuredClone(base.oss);
+    }
+    else {
+        state.taxes.oss.active = state.taxes.oss.active === true;
+        state.taxes.oss.deSharePct = String(state.taxes.oss.deSharePct ?? base.oss.deSharePct);
+    }
+    if (!state.taxes.ertragsteuern || typeof state.taxes.ertragsteuern !== "object") {
+        state.taxes.ertragsteuern = structuredClone(base.ertragsteuern);
+        return;
+    }
+    const ertragsteuern = state.taxes.ertragsteuern;
+    if (!ertragsteuern.masters || typeof ertragsteuern.masters !== "object") {
+        ertragsteuern.masters = structuredClone(base.ertragsteuern.masters);
+    }
+    if (!ertragsteuern.overrides || typeof ertragsteuern.overrides !== "object") {
+        ertragsteuern.overrides = structuredClone(base.ertragsteuern.overrides);
+    }
+    Object.keys(base.ertragsteuern.masters).forEach((taxType) => {
+        if (!ertragsteuern.masters[taxType] || typeof ertragsteuern.masters[taxType] !== "object") {
+            ertragsteuern.masters[taxType] = structuredClone(base.ertragsteuern.masters[taxType]);
+        }
+        if (!ertragsteuern.overrides[taxType] || typeof ertragsteuern.overrides[taxType] !== "object") {
+            ertragsteuern.overrides[taxType] = {};
+        }
+    });
+}
 function ensurePoTemplates(state) {
     if (!state)
         return;
@@ -232,10 +271,18 @@ function ensureVatData(state) {
     }
     else {
         const base = defaults.settings.vatPreview;
-        state.settings.vatPreview.eustLagMonths = Number(state.settings.vatPreview.eustLagMonths ?? base.eustLagMonths) || base.eustLagMonths;
-        state.settings.vatPreview.deShareDefault = Number(state.settings.vatPreview.deShareDefault ?? base.deShareDefault) || base.deShareDefault;
-        state.settings.vatPreview.feeRateDefault = Number(state.settings.vatPreview.feeRateDefault ?? base.feeRateDefault) || base.feeRateDefault;
-        state.settings.vatPreview.fixInputDefault = Number(state.settings.vatPreview.fixInputDefault ?? base.fixInputDefault) || base.fixInputDefault;
+        const eustLagMonths = Number(state.settings.vatPreview.eustLagMonths ?? base.eustLagMonths);
+        const deShareDefault = Number(state.settings.vatPreview.deShareDefault ?? base.deShareDefault);
+        const feeRateDefault = Number(state.settings.vatPreview.feeRateDefault ?? base.feeRateDefault);
+        const fixInputDefault = Number(state.settings.vatPreview.fixInputDefault ?? base.fixInputDefault);
+        const paymentLagMonths = Number(state.settings.vatPreview.paymentLagMonths ?? base.paymentLagMonths);
+        const paymentDayOfMonth = Number(state.settings.vatPreview.paymentDayOfMonth ?? base.paymentDayOfMonth);
+        state.settings.vatPreview.eustLagMonths = Number.isFinite(eustLagMonths) ? eustLagMonths : base.eustLagMonths;
+        state.settings.vatPreview.deShareDefault = Number.isFinite(deShareDefault) ? deShareDefault : base.deShareDefault;
+        state.settings.vatPreview.feeRateDefault = Number.isFinite(feeRateDefault) ? feeRateDefault : base.feeRateDefault;
+        state.settings.vatPreview.fixInputDefault = Number.isFinite(fixInputDefault) ? fixInputDefault : base.fixInputDefault;
+        state.settings.vatPreview.paymentLagMonths = Number.isFinite(paymentLagMonths) ? paymentLagMonths : base.paymentLagMonths;
+        state.settings.vatPreview.paymentDayOfMonth = Number.isFinite(paymentDayOfMonth) ? paymentDayOfMonth : base.paymentDayOfMonth;
     }
     if (!Array.isArray(state.vatCostRules)) {
         state.vatCostRules = structuredClone(defaults.vatCostRules);
@@ -1176,6 +1223,7 @@ function createEmptyState() {
     const clone = structuredClone(defaults);
     ensureStatusSection(clone);
     ensureFixcostContainers(clone);
+    ensureTaxData(clone);
     ensurePoTemplates(clone);
     ensureProducts(clone);
     ensureProductCategories(clone);
@@ -1202,6 +1250,7 @@ function loadState() {
     }
     ensureStatusSection(_state);
     ensureFixcostContainers(_state);
+    ensureTaxData(_state);
     ensurePoTemplates(_state);
     ensureProducts(_state);
     ensureProductCategories(_state);
@@ -1223,6 +1272,7 @@ function commitState(s, meta = {}) {
     _state = s || _state || structuredClone(defaults);
     ensureStatusSection(_state);
     ensureFixcostContainers(_state);
+    ensureTaxData(_state);
     ensurePoTemplates(_state);
     ensureProducts(_state);
     ensureProductCategories(_state);

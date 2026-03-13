@@ -119,6 +119,7 @@ function mergeUpsert(
   next.forecast = mergeObjectExistingWins(currentState.forecast, incomingState.forecast) as Record<string, unknown>;
   next.inventory = mergeObjectExistingWins(currentState.inventory, incomingState.inventory) as Record<string, unknown>;
   next.fixcostOverrides = mergeObjectExistingWins(currentState.fixcostOverrides, incomingState.fixcostOverrides) as Record<string, unknown>;
+  next.taxes = mergeObjectExistingWins(currentState.taxes, incomingState.taxes) as Record<string, unknown>;
   next.monthlyActuals = mergeObjectExistingWins(currentState.monthlyActuals, incomingState.monthlyActuals) as Record<string, unknown>;
 
   const legacyMetaCurrent = ensureAppStateV2(currentState).legacyMeta;

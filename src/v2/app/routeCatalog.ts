@@ -41,7 +41,7 @@ const SettingsModule = lazyRoute(() => import("../modules/settings"));
 const InputsModule = lazyRoute(() => import("../modules/inputs"));
 const FixcostsModule = lazyRoute(() => import("../modules/fixcosts"));
 const DividendPlanningModule = lazyRoute(() => import("../modules/dividend-planning"));
-const VatModule = lazyRoute(() => import("../modules/vat"));
+const TaxesModule = lazyRoute(() => import("../modules/taxes"));
 const ExportImportModule = lazyRoute(() => import("../modules/export-import"));
 const AccountingExportModule = lazyRoute(() => import("../modules/accounting-export"));
 const DebugModule = lazyRoute(() => import("../modules/debug"));
@@ -133,13 +133,12 @@ export const V2_ROUTES: V2RouteItem[] = [
     redirectFrom: ["fixcosts"],
   },
   {
-    key: "closing-vat",
-    path: "abschluss/ust",
-    label: "USt Vorschau",
+    key: "closing-taxes",
+    path: "abschluss/steuern",
+    label: "Steuern",
     section: "finance",
     icon: CalculatorOutlined,
-    Component: VatModule,
-    redirectFrom: ["vat"],
+    Component: TaxesModule,
   },
   {
     key: "closing-accounting",
@@ -190,6 +189,8 @@ export const V2_ROUTE_REDIRECTS: V2RouteRedirect[] = [
   { from: "fo", to: "orders/fo" },
   { from: "po", to: "orders/po" },
   { from: "sku", to: "orders/sku" },
+  { from: "vat", to: "abschluss/steuern?tab=ust-de" },
+  { from: "abschluss/ust", to: "abschluss/steuern?tab=ust-de" },
   { from: "payments-export", to: "abschluss/buchhalter" },
   { from: "abschluss/payments", to: "abschluss/buchhalter" },
 ].filter((entry, index, list) => list.findIndex((match) => match.from === entry.from && match.to === entry.to) === index);

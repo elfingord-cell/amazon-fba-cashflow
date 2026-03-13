@@ -39,6 +39,7 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
   try {
     const routeCatalog = await server.ssrLoadModule("/src/v2/app/routeCatalog.ts");
     const ordersTabs = await server.ssrLoadModule("/src/v2/modules/orders/tabs.ts");
+    const taxesTabs = await server.ssrLoadModule("/src/v2/modules/taxes/tabs.ts");
     const routes = Array.isArray(routeCatalog.V2_ROUTES) ? routeCatalog.V2_ROUTES : [];
     assert.ok(routes.length > 0, "Keine V2-Routen gefunden.");
     assert.equal(
@@ -50,6 +51,11 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
       routes.some((route) => String(route?.key || "") === "plan"),
       false,
       "Plan-Route darf nicht mehr als eigener V2-Tab erscheinen.",
+    );
+    assert.equal(
+      routes.some((route) => String(route?.key || "") === "closing-taxes" && String(route?.path || "") === "abschluss/steuern"),
+      true,
+      "Steuern-Route fehlt in V2.",
     );
     const redirects = Array.isArray(routeCatalog.V2_ROUTE_REDIRECTS) ? routeCatalog.V2_ROUTE_REDIRECTS : [];
     const planRedirect = redirects.find((entry) => String(entry?.from || "") === "plan");
@@ -66,6 +72,13 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
       "orders/sku",
       "SKU-Redirect muss auf SKU Sicht zeigen.",
     );
+    const legacyVatRedirect = redirects.find((entry) => String(entry?.from || "") === "abschluss/ust");
+    assert.ok(legacyVatRedirect, "Redirect fuer /v2/abschluss/ust fehlt.");
+    assert.equal(
+      String(legacyVatRedirect.to || ""),
+      "abschluss/steuern?tab=ust-de",
+      "Legacy-USt-Route muss in den neuen Steuern-Shell zeigen.",
+    );
 
     const ordersTabItems = Array.isArray(ordersTabs.ORDERS_TAB_ITEMS) ? ordersTabs.ORDERS_TAB_ITEMS : [];
     assert.equal(
@@ -77,6 +90,26 @@ test("v2 route smoke: lazy modules resolve via dynamic imports", async () => {
       String(ordersTabs.resolveOrdersTab("/v2/orders/lieferantenausblick")),
       "lieferantenausblick",
       "Lieferantenausblick-Pfad wird im Orders-Shell nicht korrekt aufgeloest.",
+    );
+    const taxesTabItems = Array.isArray(taxesTabs.TAXES_TAB_ITEMS) ? taxesTabs.TAXES_TAB_ITEMS : [];
+    assert.deepEqual(
+      taxesTabItems.map((entry) => ({ key: String(entry?.key || ""), label: String(entry?.label || "") })),
+      [
+        { key: "ust-de", label: "USt DE" },
+        { key: "oss", label: "OSS" },
+        { key: "ertragsteuern", label: "Ertragsteuern" },
+      ],
+      "Steuern-Shell muss genau die drei Increment-1-Subtabs zeigen.",
+    );
+    assert.equal(
+      String(taxesTabs.buildTaxesTabRoute("ust-de", { month: "2026-04", source: "dashboard" })),
+      "/v2/abschluss/steuern?tab=ust-de&month=2026-04&source=dashboard",
+      "Dashboard-Deep-Link fuer USt DE muss in den Steuern-Shell mit Tab und Monatskontext zeigen.",
+    );
+    assert.equal(
+      String(taxesTabs.buildTaxesTabRoute("oss", { month: "2026-04", source: "dashboard" })),
+      "/v2/abschluss/steuern?tab=oss&month=2026-04&source=dashboard",
+      "Dashboard-Deep-Link fuer OSS muss in den Steuern-Shell mit Tab und Monatskontext zeigen.",
     );
 
     const failures = [];

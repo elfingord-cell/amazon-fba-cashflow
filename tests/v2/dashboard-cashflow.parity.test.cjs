@@ -3,7 +3,9 @@ const assert = require("node:assert/strict");
 
 const {
   aggregateDashboardMonthEntries,
+  applyTaxInstancesToBreakdown,
   applyDashboardBucketScopeToBreakdown,
+  buildDashboardTaxMatrixGroup,
 } = require("../../.test-build/migration/v2/domain/dashboardCashflow.js");
 
 test("dashboard cashflow aggregation keeps March income non-zero and consumers numerically aligned", () => {
@@ -87,4 +89,182 @@ test("dashboard cashflow aggregation keeps March income non-zero and consumers n
   assert.equal(chartIncome, matrixIncome);
   assert.equal(chartIncome, march.inflow);
   assert.equal(summaryNet, march.net);
+});
+
+test("dashboard tax aggregation stays aligned across chart bucket, matrix group, and month drawer summary", () => {
+  const baseRows = [
+    {
+      month: "2026-04",
+      opening: 1000,
+      closing: 1450,
+      inflow: 0,
+      outflow: 0,
+      net: 0,
+      entries: [
+        { id: "apr-sales", direction: "in", amount: 900, source: "sales", kind: "sales-payout", portfolioBucket: "core" },
+        { id: "apr-fix", direction: "out", amount: 120, source: "fixcosts", group: "Fixkosten" },
+      ],
+    },
+  ];
+  const state = {
+    settings: {
+      startMonth: "2026-04",
+      horizonMonths: 1,
+      vatPreview: {
+        eustLagMonths: 2,
+        deShareDefault: 0.8,
+        feeRateDefault: 0.38,
+        fixInputDefault: 1900,
+        paymentLagMonths: 1,
+        paymentDayOfMonth: 10,
+      },
+    },
+    incomings: [
+      { month: "2026-01", revenueEur: "1.190" },
+      { month: "2026-02", revenueEur: "1.190" },
+      { month: "2026-03", revenueEur: "100.000" },
+      { month: "2026-04", revenueEur: "0" },
+    ],
+    extras: [],
+    dividends: [],
+    fixcosts: [],
+    fixcostOverrides: {},
+    fos: [],
+    pos: [],
+    products: [],
+    vatCostRules: [],
+    vatPreviewMonths: {},
+    recentProducts: [],
+    status: { autoManualCheck: false, events: {} },
+    taxes: {
+      oss: {
+        active: true,
+        deSharePct: "80",
+      },
+      ertragsteuern: {
+        masters: {
+          koerperschaftsteuer: {
+            active: true,
+            amount: "1.200,00",
+            firstDueDate: "2026-04-10",
+            pauseFromMonth: "",
+            endMonth: "",
+            note: "",
+          },
+          gewerbesteuer: {
+            active: true,
+            amount: "900,00",
+            firstDueDate: "2026-04-20",
+            pauseFromMonth: "",
+            endMonth: "",
+            note: "",
+          },
+        },
+        overrides: {
+          koerperschaftsteuer: {},
+          gewerbesteuer: {},
+        },
+      },
+    },
+  };
+  const bucketScope = new Set(["core", "plan"]);
+
+  const rowsWithTaxes = applyTaxInstancesToBreakdown(baseRows, state);
+  const scoped = applyDashboardBucketScopeToBreakdown(rowsWithTaxes, bucketScope, {
+    includePhantomFo: true,
+  });
+  const march = scoped[0];
+  const aggregation = aggregateDashboardMonthEntries(march.entries, {
+    bucketScope,
+    includePhantomFo: true,
+  });
+  const taxMatrixGroup = buildDashboardTaxMatrixGroup({
+    months: ["2026-04"],
+    breakdown: scoped,
+    bucketScope,
+  });
+
+  assert.ok(Math.abs(aggregation.outflow.taxByType.oss - 3492.96) < 0.02);
+  assert.ok(Math.abs(aggregation.outflow.taxByType.umsatzsteuer_de - 4805.88) < 0.5);
+  assert.equal(aggregation.outflow.taxByType.koerperschaftsteuer, 1200);
+  assert.equal(aggregation.outflow.taxByType.gewerbesteuer, 900);
+  assert.ok(Math.abs(aggregation.outflow.tax - 10398.84) < 0.5);
+  assert.ok(Math.abs(march.outflow - 10518.84) < 0.5);
+  assert.ok(Math.abs(march.net + 9618.84) < 0.5);
+  assert.ok(Math.abs(taxMatrixGroup.values["2026-04"] + 10398.84) < 0.5);
+  assert.ok(Math.abs(taxMatrixGroup.children[0].values["2026-04"] + 4805.88) < 0.5);
+  assert.ok(Math.abs(taxMatrixGroup.children[1].values["2026-04"] + 3492.96) < 0.02);
+  assert.equal(taxMatrixGroup.children[2].values["2026-04"], -1200);
+  assert.equal(taxMatrixGroup.children[3].values["2026-04"], -900);
+});
+
+test("dashboard tax aggregation keeps refund-like USt DE months signed consistently", () => {
+  const rows = applyTaxInstancesToBreakdown([
+    {
+      month: "2026-03",
+      opening: 1000,
+      closing: 1000,
+      inflow: 0,
+      outflow: 0,
+      net: 0,
+      entries: [],
+    },
+  ], {
+    settings: {
+      startMonth: "2026-03",
+      horizonMonths: 1,
+      vatPreview: {
+        eustLagMonths: 2,
+        deShareDefault: 0.8,
+        feeRateDefault: 0.38,
+        fixInputDefault: 4000,
+        paymentLagMonths: 0,
+        paymentDayOfMonth: 15,
+      },
+    },
+    incomings: [
+      { month: "2026-03", revenueEur: "10.000" },
+    ],
+    extras: [],
+    dividends: [],
+    fixcosts: [],
+    fixcostOverrides: {},
+    fos: [],
+    pos: [],
+    products: [],
+    vatCostRules: [],
+    vatPreviewMonths: {},
+    recentProducts: [],
+    status: { autoManualCheck: false, events: {} },
+    taxes: {
+      oss: {
+        active: false,
+        deSharePct: "100",
+      },
+      ertragsteuern: {
+        masters: {
+          koerperschaftsteuer: { active: false, amount: "0,00", firstDueDate: "", pauseFromMonth: "", endMonth: "", note: "" },
+          gewerbesteuer: { active: false, amount: "0,00", firstDueDate: "", pauseFromMonth: "", endMonth: "", note: "" },
+        },
+        overrides: {
+          koerperschaftsteuer: {},
+          gewerbesteuer: {},
+        },
+      },
+    },
+  });
+  const aggregation = aggregateDashboardMonthEntries(rows[0].entries, {
+    bucketScope: new Set(["core", "plan"]),
+    includePhantomFo: true,
+  });
+  const taxMatrixGroup = buildDashboardTaxMatrixGroup({
+    months: ["2026-03"],
+    breakdown: rows,
+    bucketScope: new Set(["core", "plan"]),
+  });
+
+  assert.ok(aggregation.outflow.tax < 0);
+  assert.ok(aggregation.outflow.taxByType.umsatzsteuer_de < 0);
+  assert.ok(taxMatrixGroup.values["2026-03"] > 0);
+  assert.ok(taxMatrixGroup.children[0].values["2026-03"] > 0);
 });

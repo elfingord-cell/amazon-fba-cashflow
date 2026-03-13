@@ -29,6 +29,9 @@ import {
 import {
   aggregateDashboardMonthEntries,
   applyDashboardBucketScopeToBreakdown,
+  applyTaxInstancesToBreakdown,
+  buildDashboardTaxMatrixGroup,
+  DASHBOARD_TAX_LABELS,
   isDashboardEntryInBucketScope,
   isDashboardPhantomFoEntry,
 } from "../../domain/dashboardCashflow";
@@ -372,6 +375,8 @@ function splitOutflowEntriesByType(
   bucketScope?: Set<string>,
 ): {
   fixcost: number;
+  tax: number;
+  taxByType: Record<string, number>;
   po: number;
   fo: number;
   phantomFo: number;
@@ -574,6 +579,10 @@ export default function DashboardModule(): JSX.Element {
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
   const breakdown = report.breakdown || [];
+  const dashboardBreakdown = useMemo(
+    () => applyTaxInstancesToBreakdown(breakdown, stateObject),
+    [breakdown, stateObject],
+  );
   const monthCloseStatusByMonth = useMemo(() => {
     const map = new Map<string, { closed: boolean }>();
     months.forEach((month) => {
@@ -603,12 +612,12 @@ export default function DashboardModule(): JSX.Element {
   const bucketScopeSet = useMemo(() => new Set(bucketScopeValues), [bucketScopeValues]);
 
   const visibleBreakdown = useMemo(() => {
-    const filteredByMonth = breakdown.filter((row) => visibleMonthSet.has(row.month));
+    const filteredByMonth = dashboardBreakdown.filter((row) => visibleMonthSet.has(row.month));
     return applyDashboardBucketScopeToBreakdown(filteredByMonth, bucketScopeSet, {
       includePhantomFo: showPhantomFoInChart,
       provisionalFoIds: phantomFoIdSet,
     });
-  }, [breakdown, bucketScopeSet, phantomFoIdSet, showPhantomFoInChart, visibleMonthSet]);
+  }, [bucketScopeSet, dashboardBreakdown, phantomFoIdSet, showPhantomFoInChart, visibleMonthSet]);
   const robustness = useMemo(() => {
     return buildMonthPlanningResult({
       state: stateObject,
@@ -704,6 +713,8 @@ export default function DashboardModule(): JSX.Element {
   const outflowSplitByMonth = useMemo(() => {
     const map = new Map<string, {
       fixcost: number;
+      tax: number;
+      taxByType: Record<string, number>;
       po: number;
       fo: number;
       phantomFo: number;
@@ -722,6 +733,8 @@ export default function DashboardModule(): JSX.Element {
   const outflowSplitSeries = useMemo(
     () => simulatedBreakdown.map((row) => outflowSplitByMonth.get(row.month) || {
       fixcost: 0,
+      tax: 0,
+      taxByType: {},
       po: 0,
       fo: 0,
       phantomFo: 0,
@@ -857,6 +870,14 @@ export default function DashboardModule(): JSX.Element {
     : 0;
 
   const selectedMonthData = selectedMonth ? robustness.monthMap.get(selectedMonth) || null : null;
+  const selectedMonthBreakdown = useMemo(
+    () => visibleBreakdown.find((row) => row.month === selectedMonth) || null,
+    [selectedMonth, visibleBreakdown],
+  );
+  const selectedMonthTaxAggregation = useMemo(() => {
+    if (!selectedMonthBreakdown) return null;
+    return aggregateDashboardMonthEntries(Array.isArray(selectedMonthBreakdown.entries) ? selectedMonthBreakdown.entries : []);
+  }, [selectedMonthBreakdown]);
   const selectedMonthStatusMeta = selectedMonthData
     ? coverageStatusMeta(selectedMonthData.coverage.statusKey)
     : null;
@@ -992,6 +1013,7 @@ export default function DashboardModule(): JSX.Element {
       return index >= firstUnreliableIndex - 1 ? value : null;
     });
     const fixcostOutflowSeries = outflowSplitSeries.map((row) => -row.fixcost);
+    const taxOutflowSeries = outflowSplitSeries.map((row) => -row.tax);
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
     const phantomFoOutflowSeries = outflowSplitSeries.map((row) => -row.phantomFo);
@@ -1001,6 +1023,7 @@ export default function DashboardModule(): JSX.Element {
       amazonNewSeriesName,
       "Sonstige In",
       "Fixkosten",
+      "Steuern",
       "PO",
       "FO",
       ...(showPhantomFoInChart ? [phantomFoSeriesName] : []),
@@ -1164,6 +1187,13 @@ export default function DashboardModule(): JSX.Element {
           stack: "cash",
           data: fixcostOutflowSeries,
           itemStyle: { color: v2DashboardChartColors.fixcost },
+        },
+        {
+          name: "Steuern",
+          type: "bar",
+          stack: "cash",
+          data: taxOutflowSeries,
+          itemStyle: { color: v2DashboardChartColors.tax },
         },
         {
           name: "PO",
@@ -1388,6 +1418,15 @@ export default function DashboardModule(): JSX.Element {
       phantom: toRows(categories["outflows-phantom-fo"], "phantom"),
     };
   }, [bucketScopeSet, orderMetaByRef, phantomFoIdSet, simulatedBreakdown, visibleMonths]);
+  const taxMatrixGroup = useMemo(
+    () => buildDashboardTaxMatrixGroup({
+      months: visibleMonths,
+      breakdown: simulatedBreakdown,
+      bucketScope: bucketScopeSet,
+      provisionalFoIds: phantomFoIdSet,
+    }),
+    [bucketScopeSet, phantomFoIdSet, simulatedBreakdown, visibleMonths],
+  );
   const pnlMatrixRows = useMemo<PnlMatrixRow[]>(() => {
     const byMonth = new Map(simulatedBreakdown.map((row) => [row.month, row]));
     const values = (resolve: (month: string) => number): Record<string, number> => {
@@ -1467,6 +1506,18 @@ export default function DashboardModule(): JSX.Element {
             values: values((month) => -(outflowSplitByMonth.get(month)?.fixcost || 0)),
           },
           {
+            key: taxMatrixGroup.key,
+            label: taxMatrixGroup.label,
+            rowType: "category",
+            values: taxMatrixGroup.values,
+            children: (taxMatrixGroup.children || []).map((child) => ({
+              key: child.key,
+              label: child.label,
+              values: child.values,
+              rowType: "category",
+            })),
+          },
+          {
             key: "outflows-other",
             label: "Sonstige Auszahlungen",
             rowType: "category",
@@ -1488,7 +1539,7 @@ export default function DashboardModule(): JSX.Element {
       },
     ];
     return rows;
-  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, showPhantomFoInChart, simulatedBreakdown, visibleMonths]);
+  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, showPhantomFoInChart, simulatedBreakdown, taxMatrixGroup, visibleMonths]);
   const allExpandablePnlRowKeys = useMemo(
     () => collectExpandableRowKeys(pnlMatrixRows),
     [pnlMatrixRows],
@@ -1663,9 +1714,10 @@ export default function DashboardModule(): JSX.Element {
       return;
     }
     if (blocker.checkKey === "vat") {
-      navigate(appendRouteQuery("/v2/abschluss/ust", {
+      navigate(appendRouteQuery("/v2/abschluss/steuern", {
         source: "dashboard",
         month: targetMonth,
+        tab: "ust-de",
       }));
       return;
     }
@@ -1896,6 +1948,45 @@ export default function DashboardModule(): JSX.Element {
                   </div>
                 </Space>
               )}
+            </Card>
+            <Card size="small" title="C) Steuer-Cash-outs">
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Text strong>Steuern gesamt: {formatCurrency(selectedMonthTaxAggregation?.outflow.tax || 0)}</Text>
+                <Text type="secondary">
+                  {DASHBOARD_TAX_LABELS.umsatzsteuer_de}: {formatCurrency(selectedMonthTaxAggregation?.outflow.taxByType?.umsatzsteuer_de || 0)}
+                </Text>
+                <Text type="secondary">
+                  {DASHBOARD_TAX_LABELS.oss}: {formatCurrency(selectedMonthTaxAggregation?.outflow.taxByType?.oss || 0)}
+                </Text>
+                <Text type="secondary">
+                  {DASHBOARD_TAX_LABELS.koerperschaftsteuer}: {formatCurrency(selectedMonthTaxAggregation?.outflow.taxByType?.koerperschaftsteuer || 0)}
+                </Text>
+                <Text type="secondary">
+                  {DASHBOARD_TAX_LABELS.gewerbesteuer}: {formatCurrency(selectedMonthTaxAggregation?.outflow.taxByType?.gewerbesteuer || 0)}
+                </Text>
+                <Space wrap>
+                  <Button
+                    size="small"
+                    onClick={() => navigate(appendRouteQuery("/v2/abschluss/steuern", {
+                      tab: "ust-de",
+                      month: selectedMonthData.month,
+                      source: "dashboard",
+                    }))}
+                  >
+                    Steuern &gt; USt DE öffnen
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => navigate(appendRouteQuery("/v2/abschluss/steuern", {
+                      tab: "oss",
+                      month: selectedMonthData.month,
+                      source: "dashboard",
+                    }))}
+                  >
+                    Steuern &gt; OSS öffnen
+                  </Button>
+                </Space>
+              </Space>
             </Card>
           </Space>
         ) : (

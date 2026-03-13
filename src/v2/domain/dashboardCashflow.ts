@@ -1,4 +1,9 @@
 import { PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../domain/portfolioBuckets.js";
+import {
+  buildMonthlyTaxSummary,
+  DASHBOARD_TAX_TYPE_CONFIG,
+  expandMonthlyTaxCashflowInstances,
+} from "../../domain/taxPlanner.js";
 import { buildHybridClosingBalanceSeries } from "./closingBalanceSeries";
 
 export interface DashboardCashflowEntry {
@@ -48,6 +53,8 @@ export interface DashboardMonthAggregation {
   };
   outflow: {
     fixcost: number;
+    tax: number;
+    taxByType: Record<string, number>;
     po: number;
     fo: number;
     phantomFo: number;
@@ -59,6 +66,24 @@ export interface DashboardMonthAggregation {
     cashOut: number;
     net: number;
   };
+}
+
+export const DASHBOARD_TAX_LABELS = DASHBOARD_TAX_TYPE_CONFIG.reduce((acc, entry) => {
+  acc[entry.key] = entry.label;
+  return acc;
+}, {} as Record<string, string>);
+
+function createEmptyTaxBreakdown(): Record<string, number> {
+  return DASHBOARD_TAX_TYPE_CONFIG.reduce((acc, entry) => {
+    acc[entry.key] = 0;
+    return acc;
+  }, {} as Record<string, number>);
+}
+
+function resolveDashboardTaxType(entry: DashboardCashflowEntry): string | null {
+  const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : {};
+  const sourceType = String(meta.taxType || meta.taxKey || "").trim();
+  return sourceType || null;
 }
 
 export function resolveDashboardEntryBucket(entry: DashboardCashflowEntry): string | null {
@@ -116,6 +141,8 @@ export function aggregateDashboardMonthEntries(
   };
   const outflow = {
     fixcost: 0,
+    tax: 0,
+    taxByType: createEmptyTaxBreakdown(),
     po: 0,
     fo: 0,
     phantomFo: 0,
@@ -127,9 +154,21 @@ export function aggregateDashboardMonthEntries(
     const direction = String(entry.direction || "").toLowerCase();
     const amount = Math.abs(Number(entry.amount || 0));
     if (!Number.isFinite(amount) || amount <= 0) return;
+    const source = String(entry.source || "").toLowerCase();
+    const group = String(entry.group || "").toLowerCase();
+
+    if (source === "taxes" || group === "steuern") {
+      const signedTaxAmount = direction === "in" ? -amount : amount;
+      outflow.tax += signedTaxAmount;
+      const taxType = resolveDashboardTaxType(entry);
+      if (taxType && Object.prototype.hasOwnProperty.call(outflow.taxByType, taxType)) {
+        outflow.taxByType[taxType] += signedTaxAmount;
+      }
+      outflow.total += signedTaxAmount;
+      return;
+    }
 
     if (direction === "in") {
-      const source = String(entry.source || "").toLowerCase();
       const kind = String(entry.kind || "").toLowerCase();
       const isAmazon = source === "sales" || source === "sales-plan" || kind === "sales-payout";
       if (isAmazon) {
@@ -151,8 +190,6 @@ export function aggregateDashboardMonthEntries(
 
     if (direction !== "out") return;
 
-    const source = String(entry.source || "").toLowerCase();
-    const group = String(entry.group || "").toLowerCase();
     if (source === "po") {
       outflow.po += amount;
     } else if (source === "fo") {
@@ -176,6 +213,103 @@ export function aggregateDashboardMonthEntries(
       cashOut: outflow.total,
       net: inflow.total - outflow.total,
     },
+  };
+}
+
+export function applyTaxInstancesToBreakdown(
+  rows: DashboardCashflowBreakdownRow[],
+  state: Record<string, unknown>,
+): DashboardCashflowBreakdownRow[] {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  const months = rows.map((row) => String(row.month || "").trim()).filter(Boolean);
+  const taxSummaryByMonth = buildMonthlyTaxSummary(
+    expandMonthlyTaxCashflowInstances(state, { months }),
+    months,
+    DASHBOARD_TAX_TYPE_CONFIG,
+  );
+
+  return rows.map((row) => {
+    const summary = taxSummaryByMonth.get(String(row.month || "").trim());
+    if (!summary || !Array.isArray(summary.instances) || !summary.instances.length) {
+      return {
+        ...row,
+        entries: Array.isArray(row.entries) ? row.entries.slice() : [],
+      };
+    }
+    const taxEntries = summary.instances.map((instance) => ({
+      id: String(instance.id || `tax-${row.month}`),
+      direction: String(instance.direction || "out") === "in" ? "in" as const : "out" as const,
+      amount: Math.abs(Number(instance.amount || 0)),
+      label: String(instance.label || "Steuern"),
+      date: String(instance.dueDateIso || ""),
+      kind: "tax_payment",
+      group: "Steuern",
+      source: "taxes" as const,
+      meta: {
+        taxType: instance.taxType,
+        taxLabel: instance.label,
+        sourceSection: instance.sourceSection,
+        overrideActive: instance.overrideActive === true,
+        note: instance.note || "",
+        sourceMonth: instance.sourceMonth || null,
+      },
+      tooltip: instance.note ? String(instance.note) : undefined,
+    }));
+    return {
+      ...row,
+      entries: [...(Array.isArray(row.entries) ? row.entries : []), ...taxEntries],
+    };
+  });
+}
+
+export interface DashboardTaxMatrixRow {
+  key: string;
+  label: string;
+  values: Record<string, number>;
+  children?: DashboardTaxMatrixRow[];
+}
+
+export function buildDashboardTaxMatrixGroup(input: {
+  months: string[];
+  breakdown: DashboardCashflowBreakdownRow[];
+  bucketScope?: Set<string>;
+  provisionalFoIds?: Set<string>;
+}): DashboardTaxMatrixRow {
+  const values: Record<string, number> = {};
+  const childValues = DASHBOARD_TAX_TYPE_CONFIG.reduce((acc, entry) => {
+    acc[entry.key] = {};
+    return acc;
+  }, {} as Record<string, Record<string, number>>);
+
+  input.months.forEach((month) => {
+    values[month] = 0;
+    DASHBOARD_TAX_TYPE_CONFIG.forEach((entry) => {
+      childValues[entry.key][month] = 0;
+    });
+  });
+
+  (Array.isArray(input.breakdown) ? input.breakdown : []).forEach((row) => {
+    const month = String(row.month || "").trim();
+    if (!month || !Object.prototype.hasOwnProperty.call(values, month)) return;
+    const aggregation = aggregateDashboardMonthEntries(Array.isArray(row.entries) ? row.entries : [], {
+      bucketScope: input.bucketScope,
+      provisionalFoIds: input.provisionalFoIds,
+    });
+    values[month] = -aggregation.outflow.tax;
+    DASHBOARD_TAX_TYPE_CONFIG.forEach((entry) => {
+      childValues[entry.key][month] = -(aggregation.outflow.taxByType[entry.key] || 0);
+    });
+  });
+
+  return {
+    key: "outflows-tax",
+    label: "Steuern",
+    values,
+    children: DASHBOARD_TAX_TYPE_CONFIG.map((entry) => ({
+      key: `outflows-tax-${entry.key}`,
+      label: DASHBOARD_TAX_LABELS[entry.key],
+      values: childValues[entry.key],
+    })),
   };
 }
 

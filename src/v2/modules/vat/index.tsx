@@ -10,6 +10,7 @@ import {
   Tag,
   Typography,
 } from "antd";
+import { expandVatTaxInstances } from "../../../domain/taxPlanner.js";
 import { computeVatPreview } from "../../../domain/vatPreview.js";
 import { StatsTableShell } from "../../components/StatsTableShell";
 import { ensureAppStateV2 } from "../../state/appState";
@@ -22,6 +23,8 @@ interface VatSettingsDraft {
   deShareDefault: number;
   feeRateDefault: number;
   fixInputDefault: number;
+  paymentLagMonths: number;
+  paymentDayOfMonth: number;
 }
 
 interface VatMonthOverrideDraft {
@@ -70,6 +73,10 @@ interface VatPreviewResult {
   };
 }
 
+export interface VatModuleProps {
+  embedded?: boolean;
+}
+
 const DETAIL_LABELS: Record<string, string> = {
   deBrutto: "DE-Brutto",
   outputUst: "Output-USt",
@@ -100,6 +107,16 @@ function formatPercent(value: number): string {
   })} %`;
 }
 
+function shiftMonthKey(monthKey: string, offset: number): string {
+  if (!/^\d{4}-\d{2}$/.test(String(monthKey || ""))) return "";
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return "";
+  const nextIndex = year * 12 + (month - 1) + Math.round(Number(offset || 0));
+  const targetYear = Math.floor(nextIndex / 12);
+  const targetMonth = String((nextIndex % 12) + 1).padStart(2, "0");
+  return `${targetYear}-${targetMonth}`;
+}
+
 function normalizeSettings(state: Record<string, unknown>): VatSettingsDraft {
   const vatPreview = (state?.settings && typeof state.settings === "object")
     ? ((state.settings as Record<string, unknown>).vatPreview as Record<string, unknown> | undefined)
@@ -109,6 +126,8 @@ function normalizeSettings(state: Record<string, unknown>): VatSettingsDraft {
     deShareDefault: Math.min(1, Math.max(0, toNumber(vatPreview?.deShareDefault, 0.8))),
     feeRateDefault: Math.min(1, Math.max(0, toNumber(vatPreview?.feeRateDefault, 0.38))),
     fixInputDefault: Math.max(0, toNumber(vatPreview?.fixInputDefault, 0)),
+    paymentLagMonths: Math.max(0, Math.round(toNumber(vatPreview?.paymentLagMonths, 1))),
+    paymentDayOfMonth: Math.min(31, Math.max(1, Math.round(toNumber(vatPreview?.paymentDayOfMonth, 10)))),
   };
 }
 
@@ -126,7 +145,7 @@ function normalizeMonthOverrides(input: unknown): Record<string, VatMonthOverrid
   }, {} as Record<string, VatMonthOverrideDraft>);
 }
 
-export default function VatModule(): JSX.Element {
+export default function VatModule({ embedded = false }: VatModuleProps = {}): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [settingsDraft, setSettingsDraft] = useState<VatSettingsDraft>(() => normalizeSettings(state as unknown as Record<string, unknown>));
   const [monthOverridesDraft, setMonthOverridesDraft] = useState<Record<string, VatMonthOverrideDraft>>({});
@@ -152,10 +171,45 @@ export default function VatModule(): JSX.Element {
       deShareDefault: settingsDraft.deShareDefault,
       feeRateDefault: settingsDraft.feeRateDefault,
       fixInputDefault: settingsDraft.fixInputDefault,
+      paymentLagMonths: settingsDraft.paymentLagMonths,
+      paymentDayOfMonth: settingsDraft.paymentDayOfMonth,
     };
     virtualState.vatPreviewMonths = monthOverridesDraft;
     return computeVatPreview(virtualState) as VatPreviewResult;
   }, [monthOverridesDraft, settingsDraft, stateObj]);
+
+  const vatCashflowInstances = useMemo(() => {
+    const virtualState = structuredClone(stateObj);
+    if (!virtualState.settings || typeof virtualState.settings !== "object") {
+      virtualState.settings = {};
+    }
+    (virtualState.settings as Record<string, unknown>).vatPreview = {
+      eustLagMonths: settingsDraft.eustLagMonths,
+      deShareDefault: settingsDraft.deShareDefault,
+      feeRateDefault: settingsDraft.feeRateDefault,
+      fixInputDefault: settingsDraft.fixInputDefault,
+      paymentLagMonths: settingsDraft.paymentLagMonths,
+      paymentDayOfMonth: settingsDraft.paymentDayOfMonth,
+    };
+    virtualState.vatPreviewMonths = monthOverridesDraft;
+    return expandVatTaxInstances(virtualState, {
+      months: preview.months.map((month) => shiftMonthKey(month, settingsDraft.paymentLagMonths)).filter(Boolean),
+    });
+  }, [monthOverridesDraft, preview.months, settingsDraft, stateObj]);
+
+  const cashflowInstancesBySourceMonth = useMemo(
+    () => new Map(vatCashflowInstances.map((instance) => [String(instance.sourceMonth || ""), instance])),
+    [vatCashflowInstances],
+  );
+
+  const vatCashflowTotal = useMemo(
+    () => vatCashflowInstances.reduce((sum, instance) => (
+      sum + (String(instance.direction || "out") === "in"
+        ? -Math.abs(Number(instance.amount || 0))
+        : Math.abs(Number(instance.amount || 0)))
+    ), 0),
+    [vatCashflowInstances],
+  );
 
   const rowsByMonth = useMemo(() => new Map(preview.rows.map((row) => [row.month, row])), [preview.rows]);
 
@@ -170,10 +224,14 @@ export default function VatModule(): JSX.Element {
       fixInputVat: row.fixInputVat,
       eustRefund: row.eustRefund,
       payable: row.payable,
+      paymentMonth: String(cashflowInstancesBySourceMonth.get(row.month)?.month || ""),
+      paymentDueDate: String(cashflowInstancesBySourceMonth.get(row.month)?.dueDateIso || ""),
+      paymentAmount: Number(cashflowInstancesBySourceMonth.get(row.month)?.amount || 0),
+      paymentDirection: String(cashflowInstancesBySourceMonth.get(row.month)?.direction || "out"),
       deShare: monthOverridesDraft[row.month]?.deShare ?? settingsDraft.deShareDefault,
       feeRate: monthOverridesDraft[row.month]?.feeRateOfGross ?? settingsDraft.feeRateDefault,
     }));
-  }, [monthOverridesDraft, preview.rows, settingsDraft.deShareDefault, settingsDraft.feeRateDefault]);
+  }, [cashflowInstancesBySourceMonth, monthOverridesDraft, preview.rows, settingsDraft.deShareDefault, settingsDraft.feeRateDefault]);
 
   async function saveVatDraft(): Promise<void> {
     await saveWith((current) => {
@@ -186,6 +244,8 @@ export default function VatModule(): JSX.Element {
           deShareDefault: settingsDraft.deShareDefault,
           feeRateDefault: settingsDraft.feeRateDefault,
           fixInputDefault: settingsDraft.fixInputDefault,
+          paymentLagMonths: settingsDraft.paymentLagMonths,
+          paymentDayOfMonth: settingsDraft.paymentDayOfMonth,
         },
       };
       next.vatPreviewMonths = monthOverridesDraft;
@@ -229,15 +289,25 @@ export default function VatModule(): JSX.Element {
     };
   }, [detailModal, rowsByMonth]);
 
-  return (
-    <div className="v2-page">
-      <Card className="v2-intro-card">
+  const content = (
+    <>
+      {embedded ? (
+        <Card style={{ marginBottom: 12 }}>
+          <Text type="secondary">
+            Bestehende USt-DE-Vorschau, im neuen Steuern-Modul eingebettet.
+          </Text>
+        </Card>
+      ) : null}
+      <Card>
         <div className="v2-page-head">
           <div>
-            <Title level={3}>USt Vorschau</Title>
+            <Title level={embedded ? 4 : 3}>USt Vorschau</Title>
             <Paragraph>
               DE-USt-Vorschau mit Detaildrilldown und Monats-Overrides fuer DE-Anteil, Gebuehrensatz und Fixkosten-VSt.
             </Paragraph>
+            <Text type="secondary">
+              Dashboard und Matrix nutzen dieselbe Zahllast jetzt cashflow-basiert im Zahlungsmonat.
+            </Text>
           </div>
         </div>
         <div className="v2-toolbar">
@@ -314,6 +384,29 @@ export default function VatModule(): JSX.Element {
               }}
             />
           </div>
+          <div>
+            <Text>Zahlungs-Lag (Monate)</Text>
+            <InputNumber
+              value={settingsDraft.paymentLagMonths}
+              min={0}
+              onChange={(value) => {
+                setSettingsDraft((prev) => ({ ...prev, paymentLagMonths: Math.max(0, Math.round(Number(value || 0))) }));
+                setDirty(true);
+              }}
+            />
+          </div>
+          <div>
+            <Text>Fälligkeitstag</Text>
+            <InputNumber
+              value={settingsDraft.paymentDayOfMonth}
+              min={1}
+              max={31}
+              onChange={(value) => {
+                setSettingsDraft((prev) => ({ ...prev, paymentDayOfMonth: Math.min(31, Math.max(1, Math.round(Number(value || 10) || 10))) }));
+                setDirty(true);
+              }}
+            />
+          </div>
         </Space>
       </Card>
 
@@ -324,6 +417,9 @@ export default function VatModule(): JSX.Element {
           <Tag color="purple">Fixkosten-VSt gesamt: {formatCurrency(preview.totals.fixInputVat)}</Tag>
           <Tag color={preview.totals.payable < 0 ? "red" : "green"}>
             Zahllast gesamt: {formatCurrency(preview.totals.payable)}
+          </Tag>
+          <Tag color={vatCashflowTotal < 0 ? "blue" : "orange"}>
+            Steuer-Cashflow gesamt: {formatCurrency(vatCashflowTotal)}
           </Tag>
         </Space>
       </Card>
@@ -414,6 +510,26 @@ export default function VatModule(): JSX.Element {
               ),
             },
             {
+              title: "Zahlungsmonat",
+              key: "paymentMonth",
+              render: (_, row) => row.paymentMonth ? formatMonthLabel(row.paymentMonth) : "—",
+            },
+            {
+              title: "Steuer-Cashflow",
+              key: "paymentAmount",
+              sorter: (a, b) => Number(a.paymentAmount || 0) - Number(b.paymentAmount || 0),
+              render: (_, row) => {
+                if (!row.paymentMonth || !row.paymentDueDate) return "—";
+                const signedAmount = row.paymentDirection === "in" ? -Number(row.paymentAmount || 0) : Number(row.paymentAmount || 0);
+                return (
+                  <Space direction="vertical" size={0}>
+                    <Text type={signedAmount < 0 ? "success" : undefined}>{formatCurrency(signedAmount)}</Text>
+                    <Text type="secondary">{formatDate(row.paymentDueDate)}</Text>
+                  </Space>
+                );
+              },
+            },
+            {
               title: "Aktionen",
               key: "actions",
               render: (_, row) => (
@@ -433,6 +549,8 @@ export default function VatModule(): JSX.Element {
               <Table.Summary.Cell index={7}><strong>{formatCurrency(preview.totals.eustRefund)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={8}><strong>{formatCurrency(preview.totals.payable)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={9} />
+              <Table.Summary.Cell index={10}><strong>{formatCurrency(vatCashflowTotal)}</strong></Table.Summary.Cell>
+              <Table.Summary.Cell index={11} />
             </Table.Summary.Row>
           )}
         />
@@ -537,6 +655,12 @@ export default function VatModule(): JSX.Element {
           </Space>
         ) : null}
       </Modal>
-    </div>
+    </>
   );
+
+  if (embedded) {
+    return content;
+  }
+
+  return <div className="v2-page">{content}</div>;
 }

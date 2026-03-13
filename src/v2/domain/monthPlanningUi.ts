@@ -246,8 +246,8 @@ export function buildMonthPlanningActionSurface(
       ...defaultSurface,
       typeLabel: "VAT",
       problemStatement: "Die VAT-/USt-Basis fehlt. Der Monat bleibt dadurch fachlich unvollständig.",
-      specialistLabel: "USt Vorschau öffnen",
-      actions: [{ id: "open_specialist", label: "USt Vorschau öffnen", variant: "primary" }],
+      specialistLabel: "Steuern öffnen",
+      actions: [{ id: "open_specialist", label: "Steuern öffnen", variant: "primary" }],
     };
   }
 

@@ -216,6 +216,7 @@ export interface AppStateV2 extends UnknownRecord {
   dividends?: UnknownRecord[];
   fixcosts?: UnknownRecord[];
   fixcostOverrides?: UnknownRecord;
+  taxes?: UnknownRecord;
   supplierOutlooks?: SupplierOutlookRecord[];
 }
 

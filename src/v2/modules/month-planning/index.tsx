@@ -121,7 +121,10 @@ function buildSpecialistRoute(item: MonthReviewItem, month: string, returnTo: st
   if (item.sku) params.set("sku", item.sku);
   if (item.type === "cash_in_missing") return `/v2/abschluss/eingaben?${params.toString()}`;
   if (item.type === "fixcost_missing") return `/v2/abschluss/fixkosten?${params.toString()}`;
-  if (item.type === "vat_missing") return `/v2/abschluss/ust?${params.toString()}`;
+  if (item.type === "vat_missing") {
+    params.set("tab", "ust-de");
+    return `/v2/abschluss/steuern?${params.toString()}`;
+  }
   if (item.type === "revenue_input_missing" || item.type === "master_data_blocking") return `/v2/products?${params.toString()}`;
   if (item.type === "forecast_conflict_relevant") {
     params.set("panel", "conflicts");

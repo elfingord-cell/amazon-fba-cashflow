@@ -780,7 +780,7 @@ function buildActions(input: {
       title: "USt-/Tax-Basis vervollständigen",
       detail: `${vatMissingMonths} Monat(e) ohne belastbare VAT-Konfiguration.`,
       severity: "error",
-      route: "/v2/abschluss/ust",
+      route: "/v2/abschluss/steuern?tab=ust-de",
       count: vatMissingMonths,
       impact: "Outflow-Bild unvollständig",
     });
@@ -1140,7 +1140,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
         checkKey: "vat",
         severity: "error",
         message: "USt-/Tax-Basis fehlt für den Monat.",
-        route: "/v2/abschluss/ust",
+        route: "/v2/abschluss/steuern?tab=ust-de",
       });
     }
     if (!revenuePassed) {
@@ -1208,7 +1208,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
         passed: vatPassed,
         detail: vatInfo.active ? (vatPassed ? "vorhanden" : "fehlend") : "nicht aktiv",
         blockerCount: vatPassed ? 0 : 1,
-        route: "/v2/abschluss/ust",
+        route: "/v2/abschluss/steuern?tab=ust-de",
       },
       {
         key: "revenue_inputs",
