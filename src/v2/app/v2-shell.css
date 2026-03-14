@@ -2523,6 +2523,10 @@
   background: #f59e0b;
 }
 
+.v2-dashboard-pnl-paybar > span.is-overdue {
+  background: #dc2626;
+}
+
 .v2-dashboard-pnl-paybar > span.is-unknown {
   background: #94a3b8;
 }

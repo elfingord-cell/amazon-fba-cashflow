@@ -1,0 +1,798 @@
+import { parseDeNumber } from "../lib/dataHealth.js";
+
+function parseNumber(value, fallback = 0) {
+  const parsed = parseDeNumber(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Number(parsed);
+}
+
+function parsePercent(value) {
+  return Math.min(100, Math.max(0, parseNumber(value, 0)));
+}
+
+function addDays(date, days) {
+  const next = new Date(date.getTime());
+  next.setDate(next.getDate() + Number(days || 0));
+  return next;
+}
+
+function addMonthsDate(date, months) {
+  const next = new Date(date.getTime());
+  next.setMonth(next.getMonth() + Number(months || 0));
+  return next;
+}
+
+function monthEndDate(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+function parseISODate(value) {
+  const iso = normalizeIsoDate(value);
+  if (!iso) return null;
+  const [year, month, day] = iso.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getCnyWindow(settings, year) {
+  const direct = settings?.cny;
+  if (direct?.start && direct?.end) {
+    const start = parseISODate(direct.start);
+    const end = parseISODate(direct.end);
+    if (start && end && end >= start) return { start, end };
+  }
+  const entry = settings?.cnyBlackoutByYear?.[String(year)];
+  if (!entry) return null;
+  const start = parseISODate(entry.start);
+  const end = parseISODate(entry.end);
+  if (!start || !end || end < start) return null;
+  return { start, end };
+}
+
+function applyCnyBlackout(orderDate, prodDays, settings) {
+  if (!(orderDate instanceof Date) || Number.isNaN(orderDate.getTime())) {
+    return { prodDone: orderDate, adjustmentDays: 0 };
+  }
+  const baseDays = Math.max(0, Number(prodDays || 0));
+  const prodEnd = addDays(orderDate, baseDays);
+  if (!settings || baseDays === 0) {
+    return { prodDone: prodEnd, adjustmentDays: 0 };
+  }
+
+  let adjustmentDays = 0;
+  const startYear = orderDate.getUTCFullYear();
+  const endYear = prodEnd.getUTCFullYear();
+  for (let year = startYear; year <= endYear; year += 1) {
+    const window = getCnyWindow(settings, year);
+    if (!window) continue;
+    const overlapStart = window.start > orderDate ? window.start : orderDate;
+    const overlapEnd = window.end < prodEnd ? window.end : prodEnd;
+    if (overlapEnd < overlapStart) continue;
+    const overlap = Math.round((overlapEnd.getTime() - overlapStart.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    adjustmentDays += Math.max(0, overlap);
+  }
+
+  return {
+    prodDone: adjustmentDays ? addDays(prodEnd, adjustmentDays) : prodEnd,
+    adjustmentDays,
+  };
+}
+
+function computeGoodsTotals(record, settings) {
+  const items = Array.isArray(record?.items) ? record.items : [];
+  let totalUsd = 0;
+  let totalUnits = 0;
+
+  if (items.length) {
+    items.forEach((item) => {
+      const units = parseNumber(item?.units ?? 0, 0);
+      const unitCostUsd = parseNumber(item?.unitCostUsd ?? 0, 0);
+      const unitExtraUsd = parseNumber(item?.unitExtraUsd ?? 0, 0);
+      const extraFlatUsd = parseNumber(item?.extraFlatUsd ?? 0, 0);
+      const subtotal = Math.max(0, Math.round((((unitCostUsd + unitExtraUsd) * units) + extraFlatUsd) * 100) / 100);
+      if (Number.isFinite(subtotal)) totalUsd += subtotal;
+      if (Number.isFinite(units)) totalUnits += units;
+    });
+  } else {
+    const units = parseNumber(record?.units ?? 0, 0);
+    const unitCostUsd = parseNumber(record?.unitCostUsd ?? 0, 0);
+    const unitExtraUsd = parseNumber(record?.unitExtraUsd ?? 0, 0);
+    const extraFlatUsd = parseNumber(record?.extraFlatUsd ?? 0, 0);
+    totalUsd = Math.max(0, Math.round((((unitCostUsd + unitExtraUsd) * units) + extraFlatUsd) * 100) / 100);
+    if (Number.isFinite(units)) totalUnits = units;
+  }
+
+  const override = parseNumber(record?.fxOverride ?? 0, 0);
+  const fxRate = (Number.isFinite(override) && override > 0)
+    ? override
+    : parseNumber(settings?.fxRate ?? 0, 0);
+  const derivedEur = fxRate > 0 ? Math.round((totalUsd / fxRate) * 100) / 100 : 0;
+  const fallbackEur = parseNumber(record?.goodsEur ?? 0, 0);
+
+  return {
+    usd: totalUsd,
+    eur: derivedEur > 0 ? derivedEur : fallbackEur,
+    units: totalUnits,
+  };
+}
+
+function computeFreightTotal(record, totals) {
+  const mode = record?.freightMode === "per_unit" ? "per_unit" : "total";
+  if (mode === "per_unit") {
+    const perUnit = parseNumber(record?.freightPerUnitEur ?? 0, 0);
+    const units = Number(totals?.units ?? 0) || 0;
+    return Math.round(perUnit * units * 100) / 100;
+  }
+  return parseNumber(record?.freightEur ?? 0, 0);
+}
+
+function normaliseAutoEvents(record, settings, manual) {
+  const order = ["freight", "duty", "eust", "vat_refund", "fx_fee"];
+  const clones = Array.isArray(record?.autoEvents)
+    ? record.autoEvents.filter(Boolean).map((entry) => ({ ...entry }))
+    : [];
+  const map = new Map();
+
+  clones.forEach((entry) => {
+    if (!entry?.type) return;
+    if (!entry.id) entry.id = `auto-${entry.type}`;
+    map.set(entry.type, entry);
+  });
+
+  const firstManual = (manual || [])[0] || null;
+
+  function ensure(type, defaults) {
+    if (!map.has(type)) {
+      const created = { id: `auto-${type}`, type, ...defaults };
+      clones.push(created);
+      map.set(type, created);
+      return created;
+    }
+    const existing = map.get(type);
+    if (!existing.id) existing.id = `auto-${type}`;
+    Object.entries(defaults).forEach(([key, value]) => {
+      if (existing[key] === undefined) existing[key] = value;
+    });
+    return existing;
+  }
+
+  ensure("freight", {
+    label: "Fracht",
+    anchor: "ETA",
+    lagDays: settings?.freightLagDays,
+    enabled: true,
+  });
+  ensure("duty", {
+    label: "Zoll",
+    percent: settings?.dutyRatePct,
+    anchor: "ETA",
+    lagDays: settings?.freightLagDays,
+  });
+  ensure("eust", {
+    label: "EUSt",
+    percent: settings?.eustRatePct,
+    anchor: "ETA",
+    lagDays: settings?.freightLagDays,
+  });
+  ensure("vat_refund", {
+    label: "EUSt-Erstattung",
+    percent: 100,
+    anchor: "ETA",
+    lagMonths: settings?.vatRefundLagMonths,
+    enabled: settings?.vatRefundEnabled,
+  });
+  ensure("fx_fee", {
+    label: "FX-Gebühr",
+    percent: settings?.fxFeePct,
+    anchor: (firstManual && firstManual.anchor) || "ORDER_DATE",
+    lagDays: (firstManual && Number(firstManual.lagDays || 0)) || 0,
+  });
+
+  clones.sort((left, right) => order.indexOf(left.type) - order.indexOf(right.type));
+
+  if (record?.ddp) {
+    clones.forEach((entry) => {
+      if (entry.type === "freight" || entry.type === "duty" || entry.type === "eust" || entry.type === "vat_refund") {
+        entry.enabled = false;
+      }
+    });
+  }
+
+  return clones;
+}
+
+function anchorsFor(record, settings) {
+  const orderDate = parseISODate(record?.orderDate) || new Date();
+  const prodDays = Number(record?.productionLeadTimeDays ?? record?.prodDays ?? 0);
+  const transitDays = Number(record?.logisticsLeadTimeDays ?? record?.transitDays ?? 0);
+  const blackout = applyCnyBlackout(orderDate, prodDays, settings);
+  const prodDone = blackout.prodDone ?? addDays(orderDate, prodDays);
+  const etdComputed = prodDone;
+  const etaComputed = addDays(etdComputed, transitDays);
+  const etdManual = parseISODate(record?.etdManual);
+  const etaManual = parseISODate(record?.etaManual);
+
+  return {
+    ORDER_DATE: orderDate,
+    PROD_DONE: prodDone,
+    PRODUCTION_END: prodDone,
+    ETD: etdManual || etdComputed,
+    ETA: etaManual || etaComputed,
+  };
+}
+
+function buildPlannedPoPaymentRows(record, settings) {
+  if (!record || typeof record !== "object") return [];
+  const ref = String(record.poNo || record.id || "").trim();
+  const prefix = ref ? `PO ${ref}` : "PO";
+  const manualMilestones = Array.isArray(record.milestones) ? record.milestones : [];
+  const autoEvents = normaliseAutoEvents(record, settings || {}, manualMilestones);
+  const anchors = anchorsFor(record, settings || {});
+  const totals = computeGoodsTotals(record, settings || {});
+  const goods = Number(totals.eur || 0);
+  const freight = computeFreightTotal(record, totals);
+  const results = [];
+
+  manualMilestones.forEach((milestone, index) => {
+    const percent = parsePercent(milestone?.percent);
+    const anchor = String(milestone?.anchor || "ORDER_DATE");
+    const baseDate = anchors[anchor] || anchors.ORDER_DATE;
+    if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) return;
+    const dueDate = addDays(baseDate, Number(milestone?.lagDays || 0));
+    results.push({
+      id: String(milestone?.id || `po-ms-${index + 1}`),
+      label: `${prefix}${milestone?.label ? ` – ${String(milestone.label).trim()}` : ""}`,
+      typeLabel: String(milestone?.label || "Zahlung").trim(),
+      dueDate: normalizeIsoDate(dueDate),
+      plannedEur: Math.abs(goods * (percent / 100)),
+      direction: "out",
+      eventType: "manual",
+    });
+  });
+
+  const dutyIncludeFreight = record?.dutyIncludeFreight !== false;
+  const dutyRate = parsePercent(record?.dutyRatePct ?? settings?.dutyRatePct ?? 0);
+  const eustRate = parsePercent(record?.eustRatePct ?? settings?.eustRatePct ?? 0);
+  const fxFeePct = parsePercent(record?.fxFeePct ?? settings?.fxFeePct ?? 0);
+  const vatLagMonths = Number(record?.vatRefundLagMonths ?? settings?.vatRefundLagMonths ?? 0) || 0;
+  const vatEnabled = record?.vatRefundEnabled !== false;
+  const autoResults = {};
+
+  autoEvents.forEach((event, index) => {
+    if (!event || event.enabled === false) return;
+    const anchor = String(event.anchor || "ETA");
+    const baseDate = anchors[anchor] || anchors.ETA;
+    if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) return;
+
+    if (event.type === "freight") {
+      const amount = computeFreightTotal(record, totals);
+      if (!amount) return;
+      const dueDate = addDays(baseDate, Number(event.lagDays || 0));
+      results.push({
+        id: String(event.id || `po-auto-${index + 1}`),
+        label: `${prefix}${event.label ? ` – ${String(event.label).trim()}` : ""}`,
+        typeLabel: String(event.label || "Fracht").trim(),
+        dueDate: normalizeIsoDate(dueDate),
+        plannedEur: Math.abs(amount),
+        direction: "out",
+        eventType: "freight",
+      });
+      return;
+    }
+
+    if (event.type === "duty") {
+      const baseValue = goods + (dutyIncludeFreight ? freight : 0);
+      const dueDate = addDays(baseDate, Number(event.lagDays || 0));
+      const amount = baseValue * (dutyRate / 100);
+      autoResults.duty = { amount, dueDate };
+      results.push({
+        id: String(event.id || `po-auto-${index + 1}`),
+        label: `${prefix}${event.label ? ` – ${String(event.label).trim()}` : ""}`,
+        typeLabel: String(event.label || "Zoll").trim(),
+        dueDate: normalizeIsoDate(dueDate),
+        plannedEur: Math.abs(amount),
+        direction: "out",
+        eventType: "duty",
+      });
+      return;
+    }
+
+    if (event.type === "eust") {
+      const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
+      const baseValue = goods + freight + dutyAbs;
+      const dueDate = addDays(baseDate, Number(event.lagDays || 0));
+      const amount = baseValue * (eustRate / 100);
+      autoResults.eust = { amount, dueDate };
+      results.push({
+        id: String(event.id || `po-auto-${index + 1}`),
+        label: `${prefix}${event.label ? ` – ${String(event.label).trim()}` : ""}`,
+        typeLabel: String(event.label || "EUSt").trim(),
+        dueDate: normalizeIsoDate(dueDate),
+        plannedEur: Math.abs(amount),
+        direction: "out",
+        eventType: "eust",
+      });
+      return;
+    }
+
+    if (event.type === "vat_refund") {
+      const eust = autoResults.eust;
+      if (!vatEnabled || !eust || eust.amount === 0) return;
+      const percent = parsePercent(event.percent ?? 100);
+      const lagMonths = Number(event.lagMonths ?? vatLagMonths) || 0;
+      const baseDay = addDays(eust.dueDate || baseDate, Number(event.lagDays || 0));
+      const dueDate = monthEndDate(addMonthsDate(baseDay, lagMonths));
+      results.push({
+        id: String(event.id || `po-auto-${index + 1}`),
+        label: `${prefix}${event.label ? ` – ${String(event.label).trim()}` : ""}`,
+        typeLabel: String(event.label || "EUSt-Erstattung").trim(),
+        dueDate: normalizeIsoDate(dueDate),
+        plannedEur: Math.abs(Math.abs(eust.amount) * (percent / 100)),
+        direction: "in",
+        eventType: "vat_refund",
+      });
+      return;
+    }
+
+    if (event.type === "fx_fee") {
+      const percent = parsePercent(event.percent ?? fxFeePct);
+      if (!percent) return;
+      const dueDate = addDays(baseDate, Number(event.lagDays || 0));
+      results.push({
+        id: String(event.id || `po-auto-${index + 1}`),
+        label: `${prefix}${event.label ? ` – ${String(event.label).trim()}` : ""}`,
+        typeLabel: String(event.label || "FX-Gebühr").trim(),
+        dueDate: normalizeIsoDate(dueDate),
+        plannedEur: Math.abs(goods * (percent / 100)),
+        direction: "out",
+        eventType: "fx_fee",
+      });
+    }
+  });
+
+  return results
+    .filter((entry) => Number(entry.plannedEur || 0) > 0)
+    .map((entry) => ({
+      ...entry,
+      plannedEur: round2(entry.plannedEur) || 0,
+    }));
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value == null) continue;
+    if (typeof value === "string") {
+      if (value.trim()) return value;
+      continue;
+    }
+    return value;
+  }
+  return null;
+}
+
+export function normalizeIsoDate(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getUTCFullYear();
+    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(value.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return "";
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  const deMatch = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (deMatch) {
+    const day = String(Number(deMatch[1])).padStart(2, "0");
+    const month = String(Number(deMatch[2])).padStart(2, "0");
+    const year = String(Number(deMatch[3]));
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const year = parsed.getUTCFullYear();
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function monthFromDate(value) {
+  const iso = normalizeIsoDate(value);
+  return iso ? iso.slice(0, 7) : "";
+}
+
+function readFiniteNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function round2(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.round(numeric * 100) / 100;
+}
+
+export function isPaidLike(value) {
+  if (value === true || value === 1) return true;
+  const raw = String(value || "").trim().toLowerCase();
+  return raw === "paid"
+    || raw === "bezahlt"
+    || raw === "done"
+    || raw === "true"
+    || raw === "1"
+    || raw === "yes"
+    || raw === "ja";
+}
+
+function isActualAmountUsable(amount, planned) {
+  if (!Number.isFinite(Number(amount))) return false;
+  const actual = Number(amount);
+  const plannedValue = Number.isFinite(Number(planned)) ? Number(planned) : null;
+  if (actual > 0) return true;
+  if (actual === 0 && plannedValue != null && plannedValue === 0) return true;
+  return false;
+}
+
+function buildPaymentIndexes(payments) {
+  const byId = new Map();
+  const allocationByEvent = new Map();
+  const paymentIdsByEvent = new Map();
+
+  (Array.isArray(payments) ? payments : []).forEach((entry) => {
+    const payment = entry || {};
+    const paymentId = String(payment.id || "").trim();
+    if (!paymentId) return;
+    byId.set(paymentId, payment);
+
+    if (Array.isArray(payment.allocations)) {
+      payment.allocations.forEach((allocationRaw) => {
+        const allocation = allocationRaw || {};
+        const eventId = String(allocation.eventId || allocation.plannedId || "").trim();
+        if (!eventId) return;
+        allocationByEvent.set(eventId, allocation);
+        paymentIdsByEvent.set(eventId, paymentId);
+      });
+    }
+
+    if (Array.isArray(payment.coveredEventIds)) {
+      payment.coveredEventIds.forEach((eventIdRaw) => {
+        const eventId = String(eventIdRaw || "").trim();
+        if (!eventId) return;
+        paymentIdsByEvent.set(eventId, paymentId);
+      });
+    }
+  });
+
+  return { byId, allocationByEvent, paymentIdsByEvent };
+}
+
+function allocateByPlanned(total, events) {
+  const plannedValues = events.map((entry) => Number(entry.plannedEur || 0));
+  const sumPlanned = plannedValues.reduce((sum, value) => sum + value, 0);
+  if (!Number.isFinite(sumPlanned) || sumPlanned <= 0) return null;
+
+  const allocations = plannedValues.map((planned, index) => {
+    const share = planned / sumPlanned;
+    const raw = total * share;
+    return {
+      eventId: events[index].id,
+      planned,
+      actual: Math.round(raw * 100) / 100,
+    };
+  });
+
+  const roundedSum = allocations.reduce((sum, entry) => sum + entry.actual, 0);
+  const remainder = Math.round((total - roundedSum) * 100) / 100;
+  if (Math.abs(remainder) > 0 && allocations.length) {
+    let target = allocations[allocations.length - 1];
+    if (allocations.length > 1) {
+      target = allocations.reduce((best, entry) => (entry.planned > best.planned ? entry : best), target);
+    }
+    target.actual = Math.round((target.actual + remainder) * 100) / 100;
+  }
+
+  return allocations;
+}
+
+function resolveActualAllocation({ payment, paymentRow, paymentRows }) {
+  if (!payment || !paymentRow?.paymentId) return null;
+  const total = Number(payment.amountActualEurTotal);
+  if (!Number.isFinite(total)) return null;
+
+  const related = paymentRows.filter(
+    (row) => String(row?.paymentId || "") === String(paymentRow.paymentId || ""),
+  );
+  if (!related.length) return null;
+
+  const allocations = allocateByPlanned(total, related.map((row) => ({
+    id: String(row.id || ""),
+    plannedEur: Number(row.plannedEur || 0),
+  })));
+  if (!allocations) return null;
+  return allocations.find((entry) => entry.eventId === paymentRow.id) || null;
+}
+
+function resolveActualAmountForLine({
+  plannedEur,
+  paymentRow,
+  paymentRows,
+  paymentRecord,
+  paymentIndexes,
+  paymentLogEntry,
+  paymentRecords,
+  eventId,
+  paidDate,
+}) {
+  const directCandidates = [
+    paymentRow?.paidEurActual,
+    paymentLogEntry?.amountActualEur,
+  ];
+
+  for (const candidate of directCandidates) {
+    if (candidate == null || candidate === "") continue;
+    if (!Number.isFinite(Number(candidate))) continue;
+    if (isActualAmountUsable(candidate, plannedEur)) {
+      return Number(candidate);
+    }
+    return Number(candidate);
+  }
+
+  if (paymentRecord?.allocations && Array.isArray(paymentRecord.allocations)) {
+    const allocation = paymentRecord.allocations.find((entryRaw) => {
+      const entry = entryRaw || {};
+      const allocationEventId = String(entry.eventId || entry.plannedId || "").trim();
+      return allocationEventId === String(eventId || "");
+    }) || null;
+    if (allocation) {
+      const allocationAmount = firstNonEmpty(
+        allocation.amountEur,
+        allocation.amountActualEur,
+        allocation.actualEur,
+        allocation.actual,
+      );
+      if (allocationAmount !== null && isActualAmountUsable(allocationAmount, plannedEur)) {
+        return Number(allocationAmount);
+      }
+    }
+  }
+
+  if (paymentRecord && paymentRow?.paymentId) {
+    const allocation = paymentIndexes.allocationByEvent.get(String(eventId || ""))
+      || resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
+    if (allocation && isActualAmountUsable(allocation.actual, plannedEur)) {
+      return Number(allocation.actual);
+    }
+
+    if (isActualAmountUsable(paymentRecord.amountActualEurTotal, plannedEur)) {
+      const related = paymentRows.filter(
+        (row) => String(row?.paymentId || "") === String(paymentRow?.paymentId || ""),
+      );
+      if (related.length <= 1) {
+        return Number(paymentRecord.amountActualEurTotal);
+      }
+    }
+  }
+
+  if (!paymentRow?.paymentId && paidDate && eventId) {
+    const fallbackMatch = (Array.isArray(paymentRecords) ? paymentRecords : []).find((entry) => {
+      const payment = entry || {};
+      if (normalizeIsoDate(payment.paidDate) !== normalizeIsoDate(paidDate)) return false;
+      return Array.isArray(payment.coveredEventIds) && payment.coveredEventIds.includes(eventId);
+    });
+    if (fallbackMatch && isActualAmountUsable(fallbackMatch.amountActualEurTotal, plannedEur)) {
+      return Number(fallbackMatch.amountActualEurTotal);
+    }
+  }
+
+  return null;
+}
+
+function resolvePaymentViewState(segments) {
+  const states = Array.from(new Set(
+    (Array.isArray(segments) ? segments : []).map((segment) => String(segment.viewState || "")).filter(Boolean),
+  ));
+  if (!states.length) return "open";
+  if (states.length === 1) return states[0];
+  return "mixed";
+}
+
+function resolveOpenViewState(dueDate, todayIso) {
+  if (dueDate && todayIso && dueDate < todayIso) return "overdue";
+  return "open";
+}
+
+function resolveCashflowKind(eventType) {
+  if (String(eventType || "").toLowerCase() === "manual") return "po";
+  if (String(eventType || "").toLowerCase() === "vat_refund") return "po-refund";
+  return "po-import";
+}
+
+function resolveCashflowGroup(kind) {
+  return kind === "po" ? "PO/FO-Zahlungen" : "Importkosten";
+}
+
+export function buildResolvedPoPaymentMilestones(record, settings, paymentRecords = [], options = {}) {
+  if (!record || typeof record !== "object") return [];
+  const todayIso = normalizeIsoDate(options.today) || normalizeIsoDate(new Date());
+  const paymentLog = (record.paymentLog && typeof record.paymentLog === "object") ? record.paymentLog : {};
+  const paymentIndexes = buildPaymentIndexes(paymentRecords);
+  const paymentRows = buildPlannedPoPaymentRows(record, settings || {}).map((paymentRowRaw) => {
+    const paymentRow = paymentRowRaw || {};
+    const logEntry = (paymentLog[paymentRow.id] && typeof paymentLog[paymentRow.id] === "object")
+      ? paymentLog[paymentRow.id]
+      : {};
+    const paymentId = String(firstNonEmpty(
+      paymentRow.paymentId,
+      logEntry.paymentId,
+      paymentIndexes.paymentIdsByEvent.get(String(paymentRow.id || "")),
+    ) || "").trim();
+    return {
+      ...paymentRow,
+      paymentId: paymentId || null,
+      paidDate: normalizeIsoDate(logEntry.paidDate),
+      paidEurActual: readFiniteNumber(logEntry.amountActualEur),
+    };
+  });
+
+  return paymentRows
+    .map((paymentRowRaw, index) => {
+      const paymentRow = paymentRowRaw || {};
+      const eventId = String(paymentRow.id || `po-payment-${index + 1}`).trim();
+      if (!eventId) return null;
+
+      const logEntry = (paymentLog[eventId] && typeof paymentLog[eventId] === "object")
+        ? paymentLog[eventId]
+        : {};
+
+      const plannedEur = Math.abs(Number(paymentRow.plannedEur || 0));
+      const direction = String(paymentRow.direction || "").trim().toLowerCase() === "in" ? "in" : "out";
+      const dueDate = normalizeIsoDate(firstNonEmpty(paymentRow.dueDate, logEntry.dueDate));
+      const paymentId = String(firstNonEmpty(
+        paymentRow.paymentId,
+        logEntry.paymentId,
+        paymentIndexes.paymentIdsByEvent.get(eventId),
+      ) || "").trim();
+      const paymentRecord = paymentId ? paymentIndexes.byId.get(paymentId) || null : null;
+      let paidDate = normalizeIsoDate(firstNonEmpty(paymentRecord?.paidDate, paymentRow.paidDate, logEntry.paidDate));
+
+      const resolvedActual = resolveActualAmountForLine({
+        plannedEur,
+        paymentRow,
+        paymentRows,
+        paymentRecord,
+        paymentIndexes,
+        paymentLogEntry: logEntry,
+        paymentRecords,
+        eventId,
+        paidDate,
+      });
+
+      const rawActualPaidEur = isActualAmountUsable(resolvedActual, plannedEur)
+        ? Math.abs(Number(resolvedActual))
+        : 0;
+      const hasPaymentEvidence = rawActualPaidEur > 0
+        || isPaidLike(paymentRow.status)
+        || isPaidLike(logEntry.status)
+        || isPaidLike(logEntry.paid)
+        || (paymentRecord ? isPaidLike(paymentRecord.status) : false)
+        || Boolean(paidDate)
+        || Boolean(paymentId);
+
+      let paidEur = rawActualPaidEur;
+      if (hasPaymentEvidence && paidEur <= 0 && plannedEur >= 0) {
+        paidEur = plannedEur;
+      }
+      if (paidEur > 0 && !paidDate && dueDate) {
+        paidDate = dueDate;
+      }
+
+      const appliedPaidEur = plannedEur > 0 ? Math.min(plannedEur, paidEur) : Math.max(0, paidEur);
+      const remainingEur = plannedEur > 0
+        ? Math.max(0, round2(plannedEur - appliedPaidEur) || 0)
+        : 0;
+      const dueMonth = monthFromDate(dueDate || paidDate);
+      const paidMonth = monthFromDate(paidDate || dueDate);
+      const kind = resolveCashflowKind(paymentRow.eventType);
+      const group = resolveCashflowGroup(kind);
+      const segments = [];
+
+      if (paidEur > 0 && paidMonth) {
+        segments.push({
+          id: `${eventId}:paid`,
+          eventId,
+          amountEur: round2(paidEur) || 0,
+          month: paidMonth,
+          dueDate: dueDate || null,
+          paidDate: paidDate || null,
+          viewState: "paid",
+          statusLabel: "Bezahlt",
+          isOverdue: false,
+          direction,
+          kind,
+          group,
+          label: String(paymentRow.label || "").trim(),
+          typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
+          eventType: String(paymentRow.eventType || "").trim() || null,
+          plannedEur,
+          paidEur: round2(paidEur) || 0,
+          remainingEur,
+          paymentId: paymentId || null,
+        });
+      }
+
+      if (remainingEur > 0 && dueMonth) {
+        const openViewState = resolveOpenViewState(dueDate, todayIso);
+        segments.push({
+          id: `${eventId}:${openViewState}`,
+          eventId,
+          amountEur: remainingEur,
+          month: dueMonth,
+          dueDate: dueDate || null,
+          paidDate: paidDate || null,
+          viewState: openViewState,
+          statusLabel: "Offen",
+          isOverdue: openViewState === "overdue",
+          direction,
+          kind,
+          group,
+          label: String(paymentRow.label || "").trim(),
+          typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
+          eventType: String(paymentRow.eventType || "").trim() || null,
+          plannedEur,
+          paidEur: round2(paidEur) || 0,
+          remainingEur,
+          paymentId: paymentId || null,
+        });
+      }
+
+      if (!segments.length && plannedEur > 0 && dueMonth) {
+        const openViewState = resolveOpenViewState(dueDate, todayIso);
+        segments.push({
+          id: `${eventId}:${openViewState}`,
+          eventId,
+          amountEur: round2(plannedEur) || 0,
+          month: dueMonth,
+          dueDate: dueDate || null,
+          paidDate: paidDate || null,
+          viewState: openViewState,
+          statusLabel: "Offen",
+          isOverdue: openViewState === "overdue",
+          direction,
+          kind,
+          group,
+          label: String(paymentRow.label || "").trim(),
+          typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
+          eventType: String(paymentRow.eventType || "").trim() || null,
+          plannedEur,
+          paidEur: round2(paidEur) || 0,
+          remainingEur: round2(plannedEur) || 0,
+          paymentId: paymentId || null,
+        });
+      }
+
+      return {
+        id: eventId,
+        eventId,
+        label: String(paymentRow.label || "").trim(),
+        typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
+        dueDate: dueDate || null,
+        paidDate: paidDate || null,
+        direction,
+        plannedEur: round2(plannedEur) || 0,
+        paidEur: round2(paidEur) || 0,
+        remainingEur,
+        paymentId: paymentId || null,
+        eventType: String(paymentRow.eventType || "").trim() || null,
+        kind,
+        group,
+        viewState: resolvePaymentViewState(segments),
+        segments,
+      };
+    })
+    .filter(Boolean);
+}

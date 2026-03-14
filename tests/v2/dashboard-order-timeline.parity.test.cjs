@@ -95,6 +95,67 @@ test("dashboard order timeline: PO lifecycle + payment status markers", () => {
   assert.ok(timeline.items.some((item) => item.className.includes("--payment-open")), "open payment marker missing");
 });
 
+test("dashboard order timeline: fully paid past-due PO milestone no longer shows as open", () => {
+  const state = {
+    settings: baseSettings(),
+    pos: [
+      {
+        id: "po-fully-paid",
+        poNo: "PO-3002",
+        supplierId: "sup-1",
+        orderDate: "2026-01-10",
+        prodDays: 0,
+        transitDays: 0,
+        fxOverride: 1,
+        freightEur: "0,00",
+        items: [
+          {
+            id: "po-item-1",
+            sku: "SKU-1",
+            units: "10",
+            unitCostUsd: "10,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+          },
+        ],
+        milestones: [
+          { id: "po-ms-paid", label: "Deposit", percent: 100, anchor: "ORDER_DATE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-ms-paid": {
+            status: "paid",
+            paidDate: "2026-02-05",
+            amountActualEur: 100,
+          },
+        },
+        autoEvents: [
+          { id: "po-auto-freight", type: "freight", enabled: false },
+          { id: "po-auto-duty", type: "duty", enabled: false },
+          { id: "po-auto-eust", type: "eust", enabled: false },
+          { id: "po-auto-vat", type: "vat_refund", enabled: false },
+          { id: "po-auto-fx", type: "fx_fee", enabled: false },
+        ],
+      },
+    ],
+  };
+
+  const timeline = buildDashboardOrderTimeline({
+    state,
+    source: "po",
+    sourceId: "po-fully-paid",
+  });
+
+  assert.ok(timeline, "timeline should be built");
+  const paymentMarkers = timeline.items.filter((item) => item.className.includes("--payment"));
+  assert.equal(paymentMarkers.length, 1, "there should be exactly one payment marker");
+  assert.ok(paymentMarkers[0].className.includes("--payment-paid"), "fully paid milestone must render as paid");
+  assert.equal(
+    paymentMarkers.some((item) => item.className.includes("--payment-open")),
+    false,
+    "fully paid past-due milestone must not render as open",
+  );
+});
+
 test("dashboard order timeline: FO lookup via foNumber works without foNo", () => {
   const state = {
     settings: baseSettings(),

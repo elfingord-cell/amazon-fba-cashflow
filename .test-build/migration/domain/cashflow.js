@@ -16,6 +16,7 @@ exports.loadState = loadState;
 const planProducts_js_1 = require("./planProducts.js");
 const portfolioBuckets_js_1 = require("./portfolioBuckets.js");
 const cashInRules_js_1 = require("./cashInRules.js");
+const poPaymentResolver_js_1 = require("./poPaymentResolver.js");
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 // ---------- Utils (exportiert) ----------
 function _num(n) { return Number.isFinite(n) ? n : 0; }
@@ -33,6 +34,18 @@ function parsePct(p) {
         return 0;
     const n = Number(String(p).replace(',', '.'));
     return Number.isFinite(n) ? n : 0;
+}
+function readExplicitEuroInput(value) {
+    if (value == null)
+        return null;
+    if (typeof value === 'number')
+        return Number.isFinite(value) ? value : null;
+    const raw = String(value).trim();
+    if (!raw)
+        return null;
+    const normalized = raw.replace(/\./g, '').replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
 }
 function readOptionalNumber(value, parser = parseEuro) {
     if (value == null)
@@ -57,6 +70,15 @@ function normalizeCashInRevenueBasisMode(value) {
     return String(value || '').trim().toLowerCase() === 'forecast_direct'
         ? 'forecast_direct'
         : 'hybrid';
+}
+function normalizeIncomingRevenueSource(value) {
+    return String(value || '').trim().toLowerCase() === 'forecast'
+        ? 'forecast'
+        : 'manual';
+}
+function hasPositiveRevenueOverride(value) {
+    const revenue = Number(value);
+    return Number.isFinite(revenue) && revenue > 0;
 }
 function normalizeBucketScopeSet(input) {
     if (!input)
@@ -1479,13 +1501,15 @@ function computeSeries(state) {
     const cashInMetaByMonth = {};
     Object.keys(bucket).forEach(m => {
         const incoming = incomingByMonth.get(m) || null;
-        const incomingSource = String(incoming?.source || '').trim().toLowerCase();
-        const hasManualRevenueInput = incoming?.revenueEur != null && String(incoming.revenueEur).trim() !== '';
-        const manualRevenue = hasManualRevenueInput ? parseEuro(incoming.revenueEur) : null;
-        const hasManualRevenueOverride = forecastEnabled
+        const cashInSetupRevenue = readExplicitEuroInput(incoming?.revenueEur);
+        // In hybrid mode only true manual months may override the forecast revenue.
+        // Forecast transfers persist a helper value with source="forecast", but they
+        // must keep following the live forecast in Dashboard/Cash-In.
+        const incomingRevenueSource = normalizeIncomingRevenueSource(incoming?.source);
+        const hasCashInSetupRevenueOverride = forecastEnabled
             && cashInRevenueBasisMode === 'hybrid'
-            && incomingSource === 'manual'
-            && Number.isFinite(manualRevenue);
+            && incomingRevenueSource !== 'forecast'
+            && hasPositiveRevenueOverride(cashInSetupRevenue);
         const hasManualPayoutInput = incoming?.payoutPct != null && String(incoming.payoutPct).trim() !== '';
         const manualPayoutPct = hasManualPayoutInput
             ? (0, cashInRules_js_1.parsePayoutPctInput)(incoming.payoutPct)
@@ -1539,13 +1563,13 @@ function computeSeries(state) {
         let revenue = null;
         let revenueSource = null;
         if (!forecastEnabled) {
-            if (!Number.isFinite(manualRevenue))
+            if (!Number.isFinite(cashInSetupRevenue))
                 return;
-            revenue = Number(manualRevenue);
+            revenue = Number(cashInSetupRevenue);
             revenueSource = 'manual_no_forecast';
         }
-        else if (hasManualRevenueOverride) {
-            revenue = Number(manualRevenue);
+        else if (hasCashInSetupRevenueOverride) {
+            revenue = Number(cashInSetupRevenue);
             revenueSource = 'manual_override';
         }
         else {
@@ -1559,7 +1583,7 @@ function computeSeries(state) {
         const isFutureMonth = horizonFromCurrentMonth > 0;
         const payoutPct = (0, cashInRules_js_1.clampPct)(basePayoutPct, cashInQuoteMinPct, cashInQuoteMaxPct);
         const planRevenueAfterCalibration = forecastEnabled
-            ? (hasManualRevenueOverride ? Number(manualRevenue) : (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw))
+            ? (hasCashInSetupRevenueOverride ? Number(cashInSetupRevenue) : (cashInCalibrationEnabled ? calibratedPlanRevenue : forecastRevenueRaw))
             : revenue;
         const forecastRevenueForTooltip = forecastEnabled ? forecastRevenueRaw : revenue;
         const recommendationCapsApplied = Array.isArray(recommendationByMonth?.capsApplied)
@@ -1695,7 +1719,7 @@ function computeSeries(state) {
             return;
         }
         const salesComponents = [];
-        if (hasManualRevenueOverride) {
+        if (hasCashInSetupRevenueOverride) {
             const weightedComponents = [];
             portfolioBuckets_js_1.PORTFOLIO_BUCKET_VALUES.forEach((bucketName) => {
                 const liveRevenueRaw = Number(forecastMapLiveByBucket[bucketName]?.[m] || 0);
@@ -1928,6 +1952,7 @@ function computeSeries(state) {
     const settingsNorm = normaliseSettings(s.settings);
     // PO-Events (Milestones & Importkosten)
     (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
+        const resolvedPoPayments = (0, poPaymentResolver_js_1.buildResolvedPoPaymentMilestones)(po, settingsNorm, Array.isArray(s.payments) ? s.payments : [], { today });
         const segments = buildOrderBucketSegments({
             order: po,
             profileBySku: productProfileBySku,
@@ -1936,41 +1961,64 @@ function computeSeries(state) {
         });
         const splitByBucket = segments.length > 1;
         segments.forEach((segment) => {
-            expandOrderEvents(segment.row, settingsNorm, 'PO', 'poNo').forEach(ev => {
-                const m = ev.month;
-                if (!bucket[m])
-                    return;
-                const kind = ev.type === 'manual' ? 'po' : (ev.type === 'vat_refund' ? 'po-refund' : 'po-import');
-                const group = kind === 'po'
-                    ? 'PO/FO-Zahlungen'
-                    : kind === 'po-refund'
-                        ? 'Importkosten'
-                        : 'Importkosten';
-                pushEntry(m, baseEntry({
-                    id: splitByBucket
-                        ? `${ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`}-${(0, portfolioBuckets_js_1.normalizeSkuKey)(segment.bucket)}`
-                        : (ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`),
-                    direction: ev.direction === 'in' ? 'in' : 'out',
-                    amount: Math.abs(ev.amount || 0),
-                    label: ev.label,
-                    month: m,
-                    date: isoDate(ev.due),
-                    kind,
-                    group,
-                    source: 'po',
-                    sourceTab: '#po',
-                    anchor: ev.anchor,
-                    lagDays: ev.lagDays,
-                    lagMonths: ev.lagMonths,
-                    percent: ev.percent,
-                    sourceNumber: ev.sourceNumber || po.poNo || po.id,
-                    sourceId: po.id || po.poNo || null,
-                    tooltip: ev.tooltip,
-                    portfolioBucket: segment.bucket,
-                    meta: {
-                        skuBucketShare: segment.share,
-                    },
-                }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
+            resolvedPoPayments.forEach((milestone) => {
+                (Array.isArray(milestone.segments) ? milestone.segments : []).forEach((portion) => {
+                    const amount = Math.round(Math.abs(Number(portion.amountEur || 0)) * segment.share * 100) / 100;
+                    if (!(amount > 0))
+                        return;
+                    const m = portion.month;
+                    if (!bucket[m])
+                        return;
+                    const entryId = splitByBucket
+                        ? `${portion.id || `po-${po.id || ''}-${portion.kind}-${m}`}-${(0, portfolioBuckets_js_1.normalizeSkuKey)(segment.bucket)}`
+                        : (portion.id || `po-${po.id || ''}-${portion.kind}-${m}`);
+                    pushEntry(m, {
+                        id: entryId,
+                        direction: portion.direction === 'in' ? 'in' : 'out',
+                        amount,
+                        label: portion.label,
+                        month: m,
+                        date: portion.dueDate || portion.paidDate || null,
+                        kind: portion.kind,
+                        group: portion.group,
+                        paid: portion.viewState === 'paid',
+                        source: 'po',
+                        sourceTab: '#po',
+                        anchor: null,
+                        lagDays: null,
+                        lagMonths: null,
+                        percent: null,
+                        scenarioDelta: 0,
+                        scenarioAmount: amount,
+                        meta: {
+                            skuBucketShare: segment.share,
+                            portfolioBucket: segment.bucket,
+                            poPaymentEventId: portion.eventId,
+                            poPaymentPortionId: portion.id,
+                            poPaymentState: portion.viewState,
+                            poPaymentStatusLabel: portion.statusLabel,
+                            poPaymentOverdue: portion.isOverdue === true,
+                            poPaymentDueDate: portion.dueDate || null,
+                            poPaymentPaidDate: portion.paidDate || null,
+                            poPaymentTypeLabel: portion.typeLabel || null,
+                            poPaymentPlannedEur: Number(milestone.plannedEur || 0),
+                            poPaymentPaidEur: Number(milestone.paidEur || 0),
+                            poPaymentRemainingEur: Number(milestone.remainingEur || 0),
+                        },
+                        portfolioBucket: segment.bucket,
+                        tooltip: null,
+                        sourceNumber: po.poNo || po.id,
+                        sourceId: po.id || po.poNo || null,
+                        statusId: entryId,
+                        auto: false,
+                        autoEligible: false,
+                        autoApplied: false,
+                        autoManualCheck,
+                        manualOverride: false,
+                        autoSuppressed: false,
+                        autoTooltip: null,
+                    });
+                });
             });
         });
     });

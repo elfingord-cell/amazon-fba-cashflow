@@ -9,6 +9,31 @@ const {
   buildDashboardTaxMatrixGroup,
 } = require("../../.test-build/migration/v2/domain/dashboardCashflow.js");
 
+function withMockedNow(date, callback) {
+  const RealDate = Date;
+  class MockDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(date.getTime());
+        return;
+      }
+      super(...args);
+    }
+
+    static now() {
+      return date.getTime();
+    }
+  }
+  MockDate.parse = RealDate.parse;
+  MockDate.UTC = RealDate.UTC;
+  globalThis.Date = MockDate;
+  try {
+    return callback();
+  } finally {
+    globalThis.Date = RealDate;
+  }
+}
+
 test("dashboard chart and matrix keep forecast-sourced hybrid months on live forecast revenue", async () => {
   const [{ computeSeries }, { PORTFOLIO_BUCKET }] = await Promise.all([
     import("../../src/domain/cashflow.js"),
@@ -176,6 +201,160 @@ test("dashboard chart and matrix ignore legacy manual zero revenue in hybrid mod
   assert.equal(marchAggregation.totals.cashIn, 2000);
   assert.equal(marchAggregation.totals.cashOut, 130);
   assert.equal(marchAggregation.totals.net, 1870);
+});
+
+test("dashboard PO cashflow uses PO payment truth for paid month bucketing and overdue remainder without mutating state", async () => {
+  const [{ computeSeries }, { PORTFOLIO_BUCKET }] = await Promise.all([
+    import("../../src/domain/cashflow.js"),
+    import("../../src/domain/portfolioBuckets.js"),
+  ]);
+
+  const state = {
+    settings: {
+      startMonth: "2025-01",
+      horizonMonths: 3,
+      openingBalance: 0,
+      fxRate: 1,
+      fxFeePct: 0,
+      dutyRatePct: 0,
+      dutyIncludeFreight: false,
+      eustRatePct: 0,
+      vatRefundEnabled: false,
+      vatRefundLagMonths: 0,
+      freightLagDays: 0,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    payments: [],
+    pos: [
+      {
+        id: "po-paid-late",
+        poNo: "PO-PAID-LATE",
+        orderDate: "2025-01-05",
+        prodDays: 0,
+        transitDays: 0,
+        fxOverride: 1,
+        freightEur: "0,00",
+        items: [
+          {
+            id: "po-paid-late-item",
+            sku: "SKU-1",
+            units: "10",
+            unitCostUsd: "10,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+          },
+        ],
+        milestones: [
+          { id: "po-paid-late-ms", label: "Deposit", percent: 100, anchor: "ORDER_DATE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-paid-late-ms": {
+            status: "paid",
+            paidDate: "2025-02-10",
+            amountActualEur: 100,
+          },
+        },
+        autoEvents: [
+          { id: "po-paid-late-freight", type: "freight", enabled: false },
+          { id: "po-paid-late-duty", type: "duty", enabled: false },
+          { id: "po-paid-late-eust", type: "eust", enabled: false },
+          { id: "po-paid-late-vat", type: "vat_refund", enabled: false },
+          { id: "po-paid-late-fx", type: "fx_fee", enabled: false },
+        ],
+      },
+      {
+        id: "po-partial",
+        poNo: "PO-PARTIAL",
+        orderDate: "2025-01-08",
+        prodDays: 0,
+        transitDays: 0,
+        fxOverride: 1,
+        freightEur: "0,00",
+        items: [
+          {
+            id: "po-partial-item",
+            sku: "SKU-2",
+            units: "10",
+            unitCostUsd: "10,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+          },
+        ],
+        milestones: [
+          { id: "po-partial-ms", label: "Deposit", percent: 100, anchor: "ORDER_DATE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-partial-ms": {
+            status: "paid",
+            paidDate: "2025-02-12",
+            amountActualEur: 40,
+          },
+        },
+        autoEvents: [
+          { id: "po-partial-freight", type: "freight", enabled: false },
+          { id: "po-partial-duty", type: "duty", enabled: false },
+          { id: "po-partial-eust", type: "eust", enabled: false },
+          { id: "po-partial-vat", type: "vat_refund", enabled: false },
+          { id: "po-partial-fx", type: "fx_fee", enabled: false },
+        ],
+      },
+    ],
+    products: [
+      { sku: "SKU-1", alias: "Alpha", includeInForecast: true, portfolioBucket: PORTFOLIO_BUCKET.CORE },
+      { sku: "SKU-2", alias: "Beta", includeInForecast: true, portfolioBucket: PORTFOLIO_BUCKET.CORE },
+    ],
+    status: { autoManualCheck: false, events: {} },
+  };
+  const snapshot = structuredClone(state);
+  const bucketScope = new Set([PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN]);
+
+  const report = withMockedNow(new Date("2025-03-01T12:00:00Z"), () => computeSeries(state));
+  const january = report.breakdown.find((row) => row.month === "2025-01");
+  const february = report.breakdown.find((row) => row.month === "2025-02");
+  assert.ok(january);
+  assert.ok(february);
+
+  const januaryAggregation = aggregateDashboardMonthEntries(january.entries, { bucketScope, includePhantomFo: true });
+  const februaryAggregation = aggregateDashboardMonthEntries(february.entries, { bucketScope, includePhantomFo: true });
+  assert.equal(januaryAggregation.outflow.po, 60, "only the unpaid remainder should stay in the due month");
+  assert.equal(februaryAggregation.outflow.po, 140, "paid cash should move into the actual payment month");
+
+  const januaryPoEntries = january.entries.filter((entry) => String(entry.source || "") === "po" && String(entry.direction || "") === "out");
+  const februaryPoEntries = february.entries.filter((entry) => String(entry.source || "") === "po" && String(entry.direction || "") === "out");
+  assert.equal(
+    januaryPoEntries.some((entry) => String(entry.sourceNumber || "") === "PO-PAID-LATE"),
+    false,
+    "fully paid past-due milestone must not remain as January backlog",
+  );
+  assert.deepEqual(
+    januaryPoEntries.map((entry) => ({
+      ref: entry.sourceNumber,
+      state: entry.meta?.poPaymentState,
+      paid: entry.paid,
+      amount: entry.amount,
+    })),
+    [{ ref: "PO-PARTIAL", state: "overdue", paid: false, amount: 60 }],
+  );
+  assert.deepEqual(
+    februaryPoEntries.map((entry) => ({
+      ref: entry.sourceNumber,
+      state: entry.meta?.poPaymentState,
+      paid: entry.paid,
+      amount: entry.amount,
+    })).sort((left, right) => String(left.ref).localeCompare(String(right.ref))),
+    [
+      { ref: "PO-PAID-LATE", state: "paid", paid: true, amount: 100 },
+      { ref: "PO-PARTIAL", state: "paid", paid: true, amount: 40 },
+    ],
+  );
+  assert.deepEqual(state, snapshot, "dashboard cashflow must stay derived-only and must not persist dashboard payment state");
 });
 
 test("dashboard mirror injects cash-in table payout when sales entries are missing", () => {

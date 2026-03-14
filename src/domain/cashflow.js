@@ -21,6 +21,7 @@ import {
   normalizeRevenueCalibrationMode,
   parsePayoutPctInput,
 } from "./cashInRules.js";
+import { buildResolvedPoPaymentMilestones } from "./poPaymentResolver.js";
 
 const STATE_KEY = 'amazon_fba_cashflow_v1';
 
@@ -1979,6 +1980,12 @@ export function computeSeries(state) {
 
   // PO-Events (Milestones & Importkosten)
   (Array.isArray(s.pos) ? s.pos : []).forEach(po => {
+    const resolvedPoPayments = buildResolvedPoPaymentMilestones(
+      po,
+      settingsNorm,
+      Array.isArray(s.payments) ? s.payments : [],
+      { today },
+    );
     const segments = buildOrderBucketSegments({
       order: po,
       profileBySku: productProfileBySku,
@@ -1987,40 +1994,64 @@ export function computeSeries(state) {
     });
     const splitByBucket = segments.length > 1;
     segments.forEach((segment) => {
-      expandOrderEvents(segment.row, settingsNorm, 'PO', 'poNo').forEach(ev => {
-        const m = ev.month; if (!bucket[m]) return;
-        const kind = ev.type === 'manual' ? 'po' : (ev.type === 'vat_refund' ? 'po-refund' : 'po-import');
-        const group =
-          kind === 'po'
-            ? 'PO/FO-Zahlungen'
-            : kind === 'po-refund'
-              ? 'Importkosten'
-              : 'Importkosten';
-        pushEntry(m, baseEntry({
-          id: splitByBucket
-            ? `${ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`}-${normalizeSkuKey(segment.bucket)}`
-            : (ev.id || `po-${po.id || ''}-${ev.type}-${ev.month}`),
-          direction: ev.direction === 'in' ? 'in' : 'out',
-          amount: Math.abs(ev.amount || 0),
-          label: ev.label,
-          month: m,
-          date: isoDate(ev.due),
-          kind,
-          group,
-          source: 'po',
-          sourceTab: '#po',
-          anchor: ev.anchor,
-          lagDays: ev.lagDays,
-          lagMonths: ev.lagMonths,
-          percent: ev.percent,
-          sourceNumber: ev.sourceNumber || po.poNo || po.id,
-          sourceId: po.id || po.poNo || null,
-          tooltip: ev.tooltip,
-          portfolioBucket: segment.bucket,
-          meta: {
-            skuBucketShare: segment.share,
-          },
-        }, { auto: ev.type !== 'manual', autoEligible: ev.type !== 'manual' }));
+      resolvedPoPayments.forEach((milestone) => {
+        (Array.isArray(milestone.segments) ? milestone.segments : []).forEach((portion) => {
+          const amount = Math.round(Math.abs(Number(portion.amountEur || 0)) * segment.share * 100) / 100;
+          if (!(amount > 0)) return;
+          const m = portion.month;
+          if (!bucket[m]) return;
+
+          const entryId = splitByBucket
+            ? `${portion.id || `po-${po.id || ''}-${portion.kind}-${m}`}-${normalizeSkuKey(segment.bucket)}`
+            : (portion.id || `po-${po.id || ''}-${portion.kind}-${m}`);
+
+          pushEntry(m, {
+            id: entryId,
+            direction: portion.direction === 'in' ? 'in' : 'out',
+            amount,
+            label: portion.label,
+            month: m,
+            date: portion.dueDate || portion.paidDate || null,
+            kind: portion.kind,
+            group: portion.group,
+            paid: portion.viewState === 'paid',
+            source: 'po',
+            sourceTab: '#po',
+            anchor: null,
+            lagDays: null,
+            lagMonths: null,
+            percent: null,
+            scenarioDelta: 0,
+            scenarioAmount: amount,
+            meta: {
+              skuBucketShare: segment.share,
+              portfolioBucket: segment.bucket,
+              poPaymentEventId: portion.eventId,
+              poPaymentPortionId: portion.id,
+              poPaymentState: portion.viewState,
+              poPaymentStatusLabel: portion.statusLabel,
+              poPaymentOverdue: portion.isOverdue === true,
+              poPaymentDueDate: portion.dueDate || null,
+              poPaymentPaidDate: portion.paidDate || null,
+              poPaymentTypeLabel: portion.typeLabel || null,
+              poPaymentPlannedEur: Number(milestone.plannedEur || 0),
+              poPaymentPaidEur: Number(milestone.paidEur || 0),
+              poPaymentRemainingEur: Number(milestone.remainingEur || 0),
+            },
+            portfolioBucket: segment.bucket,
+            tooltip: null,
+            sourceNumber: po.poNo || po.id,
+            sourceId: po.id || po.poNo || null,
+            statusId: entryId,
+            auto: false,
+            autoEligible: false,
+            autoApplied: false,
+            autoManualCheck,
+            manualOverride: false,
+            autoSuppressed: false,
+            autoTooltip: null,
+          });
+        });
       });
     });
   });

@@ -1,14 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildDashboardOrderTimeline = buildDashboardOrderTimeline;
-const orderEditorFactory_js_1 = require("../../ui/orderEditorFactory.js");
+const poPaymentResolver_js_1 = require("../../domain/poPaymentResolver.js");
 const orderUtils_1 = require("./orderUtils");
 const DAY_MS = 24 * 60 * 60 * 1000;
-const PO_CONFIG = {
-    slug: "po",
-    entityLabel: "PO",
-    numberField: "poNo",
-};
 function normalizeRef(value) {
     return String(value || "").trim().toLowerCase();
 }
@@ -130,36 +125,27 @@ function resolvePaymentDirection(input) {
 }
 function buildPoPayments(state, poRecord) {
     const paymentRecords = Array.isArray(state.payments) ? state.payments : [];
-    let rows = [];
-    try {
-        const clone = typeof structuredClone === "function"
-            ? structuredClone(poRecord)
-            : JSON.parse(JSON.stringify(poRecord));
-        rows = (0, orderEditorFactory_js_1.buildPaymentRows)(clone, PO_CONFIG, makePoSettings(state), paymentRecords, { includeIncoming: true });
-    }
-    catch {
-        rows = [];
-    }
-    return rows
-        .map((row) => {
-        const dueDate = normalizeIsoDate(row.dueDate);
+    const milestones = (0, poPaymentResolver_js_1.buildResolvedPoPaymentMilestones)(poRecord, makePoSettings(state), paymentRecords);
+    return milestones
+        .map((milestone) => {
+        const dueDate = normalizeIsoDate(milestone.dueDate);
         if (!dueDate)
             return null;
-        const plannedEur = Math.abs(Number(row.plannedEur || 0));
+        const plannedEur = Math.abs(Number(milestone.plannedEur || 0));
         if (!(plannedEur > 0))
             return null;
         const direction = resolvePaymentDirection({
-            amount: Number(row.plannedEur || 0),
-            eventType: row.eventType,
-            label: row.label || row.typeLabel,
-            explicitDirection: row.direction,
+            amount: plannedEur,
+            eventType: milestone.eventType,
+            label: milestone.label || milestone.typeLabel,
+            explicitDirection: milestone.direction,
         });
         return {
-            id: String(row.id || `po-pay-${dueDate}`),
-            label: String(row.typeLabel || row.label || "Zahlung"),
+            id: String(milestone.eventId || `po-pay-${dueDate}`),
+            label: String(milestone.typeLabel || milestone.label || "Zahlung"),
             dueDate,
             amountEur: plannedEur,
-            status: resolvePaymentStatus(row.status, row.paidDate, row.paymentId),
+            status: milestone.viewState === "paid" ? "paid" : "open",
             direction,
         };
     })

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildEffectiveCashInByMonth, computeSeries, expandFixcostInstances, getEffectiveCashInMonth } from "./cashflow.js";
 import { CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL } from "./cashInRules.js";
+import { buildResolvedPoPaymentMilestones } from "./poPaymentResolver.js";
 import { PORTFOLIO_BUCKET } from "./portfolioBuckets.js";
 import { createEmptyState, saveState, STORAGE_KEY } from "../data/storageLocal.js";
 
@@ -80,6 +81,56 @@ function salesEntriesForMonth(report, month) {
 function salesCashInMetaForMonth(report, month) {
   const entry = salesEntriesForMonth(report, month)[0];
   return entry?.meta?.cashIn || null;
+}
+
+function createPoResolverSettings() {
+  return {
+    fxRate: 1,
+    fxFeePct: 0,
+    dutyRatePct: 0,
+    dutyIncludeFreight: false,
+    eustRatePct: 0,
+    vatRefundEnabled: false,
+    vatRefundLagMonths: 0,
+    freightLagDays: 0,
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+}
+
+function createPoResolverRecord(overrides = {}) {
+  return {
+    id: "po-resolver",
+    poNo: "PO-RESOLVER",
+    supplierId: "sup-1",
+    orderDate: "2025-01-05",
+    prodDays: 0,
+    transitDays: 0,
+    fxOverride: 1,
+    freightEur: "0,00",
+    items: [
+      {
+        id: "po-item-1",
+        sku: "SKU-1",
+        units: "10",
+        unitCostUsd: "10,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      },
+    ],
+    milestones: [
+      { id: "po-ms-1", label: "Deposit", percent: 100, anchor: "ORDER_DATE", lagDays: 0 },
+    ],
+    paymentLog: {},
+    autoEvents: [
+      { id: "po-auto-freight", type: "freight", enabled: false },
+      { id: "po-auto-duty", type: "duty", enabled: false },
+      { id: "po-auto-eust", type: "eust", enabled: false },
+      { id: "po-auto-vat", type: "vat_refund", enabled: false },
+      { id: "po-auto-fx", type: "fx_fee", enabled: false },
+    ],
+    ...overrides,
+  };
 }
 
 test.beforeEach(() => {
@@ -504,6 +555,79 @@ test("computeSeries treats FO milestones as plan-only and excludes converted/arc
   assert.equal(aprilFoEntries[0].amount, 50);
   assert.equal(marchFoEntries[0].paid, false);
   assert.equal(aprilFoEntries[0].paid, false);
+});
+
+test("po payment resolver derives paid, open, overdue, and partial milestone portions from existing PO payment fields", () => {
+  const settings = createPoResolverSettings();
+
+  const fullyPaid = createPoResolverRecord({
+    paymentLog: {
+      "po-ms-1": {
+        status: "paid",
+        paidDate: "2025-02-10",
+        amountActualEur: 100,
+      },
+    },
+  });
+  const fullyPaidSnapshot = structuredClone(fullyPaid);
+  const fullyPaidMilestone = buildResolvedPoPaymentMilestones(fullyPaid, settings, [], { today: "2025-03-01" })[0];
+  assert.equal(fullyPaidMilestone.viewState, "paid");
+  assert.equal(fullyPaidMilestone.paidEur, 100);
+  assert.equal(fullyPaidMilestone.remainingEur, 0);
+  assert.deepEqual(
+    fullyPaidMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
+    [{ state: "paid", month: "2025-02", amount: 100 }],
+  );
+  assert.deepEqual(fullyPaid, fullyPaidSnapshot, "resolver must remain derived-only");
+
+  const openFutureMilestone = buildResolvedPoPaymentMilestones(
+    createPoResolverRecord({ orderDate: "2025-05-15" }),
+    settings,
+    [],
+    { today: "2025-03-01" },
+  )[0];
+  assert.equal(openFutureMilestone.viewState, "open");
+  assert.deepEqual(
+    openFutureMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
+    [{ state: "open", month: "2025-05", amount: 100 }],
+  );
+
+  const overdueMilestone = buildResolvedPoPaymentMilestones(
+    createPoResolverRecord(),
+    settings,
+    [],
+    { today: "2025-03-01" },
+  )[0];
+  assert.equal(overdueMilestone.viewState, "overdue");
+  assert.deepEqual(
+    overdueMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
+    [{ state: "overdue", month: "2025-01", amount: 100 }],
+  );
+
+  const partialMilestone = buildResolvedPoPaymentMilestones(
+    createPoResolverRecord({
+      paymentLog: {
+        "po-ms-1": {
+          status: "paid",
+          paidDate: "2025-02-12",
+          amountActualEur: 40,
+        },
+      },
+    }),
+    settings,
+    [],
+    { today: "2025-03-01" },
+  )[0];
+  assert.equal(partialMilestone.viewState, "mixed");
+  assert.equal(partialMilestone.paidEur, 40);
+  assert.equal(partialMilestone.remainingEur, 60);
+  assert.deepEqual(
+    partialMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
+    [
+      { state: "paid", month: "2025-02", amount: 40 },
+      { state: "overdue", month: "2025-01", amount: 60 },
+    ],
+  );
 });
 
 test("computeSeries uses manual quote first and recommendation for future months without manual quote", () => {

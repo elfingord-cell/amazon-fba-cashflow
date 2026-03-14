@@ -124,8 +124,8 @@ interface PnlMatrixRow {
   orderType?: "po" | "fo" | "phantom";
   aliases?: string[];
   units?: number | null;
-  paymentMix?: { paid: number; open: number; unknown: number };
-  paymentStatus?: "paid" | "open" | "mixed" | "unknown";
+  paymentMix?: { paid: number; open: number; overdue: number; unknown: number };
+  paymentStatus?: "paid" | "open" | "overdue" | "mixed" | "unknown";
   paymentDueDate?: string | null;
   children?: PnlMatrixRow[];
 }
@@ -419,13 +419,48 @@ function sumAbsoluteMonthValues(values: Record<string, number>): number {
   return Object.values(values).reduce((sum, value) => sum + Math.abs(Number(value || 0)), 0);
 }
 
-function resolvePaymentStatus(input: { paid: number; open: number; unknown: number }): "paid" | "open" | "mixed" | "unknown" {
+function createPaymentMix(): { paid: number; open: number; overdue: number; unknown: number } {
+  return {
+    paid: 0,
+    open: 0,
+    overdue: 0,
+    unknown: 0,
+  };
+}
+
+function resolveEntryPaymentState(entry: DashboardEntry): "paid" | "open" | "overdue" | "unknown" {
+  const meta = (entry.meta && typeof entry.meta === "object")
+    ? entry.meta as Record<string, unknown>
+    : {};
+  const poState = String(meta.poPaymentState || "").trim().toLowerCase();
+  if (poState === "paid" || poState === "open" || poState === "overdue") {
+    return poState;
+  }
+  if (entry.paid === true) return "paid";
+  if (entry.paid === false) return "open";
+  return "unknown";
+}
+
+function applyPaymentMix(
+  mix: { paid: number; open: number; overdue: number; unknown: number },
+  state: "paid" | "open" | "overdue" | "unknown",
+  amount: number,
+): void {
+  if (state === "paid") mix.paid += amount;
+  else if (state === "overdue") mix.overdue += amount;
+  else if (state === "open") mix.open += amount;
+  else mix.unknown += amount;
+}
+
+function resolvePaymentStatus(input: { paid: number; open: number; overdue: number; unknown: number }): "paid" | "open" | "overdue" | "mixed" | "unknown" {
   const paid = Number(input.paid || 0);
   const open = Number(input.open || 0);
+  const overdue = Number(input.overdue || 0);
   const unknown = Number(input.unknown || 0);
-  if (paid > 0 && open <= 0 && unknown <= 0) return "paid";
-  if (open > 0 && paid <= 0 && unknown <= 0) return "open";
-  if (unknown > 0 && paid <= 0 && open <= 0) return "unknown";
+  if (paid > 0 && open <= 0 && overdue <= 0 && unknown <= 0) return "paid";
+  if (overdue > 0 && paid <= 0 && open <= 0 && unknown <= 0) return "overdue";
+  if (open > 0 && paid <= 0 && overdue <= 0 && unknown <= 0) return "open";
+  if (unknown > 0 && paid <= 0 && open <= 0 && overdue <= 0) return "unknown";
   return "mixed";
 }
 
@@ -1292,7 +1327,7 @@ export default function DashboardModule(): JSX.Element {
       label: string;
       values: Record<string, number>;
       paymentDueDate: string | null;
-      paymentMix: { paid: number; open: number; unknown: number };
+      paymentMix: { paid: number; open: number; overdue: number; unknown: number };
     }
     interface OrderAggregate {
       key: string;
@@ -1300,7 +1335,7 @@ export default function DashboardModule(): JSX.Element {
       values: Record<string, number>;
       aliases: Set<string>;
       units: number | null;
-      paymentMix: { paid: number; open: number; unknown: number };
+      paymentMix: { paid: number; open: number; overdue: number; unknown: number };
       payments: Map<string, PaymentAggregate>;
     }
 
@@ -1347,16 +1382,15 @@ export default function DashboardModule(): JSX.Element {
             values: createMonthValueRecord(visibleMonths),
             aliases: new Set(metaByRef?.aliases || []),
             units: metaByRef?.units ?? null,
-            paymentMix: { paid: 0, open: 0, unknown: 0 },
+            paymentMix: createPaymentMix(),
             payments: new Map(),
           };
           orderMap.set(internalOrderKey, order);
         }
 
         order.values[month] += -amount;
-        if (entry.paid === true) order.paymentMix.paid += amount;
-        else if (entry.paid === false) order.paymentMix.open += amount;
-        else order.paymentMix.unknown += amount;
+        const paymentState = resolveEntryPaymentState(entry);
+        applyPaymentMix(order.paymentMix, paymentState, amount);
 
         const meta = (entry.meta && typeof entry.meta === "object")
           ? entry.meta as Record<string, unknown>
@@ -1371,8 +1405,10 @@ export default function DashboardModule(): JSX.Element {
 
         const paymentLabel = String(entry.label || "").trim() || "Zahlung";
         const paymentDueDate = String(entry.date || "").trim() || null;
-        const paymentState = entry.paid === true ? "paid" : entry.paid === false ? "open" : "unknown";
-        const internalPaymentKey = `${paymentLabel}|${paymentDueDate || ""}|${paymentState}`;
+        const poPaymentEventId = String(meta.poPaymentEventId || "").trim();
+        const internalPaymentKey = poPaymentEventId
+          ? `${source}:${reference}:${poPaymentEventId}`
+          : `${paymentLabel}|${paymentDueDate || ""}|${paymentState}`;
         let payment = order.payments.get(internalPaymentKey);
         if (!payment) {
           payment = {
@@ -1380,14 +1416,12 @@ export default function DashboardModule(): JSX.Element {
             label: paymentLabel,
             values: createMonthValueRecord(visibleMonths),
             paymentDueDate,
-            paymentMix: { paid: 0, open: 0, unknown: 0 },
+            paymentMix: createPaymentMix(),
           };
           order.payments.set(internalPaymentKey, payment);
         }
         payment.values[month] += -amount;
-        if (entry.paid === true) payment.paymentMix.paid += amount;
-        else if (entry.paid === false) payment.paymentMix.open += amount;
-        else payment.paymentMix.unknown += amount;
+        applyPaymentMix(payment.paymentMix, paymentState, amount);
       });
     });
 
@@ -1583,11 +1617,12 @@ export default function DashboardModule(): JSX.Element {
           const aliasSummary = aliases.length > 2
             ? `${aliases.slice(0, 2).join(", ")} +${aliases.length - 2}`
             : aliases.join(", ");
-          const mix = row.paymentMix || { paid: 0, open: 0, unknown: 0 };
-          const total = mix.paid + mix.open + mix.unknown;
+          const mix = row.paymentMix || createPaymentMix();
+          const total = mix.paid + mix.open + mix.overdue + mix.unknown;
           const denominator = total > 0 ? total : 1;
           const paidWidth = `${Math.max(0, Math.min(100, (mix.paid / denominator) * 100))}%`;
           const openWidth = `${Math.max(0, Math.min(100, (mix.open / denominator) * 100))}%`;
+          const overdueWidth = `${Math.max(0, Math.min(100, (mix.overdue / denominator) * 100))}%`;
           const unknownWidth = `${Math.max(0, Math.min(100, (mix.unknown / denominator) * 100))}%`;
           return (
             <div className="v2-dashboard-pnl-label-cell">
@@ -1598,9 +1633,10 @@ export default function DashboardModule(): JSX.Element {
                 {Number.isFinite(Number(row.units)) && Number(row.units) > 0 ? <Tag>Stk: {formatNumber(row.units, 0)}</Tag> : null}
               </Space>
               {total > 0 ? (
-                <div className="v2-dashboard-pnl-paybar" title={`Bezahlt ${formatCurrency(mix.paid)} · Offen ${formatCurrency(mix.open)} · Unklar ${formatCurrency(mix.unknown)}`}>
+                <div className="v2-dashboard-pnl-paybar" title={`Bezahlt ${formatCurrency(mix.paid)} · Offen ${formatCurrency(mix.open)} · Überfällig ${formatCurrency(mix.overdue)} · Unklar ${formatCurrency(mix.unknown)}`}>
                   <span className="is-paid" style={{ width: paidWidth }} />
                   <span className="is-open" style={{ width: openWidth }} />
+                  <span className="is-overdue" style={{ width: overdueWidth }} />
                   <span className="is-unknown" style={{ width: unknownWidth }} />
                 </div>
               ) : null}
@@ -1608,13 +1644,21 @@ export default function DashboardModule(): JSX.Element {
           );
         }
         if (row.rowType === "payment") {
+          const mix = row.paymentMix || createPaymentMix();
           const statusLabel = row.paymentStatus === "paid"
             ? <Tag color="green">Bezahlt</Tag>
-            : row.paymentStatus === "open"
-              ? <Tag color="orange">Offen</Tag>
-              : row.paymentStatus === "mixed"
-                ? <Tag color="blue">Gemischt</Tag>
-                : <Tag>Unklar</Tag>;
+            : row.paymentStatus === "overdue"
+              ? <Tag color="red">Offen</Tag>
+              : row.paymentStatus === "open"
+                ? <Tag color="orange">Offen</Tag>
+                : row.paymentStatus === "mixed"
+                  ? (
+                    <Space size={4} wrap>
+                      <Tag color="blue">Gemischt</Tag>
+                      {mix.overdue > 0 ? <Tag color="red">Überfällig</Tag> : null}
+                    </Space>
+                  )
+                  : <Tag>Unklar</Tag>;
           return (
             <Space size={6} wrap>
               <Text>{row.label}</Text>
