@@ -174,6 +174,8 @@ interface PoPaymentPlanRow {
   typeLabel: string;
 }
 
+const PLANNING_AUTO_EVENT_ORDER = ["freight", "eust", "duty", "vat_refund"] as const;
+
 interface PoPaymentFormValues {
   selectedEventIds: string[];
   paidDate: string;
@@ -392,6 +394,15 @@ function mapPlanningRow(row: Record<string, unknown>): PoPaymentPlanRow {
     direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
     typeLabel: String(row.typeLabel || ""),
   };
+}
+
+function planningEventDisplayLabel(row: Pick<PoPaymentPlanRow, "kind" | "eventType" | "label" | "typeLabel">): string {
+  if (row.kind === "manual") return String(row.label || row.typeLabel || "Milestone");
+  if (row.eventType === "freight") return "Shipping";
+  if (row.eventType === "eust") return "EUSt";
+  if (row.eventType === "duty") return "Zoll";
+  if (row.eventType === "vat_refund") return "EUSt-Erstattung";
+  return String(row.typeLabel || row.label || "Event");
 }
 
 function paymentTypeLabel(row: Pick<PoPaymentRow, "typeLabel" | "eventType" | "label">): string {
@@ -1305,10 +1316,31 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     [draftValues?.autoEvents],
   );
 
+  const visiblePlanningAutoEvents = useMemo<PoAutoEventDraft[]>(() => {
+    const byType = new Map(
+      draftAutoEvents
+        .map((row) => [String(row.type || ""), row] as const)
+        .filter(([type]) => Boolean(type)),
+    );
+    return PLANNING_AUTO_EVENT_ORDER
+      .map((type) => byType.get(type))
+      .filter((row): row is PoAutoEventDraft => Boolean(row));
+  }, [draftAutoEvents]);
+
   const draftPlanRowById = useMemo(
     () => new Map(draftPaymentPlanRows.map((row) => [row.id, row])),
     [draftPaymentPlanRows],
   );
+
+  const aggregateEtaStart = useMemo(() => {
+    if (draftPlanningSnapshot.schedule.etaDate) return String(draftPlanningSnapshot.schedule.etaDate);
+    return draftAggregate.minEtaDate || null;
+  }, [draftAggregate.minEtaDate, draftPlanningSnapshot.schedule.etaDate]);
+
+  const aggregateEtaEnd = useMemo(() => {
+    if (draftPlanningSnapshot.schedule.etaDate) return String(draftPlanningSnapshot.schedule.etaDate);
+    return draftAggregate.maxEtaDate || null;
+  }, [draftAggregate.maxEtaDate, draftPlanningSnapshot.schedule.etaDate]);
 
   function updateDraftAutoEvent(eventId: string, patch: Partial<PoAutoEventDraft>): void {
     const current = Array.isArray(form.getFieldValue("autoEvents"))
@@ -2707,13 +2739,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               </div>
               <div>
                 <Text type="secondary">ETD / ETA</Text>
-                <div>{formatDate(draftAggregate.schedule.etdDate)} / {formatDate(draftAggregate.schedule.etaDate)}</div>
+                <div>{formatDate(draftPlanningSnapshot.schedule.etdDate)} / {formatDate(draftPlanningSnapshot.schedule.etaDate)}</div>
               </div>
               <div>
                 <Text type="secondary">Ankunftsfenster</Text>
                 <div>
-                  {draftAggregate.minEtaDate || draftAggregate.maxEtaDate
-                    ? `${formatDate(draftAggregate.minEtaDate)} - ${formatDate(draftAggregate.maxEtaDate)}`
+                  {aggregateEtaStart || aggregateEtaEnd
+                    ? `${formatDate(aggregateEtaStart)} - ${formatDate(aggregateEtaEnd)}`
                     : "—"}
                 </div>
               </div>
@@ -2877,7 +2909,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                               </tr>
                             );
                           })}
-                          {draftAutoEvents.map((autoEvt) => {
+                          {visiblePlanningAutoEvents.map((autoEvt) => {
                             const planning = autoEvt.id ? draftPlanRowById.get(autoEvt.id) || null : null;
                             const unitLabel = planning?.offsetUnit === "months" ? "Monate" : "Tage";
                             const offsetValue = planning?.offsetUnit === "months"
@@ -2893,10 +2925,22 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                                   </Space>
                                 </td>
                                 <td>
-                                  <Input
-                                    value={autoEvt.label}
-                                    onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { label: event.target.value })}
-                                  />
+                                  <Space direction="vertical" size={0} style={{ width: "100%" }}>
+                                    <Text>{planningEventDisplayLabel(planning || {
+                                      kind: "auto",
+                                      eventType: autoEvt.type,
+                                      label: autoEvt.label,
+                                      typeLabel: autoEvt.label,
+                                    })}</Text>
+                                    {autoEvt.label && autoEvt.label !== planningEventDisplayLabel(planning || {
+                                      kind: "auto",
+                                      eventType: autoEvt.type,
+                                      label: autoEvt.label,
+                                      typeLabel: autoEvt.label,
+                                    }) ? (
+                                      <Text type="secondary">{autoEvt.label}</Text>
+                                    ) : null}
+                                  </Space>
                                 </td>
                                 <td>
                                   <Checkbox

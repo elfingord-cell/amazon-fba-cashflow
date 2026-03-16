@@ -647,6 +647,19 @@ test("po timeline integration: table and timeline reuse shared filtered rows", (
   assert.match(source, /EUSt-Erstattung wird automatisch verbucht/);
 });
 
+test("po modal planning uses one schedule truth and shows the fixed payment event basis", () => {
+  const source = readPoModuleSource();
+
+  assert.match(source, /draftPlanningSnapshot\.schedule\.etdDate/);
+  assert.match(source, /draftPlanningSnapshot\.schedule\.etaDate/);
+  assert.match(source, /aggregateEtaStart/);
+  assert.match(source, /aggregateEtaEnd/);
+  assert.match(source, /PLANNING_AUTO_EVENT_ORDER = \["freight", "eust", "duty", "vat_refund"\]/);
+  assert.match(source, /visiblePlanningAutoEvents/);
+  assert.match(source, /planningEventDisplayLabel/);
+  assert.equal(source.includes("draftAutoEvents.map"), false);
+});
+
 test("po timeline marker click opens payment flow with modal fallback", () => {
   const source = readPoModuleSource();
 
