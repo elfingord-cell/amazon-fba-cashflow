@@ -1,4 +1,5 @@
 import { loadState, commitState } from "../../data/storageLocal.js";
+import { backfillPoPaymentState } from "../../domain/poPaymentIdentity.js";
 import { ensureAppStateV2 } from "../state/appState";
 import type { AppStateV2 } from "../state/types";
 import type { StorageAdapter, WorkspaceBackupEntry } from "./types";
@@ -115,7 +116,25 @@ export class SupabaseStorageAdapter implements StorageAdapter {
     const remote = await remoteApi.fetchRemoteState();
     if (remote?.exists && remote.data) {
       this.lastRev = remote.rev || null;
-      return ensureAppStateV2(remote.data);
+      const backfill = backfillPoPaymentState(remote.data, { mutate: false });
+      const normalized = ensureAppStateV2(backfill.state);
+      if (backfill.changed) {
+        try {
+          const result = await remoteApi.pushRemoteState({
+            ifMatchRev: this.lastRev,
+            updatedBy: "v2:supabase-po-payment-backfill",
+            data: normalized,
+          });
+          this.lastRev = result.rev || this.lastRev;
+        } catch (error) {
+          if (isConflictError(error)) {
+            const latest = await remoteApi.fetchRemoteState();
+            this.lastRev = latest?.rev || null;
+            return ensureAppStateV2(latest?.data || backfill.state);
+          }
+        }
+      }
+      return normalized;
     }
     this.lastRev = null;
     return ensureAppStateV2(loadState());

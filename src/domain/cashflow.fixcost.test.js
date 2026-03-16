@@ -639,6 +639,7 @@ test("po payment resolver derives paid, open, and overdue milestone portions fro
 test("po payment resolver keeps later open freight, customs, and import VAT on their own event month and status", () => {
   const settings = {
     ...createPoResolverSettings(),
+    fxFeePct: 0.9521,
     dutyRatePct: 10,
     dutyIncludeFreight: true,
     eustRatePct: 20,
@@ -689,9 +690,9 @@ test("po payment resolver keeps later open freight, customs, and import VAT on t
     [
       { id: "po-ms-deposit", amount: 290, month: "2025-03", status: "paid", state: "paid" },
       { id: "po-ms-balance", amount: 700, month: "2025-05", status: "open", state: "open" },
-      { id: "po-auto-freight", amount: 500, month: "2025-06", status: "open", state: "open" },
-      { id: "po-auto-duty", amount: 150, month: "2025-06", status: "open", state: "open" },
-      { id: "po-auto-eust", amount: 330, month: "2025-06", status: "open", state: "open" },
+      { id: "po-auto-po-resolver-freight", amount: 500, month: "2025-06", status: "open", state: "open" },
+      { id: "po-auto-po-resolver-duty", amount: 150, month: "2025-06", status: "open", state: "open" },
+      { id: "po-auto-po-resolver-eust", amount: 330, month: "2025-06", status: "open", state: "open" },
     ],
   );
   assert.equal(
@@ -699,6 +700,126 @@ test("po payment resolver keeps later open freight, customs, and import VAT on t
     "po-ms-deposit",
     "only the explicitly paid deposit may resolve as paid",
   );
+});
+
+test("po payment resolver ignores stray generic auto-event payments without an explicit PO paymentLog link", () => {
+  const settings = {
+    ...createPoResolverSettings(),
+    fxFeePct: 0.9521,
+    dutyRatePct: 10,
+    dutyIncludeFreight: true,
+    eustRatePct: 20,
+  };
+  const record = createPoResolverRecord({
+    id: "po-260002",
+    poNo: "260002",
+    orderDate: "2026-01-08",
+    prodDays: 117,
+    transitDays: 0,
+    etaManual: "2026-04-29",
+    freightEur: "4377,00",
+    items: [
+      {
+        id: "po-260002-item-1",
+        sku: "SKU-260002",
+        units: "100",
+        unitCostUsd: "100,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      },
+    ],
+    milestones: [
+      { id: "po-260002-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "po-260002-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+    paymentLog: {
+      "po-260002-deposit": {
+        status: "paid",
+        paymentId: "pay-260002-deposit",
+        paidDate: "2026-01-23",
+        amountActualEur: 5712.31,
+      },
+      "auto-fx_fee": {
+        status: "paid",
+        paymentId: "pay-260002-fx",
+        paidDate: "2026-01-23",
+        amountActualEur: 95.21,
+      },
+      "po-260002-balance": {
+        status: "open",
+      },
+      "auto-freight": {
+        status: "open",
+      },
+      "auto-duty": {
+        status: "open",
+      },
+      "auto-eust": {
+        status: "open",
+      },
+    },
+    autoEvents: [
+      { id: "auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+      { id: "auto-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 10 },
+      { id: "auto-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 20 },
+      { id: "auto-vat", type: "vat_refund", enabled: false, anchor: "ETA", lagDays: 0, label: "EUSt-Erstattung" },
+      { id: "auto-fx", type: "fx_fee", enabled: true, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+    ],
+  });
+  const payments = [
+    {
+      id: "pay-260002-deposit",
+      paidDate: "2026-01-23",
+      amountActualEurTotal: 5712.31,
+      allocations: [{ eventId: "po-260002-deposit", amountEur: 5712.31 }],
+    },
+    {
+      id: "pay-260002-fx",
+      paidDate: "2026-01-23",
+      amountActualEurTotal: 95.21,
+      allocations: [{ eventId: "auto-fx_fee", amountEur: 95.21 }],
+      coveredEventIds: ["auto-fx_fee"],
+    },
+    {
+      id: "pay-stray-freight",
+      paidDate: "2026-03-13",
+      amountActualEurTotal: 2658.94,
+      allocations: [{ eventId: "auto-freight", amountEur: 2658.94 }],
+      coveredEventIds: ["auto-freight"],
+    },
+    {
+      id: "pay-stray-duty",
+      paidDate: "2026-03-16",
+      amountActualEurTotal: 1522.17,
+      allocations: [{ eventId: "auto-duty", amountEur: 1522.17 }],
+      coveredEventIds: ["auto-duty"],
+    },
+    {
+      id: "pay-stray-eust",
+      paidDate: "2026-03-16",
+      amountActualEurTotal: 4779.43,
+      allocations: [{ eventId: "auto-eust", amountEur: 4779.43 }],
+      coveredEventIds: ["auto-eust"],
+    },
+  ];
+
+  const milestones = buildResolvedPoPaymentMilestones(record, settings, payments, { today: "2026-03-16" });
+  const summary = milestones.map((entry) => ({
+    id: entry.id,
+    amount: entry.displayAmountEur,
+    month: entry.displayMonth,
+    status: entry.status,
+    paidDate: entry.paidDate,
+  }));
+
+  assert.deepEqual(summary, [
+    { id: "po-260002-deposit", amount: 5712.31, month: "2026-01", status: "paid", paidDate: "2026-01-23" },
+    { id: "po-260002-balance", amount: 7000, month: "2026-05", status: "open", paidDate: null },
+    { id: "po-auto-po-260002-freight", amount: 4377, month: "2026-05", status: "open", paidDate: null },
+    { id: "po-auto-po-260002-duty", amount: 1437.7, month: "2026-05", status: "open", paidDate: null },
+    { id: "po-auto-po-260002-eust", amount: 3162.94, month: "2026-05", status: "open", paidDate: null },
+    { id: "po-auto-po-260002-fx_fee", amount: 95.21, month: "2026-01", status: "paid", paidDate: "2026-01-23" },
+  ]);
 });
 
 test("computeSeries uses manual quote first and recommendation for future months without manual quote", () => {

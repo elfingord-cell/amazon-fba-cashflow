@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createEmptyAppStateV2 = createEmptyAppStateV2;
 exports.ensureAppStateV2 = ensureAppStateV2;
 const storageLocal_js_1 = require("../../data/storageLocal.js");
+const poPaymentIdentity_js_1 = require("../../domain/poPaymentIdentity.js");
 function createEmptyAppStateV2() {
     const legacy = (0, storageLocal_js_1.createEmptyState)();
     return {
@@ -35,5 +36,6 @@ function ensureAppStateV2(input) {
     if (!Array.isArray(merged.legacyMeta.importHistory)) {
         merged.legacyMeta.importHistory = [];
     }
+    (0, poPaymentIdentity_js_1.backfillPoPaymentState)(merged, { mutate: true });
     return merged;
 }

@@ -1,4 +1,9 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
+import {
+  getCanonicalPoAutoEventId,
+  hasExplicitPoPaymentEvidence,
+  normalizePoPaymentStateRecord,
+} from "./poPaymentIdentity.js";
 
 function parseNumber(value, fallback = 0) {
   const parsed = parseDeNumber(value);
@@ -146,7 +151,8 @@ function normaliseAutoEvents(record, settings, manual) {
 
   clones.forEach((entry) => {
     if (!entry?.type) return;
-    if (!entry.id) entry.id = `auto-${entry.type}`;
+    const canonicalId = getCanonicalPoAutoEventId(record, entry.type);
+    if (canonicalId) entry.id = canonicalId;
     map.set(entry.type, entry);
   });
 
@@ -178,13 +184,13 @@ function normaliseAutoEvents(record, settings, manual) {
 
   function ensure(type, defaults) {
     if (!map.has(type)) {
-      const created = { id: `auto-${type}`, type, ...defaults };
+      const created = { id: getCanonicalPoAutoEventId(record, type), type, ...defaults };
       clones.push(created);
       map.set(type, created);
       return created;
     }
     const existing = map.get(type);
-    if (!existing.id) existing.id = `auto-${type}`;
+    if (!existing.id) existing.id = getCanonicalPoAutoEventId(record, type);
     Object.entries(defaults).forEach(([key, value]) => {
       if (existing[key] === undefined) existing[key] = value;
     });
@@ -261,14 +267,15 @@ function anchorsFor(record, settings) {
 
 function buildPlannedPoPaymentRows(record, settings) {
   if (!record || typeof record !== "object") return [];
-  const ref = String(record.poNo || record.id || "").trim();
+  const workingRecord = normalizePoPaymentStateRecord(record, { mutate: false }).record;
+  const ref = String(workingRecord.poNo || workingRecord.id || "").trim();
   const prefix = ref ? `PO ${ref}` : "PO";
-  const manualMilestones = Array.isArray(record.milestones) ? record.milestones : [];
-  const autoEvents = normaliseAutoEvents(record, settings || {}, manualMilestones);
-  const anchors = anchorsFor(record, settings || {});
-  const totals = computeGoodsTotals(record, settings || {});
+  const manualMilestones = Array.isArray(workingRecord.milestones) ? workingRecord.milestones : [];
+  const autoEvents = normaliseAutoEvents(workingRecord, settings || {}, manualMilestones);
+  const anchors = anchorsFor(workingRecord, settings || {});
+  const totals = computeGoodsTotals(workingRecord, settings || {});
   const goods = Number(totals.eur || 0);
-  const freight = computeFreightTotal(record, totals);
+  const freight = computeFreightTotal(workingRecord, totals);
   const results = [];
 
   manualMilestones.forEach((milestone, index) => {
@@ -288,12 +295,12 @@ function buildPlannedPoPaymentRows(record, settings) {
     });
   });
 
-  const dutyIncludeFreight = record?.dutyIncludeFreight !== false;
-  const dutyRate = parsePercent(record?.dutyRatePct ?? settings?.dutyRatePct ?? 0);
-  const eustRate = parsePercent(record?.eustRatePct ?? settings?.eustRatePct ?? 0);
-  const fxFeePct = parsePercent(record?.fxFeePct ?? settings?.fxFeePct ?? 0);
-  const vatLagMonths = Number(record?.vatRefundLagMonths ?? settings?.vatRefundLagMonths ?? 0) || 0;
-  const vatEnabled = record?.vatRefundEnabled !== false;
+  const dutyIncludeFreight = workingRecord?.dutyIncludeFreight !== false;
+  const dutyRate = parsePercent(workingRecord?.dutyRatePct ?? settings?.dutyRatePct ?? 0);
+  const eustRate = parsePercent(workingRecord?.eustRatePct ?? settings?.eustRatePct ?? 0);
+  const fxFeePct = parsePercent(workingRecord?.fxFeePct ?? settings?.fxFeePct ?? 0);
+  const vatLagMonths = Number(workingRecord?.vatRefundLagMonths ?? settings?.vatRefundLagMonths ?? 0) || 0;
+  const vatEnabled = workingRecord?.vatRefundEnabled !== false;
   const autoResults = {};
 
   autoEvents.forEach((event, index) => {
@@ -303,7 +310,7 @@ function buildPlannedPoPaymentRows(record, settings) {
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) return;
 
     if (event.type === "freight") {
-      const amount = computeFreightTotal(record, totals);
+      const amount = computeFreightTotal(workingRecord, totals);
       if (!amount) return;
       const dueDate = addDays(baseDate, Number(event.lagDays || 0));
       results.push({
@@ -477,35 +484,15 @@ function isActualAmountUsable(amount, planned) {
 
 function buildPaymentIndexes(payments) {
   const byId = new Map();
-  const allocationByEvent = new Map();
-  const paymentIdsByEvent = new Map();
 
   (Array.isArray(payments) ? payments : []).forEach((entry) => {
     const payment = entry || {};
     const paymentId = String(payment.id || "").trim();
     if (!paymentId) return;
     byId.set(paymentId, payment);
-
-    if (Array.isArray(payment.allocations)) {
-      payment.allocations.forEach((allocationRaw) => {
-        const allocation = allocationRaw || {};
-        const eventId = String(allocation.eventId || allocation.plannedId || "").trim();
-        if (!eventId) return;
-        allocationByEvent.set(eventId, allocation);
-        paymentIdsByEvent.set(eventId, paymentId);
-      });
-    }
-
-    if (Array.isArray(payment.coveredEventIds)) {
-      payment.coveredEventIds.forEach((eventIdRaw) => {
-        const eventId = String(eventIdRaw || "").trim();
-        if (!eventId) return;
-        paymentIdsByEvent.set(eventId, paymentId);
-      });
-    }
   });
 
-  return { byId, allocationByEvent, paymentIdsByEvent };
+  return { byId };
 }
 
 function allocateByPlanned(total, events) {
@@ -559,11 +546,8 @@ function resolveActualAmountForLine({
   paymentRow,
   paymentRows,
   paymentRecord,
-  paymentIndexes,
   paymentLogEntry,
-  paymentRecords,
   eventId,
-  paidDate,
 }) {
   const directCandidates = [
     paymentRow?.paidEurActual,
@@ -599,8 +583,7 @@ function resolveActualAmountForLine({
   }
 
   if (paymentRecord && paymentRow?.paymentId) {
-    const allocation = paymentIndexes.allocationByEvent.get(String(eventId || ""))
-      || resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
+    const allocation = resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
     if (allocation && isActualAmountUsable(allocation.actual, plannedEur)) {
       return Number(allocation.actual);
     }
@@ -612,17 +595,6 @@ function resolveActualAmountForLine({
       if (related.length <= 1) {
         return Number(paymentRecord.amountActualEurTotal);
       }
-    }
-  }
-
-  if (!paymentRow?.paymentId && paidDate && eventId) {
-    const fallbackMatch = (Array.isArray(paymentRecords) ? paymentRecords : []).find((entry) => {
-      const payment = entry || {};
-      if (normalizeIsoDate(payment.paidDate) !== normalizeIsoDate(paidDate)) return false;
-      return Array.isArray(payment.coveredEventIds) && payment.coveredEventIds.includes(eventId);
-    });
-    if (fallbackMatch && isActualAmountUsable(fallbackMatch.amountActualEurTotal, plannedEur)) {
-      return Number(fallbackMatch.amountActualEurTotal);
     }
   }
 
@@ -657,19 +629,16 @@ function resolveCashflowGroup(kind) {
 
 export function buildResolvedPoPaymentMilestones(record, settings, paymentRecords = [], options = {}) {
   if (!record || typeof record !== "object") return [];
+  const workingRecord = normalizePoPaymentStateRecord(record, { mutate: false }).record;
   const todayIso = normalizeIsoDate(options.today) || normalizeIsoDate(new Date());
-  const paymentLog = (record.paymentLog && typeof record.paymentLog === "object") ? record.paymentLog : {};
+  const paymentLog = (workingRecord.paymentLog && typeof workingRecord.paymentLog === "object") ? workingRecord.paymentLog : {};
   const paymentIndexes = buildPaymentIndexes(paymentRecords);
-  const paymentRows = buildPlannedPoPaymentRows(record, settings || {}).map((paymentRowRaw) => {
+  const paymentRows = buildPlannedPoPaymentRows(workingRecord, settings || {}).map((paymentRowRaw) => {
     const paymentRow = paymentRowRaw || {};
     const logEntry = (paymentLog[paymentRow.id] && typeof paymentLog[paymentRow.id] === "object")
       ? paymentLog[paymentRow.id]
       : {};
-    const paymentId = String(firstNonEmpty(
-      paymentRow.paymentId,
-      logEntry.paymentId,
-      paymentIndexes.paymentIdsByEvent.get(String(paymentRow.id || "")),
-    ) || "").trim();
+    const paymentId = String(firstNonEmpty(paymentRow.paymentId, logEntry.paymentId) || "").trim();
     return {
       ...paymentRow,
       paymentId: paymentId || null,
@@ -691,36 +660,30 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
       const plannedEur = Math.abs(Number(paymentRow.plannedEur || 0));
       const direction = String(paymentRow.direction || "").trim().toLowerCase() === "in" ? "in" : "out";
       const dueDate = normalizeIsoDate(firstNonEmpty(paymentRow.dueDate, logEntry.dueDate));
-      const paymentId = String(firstNonEmpty(
-        paymentRow.paymentId,
-        logEntry.paymentId,
-        paymentIndexes.paymentIdsByEvent.get(eventId),
-      ) || "").trim();
+      const paymentId = String(firstNonEmpty(paymentRow.paymentId, logEntry.paymentId) || "").trim();
       const paymentRecord = paymentId ? paymentIndexes.byId.get(paymentId) || null : null;
-      let paidDate = normalizeIsoDate(firstNonEmpty(paymentRecord?.paidDate, paymentRow.paidDate, logEntry.paidDate));
+      let paidDate = normalizeIsoDate(firstNonEmpty(paymentRow.paidDate, logEntry.paidDate, paymentRecord?.paidDate));
 
       const resolvedActual = resolveActualAmountForLine({
         plannedEur,
         paymentRow,
         paymentRows,
         paymentRecord,
-        paymentIndexes,
         paymentLogEntry: logEntry,
-        paymentRecords,
         eventId,
-        paidDate,
       });
 
       const rawActualPaidEur = isActualAmountUsable(resolvedActual, plannedEur)
         ? Math.abs(Number(resolvedActual))
         : 0;
-      const hasPaymentEvidence = rawActualPaidEur > 0
-        || isPaidLike(paymentRow.status)
-        || isPaidLike(logEntry.status)
-        || isPaidLike(logEntry.paid)
-        || (paymentRecord ? isPaidLike(paymentRecord.status) : false)
-        || Boolean(paidDate)
-        || Boolean(paymentId);
+      const hasPaymentEvidence = hasExplicitPoPaymentEvidence({
+        status: firstNonEmpty(paymentRow.status, logEntry.status),
+        paid: logEntry.paid,
+        paymentId,
+        paidDate,
+        amountActualEur: firstNonEmpty(paymentRow.paidEurActual, logEntry.amountActualEur, resolvedActual),
+        amountActualUsd: logEntry.amountActualUsd,
+      });
 
       let paidEur = rawActualPaidEur;
       if (hasPaymentEvidence && paidEur <= 0 && plannedEur >= 0) {

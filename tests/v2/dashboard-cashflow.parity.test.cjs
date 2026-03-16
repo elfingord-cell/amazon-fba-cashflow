@@ -231,7 +231,29 @@ test("dashboard PO cashflow uses PO payment truth for paid month bucketing witho
     extras: [],
     dividends: [],
     fos: [],
-    payments: [],
+    payments: [
+      {
+        id: "pay-stray-freight",
+        paidDate: "2025-03-10",
+        amountActualEurTotal: 250,
+        coveredEventIds: ["auto-freight"],
+        allocations: [{ eventId: "auto-freight", amountEur: 250 }],
+      },
+      {
+        id: "pay-stray-duty",
+        paidDate: "2025-03-11",
+        amountActualEurTotal: 90,
+        coveredEventIds: ["auto-duty"],
+        allocations: [{ eventId: "auto-duty", amountEur: 90 }],
+      },
+      {
+        id: "pay-stray-eust",
+        paidDate: "2025-03-11",
+        amountActualEurTotal: 180,
+        coveredEventIds: ["auto-eust"],
+        allocations: [{ eventId: "auto-eust", amountEur: 180 }],
+      },
+    ],
     pos: [
       {
         id: "po-paid-late",

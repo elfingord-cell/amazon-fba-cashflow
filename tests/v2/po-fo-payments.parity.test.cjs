@@ -332,3 +332,101 @@ test("po payment rows keep outgoing totals stable and include EUSt refund only i
   );
   assert.equal(outgoingTotal, outgoingFromIncomingTotal);
 });
+
+test("PO payment rows and journal ignore stray generic auto-event payments without an explicit PO paymentLog link", () => {
+  const state = {
+    settings: {
+      fxRate: 1,
+      fxFeePct: 0,
+      eurUsdRate: 1,
+      dutyRatePct: 0,
+      dutyIncludeFreight: false,
+      eustRatePct: 0,
+      vatRefundEnabled: false,
+      vatRefundLagMonths: 0,
+      freightLagDays: 0,
+      cny: { start: "", end: "" },
+      cnyBlackoutByYear: {},
+    },
+    suppliers: [{ id: "sup-260002", name: "Supplier 260002" }],
+    products: [],
+    payments: [
+      {
+        id: "pay-deposit",
+        paidDate: "2026-01-23",
+        amountActualEurTotal: 3000,
+        allocations: [{ eventId: "po-260002-deposit", amountEur: 3000 }],
+      },
+      {
+        id: "pay-stray-freight",
+        paidDate: "2026-03-13",
+        amountActualEurTotal: 2658.94,
+        coveredEventIds: ["auto-freight"],
+        allocations: [{ eventId: "auto-freight", amountEur: 2658.94 }],
+      },
+    ],
+    pos: [
+      {
+        id: "po-260002",
+        poNo: "260002",
+        supplierId: "sup-260002",
+        orderDate: "2026-01-08",
+        prodDays: 117,
+        transitDays: 0,
+        etaManual: "2026-04-29",
+        freightEur: "4377,00",
+        items: [
+          {
+            id: "po-260002-item-1",
+            sku: "SKU-260002",
+            units: "100",
+            unitCostUsd: "100,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+            unitCostManuallyEdited: false,
+          },
+        ],
+        milestones: [
+          { id: "po-260002-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+          { id: "po-260002-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-260002-deposit": { status: "paid", paymentId: "pay-deposit", paidDate: "2026-01-23", amountActualEur: 3000 },
+          "auto-freight": { status: "open" },
+        },
+        autoEvents: [
+          { id: "auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+          { id: "auto-duty", type: "duty", enabled: false, anchor: "ETA", lagDays: 30, label: "Zoll" },
+          { id: "auto-eust", type: "eust", enabled: false, anchor: "ETA", lagDays: 30, label: "EUSt" },
+          { id: "auto-vat", type: "vat_refund", enabled: false, anchor: "ETA", lagDays: 0, label: "EUSt-Erstattung" },
+          { id: "auto-fx", type: "fx_fee", enabled: false, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+        ],
+      },
+    ],
+    fos: [],
+  };
+
+  const po = JSON.parse(JSON.stringify(state.pos[0]));
+  const paymentRows = buildPaymentRows(po, PO_CONFIG, state.settings, state.payments);
+  const freightRow = paymentRows.find((row) => row.eventType === "freight");
+
+  assert.ok(freightRow);
+  assert.equal(freightRow.id, "po-auto-po-260002-freight");
+  assert.equal(freightRow.status, "open");
+  assert.equal(round2(freightRow.plannedEur), 4377);
+  assert.equal(freightRow.paymentId, null);
+
+  const journalRows = buildV2PaymentJournalRowsFromState(state, { scope: "both", month: "2026-05" });
+  const poFreightRow = journalRows.find((row) => row.entityType === "PO" && row.paymentType === "Shipping");
+  const paidPoRows = journalRows.filter((row) => row.entityType === "PO" && row.status === "PAID");
+
+  assert.ok(poFreightRow);
+  assert.equal(poFreightRow.status, "OPEN");
+  assert.equal(round2(poFreightRow.amountPlannedEur), 4377);
+  assert.equal(poFreightRow.paymentId, "");
+  assert.deepEqual(
+    paidPoRows.map((row) => row.paymentType),
+    [],
+    "the freight journal row must stay open even when a stray generic payment exists",
+  );
+});

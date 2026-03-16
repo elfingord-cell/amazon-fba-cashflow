@@ -22,6 +22,7 @@ const useDirtyGuard_js_1 = require("../hooks/useDirtyGuard.js");
 const confirmDialog_js_1 = require("./utils/confirmDialog.js");
 const prefill_js_1 = require("../lib/prefill.js");
 const productCompleteness_js_1 = require("../lib/productCompleteness.js");
+const poPaymentIdentity_js_1 = require("../domain/poPaymentIdentity.js");
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -842,6 +843,7 @@ function monthEnd(date) {
     return new Date(Date.UTC(year, month + 1, 0));
 }
 function ensureAutoEvents(record, settings, manualMilestones = []) {
+    (0, poPaymentIdentity_js_1.normalizePoPaymentStateRecord)(record, { mutate: true });
     if (!record.autoEvents)
         record.autoEvents = [];
     const map = new Map(record.autoEvents.map(evt => [evt.type, evt]));
@@ -873,12 +875,13 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
     const vatRefundDue = defaultDue("vatRefund", "ETA", 0);
     const ensure = (type, defaults) => {
         if (!map.has(type)) {
-            const created = { id: `auto-${type}`, type, ...defaults };
+            const created = { id: (0, poPaymentIdentity_js_1.getCanonicalPoAutoEventId)(record, type), type, ...defaults };
             record.autoEvents.push(created);
             map.set(type, created);
         }
         else {
             const current = map.get(type);
+            current.id = (0, poPaymentIdentity_js_1.getCanonicalPoAutoEventId)(record, type);
             Object.assign(current, { type, ...defaults, ...current });
         }
         return map.get(type);
@@ -1064,6 +1067,7 @@ function buildInvoiceKeyEvents(selectedEvents) {
     return `${unique.slice(0, 2).join("+")}+more`;
 }
 function buildPaymentRows(record, config, settings, paymentRecords = [], options = {}) {
+    (0, poPaymentIdentity_js_1.normalizePoPaymentStateRecord)(record, { mutate: true });
     const includeIncoming = options?.includeIncoming === true;
     const includeZeroAmount = options?.includeZeroAmount === true;
     ensurePaymentLog(record);
@@ -1089,8 +1093,14 @@ function buildPaymentRows(record, config, settings, paymentRecords = [], options
         const paymentInternalId = ensurePaymentInternalId(record, evt.id);
         const amount = Number(evt.amount || 0);
         const planned = Math.abs(amount);
-        const payment = log.paymentId ? paymentMap.get(log.paymentId) : null;
-        const status = log.status === "paid" || payment ? "paid" : "open";
+        const paymentId = log.paymentId ? String(log.paymentId) : "";
+        const payment = paymentId ? paymentMap.get(paymentId) : null;
+        const status = (0, poPaymentIdentity_js_1.hasExplicitPoPaymentEvidence)({
+            ...log,
+            paymentId,
+        })
+            ? "paid"
+            : "open";
         const paidDate = log.paidDate || payment?.paidDate || null;
         return {
             id: evt.id,
@@ -1105,7 +1115,7 @@ function buildPaymentRows(record, config, settings, paymentRecords = [], options
             paidUsdActual: Number.isFinite(Number(log.amountActualUsd)) ? Number(log.amountActualUsd) : null,
             method: payment?.method || log.method || null,
             paidBy: payment?.payer || log.payer || null,
-            paymentId: payment?.id || log.paymentId || null,
+            paymentId: paymentId || null,
             note: log.note || "",
             invoiceIdOrNumber: payment?.invoiceIdOrNumber || log.invoiceIdOrNumber || "",
             transferReference: payment?.transferReference || log.transferReference || "",

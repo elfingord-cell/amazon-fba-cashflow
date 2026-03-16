@@ -38,6 +38,7 @@ exports.getWorkspaceBackups = getWorkspaceBackups;
 exports.createWorkspaceBackup = createWorkspaceBackup;
 exports.createDefaultStorageAdapter = createDefaultStorageAdapter;
 const storageLocal_js_1 = require("../../data/storageLocal.js");
+const poPaymentIdentity_js_1 = require("../../domain/poPaymentIdentity.js");
 const appState_1 = require("../state/appState");
 const BACKUP_KEY = "v2_workspace_backups_v1";
 const MAX_BACKUPS = 20;
@@ -118,7 +119,26 @@ class SupabaseStorageAdapter {
         const remote = await remoteApi.fetchRemoteState();
         if (remote?.exists && remote.data) {
             this.lastRev = remote.rev || null;
-            return (0, appState_1.ensureAppStateV2)(remote.data);
+            const backfill = (0, poPaymentIdentity_js_1.backfillPoPaymentState)(remote.data, { mutate: false });
+            const normalized = (0, appState_1.ensureAppStateV2)(backfill.state);
+            if (backfill.changed) {
+                try {
+                    const result = await remoteApi.pushRemoteState({
+                        ifMatchRev: this.lastRev,
+                        updatedBy: "v2:supabase-po-payment-backfill",
+                        data: normalized,
+                    });
+                    this.lastRev = result.rev || this.lastRev;
+                }
+                catch (error) {
+                    if (isConflictError(error)) {
+                        const latest = await remoteApi.fetchRemoteState();
+                        this.lastRev = latest?.rev || null;
+                        return (0, appState_1.ensureAppStateV2)(latest?.data || backfill.state);
+                    }
+                }
+            }
+            return normalized;
         }
         this.lastRev = null;
         return (0, appState_1.ensureAppStateV2)((0, storageLocal_js_1.loadState)());

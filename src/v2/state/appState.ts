@@ -1,4 +1,5 @@
 import { createEmptyState } from "../../data/storageLocal.js";
+import { backfillPoPaymentState } from "../../domain/poPaymentIdentity.js";
 import type { AppStateV2 } from "./types";
 
 export function createEmptyAppStateV2(): AppStateV2 {
@@ -34,5 +35,6 @@ export function ensureAppStateV2(input: unknown): AppStateV2 {
   if (!Array.isArray(merged.legacyMeta.importHistory)) {
     merged.legacyMeta.importHistory = [];
   }
+  backfillPoPaymentState(merged, { mutate: true });
   return merged;
 }

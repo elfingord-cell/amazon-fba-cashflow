@@ -427,6 +427,84 @@ test("po payments ledger: csv and export metadata are consistent", () => {
   assert.equal(exported.csv, csv);
 });
 
+test("po payments ledger: ignores stray generic auto-event payments without an explicit PO paymentLog link", () => {
+  const state = {
+    settings: baseSettings(),
+    suppliers: [{ id: "sup-260002", name: "Supplier 260002" }],
+    payments: [
+      {
+        id: "pay-deposit",
+        paidDate: "2026-01-23",
+        method: "Wise Transfer",
+        payer: "Ops",
+        currency: "EUR",
+        amountActualEurTotal: 3000,
+      },
+      {
+        id: "pay-stray-freight",
+        paidDate: "2026-03-13",
+        method: "Wise Transfer",
+        payer: "Ops",
+        currency: "EUR",
+        amountActualEurTotal: 2658.94,
+        coveredEventIds: ["auto-freight"],
+        allocations: [{ eventId: "auto-freight", amountEur: 2658.94 }],
+      },
+    ],
+    pos: [
+      {
+        id: "po-260002",
+        poNo: "260002",
+        supplierId: "sup-260002",
+        orderDate: "2026-01-08",
+        prodDays: 117,
+        transitDays: 0,
+        etaManual: "2026-04-29",
+        freightEur: "4377,00",
+        items: [
+          {
+            id: "po-260002-item-1",
+            sku: "SKU-260002",
+            units: "100",
+            unitCostUsd: "100,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+          },
+        ],
+        milestones: [
+          { id: "po-260002-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+          { id: "po-260002-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-260002-deposit": {
+            status: "paid",
+            paymentId: "pay-deposit",
+            paidDate: "2026-01-23",
+            amountActualEur: 3000,
+          },
+          "auto-freight": { status: "open" },
+        },
+        autoEvents: [
+          { id: "auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+          { id: "auto-duty", type: "duty", enabled: false, anchor: "ETA", lagDays: 30, label: "Zoll" },
+          { id: "auto-eust", type: "eust", enabled: false, anchor: "ETA", lagDays: 30, label: "EUSt" },
+          { id: "auto-vat", type: "vat_refund", enabled: false, anchor: "ETA", lagDays: 0, label: "EUSt-Erstattung" },
+          { id: "auto-fx", type: "fx_fee", enabled: false, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+        ],
+      },
+    ],
+    fos: [],
+  };
+
+  const januaryRows = buildPoPaymentsLedgerRows(state, { month: "2026-01" });
+  const marchRows = buildPoPaymentsLedgerRows(state, { month: "2026-03" });
+
+  assert.equal(januaryRows.length, 1);
+  assert.equal(januaryRows[0]?.po_number, "260002");
+  assert.equal(januaryRows[0]?.payment_stage, "DEPOSIT");
+  assert.equal(marchRows.length, 0);
+});
+
 test("po payments ledger: performance smoke stays below 5s for typical volume", () => {
   const state = createPerformanceState();
   const startedAt = Date.now();

@@ -1,4 +1,5 @@
 import { parseDeNumber } from "../lib/dataHealth.js";
+import { normalizePoPaymentStateRecord } from "./poPaymentIdentity.js";
 import { buildPaymentRows } from "../ui/orderEditorFactory.js";
 
 const PO_CONFIG = { slug: "po", entityLabel: "PO", numberField: "poNo" };
@@ -452,13 +453,14 @@ export function buildPoPaymentsLedgerRows(state, options = {}) {
     if (record.archived) return;
     if (String(record.status || "").toUpperCase() === "CANCELLED") return;
 
-    const paymentRows = buildPaymentRows(cloneRecord(record), PO_CONFIG, settings, sourceState.payments || []);
-    const paymentLog = (record.paymentLog && typeof record.paymentLog === "object") ? record.paymentLog : {};
-    const supplierName = resolveSupplierName(record, supplierMap);
-    const milestonePercentByEventId = buildMilestonePercentMap(record);
-    const goodsUsd = computeGoodsUsd(record);
-    const unitsTotal = buildUnitsTotal(record);
-    const skuList = buildSkuList(record);
+    const workingRecord = normalizePoPaymentStateRecord(cloneRecord(record), { mutate: true }).record;
+    const paymentRows = buildPaymentRows(workingRecord, PO_CONFIG, settings, sourceState.payments || []);
+    const paymentLog = (workingRecord.paymentLog && typeof workingRecord.paymentLog === "object") ? workingRecord.paymentLog : {};
+    const supplierName = resolveSupplierName(workingRecord, supplierMap);
+    const milestonePercentByEventId = buildMilestonePercentMap(workingRecord);
+    const goodsUsd = computeGoodsUsd(workingRecord);
+    const unitsTotal = buildUnitsTotal(workingRecord);
+    const skuList = buildSkuList(workingRecord);
 
     paymentRows.forEach((paymentRow) => {
       if (String(paymentRow?.status || "").toLowerCase() !== "paid") return;
@@ -466,7 +468,7 @@ export function buildPoPaymentsLedgerRows(state, options = {}) {
       const paymentLogEntry = paymentLog?.[paymentRow?.id] || null;
       const row = buildRowFromPayment({
         month,
-        record,
+        record: workingRecord,
         supplierName,
         paymentRows,
         paymentRow,

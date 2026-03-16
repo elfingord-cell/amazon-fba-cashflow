@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildPaymentJournalRowsCore = buildPaymentJournalRowsCore;
 const dataHealth_js_1 = require("../lib/dataHealth.js");
+const poPaymentIdentity_js_1 = require("./poPaymentIdentity.js");
 const orderEditorFactory_js_1 = require("../ui/orderEditorFactory.js");
 const PO_CONFIG = { slug: "po", entityLabel: "PO", numberField: "poNo" };
 const POSITION_ORDER = [
@@ -276,34 +277,14 @@ function formatPositions(positions) {
 }
 function buildPaymentIndexes(payments) {
     const byId = new Map();
-    const allocationByEvent = new Map();
-    const paymentIdsByEvent = new Map();
     (Array.isArray(payments) ? payments : []).forEach((entry) => {
         const payment = entry || {};
         const paymentId = String(payment.id || "").trim();
         if (!paymentId)
             return;
         byId.set(paymentId, payment);
-        if (Array.isArray(payment.allocations)) {
-            payment.allocations.forEach((allocationRaw) => {
-                const allocation = allocationRaw || {};
-                const eventId = String(allocation.eventId || allocation.plannedId || "").trim();
-                if (!eventId)
-                    return;
-                allocationByEvent.set(eventId, allocation);
-                paymentIdsByEvent.set(eventId, paymentId);
-            });
-        }
-        if (Array.isArray(payment.coveredEventIds)) {
-            payment.coveredEventIds.forEach((eventIdRaw) => {
-                const eventId = String(eventIdRaw || "").trim();
-                if (!eventId)
-                    return;
-                paymentIdsByEvent.set(eventId, paymentId);
-            });
-        }
     });
-    return { byId, allocationByEvent, paymentIdsByEvent };
+    return { byId };
 }
 function allocateByPlanned(total, events) {
     const plannedValues = events.map((entry) => Number(entry.plannedEur || 0));
@@ -347,7 +328,7 @@ function resolveActualAllocation({ payment, paymentRow, paymentRows }) {
         return null;
     return allocations.find((entry) => entry.eventId === paymentRow.id) || null;
 }
-function resolveActualAmountForLine({ status, plannedEur, paymentRow, paymentRows, paymentRecord, paymentIndexes, paymentLogEntry, state, eventId, paidDate, }) {
+function resolveActualAmountForLine({ status, plannedEur, paymentRow, paymentRows, paymentRecord, paymentLogEntry, eventId, }) {
     const issues = [];
     if (status !== "PAID")
         return { amountActualEur: null, issues };
@@ -382,8 +363,7 @@ function resolveActualAmountForLine({ status, plannedEur, paymentRow, paymentRow
         }
     }
     if (paymentRecord && paymentRow?.paymentId) {
-        const allocation = paymentIndexes.allocationByEvent.get(String(eventId || ""))
-            || resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
+        const allocation = resolveActualAllocation({ payment: paymentRecord, paymentRow, paymentRows });
         if (allocation && isActualAmountUsable(allocation.actual, plannedEur)) {
             issues.push("PRO_RATA_ALLOCATION");
             return { amountActualEur: Number(allocation.actual), issues };
@@ -393,19 +373,6 @@ function resolveActualAmountForLine({ status, plannedEur, paymentRow, paymentRow
             if (related.length <= 1) {
                 return { amountActualEur: Number(paymentRecord.amountActualEurTotal), issues };
             }
-        }
-    }
-    if (!paymentRow?.paymentId && paidDate && eventId) {
-        const fallbackMatch = (Array.isArray(state?.payments) ? state.payments : []).find((entry) => {
-            const payment = entry || {};
-            if (normalizeIsoDate(payment.paidDate) !== normalizeIsoDate(paidDate))
-                return false;
-            if (Array.isArray(payment.coveredEventIds) && payment.coveredEventIds.includes(eventId))
-                return true;
-            return false;
-        });
-        if (fallbackMatch && isActualAmountUsable(fallbackMatch.amountActualEurTotal, plannedEur)) {
-            return { amountActualEur: Number(fallbackMatch.amountActualEurTotal), issues };
         }
     }
     issues.push("MISSING_ACTUAL_AMOUNT");
@@ -432,11 +399,12 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
             return;
         if (String(record.status || "").toUpperCase() === "CANCELLED")
             return;
-        const supplierName = resolveSupplierName(record, supplierNameMap);
-        const itemMeta = buildItemMeta(record, skuAliasMap);
-        const recordId = String(record.id || record.poNo || "po");
-        const paymentLog = (record.paymentLog && typeof record.paymentLog === "object") ? record.paymentLog : {};
-        const paymentRows = (0, orderEditorFactory_js_1.buildPaymentRows)(cloneRecord(record), PO_CONFIG, settings, payments, { includeIncoming: true });
+        const workingRecord = (0, poPaymentIdentity_js_1.normalizePoPaymentStateRecord)(cloneRecord(record), { mutate: true }).record;
+        const supplierName = resolveSupplierName(workingRecord, supplierNameMap);
+        const itemMeta = buildItemMeta(workingRecord, skuAliasMap);
+        const recordId = String(workingRecord.id || workingRecord.poNo || "po");
+        const paymentLog = (workingRecord.paymentLog && typeof workingRecord.paymentLog === "object") ? workingRecord.paymentLog : {};
+        const paymentRows = (0, orderEditorFactory_js_1.buildPaymentRows)(workingRecord, PO_CONFIG, settings, payments, { includeIncoming: true });
         const seenEventIds = new Set();
         paymentRows.forEach((paymentRowRaw) => {
             const paymentRow = paymentRowRaw || {};
@@ -453,16 +421,20 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
             });
             if (!hasRelevantPosition(positions))
                 return;
-            const paymentId = firstNonEmpty(paymentRow.paymentId, logEntry.paymentId, paymentIndexes.paymentIdsByEvent.get(eventId));
+            const paymentId = firstNonEmpty(paymentRow.paymentId, logEntry.paymentId);
             const paymentRecord = paymentId ? paymentIndexes.byId.get(paymentId) || null : null;
-            const status = (isPaidLike(paymentRow.status)
-                || isPaidLike(logEntry.status)
-                || isPaidLike(logEntry.paid)
-                || (paymentRecord ? isPaidLike(paymentRecord.status) : false))
+            const status = (0, poPaymentIdentity_js_1.hasExplicitPoPaymentEvidence)({
+                status: firstNonEmpty(paymentRow.status, logEntry.status),
+                paid: logEntry.paid,
+                paymentId,
+                paidDate: firstNonEmpty(paymentRow.paidDate, logEntry.paidDate),
+                amountActualEur: firstNonEmpty(paymentRow.paidEurActual, logEntry.amountActualEur),
+                amountActualUsd: firstNonEmpty(paymentRow.paidUsdActual, logEntry.amountActualUsd),
+            })
                 ? "PAID"
                 : "OPEN";
             const dueDate = normalizeIsoDate(firstNonEmpty(paymentRow.dueDate, logEntry.dueDate));
-            let paidDate = normalizeIsoDate(firstNonEmpty(paymentRecord?.paidDate, paymentRow.paidDate, logEntry.paidDate));
+            let paidDate = normalizeIsoDate(firstNonEmpty(paymentRow.paidDate, logEntry.paidDate, paymentRecord?.paidDate));
             const issues = [];
             if (status === "PAID" && !paidDate && dueDate) {
                 paidDate = dueDate;
@@ -478,11 +450,8 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
                 paymentRow,
                 paymentRows,
                 paymentRecord,
-                paymentIndexes,
                 paymentLogEntry: logEntry,
-                state,
                 eventId,
-                paidDate,
             });
             let actual = resolved.amountActualEur;
             issues.push(...resolved.issues);
@@ -532,7 +501,7 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
             if (seenEventIds.has(eventId))
                 return;
             const logEntry = (logEntryRaw && typeof logEntryRaw === "object") ? logEntryRaw : {};
-            const status = (isPaidLike(logEntry.status) || isPaidLike(logEntry.paid)) ? "PAID" : "OPEN";
+            const status = (0, poPaymentIdentity_js_1.hasExplicitPoPaymentEvidence)(logEntry) ? "PAID" : "OPEN";
             if (status !== "PAID")
                 return;
             const positions = classifyPaymentPositions({
@@ -541,10 +510,10 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
             });
             if (!hasRelevantPosition(positions))
                 return;
-            const paymentId = firstNonEmpty(logEntry.paymentId, paymentIndexes.paymentIdsByEvent.get(eventId));
+            const paymentId = firstNonEmpty(logEntry.paymentId);
             const paymentRecord = paymentId ? paymentIndexes.byId.get(paymentId) || null : null;
             const dueDate = normalizeIsoDate(firstNonEmpty(logEntry.dueDate));
-            let paidDate = normalizeIsoDate(firstNonEmpty(paymentRecord?.paidDate, logEntry.paidDate));
+            let paidDate = normalizeIsoDate(firstNonEmpty(logEntry.paidDate, paymentRecord?.paidDate));
             const issues = ["AUTO_GENERATED"];
             if (!paidDate && dueDate) {
                 paidDate = dueDate;
@@ -635,7 +604,7 @@ function mergeGroupedPoPayments(eventRows, paymentIndexes) {
                 actual = null;
             }
         }
-        let paidDate = normalizeIsoDate(firstNonEmpty(paymentRecord?.paidDate, ...rows.map((row) => row.paidDate)));
+        let paidDate = normalizeIsoDate(firstNonEmpty(...rows.map((row) => row.paidDate), paymentRecord?.paidDate));
         const dueDateCandidates = rows.map((row) => normalizeIsoDate(row.dueDate)).filter(Boolean).sort();
         const dueDate = dueDateCandidates[0] || "";
         if (!paidDate && dueDate) {

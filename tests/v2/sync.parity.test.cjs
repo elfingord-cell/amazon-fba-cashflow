@@ -127,3 +127,77 @@ test("sync parity: offline fallback persists locally and resumes remote sync aft
   assert.equal(local.saved[1].meta.source, "offline-flow:cache");
   assert.equal(local.saved[1].next.settings.openingBalance, "15,00");
 });
+
+test("sync parity: remote load backfills canonical PO auto-event ids and persists the cleanup", async () => {
+  const pushes = [];
+  const remoteApi = {
+    async fetchRemoteState() {
+      return {
+        exists: true,
+        rev: "rev-po-backfill-1",
+        data: {
+          settings: { openingBalance: "10,00" },
+          pos: [
+            {
+              id: "po-260002",
+              poNo: "260002",
+              paymentLog: {
+                "auto-freight": {
+                  status: "paid",
+                  paymentId: "pay-freight-260002",
+                  paidDate: "2026-03-13",
+                  amountActualEur: 2658.94,
+                },
+              },
+              autoEvents: [
+                { id: "auto-freight", type: "freight", enabled: true },
+                { id: "auto-duty", type: "duty", enabled: false },
+                { id: "auto-eust", type: "eust", enabled: false },
+                { id: "auto-vat", type: "vat_refund", enabled: false },
+                { id: "auto-fx", type: "fx_fee", enabled: false },
+              ],
+            },
+          ],
+          payments: [
+            {
+              id: "pay-freight-260002",
+              paidDate: "2026-03-13",
+              amountActualEurTotal: 2658.94,
+              coveredEventIds: ["auto-freight", "auto-eust"],
+              allocations: [
+                { eventId: "auto-freight", amountEur: 2658.94 },
+                { eventId: "auto-eust", amountEur: 99.99 },
+              ],
+            },
+          ],
+        },
+      };
+    },
+    async pushRemoteState(input) {
+      pushes.push(clone(input));
+      return { rev: "rev-po-backfill-2" };
+    },
+  };
+
+  const adapter = new SupabaseStorageAdapter({
+    remoteApiLoader: async () => remoteApi,
+  });
+
+  const loaded = await adapter.load();
+  const payment = loaded.payments[0];
+  const po = loaded.pos[0];
+
+  assert.equal(po.autoEvents[0].id, "po-auto-po-260002-freight");
+  assert.ok(po.paymentLog["po-auto-po-260002-freight"]);
+  assert.equal(payment.coveredEventIds.join(","), "po-auto-po-260002-freight");
+  assert.equal(payment.allocations[0].eventId, "po-auto-po-260002-freight");
+  assert.equal(payment.allocations[1].eventId, "auto-eust");
+
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].updatedBy, "v2:supabase-po-payment-backfill");
+  assert.equal(pushes[0].ifMatchRev, "rev-po-backfill-1");
+  assert.equal(
+    pushes[0].data.payments[0].coveredEventIds.join(","),
+    "po-auto-po-260002-freight",
+  );
+});
