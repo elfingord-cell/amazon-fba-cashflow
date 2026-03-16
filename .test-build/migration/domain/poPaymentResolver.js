@@ -16,16 +16,16 @@ function parsePercent(value) {
 }
 function addDays(date, days) {
     const next = new Date(date.getTime());
-    next.setDate(next.getDate() + Number(days || 0));
+    next.setUTCDate(next.getUTCDate() + Number(days || 0));
     return next;
 }
 function addMonthsDate(date, months) {
     const next = new Date(date.getTime());
-    next.setMonth(next.getMonth() + Number(months || 0));
+    next.setUTCMonth(next.getUTCMonth() + Number(months || 0));
     return next;
 }
 function monthEndDate(date) {
-    return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
 }
 function parseISODate(value) {
     const iso = normalizeIsoDate(value);
@@ -34,7 +34,7 @@ function parseISODate(value) {
     const [year, month, day] = iso.split("-").map(Number);
     if (!year || !month || !day)
         return null;
-    const date = new Date(year, month - 1, day);
+    const date = new Date(Date.UTC(year, month - 1, day));
     return Number.isNaN(date.getTime()) ? null : date;
 }
 function getCnyWindow(settings, year) {
@@ -711,6 +711,8 @@ function buildResolvedPoPaymentMilestones(record, settings, paymentRecords = [],
                 eventId,
                 amountEur: displayAmountEur,
                 month: displayMonth,
+                displayDate: displayDate || null,
+                displayDateKind: hasPaymentEvidence ? "paid" : "due",
                 dueDate: dueDate || null,
                 paidDate: paidDate || null,
                 viewState: eventViewState,

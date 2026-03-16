@@ -126,7 +126,8 @@ interface PnlMatrixRow {
   units?: number | null;
   paymentMix?: { paid: number; open: number; overdue: number; unknown: number };
   paymentStatus?: "paid" | "open" | "overdue" | "unknown";
-  paymentDueDate?: string | null;
+  paymentDate?: string | null;
+  paymentDateLabel?: string | null;
   children?: PnlMatrixRow[];
 }
 
@@ -1329,7 +1330,8 @@ export default function DashboardModule(): JSX.Element {
       key: string;
       label: string;
       values: Record<string, number>;
-      paymentDueDate: string | null;
+      paymentDate: string | null;
+      paymentDateLabel: string | null;
       paymentMix: { paid: number; open: number; overdue: number; unknown: number };
     }
     interface OrderAggregate {
@@ -1407,18 +1409,20 @@ export default function DashboardModule(): JSX.Element {
         }
 
         const paymentLabel = String(entry.label || "").trim() || "Zahlung";
-        const paymentDueDate = String(entry.date || "").trim() || null;
+        const paymentDate = String(meta.poPaymentDisplayDate || entry.date || "").trim() || null;
+        const paymentDateKind = String(meta.poPaymentDisplayDateKind || "").trim().toLowerCase();
         const poPaymentEventId = String(meta.poPaymentEventId || "").trim();
         const internalPaymentKey = poPaymentEventId
           ? `${source}:${reference}:${poPaymentEventId}`
-          : `${paymentLabel}|${paymentDueDate || ""}|${paymentState}`;
+          : `${paymentLabel}|${paymentDate || ""}|${paymentState}`;
         let payment = order.payments.get(internalPaymentKey);
         if (!payment) {
           payment = {
             key: `payment:${order.key}:${internalPaymentKey}`,
             label: paymentLabel,
             values: createMonthValueRecord(visibleMonths),
-            paymentDueDate,
+            paymentDate,
+            paymentDateLabel: paymentDateKind === "paid" || paymentState === "paid" ? "Bezahlt am" : "Fällig",
             paymentMix: createPaymentMix(),
           };
           order.payments.set(internalPaymentKey, payment);
@@ -1440,7 +1444,8 @@ export default function DashboardModule(): JSX.Element {
               values: payment.values,
               rowType: "payment" as const,
               paymentStatus: resolvePaymentStatus(payment.paymentMix),
-              paymentDueDate: payment.paymentDueDate,
+              paymentDate: payment.paymentDate,
+              paymentDateLabel: payment.paymentDateLabel,
             }));
 
           const units = Number(order.units);
@@ -1658,7 +1663,7 @@ export default function DashboardModule(): JSX.Element {
           return (
             <Space size={6} wrap>
               <Text>{row.label}</Text>
-              {row.paymentDueDate ? <Text type="secondary">Fällig: {formatIsoDate(row.paymentDueDate)}</Text> : null}
+              {row.paymentDate ? <Text type="secondary">{row.paymentDateLabel || "Datum"}: {formatIsoDate(row.paymentDate)}</Text> : null}
               {statusLabel}
             </Space>
           );

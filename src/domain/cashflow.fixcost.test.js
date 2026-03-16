@@ -572,6 +572,7 @@ test("po payment resolver derives paid, open, and overdue milestone portions fro
   const fullyPaidSnapshot = structuredClone(fullyPaid);
   const fullyPaidMilestone = buildResolvedPoPaymentMilestones(fullyPaid, settings, [], { today: "2025-03-01" })[0];
   assert.equal(fullyPaidMilestone.viewState, "paid");
+  assert.equal(fullyPaidMilestone.displayDate, "2025-02-10");
   assert.equal(fullyPaidMilestone.paidEur, 100);
   assert.equal(fullyPaidMilestone.remainingEur, 0);
   assert.deepEqual(
@@ -587,6 +588,7 @@ test("po payment resolver derives paid, open, and overdue milestone portions fro
     { today: "2025-03-01" },
   )[0];
   assert.equal(openFutureMilestone.viewState, "open");
+  assert.equal(openFutureMilestone.displayDate, "2025-05-15");
   assert.deepEqual(
     openFutureMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
     [{ state: "open", month: "2025-05", amount: 100 }],
@@ -599,6 +601,7 @@ test("po payment resolver derives paid, open, and overdue milestone portions fro
     { today: "2025-03-01" },
   )[0];
   assert.equal(overdueMilestone.viewState, "overdue");
+  assert.equal(overdueMilestone.displayDate, "2025-01-05");
   assert.deepEqual(
     overdueMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
     [{ state: "overdue", month: "2025-01", amount: 100 }],
@@ -619,6 +622,7 @@ test("po payment resolver derives paid, open, and overdue milestone portions fro
     { today: "2025-03-01" },
   )[0];
   assert.equal(paidDeltaMilestone.viewState, "paid");
+  assert.equal(paidDeltaMilestone.displayDate, "2025-02-12");
   assert.equal(paidDeltaMilestone.paidEur, 40);
   assert.equal(paidDeltaMilestone.remainingEur, 0);
   assert.deepEqual(

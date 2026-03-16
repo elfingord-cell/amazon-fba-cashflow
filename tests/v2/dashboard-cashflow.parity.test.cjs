@@ -458,7 +458,12 @@ test("dashboard PO cashflow keeps deposit, balance, freight, customs, and import
     .map((entry) => ({
       ref: entry.sourceNumber,
       label: entry.label,
+      date: entry.date,
       state: entry.meta?.poPaymentState,
+      displayDate: entry.meta?.poPaymentDisplayDate,
+      displayDateKind: entry.meta?.poPaymentDisplayDateKind,
+      dueDate: entry.meta?.poPaymentDueDate,
+      paidDate: entry.meta?.poPaymentPaidDate,
       paid: entry.paid,
       amount: entry.amount,
     }))
@@ -466,18 +471,73 @@ test("dashboard PO cashflow keeps deposit, balance, freight, customs, and import
 
   assert.deepEqual(
     pickPoRows(march),
-    [{ ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Deposit", state: "paid", paid: true, amount: 290 }],
+    [{
+      ref: "PO-EVENT-TRUTH",
+      label: "PO PO-EVENT-TRUTH – Deposit",
+      date: "2025-03-05",
+      state: "paid",
+      displayDate: "2025-03-05",
+      displayDateKind: "paid",
+      dueDate: "2025-03-01",
+      paidDate: "2025-03-05",
+      paid: true,
+      amount: 290,
+    }],
   );
   assert.deepEqual(
     pickPoRows(may),
-    [{ ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Balance", state: "open", paid: false, amount: 700 }],
+    [{
+      ref: "PO-EVENT-TRUTH",
+      label: "PO PO-EVENT-TRUTH – Balance",
+      date: "2025-05-15",
+      state: "open",
+      displayDate: "2025-05-15",
+      displayDateKind: "due",
+      dueDate: "2025-05-15",
+      paidDate: null,
+      paid: false,
+      amount: 700,
+    }],
   );
   assert.deepEqual(
     pickPoRows(june),
     [
-      { ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – EUSt", state: "open", paid: false, amount: 330 },
-      { ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Fracht", state: "open", paid: false, amount: 500 },
-      { ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Zoll", state: "open", paid: false, amount: 150 },
+      {
+        ref: "PO-EVENT-TRUTH",
+        label: "PO PO-EVENT-TRUTH – EUSt",
+        date: "2025-06-14",
+        state: "open",
+        displayDate: "2025-06-14",
+        displayDateKind: "due",
+        dueDate: "2025-06-14",
+        paidDate: null,
+        paid: false,
+        amount: 330,
+      },
+      {
+        ref: "PO-EVENT-TRUTH",
+        label: "PO PO-EVENT-TRUTH – Fracht",
+        date: "2025-06-14",
+        state: "open",
+        displayDate: "2025-06-14",
+        displayDateKind: "due",
+        dueDate: "2025-06-14",
+        paidDate: null,
+        paid: false,
+        amount: 500,
+      },
+      {
+        ref: "PO-EVENT-TRUTH",
+        label: "PO PO-EVENT-TRUTH – Zoll",
+        date: "2025-06-14",
+        state: "open",
+        displayDate: "2025-06-14",
+        displayDateKind: "due",
+        dueDate: "2025-06-14",
+        paidDate: null,
+        paid: false,
+        amount: 150,
+      },
     ],
   );
   assert.deepEqual(state, snapshot, "dashboard PO cashflow must remain derived-only");
