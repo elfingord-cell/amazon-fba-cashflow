@@ -128,24 +128,24 @@ function buildPoPayments(state, poRecord) {
     const milestones = (0, poPaymentResolver_js_1.buildResolvedPoPaymentMilestones)(poRecord, makePoSettings(state), paymentRecords);
     return milestones
         .map((milestone) => {
-        const dueDate = normalizeIsoDate(milestone.dueDate);
-        if (!dueDate)
+        const displayDate = normalizeIsoDate(milestone.displayDate || milestone.paidDate || milestone.dueDate);
+        if (!displayDate)
             return null;
-        const plannedEur = Math.abs(Number(milestone.plannedEur || 0));
-        if (!(plannedEur > 0))
+        const displayAmountEur = Math.abs(Number(milestone.displayAmountEur || 0));
+        if (!(displayAmountEur > 0))
             return null;
         const direction = resolvePaymentDirection({
-            amount: plannedEur,
+            amount: displayAmountEur,
             eventType: milestone.eventType,
             label: milestone.label || milestone.typeLabel,
             explicitDirection: milestone.direction,
         });
         return {
-            id: String(milestone.eventId || `po-pay-${dueDate}`),
+            id: String(milestone.eventId || `po-pay-${displayDate}`),
             label: String(milestone.typeLabel || milestone.label || "Zahlung"),
-            dueDate,
-            amountEur: plannedEur,
-            status: milestone.viewState === "paid" ? "paid" : "open",
+            dueDate: displayDate,
+            amountEur: displayAmountEur,
+            status: milestone.status === "paid" ? "paid" : "open",
             direction,
         };
     })
@@ -247,7 +247,7 @@ function buildTimeline(input) {
             ].join(" "),
             title: [
                 payment.label,
-                `Fällig: ${formatDate(payment.dueDate)}`,
+                `${payment.status === "paid" ? "Bezahlt am" : "Fällig"}: ${formatDate(payment.dueDate)}`,
                 `Betrag: ${formatCurrency(payment.amountEur)}`,
                 `Status: ${payment.status === "paid" ? "Bezahlt" : "Offen"}`,
             ].join("\n"),

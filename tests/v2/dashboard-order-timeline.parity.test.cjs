@@ -156,6 +156,95 @@ test("dashboard order timeline: fully paid past-due PO milestone no longer shows
   );
 });
 
+test("dashboard order timeline: each PO payment event keeps its own date, amount, and status", () => {
+  const state = {
+    settings: {
+      ...baseSettings(),
+      dutyRatePct: 10,
+      dutyIncludeFreight: true,
+      eustRatePct: 20,
+    },
+    pos: [
+      {
+        id: "po-event-truth",
+        poNo: "PO-3003",
+        supplierId: "sup-1",
+        orderDate: "2025-03-01",
+        prodDays: 75,
+        transitDays: 0,
+        fxOverride: 1,
+        freightEur: "500,00",
+        items: [
+          {
+            id: "po-item-1",
+            sku: "SKU-1",
+            units: "100",
+            unitCostUsd: "10,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+          },
+        ],
+        milestones: [
+          { id: "po-ms-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+          { id: "po-ms-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-ms-deposit": {
+            status: "paid",
+            paidDate: "2025-03-05",
+            amountActualEur: 290,
+          },
+        },
+        autoEvents: [
+          { id: "po-auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+          { id: "po-auto-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 10 },
+          { id: "po-auto-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 20 },
+          { id: "po-auto-vat", type: "vat_refund", enabled: false, anchor: "ETA", lagDays: 0, label: "EUSt-Erstattung" },
+          { id: "po-auto-fx", type: "fx_fee", enabled: false, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+        ],
+      },
+    ],
+  };
+
+  const timeline = buildDashboardOrderTimeline({
+    state,
+    source: "po",
+    sourceId: "po-event-truth",
+  });
+
+  assert.ok(timeline, "timeline should be built");
+  const paymentMarkers = timeline.items
+    .filter((item) => item.className.includes("--payment"))
+    .map((item) => ({
+      startMs: item.startMs,
+      className: item.className,
+      title: item.title || "",
+    }))
+    .sort((left, right) => left.startMs - right.startMs || left.title.localeCompare(right.title));
+
+  assert.equal(paymentMarkers.length, 5, "deposit, balance, freight, customs, and EUSt markers should all be present");
+  assert.ok(paymentMarkers[0].className.includes("--payment-paid"), "deposit should render as paid");
+  assert.equal(paymentMarkers[0].startMs, toMs("2025-03-05"));
+  assert.match(paymentMarkers[0].title, /Betrag: 290,00/);
+  assert.match(paymentMarkers[0].title, /Bezahlt am: 5\.3\.2025/);
+
+  assert.equal(new Date(paymentMarkers[1].startMs).toISOString().slice(0, 7), "2025-05");
+  assert.ok(paymentMarkers[1].className.includes("--payment-open"), "balance should stay open");
+  assert.match(paymentMarkers[1].title, /Betrag: 700,00/);
+
+  assert.deepEqual(
+    paymentMarkers.slice(2).map((item) => new Date(item.startMs).toISOString().slice(0, 7)),
+    ["2025-06", "2025-06", "2025-06"],
+  );
+  paymentMarkers.slice(2).forEach((item) => {
+    assert.ok(item.className.includes("--payment-open"), "later import cost events must stay open");
+  });
+  assert.equal(
+    paymentMarkers.some((item) => /Status: Bezahlt/.test(item.title) && new Date(item.startMs).toISOString().slice(0, 7) === "2025-06"),
+    false,
+  );
+});
+
 test("dashboard order timeline: FO lookup via foNumber works without foNo", () => {
   const state = {
     settings: baseSettings(),

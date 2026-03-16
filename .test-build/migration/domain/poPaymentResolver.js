@@ -120,12 +120,23 @@ function computeGoodsTotals(record, settings) {
         units: totalUnits,
     };
 }
+function resolveFreightInputMode(record) {
+    const mode = String(record?.timeline?.freightInputMode || "").trim().toUpperCase();
+    if (mode === "TOTAL_EUR" || mode === "PER_UNIT_EUR" || mode === "AUTO_FROM_LANDED")
+        return mode;
+    return record?.freightMode === "per_unit" ? "PER_UNIT_EUR" : "TOTAL_EUR";
+}
 function computeFreightTotal(record, totals) {
-    const mode = record?.freightMode === "per_unit" ? "per_unit" : "total";
-    if (mode === "per_unit") {
+    if (record?.timeline?.includeFreight === false)
+        return 0;
+    const mode = resolveFreightInputMode(record);
+    if (mode === "PER_UNIT_EUR") {
         const perUnit = parseNumber(record?.freightPerUnitEur ?? 0, 0);
         const units = Number(totals?.units ?? 0) || 0;
         return Math.round(perUnit * units * 100) / 100;
+    }
+    if (mode === "AUTO_FROM_LANDED") {
+        return parseNumber(record?.derived?.estimatedFreightEur ?? record?.freightEur ?? 0, 0);
     }
     return parseNumber(record?.freightEur ?? 0, 0);
 }
@@ -142,7 +153,33 @@ function normaliseAutoEvents(record, settings, manual) {
             entry.id = `auto-${entry.type}`;
         map.set(entry.type, entry);
     });
+    const poDueDefaults = settings?.paymentDueDefaults?.po || {};
     const firstManual = (manual || [])[0] || null;
+    const resolveAnchor = (value, fallback) => {
+        const upper = String(value || "").trim().toUpperCase();
+        if (["ORDER_DATE", "PROD_DONE", "ETD", "ETA"].includes(upper))
+            return upper;
+        return fallback;
+    };
+    const resolveLagDays = (value, fallback = 0) => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed))
+            return fallback;
+        return Math.round(parsed);
+    };
+    const defaultDue = (key, fallbackAnchor, fallbackLagDays) => {
+        const row = poDueDefaults[key] && typeof poDueDefaults[key] === "object"
+            ? poDueDefaults[key]
+            : {};
+        return {
+            anchor: resolveAnchor(row.anchor, fallbackAnchor),
+            lagDays: resolveLagDays(row.lagDays, fallbackLagDays),
+        };
+    };
+    const freightDue = defaultDue("freight", "ETA", settings?.freightLagDays);
+    const dutyDue = defaultDue("duty", "ETA", settings?.freightLagDays);
+    const eustDue = defaultDue("eust", "ETA", settings?.freightLagDays);
+    const vatRefundDue = defaultDue("vatRefund", "ETA", 0);
     function ensure(type, defaults) {
         if (!map.has(type)) {
             const created = { id: `auto-${type}`, type, ...defaults };
@@ -161,26 +198,29 @@ function normaliseAutoEvents(record, settings, manual) {
     }
     ensure("freight", {
         label: "Fracht",
-        anchor: "ETA",
-        lagDays: settings?.freightLagDays,
+        anchor: freightDue.anchor,
+        lagDays: freightDue.lagDays,
         enabled: true,
     });
     ensure("duty", {
         label: "Zoll",
         percent: settings?.dutyRatePct,
-        anchor: "ETA",
-        lagDays: settings?.freightLagDays,
+        anchor: dutyDue.anchor,
+        lagDays: dutyDue.lagDays,
+        enabled: true,
     });
     ensure("eust", {
         label: "EUSt",
         percent: settings?.eustRatePct,
-        anchor: "ETA",
-        lagDays: settings?.freightLagDays,
+        anchor: eustDue.anchor,
+        lagDays: eustDue.lagDays,
+        enabled: true,
     });
     ensure("vat_refund", {
         label: "EUSt-Erstattung",
         percent: 100,
-        anchor: "ETA",
+        anchor: vatRefundDue.anchor,
+        lagDays: vatRefundDue.lagDays,
         lagMonths: settings?.vatRefundLagMonths,
         enabled: settings?.vatRefundEnabled,
     });
@@ -648,26 +688,34 @@ function buildResolvedPoPaymentMilestones(record, settings, paymentRecords = [],
         if (paidEur > 0 && !paidDate && dueDate) {
             paidDate = dueDate;
         }
+        const displayAmountEur = hasPaymentEvidence
+            ? (round2(paidEur) || 0)
+            : (round2(plannedEur) || 0);
+        const displayMonth = hasPaymentEvidence
+            ? monthFromDate(paidDate || dueDate)
+            : monthFromDate(dueDate || paidDate);
+        const displayDate = hasPaymentEvidence
+            ? normalizeIsoDate(paidDate || dueDate) || null
+            : normalizeIsoDate(dueDate || paidDate) || null;
+        const eventViewState = hasPaymentEvidence ? "paid" : resolveOpenViewState(dueDate, todayIso);
         const normalizedPaidEur = round2(paidEur) || 0;
         const remainingEur = hasPaymentEvidence
             ? 0
             : (plannedEur > 0 ? Math.max(0, round2(plannedEur) || 0) : 0);
-        const dueMonth = monthFromDate(dueDate || paidDate);
-        const paidMonth = monthFromDate(paidDate || dueDate);
         const kind = resolveCashflowKind(paymentRow.eventType);
         const group = resolveCashflowGroup(kind);
         const segments = [];
-        if (hasPaymentEvidence && paidMonth) {
+        if (displayAmountEur > 0 && displayMonth) {
             segments.push({
-                id: `${eventId}:paid`,
+                id: `${eventId}:${eventViewState}`,
                 eventId,
-                amountEur: normalizedPaidEur,
-                month: paidMonth,
+                amountEur: displayAmountEur,
+                month: displayMonth,
                 dueDate: dueDate || null,
                 paidDate: paidDate || null,
-                viewState: "paid",
-                statusLabel: "Bezahlt",
-                isOverdue: false,
+                viewState: eventViewState,
+                statusLabel: hasPaymentEvidence ? "Bezahlt" : "Offen",
+                isOverdue: eventViewState === "overdue",
                 direction,
                 kind,
                 group,
@@ -680,54 +728,8 @@ function buildResolvedPoPaymentMilestones(record, settings, paymentRecords = [],
                 paymentId: paymentId || null,
             });
         }
-        if (!hasPaymentEvidence && remainingEur > 0 && dueMonth) {
-            const openViewState = resolveOpenViewState(dueDate, todayIso);
-            segments.push({
-                id: `${eventId}:${openViewState}`,
-                eventId,
-                amountEur: remainingEur,
-                month: dueMonth,
-                dueDate: dueDate || null,
-                paidDate: paidDate || null,
-                viewState: openViewState,
-                statusLabel: "Offen",
-                isOverdue: openViewState === "overdue",
-                direction,
-                kind,
-                group,
-                label: String(paymentRow.label || "").trim(),
-                typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
-                eventType: String(paymentRow.eventType || "").trim() || null,
-                plannedEur,
-                paidEur: normalizedPaidEur,
-                remainingEur,
-                paymentId: paymentId || null,
-            });
-        }
-        if (!segments.length && plannedEur > 0 && dueMonth) {
-            const openViewState = resolveOpenViewState(dueDate, todayIso);
-            segments.push({
-                id: `${eventId}:${openViewState}`,
-                eventId,
-                amountEur: round2(plannedEur) || 0,
-                month: dueMonth,
-                dueDate: dueDate || null,
-                paidDate: paidDate || null,
-                viewState: openViewState,
-                statusLabel: "Offen",
-                isOverdue: openViewState === "overdue",
-                direction,
-                kind,
-                group,
-                label: String(paymentRow.label || "").trim(),
-                typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
-                eventType: String(paymentRow.eventType || "").trim() || null,
-                plannedEur,
-                paidEur: normalizedPaidEur,
-                remainingEur: round2(plannedEur) || 0,
-                paymentId: paymentId || null,
-            });
-        }
+        if (!segments.length)
+            return null;
         return {
             id: eventId,
             eventId,
@@ -735,6 +737,10 @@ function buildResolvedPoPaymentMilestones(record, settings, paymentRecords = [],
             typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
             dueDate: dueDate || null,
             paidDate: paidDate || null,
+            displayDate,
+            displayMonth,
+            displayAmountEur,
+            status: hasPaymentEvidence ? "paid" : "open",
             direction,
             plannedEur: round2(plannedEur) || 0,
             paidEur: normalizedPaidEur,

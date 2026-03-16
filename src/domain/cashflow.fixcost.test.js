@@ -632,6 +632,71 @@ test("po payment resolver derives paid, open, and overdue milestone portions fro
   );
 });
 
+test("po payment resolver keeps later open freight, customs, and import VAT on their own event month and status", () => {
+  const settings = {
+    ...createPoResolverSettings(),
+    dutyRatePct: 10,
+    dutyIncludeFreight: true,
+    eustRatePct: 20,
+  };
+  const milestones = buildResolvedPoPaymentMilestones(createPoResolverRecord({
+    orderDate: "2025-03-01",
+    prodDays: 75,
+    transitDays: 0,
+    freightEur: "500,00",
+    items: [
+      {
+        id: "po-item-1",
+        sku: "SKU-1",
+        units: "100",
+        unitCostUsd: "10,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      },
+    ],
+    milestones: [
+      { id: "po-ms-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "po-ms-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+    paymentLog: {
+      "po-ms-deposit": {
+        status: "paid",
+        paidDate: "2025-03-05",
+        amountActualEur: 290,
+      },
+    },
+    autoEvents: [
+      { id: "po-auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+      { id: "po-auto-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 10 },
+      { id: "po-auto-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 20 },
+      { id: "po-auto-vat", type: "vat_refund", enabled: false, anchor: "ETA", lagDays: 0, label: "EUSt-Erstattung" },
+      { id: "po-auto-fx", type: "fx_fee", enabled: false, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+    ],
+  }), settings, [], { today: "2025-03-16" });
+
+  assert.deepEqual(
+    milestones.map((entry) => ({
+      id: entry.id,
+      amount: entry.displayAmountEur,
+      month: entry.displayMonth,
+      status: entry.status,
+      state: entry.viewState,
+    })),
+    [
+      { id: "po-ms-deposit", amount: 290, month: "2025-03", status: "paid", state: "paid" },
+      { id: "po-ms-balance", amount: 700, month: "2025-05", status: "open", state: "open" },
+      { id: "po-auto-freight", amount: 500, month: "2025-06", status: "open", state: "open" },
+      { id: "po-auto-duty", amount: 150, month: "2025-06", status: "open", state: "open" },
+      { id: "po-auto-eust", amount: 330, month: "2025-06", status: "open", state: "open" },
+    ],
+  );
+  assert.equal(
+    milestones.filter((entry) => entry.status === "paid").map((entry) => entry.id).join(","),
+    "po-ms-deposit",
+    "only the explicitly paid deposit may resolve as paid",
+  );
+});
+
 test("computeSeries uses manual quote first and recommendation for future months without manual quote", () => {
   const currentMonth = monthKeyFromDate(new Date());
   const prev2 = addMonths(currentMonth, -2);

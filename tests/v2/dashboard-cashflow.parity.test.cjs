@@ -362,6 +362,127 @@ test("dashboard PO cashflow uses PO payment truth for paid month bucketing witho
   assert.deepEqual(state, snapshot, "dashboard cashflow must stay derived-only and must not persist dashboard payment state");
 });
 
+test("dashboard PO cashflow keeps deposit, balance, freight, customs, and import VAT on their exact event month/amount/status", async () => {
+  const [{ computeSeries }, { PORTFOLIO_BUCKET }] = await Promise.all([
+    import("../../src/domain/cashflow.js"),
+    import("../../src/domain/portfolioBuckets.js"),
+  ]);
+
+  const state = {
+    settings: {
+      startMonth: "2025-03",
+      horizonMonths: 5,
+      openingBalance: 0,
+      fxRate: 1,
+      fxFeePct: 0,
+      dutyRatePct: 10,
+      dutyIncludeFreight: true,
+      eustRatePct: 20,
+      vatRefundEnabled: false,
+      vatRefundLagMonths: 0,
+      freightLagDays: 0,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: { settings: { useForecast: false } },
+    incomings: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    payments: [],
+    pos: [
+      {
+        id: "po-event-truth",
+        poNo: "PO-EVENT-TRUTH",
+        orderDate: "2025-03-01",
+        prodDays: 75,
+        transitDays: 0,
+        fxOverride: 1,
+        freightEur: "500,00",
+        items: [
+          {
+            id: "po-event-truth-item",
+            sku: "SKU-1",
+            units: "100",
+            unitCostUsd: "10,00",
+            unitExtraUsd: "0,00",
+            extraFlatUsd: "0,00",
+          },
+        ],
+        milestones: [
+          { id: "po-ms-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+          { id: "po-ms-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+        ],
+        paymentLog: {
+          "po-ms-deposit": {
+            status: "paid",
+            paidDate: "2025-03-05",
+            amountActualEur: 290,
+          },
+        },
+        autoEvents: [
+          { id: "po-auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+          { id: "po-auto-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 10 },
+          { id: "po-auto-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 20 },
+          { id: "po-auto-vat", type: "vat_refund", enabled: false, anchor: "ETA", lagDays: 0, label: "EUSt-Erstattung" },
+          { id: "po-auto-fx", type: "fx_fee", enabled: false, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+        ],
+      },
+    ],
+    products: [
+      { sku: "SKU-1", alias: "Alpha", includeInForecast: true, portfolioBucket: PORTFOLIO_BUCKET.CORE },
+    ],
+    status: { autoManualCheck: false, events: {} },
+  };
+  const snapshot = structuredClone(state);
+  const bucketScope = new Set([PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN]);
+
+  const report = withMockedNow(new Date("2025-03-16T12:00:00Z"), () => computeSeries(state));
+  const march = report.breakdown.find((row) => row.month === "2025-03");
+  const may = report.breakdown.find((row) => row.month === "2025-05");
+  const june = report.breakdown.find((row) => row.month === "2025-06");
+  assert.ok(march);
+  assert.ok(may);
+  assert.ok(june);
+
+  const marchAggregation = aggregateDashboardMonthEntries(march.entries, { bucketScope, includePhantomFo: true });
+  const mayAggregation = aggregateDashboardMonthEntries(may.entries, { bucketScope, includePhantomFo: true });
+  const juneAggregation = aggregateDashboardMonthEntries(june.entries, { bucketScope, includePhantomFo: true });
+  assert.equal(marchAggregation.outflow.po, 290);
+  assert.equal(mayAggregation.outflow.po, 700);
+  assert.equal(juneAggregation.outflow.po, 980);
+
+  const pickPoRows = (monthRow) => monthRow.entries
+    .filter((entry) => String(entry.source || "") === "po" && String(entry.direction || "") === "out")
+    .map((entry) => ({
+      ref: entry.sourceNumber,
+      label: entry.label,
+      state: entry.meta?.poPaymentState,
+      paid: entry.paid,
+      amount: entry.amount,
+    }))
+    .sort((left, right) => String(left.label || "").localeCompare(String(right.label || "")));
+
+  assert.deepEqual(
+    pickPoRows(march),
+    [{ ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Deposit", state: "paid", paid: true, amount: 290 }],
+  );
+  assert.deepEqual(
+    pickPoRows(may),
+    [{ ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Balance", state: "open", paid: false, amount: 700 }],
+  );
+  assert.deepEqual(
+    pickPoRows(june),
+    [
+      { ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – EUSt", state: "open", paid: false, amount: 330 },
+      { ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Fracht", state: "open", paid: false, amount: 500 },
+      { ref: "PO-EVENT-TRUTH", label: "PO PO-EVENT-TRUTH – Zoll", state: "open", paid: false, amount: 150 },
+    ],
+  );
+  assert.deepEqual(state, snapshot, "dashboard PO cashflow must remain derived-only");
+});
+
 test("dashboard mirror injects cash-in table payout when sales entries are missing", () => {
   const bucketScope = new Set(["Kernportfolio", "Planprodukte"]);
   const rows = alignDashboardCashInToMirror([
