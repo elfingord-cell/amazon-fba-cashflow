@@ -557,7 +557,7 @@ test("computeSeries treats FO milestones as plan-only and excludes converted/arc
   assert.equal(aprilFoEntries[0].paid, false);
 });
 
-test("po payment resolver derives paid, open, overdue, and partial milestone portions from existing PO payment fields", () => {
+test("po payment resolver derives paid, open, and overdue milestone portions from existing PO payment fields", () => {
   const settings = createPoResolverSettings();
 
   const fullyPaid = createPoResolverRecord({
@@ -604,7 +604,7 @@ test("po payment resolver derives paid, open, overdue, and partial milestone por
     [{ state: "overdue", month: "2025-01", amount: 100 }],
   );
 
-  const partialMilestone = buildResolvedPoPaymentMilestones(
+  const paidDeltaMilestone = buildResolvedPoPaymentMilestones(
     createPoResolverRecord({
       paymentLog: {
         "po-ms-1": {
@@ -618,15 +618,17 @@ test("po payment resolver derives paid, open, overdue, and partial milestone por
     [],
     { today: "2025-03-01" },
   )[0];
-  assert.equal(partialMilestone.viewState, "mixed");
-  assert.equal(partialMilestone.paidEur, 40);
-  assert.equal(partialMilestone.remainingEur, 60);
+  assert.equal(paidDeltaMilestone.viewState, "paid");
+  assert.equal(paidDeltaMilestone.paidEur, 40);
+  assert.equal(paidDeltaMilestone.remainingEur, 0);
   assert.deepEqual(
-    partialMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
-    [
-      { state: "paid", month: "2025-02", amount: 40 },
-      { state: "overdue", month: "2025-01", amount: 60 },
-    ],
+    paidDeltaMilestone.segments.map((segment) => ({ state: segment.viewState, month: segment.month, amount: segment.amountEur })),
+    [{ state: "paid", month: "2025-02", amount: 40 }],
+  );
+  assert.equal(
+    paidDeltaMilestone.segments.some((segment) => segment.viewState === "mixed"),
+    false,
+    "paid PO events must not emit a mixed milestone segment",
   );
 });
 

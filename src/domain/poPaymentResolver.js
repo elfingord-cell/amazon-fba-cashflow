@@ -597,8 +597,10 @@ function resolvePaymentViewState(segments) {
     (Array.isArray(segments) ? segments : []).map((segment) => String(segment.viewState || "")).filter(Boolean),
   ));
   if (!states.length) return "open";
-  if (states.length === 1) return states[0];
-  return "mixed";
+  if (states.includes("paid")) return "paid";
+  if (states.includes("overdue")) return "overdue";
+  if (states.includes("open")) return "open";
+  return states[0];
 }
 
 function resolveOpenViewState(dueDate, todayIso) {
@@ -691,21 +693,21 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
         paidDate = dueDate;
       }
 
-      const appliedPaidEur = plannedEur > 0 ? Math.min(plannedEur, paidEur) : Math.max(0, paidEur);
-      const remainingEur = plannedEur > 0
-        ? Math.max(0, round2(plannedEur - appliedPaidEur) || 0)
-        : 0;
+      const normalizedPaidEur = round2(paidEur) || 0;
+      const remainingEur = hasPaymentEvidence
+        ? 0
+        : (plannedEur > 0 ? Math.max(0, round2(plannedEur) || 0) : 0);
       const dueMonth = monthFromDate(dueDate || paidDate);
       const paidMonth = monthFromDate(paidDate || dueDate);
       const kind = resolveCashflowKind(paymentRow.eventType);
       const group = resolveCashflowGroup(kind);
       const segments = [];
 
-      if (paidEur > 0 && paidMonth) {
+      if (hasPaymentEvidence && paidMonth) {
         segments.push({
           id: `${eventId}:paid`,
           eventId,
-          amountEur: round2(paidEur) || 0,
+          amountEur: normalizedPaidEur,
           month: paidMonth,
           dueDate: dueDate || null,
           paidDate: paidDate || null,
@@ -719,13 +721,13 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
           typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
           eventType: String(paymentRow.eventType || "").trim() || null,
           plannedEur,
-          paidEur: round2(paidEur) || 0,
+          paidEur: normalizedPaidEur,
           remainingEur,
           paymentId: paymentId || null,
         });
       }
 
-      if (remainingEur > 0 && dueMonth) {
+      if (!hasPaymentEvidence && remainingEur > 0 && dueMonth) {
         const openViewState = resolveOpenViewState(dueDate, todayIso);
         segments.push({
           id: `${eventId}:${openViewState}`,
@@ -744,7 +746,7 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
           typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
           eventType: String(paymentRow.eventType || "").trim() || null,
           plannedEur,
-          paidEur: round2(paidEur) || 0,
+          paidEur: normalizedPaidEur,
           remainingEur,
           paymentId: paymentId || null,
         });
@@ -769,7 +771,7 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
           typeLabel: String(paymentRow.typeLabel || paymentRow.label || "Zahlung").trim(),
           eventType: String(paymentRow.eventType || "").trim() || null,
           plannedEur,
-          paidEur: round2(paidEur) || 0,
+          paidEur: normalizedPaidEur,
           remainingEur: round2(plannedEur) || 0,
           paymentId: paymentId || null,
         });
@@ -784,7 +786,7 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
         paidDate: paidDate || null,
         direction,
         plannedEur: round2(plannedEur) || 0,
-        paidEur: round2(paidEur) || 0,
+        paidEur: normalizedPaidEur,
         remainingEur,
         paymentId: paymentId || null,
         eventType: String(paymentRow.eventType || "").trim() || null,

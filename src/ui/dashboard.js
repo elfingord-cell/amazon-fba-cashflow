@@ -743,12 +743,12 @@ function sumPaymentEvents(events, month, currentMonth) {
     const planned = Number(evt.plannedEur || 0);
     const actual = Number(evt.actualEur || 0);
     const paid = evt.paid === true;
-    const actualValid = paid && actual > 0;
+    const bookedValue = paid ? (actual > 0 ? actual : planned) : planned;
 
-    plannedTotal += planned;
-    if (actualValid) {
-      actualTotal += actual;
-      displayTotal += actual;
+    plannedTotal += bookedValue;
+    if (paid && bookedValue > 0) {
+      actualTotal += bookedValue;
+      displayTotal += bookedValue;
       hasPaidValue = true;
       if (evt.paidDate && toMonthKey(evt.paidDate) === currentMonth) {
         paidThisMonthCount += 1;
@@ -2016,4 +2016,5 @@ export function render(root) {
   }
 }
 
+export { sumPaymentEvents };
 export default { render };

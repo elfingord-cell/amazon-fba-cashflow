@@ -203,7 +203,7 @@ test("dashboard chart and matrix ignore legacy manual zero revenue in hybrid mod
   assert.equal(marchAggregation.totals.net, 1870);
 });
 
-test("dashboard PO cashflow uses PO payment truth for paid month bucketing and overdue remainder without mutating state", async () => {
+test("dashboard PO cashflow uses PO payment truth for paid month bucketing without emitting mixed/open remainder state", async () => {
   const [{ computeSeries }, { PORTFOLIO_BUCKET }] = await Promise.all([
     import("../../src/domain/cashflow.js"),
     import("../../src/domain/portfolioBuckets.js"),
@@ -323,7 +323,7 @@ test("dashboard PO cashflow uses PO payment truth for paid month bucketing and o
 
   const januaryAggregation = aggregateDashboardMonthEntries(january.entries, { bucketScope, includePhantomFo: true });
   const februaryAggregation = aggregateDashboardMonthEntries(february.entries, { bucketScope, includePhantomFo: true });
-  assert.equal(januaryAggregation.outflow.po, 60, "only the unpaid remainder should stay in the due month");
+  assert.equal(januaryAggregation.outflow.po, 0, "a paid PO event delta must not stay behind as open backlog");
   assert.equal(februaryAggregation.outflow.po, 140, "paid cash should move into the actual payment month");
 
   const januaryPoEntries = january.entries.filter((entry) => String(entry.source || "") === "po" && String(entry.direction || "") === "out");
@@ -340,7 +340,7 @@ test("dashboard PO cashflow uses PO payment truth for paid month bucketing and o
       paid: entry.paid,
       amount: entry.amount,
     })),
-    [{ ref: "PO-PARTIAL", state: "overdue", paid: false, amount: 60 }],
+    [],
   );
   assert.deepEqual(
     februaryPoEntries.map((entry) => ({
@@ -353,6 +353,11 @@ test("dashboard PO cashflow uses PO payment truth for paid month bucketing and o
       { ref: "PO-PAID-LATE", state: "paid", paid: true, amount: 100 },
       { ref: "PO-PARTIAL", state: "paid", paid: true, amount: 40 },
     ],
+  );
+  assert.equal(
+    [...januaryPoEntries, ...februaryPoEntries].some((entry) => entry.meta?.poPaymentState === "mixed"),
+    false,
+    "dashboard PO entries must not emit a mixed payment state",
   );
   assert.deepEqual(state, snapshot, "dashboard cashflow must stay derived-only and must not persist dashboard payment state");
 });

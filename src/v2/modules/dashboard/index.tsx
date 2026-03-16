@@ -125,7 +125,7 @@ interface PnlMatrixRow {
   aliases?: string[];
   units?: number | null;
   paymentMix?: { paid: number; open: number; overdue: number; unknown: number };
-  paymentStatus?: "paid" | "open" | "overdue" | "mixed" | "unknown";
+  paymentStatus?: "paid" | "open" | "overdue" | "unknown";
   paymentDueDate?: string | null;
   children?: PnlMatrixRow[];
 }
@@ -452,7 +452,7 @@ function applyPaymentMix(
   else mix.unknown += amount;
 }
 
-function resolvePaymentStatus(input: { paid: number; open: number; overdue: number; unknown: number }): "paid" | "open" | "overdue" | "mixed" | "unknown" {
+function resolvePaymentStatus(input: { paid: number; open: number; overdue: number; unknown: number }): "paid" | "open" | "overdue" | "unknown" {
   const paid = Number(input.paid || 0);
   const open = Number(input.open || 0);
   const overdue = Number(input.overdue || 0);
@@ -461,7 +461,10 @@ function resolvePaymentStatus(input: { paid: number; open: number; overdue: numb
   if (overdue > 0 && paid <= 0 && open <= 0 && unknown <= 0) return "overdue";
   if (open > 0 && paid <= 0 && overdue <= 0 && unknown <= 0) return "open";
   if (unknown > 0 && paid <= 0 && open <= 0 && overdue <= 0) return "unknown";
-  return "mixed";
+  if (overdue > 0) return "overdue";
+  if (open > 0) return "open";
+  if (paid > 0) return "paid";
+  return "unknown";
 }
 
 function collectExpandableRowKeys(rows: PnlMatrixRow[]): string[] {
@@ -1651,14 +1654,7 @@ export default function DashboardModule(): JSX.Element {
               ? <Tag color="red">Offen</Tag>
               : row.paymentStatus === "open"
                 ? <Tag color="orange">Offen</Tag>
-                : row.paymentStatus === "mixed"
-                  ? (
-                    <Space size={4} wrap>
-                      <Tag color="blue">Gemischt</Tag>
-                      {mix.overdue > 0 ? <Tag color="red">Überfällig</Tag> : null}
-                    </Space>
-                  )
-                  : <Tag>Unklar</Tag>;
+                : <Tag>Unklar</Tag>;
           return (
             <Space size={6} wrap>
               <Text>{row.label}</Text>
