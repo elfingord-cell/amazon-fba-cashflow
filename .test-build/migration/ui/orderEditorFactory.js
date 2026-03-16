@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.orderEditorUtils = void 0;
 exports.buildPaymentRows = buildPaymentRows;
+exports.buildPoPaymentPlanning = buildPoPaymentPlanning;
 exports.getSettings = getSettings;
 exports.renderOrderModule = renderOrderModule;
 const storageLocal_js_1 = require("../data/storageLocal.js");
@@ -1067,19 +1068,16 @@ function buildInvoiceKeyEvents(selectedEvents) {
     return `${unique.slice(0, 2).join("+")}+more`;
 }
 function buildPaymentRows(record, config, settings, paymentRecords = [], options = {}) {
-    (0, poPaymentIdentity_js_1.normalizePoPaymentStateRecord)(record, { mutate: true });
     const includeIncoming = options?.includeIncoming === true;
     const includeZeroAmount = options?.includeZeroAmount === true;
-    ensurePaymentLog(record);
-    const milestones = Array.isArray(record.milestones) ? record.milestones : [];
-    const msMap = new Map(milestones.map(item => [item.id, item]));
-    const paymentMap = buildPaymentMap(paymentRecords);
-    const events = orderEvents(JSON.parse(JSON.stringify(record)), config, settings);
-    return events
-        .filter((evt) => {
-        if (!evt)
+    const snapshot = buildPoPaymentPlanning(record, config, settings, paymentRecords);
+    return snapshot.paymentRows
+        .filter((row) => {
+        if (!row)
             return false;
-        const amount = Number(evt.amount || 0);
+        const amount = row.direction === "in"
+            ? Math.abs(Number(row.plannedEur || 0))
+            : (row.direction === "out" ? -Math.abs(Number(row.plannedEur || 0)) : 0);
         if (!Number.isFinite(amount))
             return false;
         if (amount < 0)
@@ -1087,43 +1085,6 @@ function buildPaymentRows(record, config, settings, paymentRecords = [], options
         if (amount > 0)
             return includeIncoming;
         return includeZeroAmount;
-    })
-        .map(evt => {
-        const log = record.paymentLog?.[evt.id] || {};
-        const paymentInternalId = ensurePaymentInternalId(record, evt.id);
-        const amount = Number(evt.amount || 0);
-        const planned = Math.abs(amount);
-        const paymentId = log.paymentId ? String(log.paymentId) : "";
-        const payment = paymentId ? paymentMap.get(paymentId) : null;
-        const status = (0, poPaymentIdentity_js_1.hasExplicitPoPaymentEvidence)({
-            ...log,
-            paymentId,
-        })
-            ? "paid"
-            : "open";
-        const paidDate = log.paidDate || payment?.paidDate || null;
-        return {
-            id: evt.id,
-            paymentInternalId,
-            typeLabel: mapPaymentType(evt, msMap.get(evt.id)),
-            label: evt.label,
-            dueDate: evt.date || null,
-            plannedEur: planned,
-            status,
-            paidDate,
-            paidEurActual: Number.isFinite(Number(log.amountActualEur)) ? Number(log.amountActualEur) : null,
-            paidUsdActual: Number.isFinite(Number(log.amountActualUsd)) ? Number(log.amountActualUsd) : null,
-            method: payment?.method || log.method || null,
-            paidBy: payment?.payer || log.payer || null,
-            paymentId: paymentId || null,
-            note: log.note || "",
-            invoiceIdOrNumber: payment?.invoiceIdOrNumber || log.invoiceIdOrNumber || "",
-            transferReference: payment?.transferReference || log.transferReference || "",
-            invoiceDriveUrl: payment?.invoiceDriveUrl || "",
-            invoiceFolderDriveUrl: payment?.invoiceFolderDriveUrl || "",
-            eventType: evt.type || null,
-            direction: amount < 0 ? "out" : (amount > 0 ? "in" : "neutral"),
-        };
     });
 }
 function highestNumberInfo(records, field) {
@@ -1244,7 +1205,22 @@ function msSum100(ms) {
     const sum = (ms || []).reduce((acc, row) => acc + clampPct(row.percent || 0), 0);
     return Math.round(sum * 10) / 10;
 }
-function orderEvents(record, config, settings) {
+function mapPlanningDirection(amount) {
+    if (amount < 0)
+        return "out";
+    if (amount > 0)
+        return "in";
+    return "neutral";
+}
+function serialiseTimeline(schedule) {
+    return {
+        orderDate: isoDate(schedule?.order),
+        prodDoneDate: isoDate(schedule?.prodDone),
+        etdDate: isoDate(schedule?.etd),
+        etaDate: isoDate(schedule?.eta),
+    };
+}
+function derivePoPlanningRows(record, config, settings, options = {}) {
     const totals = computeGoodsTotals(record, settings);
     let goods = totals.eur;
     if (!goods) {
@@ -1256,8 +1232,11 @@ function orderEvents(record, config, settings) {
     const prefix = record[config.numberField] ? `${config.entityLabel} ${record[config.numberField]} – ` : "";
     const manual = Array.isArray(record.milestones) ? record.milestones : [];
     const auto = ensureAutoEvents(record, settings, manual);
-    const events = [];
     const schedule = computeTimeline(record, settings);
+    const rows = [];
+    const explicitAutoTypes = new Set((Array.isArray(options?.explicitAutoEvents) ? options.explicitAutoEvents : [])
+        .map((entry) => String(entry?.type || "").trim())
+        .filter(Boolean));
     const manualComputed = manual.map(m => {
         const pct = clampPct(m.percent);
         const baseDate = anchorDate(schedule, m.anchor || "ORDER_DATE");
@@ -1278,19 +1257,16 @@ function orderEvents(record, config, settings) {
             type: "manual",
             due,
             auto: false,
-            direction: amount <= 0 ? "out" : "in",
+            direction: mapPlanningDirection(amount),
+            kind: "manual",
+            anchor: m.anchor || "ORDER_DATE",
+            offsetValue: Number(m.lagDays || 0),
+            offsetUnit: "days",
+            source: "PO-Milestone",
+            enabled: true,
         };
     }).filter(Boolean);
-    events.push(...manualComputed.map(evt => ({
-        id: evt.id,
-        label: evt.label,
-        date: evt.date,
-        amount: evt.amount,
-        type: evt.type,
-        auto: false,
-        due: evt.due,
-        direction: evt.direction,
-    })));
+    rows.push(...manualComputed);
     const dutyIncludeFreight = record.dutyIncludeFreight !== false;
     const stateDutyRate = typeof record.dutyRatePct === "number" ? record.dutyRatePct : clampPct(record.dutyRatePct);
     const stateEustRate = typeof record.eustRatePct === "number" ? record.eustRatePct : clampPct(record.eustRatePct);
@@ -1298,37 +1274,40 @@ function orderEvents(record, config, settings) {
     const vatLagMonths = Number(record.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0) || 0;
     const autoResults = {};
     for (const autoEvt of auto) {
-        if (!autoEvt || autoEvt.enabled === false)
+        if (!autoEvt)
             continue;
         const anchor = autoEvt.anchor || "ETA";
         const baseDate = anchorDate(schedule, anchor);
-        if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime()))
+        const lagDays = Number(autoEvt.lagDays || 0);
+        const enabled = autoEvt.enabled !== false;
+        const source = explicitAutoTypes.has(String(autoEvt.type || "").trim()) ? "PO" : "Settings-Default";
+        if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) {
+            rows.push({
+                id: autoEvt.id,
+                label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
+                date: null,
+                amount: 0,
+                type: autoEvt.type,
+                auto: true,
+                due: null,
+                direction: "neutral",
+                kind: "auto",
+                anchor,
+                offsetValue: autoEvt.type === "vat_refund" ? Number((autoEvt.lagMonths ?? vatLagMonths) || 0) : lagDays,
+                offsetUnit: autoEvt.type === "vat_refund" ? "months" : "days",
+                source,
+                enabled,
+            });
             continue;
+        }
         if (autoEvt.type === "freight") {
             const amountAbs = resolveFreightTotal(record, totals);
-            if (!amountAbs) {
-                const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
-                const dueIso = isoDate(due);
-                if (!dueIso)
-                    continue;
-                events.push({
-                    id: autoEvt.id,
-                    label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
-                    date: dueIso,
-                    amount: 0,
-                    type: "freight",
-                    auto: true,
-                    due,
-                    direction: "out",
-                });
-                continue;
-            }
-            const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+            const due = addDays(baseDate, lagDays);
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
-            const amount = -amountAbs;
-            events.push({
+            const amount = -(amountAbs || 0);
+            rows.push({
                 id: autoEvt.id,
                 label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
                 date: dueIso,
@@ -1336,20 +1315,26 @@ function orderEvents(record, config, settings) {
                 type: "freight",
                 auto: true,
                 due,
-                direction: amount <= 0 ? "out" : "in",
+                direction: mapPlanningDirection(amount),
+                kind: "auto",
+                anchor,
+                offsetValue: lagDays,
+                offsetUnit: "days",
+                source,
+                enabled,
             });
             continue;
         }
         if (autoEvt.type === "duty") {
             const percent = clampPct(autoEvt.percent ?? stateDutyRate ?? settings.dutyRatePct ?? 0);
             const baseValue = goods + (dutyIncludeFreight ? freight : 0);
-            const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+            const due = addDays(baseDate, lagDays);
             const amount = -(baseValue * (percent / 100));
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
             autoResults.duty = { amount, due };
-            events.push({
+            rows.push({
                 id: autoEvt.id,
                 label: `${prefix}${autoEvt.label || "Zoll"}`.trim(),
                 date: dueIso,
@@ -1357,7 +1342,13 @@ function orderEvents(record, config, settings) {
                 type: "duty",
                 auto: true,
                 due,
-                direction: amount <= 0 ? "out" : "in",
+                direction: mapPlanningDirection(amount),
+                kind: "auto",
+                anchor,
+                offsetValue: lagDays,
+                offsetUnit: "days",
+                source,
+                enabled,
             });
             continue;
         }
@@ -1365,13 +1356,13 @@ function orderEvents(record, config, settings) {
             const percent = clampPct(autoEvt.percent ?? stateEustRate ?? settings.eustRatePct ?? 0);
             const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
             const baseValue = goods + freight + dutyAbs;
-            const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+            const due = addDays(baseDate, lagDays);
             const amount = -(baseValue * (percent / 100));
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
             autoResults.eust = { amount, due };
-            events.push({
+            rows.push({
                 id: autoEvt.id,
                 label: `${prefix}${autoEvt.label || "EUSt"}`.trim(),
                 date: dueIso,
@@ -1379,25 +1370,31 @@ function orderEvents(record, config, settings) {
                 type: "eust",
                 auto: true,
                 due,
-                direction: amount <= 0 ? "out" : "in",
+                direction: mapPlanningDirection(amount),
+                kind: "auto",
+                anchor,
+                offsetValue: lagDays,
+                offsetUnit: "days",
+                source,
+                enabled,
             });
             continue;
         }
         if (autoEvt.type === "vat_refund") {
             const eust = autoResults.eust;
-            if (!eust || eust.amount === 0 || record.vatRefundEnabled === false)
-                continue;
             const percent = clampPct(autoEvt.percent ?? 100);
             const months = Number((autoEvt.lagMonths ?? vatLagMonths) || 0);
-            const baseDay = addDays(eust.due || baseDate, Number(autoEvt.lagDays || 0));
+            const baseDay = addDays((eust && eust.due) || baseDate, lagDays);
             const shifted = addMonths(baseDay, months);
             const due = monthEnd(shifted);
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
-            const amount = Math.abs(eust.amount) * (percent / 100);
+            const amount = eust && eust.amount !== 0 && record.vatRefundEnabled !== false
+                ? Math.abs(eust.amount) * (percent / 100)
+                : 0;
             autoResults.vat = { amount, due };
-            events.push({
+            rows.push({
                 id: autoEvt.id,
                 label: `${prefix}${autoEvt.label || "EUSt-Erstattung"}`.trim(),
                 date: dueIso,
@@ -1405,18 +1402,24 @@ function orderEvents(record, config, settings) {
                 type: "vat_refund",
                 auto: true,
                 due,
-                direction: amount <= 0 ? "out" : "in",
+                direction: mapPlanningDirection(amount),
+                kind: "auto",
+                anchor,
+                offsetValue: months,
+                offsetUnit: "months",
+                source,
+                enabled,
             });
             continue;
         }
         if (autoEvt.type === "fx_fee") {
             const percent = clampPct(autoEvt.percent ?? stateFxFee ?? settings.fxFeePct ?? 0);
-            const due = addDays(baseDate, Number(autoEvt.lagDays || 0));
+            const due = addDays(baseDate, lagDays);
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
             const amount = -(goods * (percent / 100));
-            events.push({
+            rows.push({
                 id: autoEvt.id,
                 label: `${prefix}${autoEvt.label || "FX"}`.trim(),
                 date: dueIso,
@@ -1424,14 +1427,105 @@ function orderEvents(record, config, settings) {
                 type: "fx_fee",
                 auto: true,
                 due,
-                direction: amount <= 0 ? "out" : "in",
+                direction: mapPlanningDirection(amount),
+                kind: "auto",
+                anchor,
+                offsetValue: lagDays,
+                offsetUnit: "days",
+                source,
+                enabled,
             });
             continue;
         }
     }
-    return events
-        .filter(evt => evt && Number.isFinite(evt.amount))
-        .sort((a, b) => (a.date === b.date ? (a.label || "").localeCompare(b.label || "") : a.date.localeCompare(b.date)));
+    return rows
+        .filter(evt => evt && Number.isFinite(Number(evt.amount || 0)))
+        .sort((a, b) => {
+        const leftDate = a.date || "9999-12-31";
+        const rightDate = b.date || "9999-12-31";
+        return leftDate === rightDate
+            ? (a.label || "").localeCompare(b.label || "")
+            : leftDate.localeCompare(rightDate);
+    });
+}
+function orderEvents(record, config, settings) {
+    return derivePoPlanningRows(record, config, settings, {
+        explicitAutoEvents: Array.isArray(record?.autoEvents) ? record.autoEvents : [],
+    })
+        .filter((evt) => evt.enabled !== false)
+        .map((evt) => ({
+        id: evt.id,
+        label: evt.label,
+        date: evt.date,
+        amount: evt.amount,
+        type: evt.type,
+        auto: evt.auto,
+        due: evt.due,
+        direction: evt.direction,
+    }));
+}
+function buildPoPaymentPlanning(record, config, settings, paymentRecords = []) {
+    (0, poPaymentIdentity_js_1.normalizePoPaymentStateRecord)(record, { mutate: true });
+    ensurePaymentLog(record);
+    const milestones = Array.isArray(record.milestones) ? record.milestones : [];
+    const msMap = new Map(milestones.map(item => [item.id, item]));
+    const paymentMap = buildPaymentMap(paymentRecords);
+    const planningRecord = JSON.parse(JSON.stringify(record));
+    const planningRows = derivePoPlanningRows(planningRecord, config, settings, {
+        explicitAutoEvents: Array.isArray(record?.autoEvents) ? record.autoEvents : [],
+    });
+    const paymentRows = planningRows
+        .filter((evt) => evt.enabled !== false)
+        .map((evt) => {
+        const log = record.paymentLog?.[evt.id] || {};
+        const paymentInternalId = ensurePaymentInternalId(record, evt.id);
+        const amount = Number(evt.amount || 0);
+        const paymentId = log.paymentId ? String(log.paymentId) : "";
+        const payment = paymentId ? paymentMap.get(paymentId) : null;
+        const status = (0, poPaymentIdentity_js_1.hasExplicitPoPaymentEvidence)({ ...log, paymentId }) ? "paid" : "open";
+        return {
+            id: evt.id,
+            paymentInternalId,
+            typeLabel: mapPaymentType(evt, msMap.get(evt.id)),
+            label: evt.label,
+            dueDate: evt.date || null,
+            plannedEur: Math.abs(amount),
+            status,
+            paidDate: log.paidDate || payment?.paidDate || null,
+            paidEurActual: Number.isFinite(Number(log.amountActualEur)) ? Number(log.amountActualEur) : null,
+            paidUsdActual: Number.isFinite(Number(log.amountActualUsd)) ? Number(log.amountActualUsd) : null,
+            method: payment?.method || log.method || null,
+            paidBy: payment?.payer || log.payer || null,
+            paymentId: paymentId || null,
+            note: log.note || "",
+            invoiceIdOrNumber: payment?.invoiceIdOrNumber || log.invoiceIdOrNumber || "",
+            transferReference: payment?.transferReference || log.transferReference || "",
+            invoiceDriveUrl: payment?.invoiceDriveUrl || "",
+            invoiceFolderDriveUrl: payment?.invoiceFolderDriveUrl || "",
+            eventType: evt.type || null,
+            direction: evt.direction,
+        };
+    });
+    return {
+        record: planningRecord,
+        schedule: serialiseTimeline(computeTimeline(planningRecord, settings)),
+        planningRows: planningRows.map((row) => ({
+            id: row.id,
+            label: row.label,
+            kind: row.kind,
+            eventType: row.type || null,
+            anchor: row.anchor || "ETA",
+            offsetValue: Number(row.offsetValue || 0),
+            offsetUnit: row.offsetUnit || "days",
+            source: row.source || "PO",
+            enabled: row.enabled !== false,
+            dueDate: row.date || null,
+            plannedAmountEur: Math.abs(Number(row.amount || 0)),
+            direction: row.direction,
+            typeLabel: mapPaymentType(row, msMap.get(row.id)),
+        })),
+        paymentRows,
+    };
 }
 function buildEventList(events, paymentLog = {}, paymentRecords = []) {
     const wrapper = el("div", { class: "po-event-table" });

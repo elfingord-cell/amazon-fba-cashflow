@@ -17,7 +17,7 @@ import {
 } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
-import { buildPaymentRows } from "../../../ui/orderEditorFactory.js";
+import { buildPaymentRows, buildPoPaymentPlanning } from "../../../ui/orderEditorFactory.js";
 import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
 import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
@@ -57,6 +57,17 @@ interface PoMilestoneDraft {
   lagDays: number;
 }
 
+interface PoAutoEventDraft {
+  id?: string;
+  type: string;
+  label: string;
+  anchor: string;
+  lagDays: number;
+  lagMonths?: number;
+  enabled?: boolean;
+  percent?: number;
+}
+
 interface PoFormValues {
   id?: string;
   poNo: string;
@@ -73,6 +84,7 @@ interface PoFormValues {
   ddp: boolean;
   archived: boolean;
   milestones: PoMilestoneDraft[];
+  autoEvents?: PoAutoEventDraft[];
   items: PoItemDraft[];
 }
 
@@ -144,6 +156,22 @@ interface PoPaymentRow {
   invoiceFolderDriveUrl: string;
   eventType: string | null;
   direction?: "out" | "in" | "neutral";
+}
+
+interface PoPaymentPlanRow {
+  id: string;
+  label: string;
+  kind: "manual" | "auto";
+  eventType: string | null;
+  anchor: string;
+  offsetValue: number;
+  offsetUnit: "days" | "months" | string;
+  source: string;
+  enabled: boolean;
+  dueDate: string | null;
+  plannedAmountEur: number;
+  direction: "out" | "in" | "neutral";
+  typeLabel: string;
 }
 
 interface PoPaymentFormValues {
@@ -332,6 +360,37 @@ function mapBuiltPaymentRow(row: Record<string, unknown>): PoPaymentRow {
     invoiceFolderDriveUrl: String(row.invoiceFolderDriveUrl || ""),
     eventType: row.eventType ? String(row.eventType) : null,
     direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
+  };
+}
+
+function normalizeAutoEventDraft(row: Record<string, unknown> | PoAutoEventDraft | null | undefined): PoAutoEventDraft {
+  return {
+    id: row?.id ? String(row.id) : undefined,
+    type: String(row?.type || ""),
+    label: String(row?.label || "Auto-Event"),
+    anchor: String(row?.anchor || "ETA"),
+    lagDays: Number(row?.lagDays || 0),
+    lagMonths: row?.lagMonths == null ? undefined : Number(row.lagMonths || 0),
+    enabled: row?.enabled !== false,
+    percent: row?.percent == null ? undefined : Number(row.percent || 0),
+  };
+}
+
+function mapPlanningRow(row: Record<string, unknown>): PoPaymentPlanRow {
+  return {
+    id: String(row.id || ""),
+    label: String(row.label || ""),
+    kind: row.kind === "auto" ? "auto" : "manual",
+    eventType: row.eventType ? String(row.eventType) : null,
+    anchor: String(row.anchor || "ETA"),
+    offsetValue: Number(row.offsetValue || 0),
+    offsetUnit: String(row.offsetUnit || "days"),
+    source: String(row.source || "PO"),
+    enabled: row.enabled !== false,
+    dueDate: row.dueDate ? String(row.dueDate) : null,
+    plannedAmountEur: Number(row.plannedAmountEur || 0),
+    direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
+    typeLabel: String(row.typeLabel || ""),
   };
 }
 
@@ -612,6 +671,23 @@ function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | nu
     anchor: String(row.anchor || "ORDER_DATE"),
     lagDays: Number(row.lagDays || 0),
   }));
+  const autoEvents = (values.autoEvents || existing?.autoEvents || []).map((row) => ({
+    id: String((row as Record<string, unknown>)?.id || randomId("po-auto")),
+    type: String((row as Record<string, unknown>)?.type || ""),
+    label: String((row as Record<string, unknown>)?.label || "Auto-Event"),
+    anchor: String((row as Record<string, unknown>)?.anchor || "ETA"),
+    lagDays: Number((row as Record<string, unknown>)?.lagDays || 0),
+    lagMonths: (row as Record<string, unknown>)?.lagMonths == null ? undefined : Number((row as Record<string, unknown>)?.lagMonths || 0),
+    enabled: (row as Record<string, unknown>)?.enabled !== false,
+    percent: (row as Record<string, unknown>)?.percent == null ? undefined : Number((row as Record<string, unknown>)?.percent || 0),
+  }));
+  if (values.ddp === true) {
+    autoEvents.forEach((row) => {
+      if (["freight", "duty", "eust", "vat_refund"].includes(String(row.type || ""))) {
+        row.enabled = false;
+      }
+    });
+  }
   return {
     ...(existing || {}),
     id: String(values.id || existing?.id || randomId("po")),
@@ -643,7 +719,7 @@ function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | nu
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     paymentLog: existing?.paymentLog || {},
-    autoEvents: existing?.autoEvents || undefined,
+    autoEvents,
   };
 }
 
@@ -1167,50 +1243,80 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     return warnings;
   }, [draftItems]);
 
-  const draftPaymentRowsRaw = useMemo<PoPaymentRow[]>(() => {
-    if (!draftPoRecord) return [];
+  const draftPlanningSnapshot = useMemo<{
+    schedule: { orderDate?: unknown; prodDoneDate?: unknown; etdDate?: unknown; etaDate?: unknown };
+    planningRows: PoPaymentPlanRow[];
+    paymentRows: PoPaymentRow[];
+  }>(() => {
+    if (!draftPoRecord) {
+      return {
+        schedule: {},
+        planningRows: [],
+        paymentRows: [],
+      };
+    }
     try {
       const cloned = structuredClone(draftPoRecord);
-      const rows = buildPaymentRows(
+      const snapshot = buildPoPaymentPlanning(
         cloned,
         PO_CONFIG,
         poSettings,
         (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
       );
-      return rows
-        .map((row) => mapBuiltPaymentRow(row as Record<string, unknown>))
-        .filter((row) => row.direction !== "in")
-        .filter((row) => row.id && row.plannedEur > 0);
+      return {
+        schedule: snapshot.schedule as Record<string, unknown>,
+        planningRows: (Array.isArray(snapshot.planningRows) ? snapshot.planningRows : []).map((row) => mapPlanningRow(row as Record<string, unknown>)),
+        paymentRows: (Array.isArray(snapshot.paymentRows) ? snapshot.paymentRows : []).map((row) => mapBuiltPaymentRow(row as Record<string, unknown>)),
+      };
     } catch {
-      return [];
+      return {
+        schedule: {},
+        planningRows: [],
+        paymentRows: [],
+      };
     }
   }, [draftPoRecord, poSettings, state.payments]);
 
-  const draftIncomingPaymentRows = useMemo<PoPaymentRow[]>(() => {
-    if (!draftPoRecord) return [];
-    try {
-      const cloned = structuredClone(draftPoRecord);
-      const rows = buildPaymentRows(
-        cloned,
-        PO_CONFIG,
-        poSettings,
-        (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
-        { includeIncoming: true },
-      );
-      return rows
-        .map((row) => mapBuiltPaymentRow(row as Record<string, unknown>))
-        .filter((row) => row.eventType === "vat_refund" || row.direction === "in")
-        .filter((row) => row.id && row.plannedEur > 0)
-        .sort((left, right) => String(left.dueDate || "").localeCompare(String(right.dueDate || "")));
-    } catch {
-      return [];
-    }
-  }, [draftPoRecord, poSettings, state.payments]);
+  const draftPaymentRowsRaw = useMemo<PoPaymentRow[]>(() => (
+    draftPlanningSnapshot.paymentRows
+      .filter((row) => row.direction !== "in")
+      .filter((row) => row.id && row.plannedEur > 0)
+  ), [draftPlanningSnapshot]);
+
+  const draftIncomingPaymentRows = useMemo<PoPaymentRow[]>(() => (
+    draftPlanningSnapshot.paymentRows
+      .filter((row) => row.eventType === "vat_refund" || row.direction === "in")
+      .filter((row) => row.id && row.plannedEur > 0)
+      .sort((left, right) => String(left.dueDate || "").localeCompare(String(right.dueDate || "")))
+  ), [draftPlanningSnapshot]);
 
   const draftPaymentRows = useMemo<PoPaymentRow[]>(
     () => sortPaymentRowsByFlow(draftPaymentRowsRaw),
     [draftPaymentRowsRaw],
   );
+
+  const draftPaymentPlanRows = useMemo<PoPaymentPlanRow[]>(
+    () => draftPlanningSnapshot.planningRows,
+    [draftPlanningSnapshot],
+  );
+
+  const draftAutoEvents = useMemo<PoAutoEventDraft[]>(
+    () => (Array.isArray(draftValues?.autoEvents) ? draftValues.autoEvents.map((row) => normalizeAutoEventDraft(row)) : []),
+    [draftValues?.autoEvents],
+  );
+
+  const draftPlanRowById = useMemo(
+    () => new Map(draftPaymentPlanRows.map((row) => [row.id, row])),
+    [draftPaymentPlanRows],
+  );
+
+  function updateDraftAutoEvent(eventId: string, patch: Partial<PoAutoEventDraft>): void {
+    const current = Array.isArray(form.getFieldValue("autoEvents"))
+      ? (form.getFieldValue("autoEvents") as Record<string, unknown>[]).map((row) => normalizeAutoEventDraft(row))
+      : [];
+    const next = current.map((row) => (row.id === eventId ? { ...row, ...patch } : row));
+    form.setFieldValue("autoEvents", next);
+  }
 
   useEffect(() => {
     if (!markerPendingAction || !modalOpen) return;
@@ -1425,7 +1531,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       anchor: row.anchor,
       lagDays: row.lagDays,
     }));
-    return {
+    const baseDraft: PoFormValues = {
       id: existing?.id ? String(existing.id) : undefined,
       poNo: String(existing?.poNo || ""),
       supplierId,
@@ -1451,6 +1557,28 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         : (supplierMilestones.length ? supplierMilestones : defaultMilestones()),
       items: supplierScopedItems,
     };
+    try {
+      const existingRecord = existing ? { ...existing } as Record<string, unknown> : null;
+      const snapshot = buildPoPaymentPlanning(
+        toPoRecord(baseDraft, existingRecord),
+        PO_CONFIG,
+        poSettings,
+        (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
+      );
+      return {
+        ...baseDraft,
+        autoEvents: Array.isArray(snapshot.record?.autoEvents)
+          ? (snapshot.record.autoEvents as Record<string, unknown>[]).map((row) => normalizeAutoEventDraft(row))
+          : [],
+      };
+    } catch {
+      return {
+        ...baseDraft,
+        autoEvents: Array.isArray(existing?.autoEvents)
+          ? (existing.autoEvents as Record<string, unknown>[]).map((row) => normalizeAutoEventDraft(row))
+          : [],
+      };
+    }
   }
 
   function applyDefaultsToItem(index: number, skuValue: string): void {
@@ -2665,65 +2793,169 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           ) : null}
 
           <Card size="small" style={{ marginBottom: 12 }}>
-            <Space style={{ width: "100%", justifyContent: "space-between" }}>
-              <Text strong>Milestones</Text>
-              <Text type={Math.abs(milestoneSum(draftValues?.milestones || []) - 100) <= 0.01 ? "secondary" : "danger"}>
-                Summe: {formatNumber(milestoneSum(draftValues?.milestones || []), 2)}%
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+                <Text strong>Payment Planning</Text>
+                <Text type={Math.abs(milestoneSum(draftValues?.milestones || []) - 100) <= 0.01 ? "secondary" : "danger"}>
+                  Supplier-Milestones: {formatNumber(milestoneSum(draftValues?.milestones || []), 2)}%
+                </Text>
+              </Space>
+              <Text type="secondary">
+                Alle PO-Payment-Events nutzen hier denselben Anchor-/Offset-Pfad wie Timeline und Payment Preview. Offsets sind explizit in Tagen bzw. Monaten.
               </Text>
+              <Form.List name="milestones">
+                {(fields, { add, remove }) => (
+                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    <StatsTableShell>
+                      <table className="v2-stats-table">
+                        <thead>
+                          <tr>
+                            <th>Art</th>
+                            <th>Event</th>
+                            <th>% / Status</th>
+                            <th>Anchor</th>
+                            <th>Offset</th>
+                            <th>Due</th>
+                            <th>Planned EUR</th>
+                            <th>Quelle</th>
+                            <th>Aktion</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fields.map((field) => {
+                            const milestoneId = String(form.getFieldValue(["milestones", field.name, "id"]) || "");
+                            const planning = draftPlanRowById.get(milestoneId) || null;
+                            return (
+                              <tr key={field.key}>
+                                <td><Tag color="blue">Milestone</Tag></td>
+                                <td>
+                                  <Form.Item
+                                    {...field}
+                                    name={[field.name, "label"]}
+                                    style={{ marginBottom: 0, minWidth: 220 }}
+                                    rules={[{ required: true, message: "Label fehlt." }]}
+                                  >
+                                    <Input placeholder="Label" />
+                                  </Form.Item>
+                                </td>
+                                <td>
+                                  <Form.Item
+                                    {...field}
+                                    name={[field.name, "percent"]}
+                                    style={{ marginBottom: 0, width: 100 }}
+                                    rules={[{ required: true, message: "%" }]}
+                                  >
+                                    <DeNumberInput mode="percent" min={0} max={100} />
+                                  </Form.Item>
+                                </td>
+                                <td>
+                                  <Form.Item
+                                    {...field}
+                                    name={[field.name, "anchor"]}
+                                    style={{ marginBottom: 0, minWidth: 140 }}
+                                    rules={[{ required: true, message: "Anchor fehlt." }]}
+                                  >
+                                    <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
+                                  </Form.Item>
+                                </td>
+                                <td>
+                                  <Space size={4} wrap>
+                                    <Form.Item
+                                      {...field}
+                                      name={[field.name, "lagDays"]}
+                                      style={{ marginBottom: 0, width: 100 }}
+                                    >
+                                      <DeNumberInput mode="int" />
+                                    </Form.Item>
+                                    <Text type="secondary">Tage</Text>
+                                  </Space>
+                                </td>
+                                <td>{formatDate(planning?.dueDate)}</td>
+                                <td>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</td>
+                                <td><Tag>{planning?.source || "PO-Milestone"}</Tag></td>
+                                <td><Button danger onClick={() => remove(field.name)}>X</Button></td>
+                              </tr>
+                            );
+                          })}
+                          {draftAutoEvents.map((autoEvt) => {
+                            const planning = autoEvt.id ? draftPlanRowById.get(autoEvt.id) || null : null;
+                            const unitLabel = planning?.offsetUnit === "months" ? "Monate" : "Tage";
+                            const offsetValue = planning?.offsetUnit === "months"
+                              ? Number(autoEvt.lagMonths || 0)
+                              : Number(autoEvt.lagDays || 0);
+                            const ddpLocked = draftValues?.ddp === true && ["freight", "duty", "eust", "vat_refund"].includes(String(autoEvt.type || ""));
+                            return (
+                              <tr key={`auto-${autoEvt.id || autoEvt.type}`}>
+                                <td>
+                                  <Space direction="vertical" size={0}>
+                                    <Tag color={planning?.direction === "in" ? "green" : "gold"}>Auto</Tag>
+                                    {planning?.direction === "in" ? <Text type="secondary">Incoming</Text> : null}
+                                  </Space>
+                                </td>
+                                <td>
+                                  <Input
+                                    value={autoEvt.label}
+                                    onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { label: event.target.value })}
+                                  />
+                                </td>
+                                <td>
+                                  <Checkbox
+                                    checked={autoEvt.enabled !== false}
+                                    disabled={ddpLocked}
+                                    onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { enabled: event.target.checked })}
+                                  >
+                                    Aktiv
+                                  </Checkbox>
+                                </td>
+                                <td>
+                                  <Select
+                                    value={autoEvt.anchor || "ETA"}
+                                    style={{ minWidth: 140 }}
+                                    options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))}
+                                    onChange={(value) => updateDraftAutoEvent(String(autoEvt.id || ""), { anchor: String(value || "ETA") })}
+                                  />
+                                </td>
+                                <td>
+                                  <Space size={4} wrap>
+                                    <DeNumberInput
+                                      mode="int"
+                                      value={offsetValue}
+                                      style={{ width: 100 }}
+                                      onChange={(value) => updateDraftAutoEvent(
+                                        String(autoEvt.id || ""),
+                                        planning?.offsetUnit === "months"
+                                          ? { lagMonths: Number(value || 0) }
+                                          : { lagDays: Number(value || 0) },
+                                      )}
+                                    />
+                                    <Text type="secondary">{unitLabel}</Text>
+                                  </Space>
+                                </td>
+                                <td>{formatDate(planning?.dueDate)}</td>
+                                <td>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</td>
+                                <td><Tag>{planning?.source || "Settings-Default"}</Tag></td>
+                                <td>{ddpLocked ? <Text type="secondary">DDP</Text> : <Text type="secondary">—</Text>}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </StatsTableShell>
+                    <Button
+                      onClick={() => add({
+                        id: randomId("ms"),
+                        label: "Milestone",
+                        percent: 0,
+                        anchor: "ORDER_DATE",
+                        lagDays: 0,
+                      })}
+                    >
+                      Milestone
+                    </Button>
+                  </Space>
+                )}
+              </Form.List>
             </Space>
-            <Form.List name="milestones">
-              {(fields, { add, remove }) => (
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                  {fields.map((field) => (
-                    <Space key={field.key} align="start" style={{ width: "100%" }} wrap>
-                      <Form.Item
-                        {...field}
-                        name={[field.name, "label"]}
-                        style={{ minWidth: 240, flex: 2 }}
-                        rules={[{ required: true, message: "Label fehlt." }]}
-                      >
-                        <Input placeholder="Label" />
-                      </Form.Item>
-                      <Form.Item
-                        {...field}
-                        name={[field.name, "percent"]}
-                        style={{ width: 100 }}
-                        rules={[{ required: true, message: "%" }]}
-                      >
-                        <DeNumberInput mode="percent" min={0} max={100} />
-                      </Form.Item>
-                      <Form.Item
-                        {...field}
-                        name={[field.name, "anchor"]}
-                        style={{ width: 160 }}
-                        rules={[{ required: true, message: "Anchor fehlt." }]}
-                      >
-                        <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
-                      </Form.Item>
-                      <Form.Item
-                        {...field}
-                        name={[field.name, "lagDays"]}
-                        style={{ width: 120 }}
-                      >
-                        <DeNumberInput mode="int" />
-                      </Form.Item>
-                      <Button danger onClick={() => remove(field.name)}>X</Button>
-                    </Space>
-                  ))}
-                  <Button
-                    onClick={() => add({
-                      id: randomId("ms"),
-                      label: "Milestone",
-                      percent: 0,
-                      anchor: "ORDER_DATE",
-                      lagDays: 0,
-                    })}
-                  >
-                    Milestone
-                  </Button>
-                </Space>
-              )}
-            </Form.List>
           </Card>
 
           <div ref={paymentSectionRef}>
@@ -2741,27 +2973,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             {draftPoRecord ? (
               <Space direction="vertical" size={4} style={{ width: "100%", marginTop: 8 }}>
                 <Text>
-                  Timeline: Order {formatDate(draftPoRecord.orderDate)} · ETD {
-                    formatDate(
-                      draftPoRecord.etdManual
-                      || computeScheduleFromOrderDate({
-                        orderDate: draftPoRecord.orderDate,
-                        productionLeadTimeDays: draftPoRecord.prodDays,
-                        logisticsLeadTimeDays: draftPoRecord.transitDays,
-                        bufferDays: 0,
-                      }).etdDate,
-                    )
-                  } · ETA {
-                    formatDate(
-                      draftPoRecord.etaManual
-                      || computeScheduleFromOrderDate({
-                        orderDate: draftPoRecord.orderDate,
-                        productionLeadTimeDays: draftPoRecord.prodDays,
-                        logisticsLeadTimeDays: draftPoRecord.transitDays,
-                        bufferDays: 0,
-                      }).etaDate,
-                    )
-                  }
+                  Timeline: Order {formatDate(draftPlanningSnapshot.schedule.orderDate || draftPoRecord.orderDate)} · ETD {formatDate(draftPlanningSnapshot.schedule.etdDate)} · ETA {formatDate(draftPlanningSnapshot.schedule.etaDate)}
                 </Text>
                 {!editingId ? (
                   <Alert

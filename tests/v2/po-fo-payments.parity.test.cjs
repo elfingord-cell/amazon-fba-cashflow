@@ -6,7 +6,7 @@ const { pathToFileURL } = require("node:url");
 const {
   buildPaymentJournalRowsFromState: buildV2PaymentJournalRowsFromState,
 } = require("../../.test-build/migration/v2/domain/paymentJournal.js");
-const { buildPaymentRows } = require("../../.test-build/migration/ui/orderEditorFactory.js");
+const { buildPaymentRows, buildPoPaymentPlanning } = require("../../.test-build/migration/ui/orderEditorFactory.js");
 
 const PO_CONFIG = {
   slug: "po",
@@ -429,4 +429,82 @@ test("PO payment rows and journal ignore stray generic auto-event payments witho
     [],
     "the freight journal row must stay open even when a stray generic payment exists",
   );
+});
+
+test("PO planning snapshot keeps milestone offsets and settings-derived auto-event due dates aligned", () => {
+  const settings = {
+    fxRate: 1,
+    fxFeePct: 0,
+    dutyRatePct: 7,
+    dutyIncludeFreight: true,
+    eustRatePct: 19,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 4,
+    freightLagDays: 0,
+    paymentDueDefaults: {
+      po: {
+        freight: { anchor: "ETA", lagDays: 36 },
+        duty: { anchor: "ETA", lagDays: 36 },
+        eust: { anchor: "ETA", lagDays: 36 },
+        vatRefund: { anchor: "ETA", lagDays: 0 },
+      },
+    },
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+  const po = {
+    id: "po-modal-26002",
+    poNo: "26002",
+    supplierId: "sup-26002",
+    orderDate: "2026-01-23",
+    etdManual: "2026-03-24",
+    etaManual: "2026-05-08",
+    prodDays: 61,
+    transitDays: 45,
+    dutyRatePct: 7,
+    eustRatePct: 19,
+    dutyIncludeFreight: true,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 4,
+    freightEur: "4377,00",
+    items: [
+      {
+        id: "poi-1",
+        sku: "SKU-26002",
+        units: "100",
+        unitCostUsd: "190,41",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+        unitCostManuallyEdited: false,
+      },
+    ],
+    milestones: [
+      { id: "po-26002-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "po-26002-balance", label: "Balance", percent: 70, anchor: "ETA", lagDays: -10 },
+    ],
+    paymentLog: {
+      "po-26002-deposit": { status: "paid", paidDate: "2026-01-23", amountActualEur: 5712.31 },
+    },
+  };
+
+  const snapshot = buildPoPaymentPlanning(po, PO_CONFIG, settings, []);
+  const balancePlan = snapshot.planningRows.find((row) => String(row.id || "") === "po-26002-balance");
+  const freightPlan = snapshot.planningRows.find((row) => String(row.eventType || "") === "freight");
+  const dutyPlan = snapshot.planningRows.find((row) => String(row.eventType || "") === "duty");
+  const eustPlan = snapshot.planningRows.find((row) => String(row.eventType || "") === "eust");
+  const balancePaymentRow = buildPaymentRows(po, PO_CONFIG, settings, []).find((row) => String(row.id || "") === "po-26002-balance");
+
+  assert.ok(balancePlan);
+  assert.ok(freightPlan);
+  assert.ok(dutyPlan);
+  assert.ok(eustPlan);
+  assert.equal(snapshot.schedule.etaDate, "2026-05-08");
+  assert.equal(balancePlan.dueDate, "2026-04-28");
+  assert.equal(balancePaymentRow?.dueDate, "2026-04-28");
+  assert.equal(freightPlan.dueDate, "2026-06-13");
+  assert.equal(dutyPlan.dueDate, "2026-06-13");
+  assert.equal(eustPlan.dueDate, "2026-06-13");
+  assert.equal(freightPlan.source, "Settings-Default");
+  assert.equal(Array.isArray(snapshot.record?.autoEvents), true);
+  assert.equal(snapshot.record.autoEvents.length >= 5, true);
 });
