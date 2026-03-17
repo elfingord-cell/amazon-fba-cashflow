@@ -74,6 +74,7 @@ function buildProductGridRows(input) {
             id: String(product.id || (sku ? `prod-${sku}` : `prod-${index}`)),
             sku,
             alias: String(product.alias || ""),
+            fnsku: String(product.fnsku || "").trim(),
             supplierId: String(product.supplierId || ""),
             categoryId: product.categoryId ? String(product.categoryId) : null,
             status: normalizeStatus(product.status),
@@ -101,6 +102,7 @@ function buildProductGridRows(input) {
         const haystack = [
             row.sku,
             row.alias,
+            row.fnsku,
             row.supplierId,
             row.categoryId || "",
             row.portfolioBucket,

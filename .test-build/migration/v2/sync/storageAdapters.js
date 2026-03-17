@@ -39,6 +39,7 @@ exports.createWorkspaceBackup = createWorkspaceBackup;
 exports.createDefaultStorageAdapter = createDefaultStorageAdapter;
 const storageLocal_js_1 = require("../../data/storageLocal.js");
 const poPaymentIdentity_js_1 = require("../../domain/poPaymentIdentity.js");
+const localTestMode_js_1 = require("../app/localTestMode.js");
 const appState_1 = require("../state/appState");
 const BACKUP_KEY = "v2_workspace_backups_v1";
 const MAX_BACKUPS = 20;
@@ -102,6 +103,9 @@ function createWorkspaceBackup(source, state) {
 }
 class LocalStorageAdapter {
     async load() {
+        if ((0, localTestMode_js_1.isLocalV2TestModeEnabled)()) {
+            return (0, localTestMode_js_1.ensureLocalTestWorkspaceSeed)();
+        }
         return (0, appState_1.ensureAppStateV2)((0, storageLocal_js_1.loadState)());
     }
     async save(next, meta) {
@@ -196,5 +200,8 @@ class SupabaseFirstStorageAdapter {
 }
 exports.SupabaseFirstStorageAdapter = SupabaseFirstStorageAdapter;
 function createDefaultStorageAdapter() {
+    if ((0, localTestMode_js_1.isLocalV2TestModeEnabled)()) {
+        return new LocalStorageAdapter();
+    }
     return new SupabaseFirstStorageAdapter();
 }

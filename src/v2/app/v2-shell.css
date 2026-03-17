@@ -1248,11 +1248,12 @@
 
 .v2-po-modal-timeline-card {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid rgba(15, 27, 45, 0.08);
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(241, 245, 249, 0.72));
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 244, 255, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .v2-po-modal-timeline {
@@ -1268,12 +1269,124 @@
   color: #64748b;
 }
 
+.v2-po-modal-timeline-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.v2-po-modal-timeline-quick-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.v2-po-modal-timeline-quick-card--overview {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.05), rgba(59, 130, 246, 0.08));
+  border-color: rgba(59, 130, 246, 0.16);
+}
+
+.v2-po-modal-timeline-quick-card--paid {
+  border-color: rgba(34, 197, 94, 0.24);
+}
+
+.v2-po-modal-timeline-quick-card--open {
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.v2-po-modal-timeline-quick-card--overdue {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(254, 242, 242, 0.92));
+}
+
+.v2-po-modal-timeline-quick-card--disabled {
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.v2-po-modal-timeline-quick-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.v2-po-modal-timeline-quick-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.v2-po-modal-timeline-quick-stat {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(241, 245, 249, 0.88);
+  color: #475569;
+  border: 1px solid transparent;
+}
+
+.v2-po-modal-timeline-quick-stat--paid {
+  background: rgba(34, 197, 94, 0.14);
+  color: #15803d;
+}
+
+.v2-po-modal-timeline-quick-stat--open {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.v2-po-modal-timeline-quick-stat--overdue {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+.v2-po-modal-timeline-quick-stat--disabled {
+  background: rgba(203, 213, 225, 0.52);
+  color: #64748b;
+}
+
+.v2-po-modal-timeline-lane-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.v2-po-modal-timeline-lane-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.v2-po-modal-timeline-lane-chip--logistics {
+  background: rgba(226, 232, 240, 0.7);
+  color: #475569;
+}
+
+.v2-po-modal-timeline-lane-chip--payments {
+  background: rgba(255, 237, 213, 0.88);
+  color: #9a3412;
+}
+
 .v2-po-modal-timeline-track {
   position: relative;
-  min-height: 132px;
-  border-radius: 12px;
-  border: 1px dashed rgba(15, 27, 45, 0.16);
-  background: linear-gradient(180deg, #ffffff, #eef4ff);
+  min-height: 214px;
+  border-radius: 18px;
+  border: 1px solid rgba(15, 27, 45, 0.1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 244, 255, 0.96));
   overflow: hidden;
 }
 
@@ -1281,60 +1394,117 @@
   position: absolute;
   left: 14px;
   right: 14px;
-  top: 62px;
-  height: 10px;
   border-radius: 999px;
   background: rgba(15, 27, 45, 0.08);
 }
 
+.v2-po-modal-timeline-track-bg--logistics {
+  top: 98px;
+  height: 12px;
+  background: rgba(100, 116, 139, 0.18);
+}
+
+.v2-po-modal-timeline-track-bg--payments {
+  top: 156px;
+  height: 2px;
+  background: rgba(148, 163, 184, 0.24);
+}
+
+.v2-po-modal-timeline-month {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-right: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.v2-po-modal-timeline-month--odd {
+  background: rgba(241, 245, 249, 0.42);
+}
+
+.v2-po-modal-timeline-month-label {
+  position: absolute;
+  top: 10px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.v2-po-modal-timeline-lane-badge {
+  position: absolute;
+  left: 10px;
+  z-index: 2;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.v2-po-modal-timeline-lane-badge--logistics {
+  top: 54px;
+  background: rgba(226, 232, 240, 0.92);
+  color: #475569;
+}
+
+.v2-po-modal-timeline-lane-badge--payments {
+  top: 122px;
+  background: rgba(255, 237, 213, 0.96);
+  color: #9a3412;
+}
+
 .v2-po-modal-timeline-segment {
   position: absolute;
-  top: 62px;
-  height: 10px;
+  top: 98px;
+  height: 12px;
   border-radius: 999px;
-  transform: translateY(0);
+  z-index: 1;
 }
 
 .v2-po-modal-timeline-segment--production {
-  background: rgba(16, 185, 129, 0.52);
+  background: rgba(13, 148, 136, 0.34);
 }
 
 .v2-po-modal-timeline-segment--cny {
-  top: 50px;
-  height: 34px;
-  border-radius: 8px;
-  background: rgba(239, 68, 68, 0.16);
-  border: 1px solid rgba(220, 38, 38, 0.26);
+  top: 82px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.2);
 }
 
 .v2-po-modal-timeline-segment--transit {
-  background: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.28);
 }
 
 .v2-po-modal-timeline-anchor {
   position: absolute;
-  top: 12px;
+  top: 42px;
   transform: translateX(-50%);
   display: grid;
   justify-items: center;
   gap: 4px;
   min-width: max-content;
+  z-index: 2;
 }
 
 .v2-po-modal-timeline-anchor-line {
   width: 2px;
-  height: 36px;
-  background: rgba(71, 85, 105, 0.35);
+  height: 42px;
+  background: rgba(71, 85, 105, 0.28);
 }
 
 .v2-po-modal-timeline-anchor-label {
   font-size: 11px;
   font-weight: 600;
   color: #334155;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 3px 9px;
 }
 
 .v2-po-modal-timeline-anchor--eta .v2-po-modal-timeline-anchor-label {
@@ -1344,12 +1514,12 @@
 
 .v2-po-modal-timeline-payment {
   position: absolute;
-  top: 88px;
   transform: translateX(-50%);
   display: grid;
   justify-items: center;
-  gap: 4px;
-  min-width: max-content;
+  gap: 5px;
+  min-width: 0;
+  z-index: 3;
 }
 
 .v2-po-modal-timeline-payment-dot {
@@ -1357,20 +1527,30 @@
   height: 12px;
   border-radius: 999px;
   border: 2px solid #fff;
-  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.2);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.92), 0 0 0 4px rgba(148, 163, 184, 0.2);
 }
 
 .v2-po-modal-timeline-payment-label {
   font-size: 11px;
-  color: #475569;
-  background: rgba(255, 255, 255, 0.94);
+  color: #334155;
+  background: rgba(255, 255, 255, 0.96);
   border: 1px solid rgba(148, 163, 184, 0.3);
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 4px 8px;
+  line-height: 1.15;
+  text-align: center;
+  min-width: 72px;
+  max-width: 112px;
+  white-space: normal;
+  font-weight: 600;
 }
 
 .v2-po-modal-timeline-payment--open .v2-po-modal-timeline-payment-dot {
   background: #f59e0b;
+}
+
+.v2-po-modal-timeline-payment--overdue .v2-po-modal-timeline-payment-dot {
+  background: #ef4444;
 }
 
 .v2-po-modal-timeline-payment--paid .v2-po-modal-timeline-payment-dot {
@@ -1379,6 +1559,25 @@
 
 .v2-po-modal-timeline-payment--disabled .v2-po-modal-timeline-payment-dot {
   background: #cbd5e1;
+}
+
+.v2-po-modal-timeline-payment--open .v2-po-modal-timeline-payment-label {
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #9a3412;
+}
+
+.v2-po-modal-timeline-payment--overdue .v2-po-modal-timeline-payment-label {
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #991b1b;
+}
+
+.v2-po-modal-timeline-payment--paid .v2-po-modal-timeline-payment-label {
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #166534;
+}
+
+.v2-po-modal-timeline-payment--disabled .v2-po-modal-timeline-payment-label {
+  color: #64748b;
 }
 
 .v2-po-modal-timeline-legend {
@@ -1404,7 +1603,7 @@
 }
 
 .v2-po-modal-timeline-legend-box--production {
-  background: rgba(16, 185, 129, 0.6);
+  background: rgba(13, 148, 136, 0.48);
 }
 
 .v2-po-modal-timeline-legend-box--cny {
@@ -1412,7 +1611,7 @@
 }
 
 .v2-po-modal-timeline-legend-box--transit {
-  background: rgba(59, 130, 246, 0.56);
+  background: rgba(59, 130, 246, 0.34);
 }
 
 .v2-po-modal-timeline-legend-dot {
@@ -1429,13 +1628,17 @@
   background: #22c55e;
 }
 
+.v2-po-modal-timeline-legend-dot--overdue {
+  background: #ef4444;
+}
+
 .v2-po-modal-timeline-legend-dot--disabled {
   background: #cbd5e1;
 }
 
 .v2-po-planning-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .v2-po-planning-section-title {
@@ -1444,7 +1647,10 @@
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
-  padding-top: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 27, 45, 0.08);
+  background: rgba(248, 250, 252, 0.86);
 }
 
 .v2-po-planning-row {
@@ -1452,9 +1658,10 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   border: 1px solid rgba(15, 27, 45, 0.08);
-  border-radius: 12px;
-  background: #fff;
-  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .v2-po-planning-row--incoming {
@@ -1463,19 +1670,80 @@
 
 .v2-po-planning-row-main {
   display: grid;
-  grid-template-columns: minmax(180px, 1.35fr) repeat(3, minmax(140px, 1fr)) repeat(3, minmax(110px, 0.9fr));
-  gap: 10px 12px;
+  gap: 12px;
   min-width: 0;
+}
+
+.v2-po-planning-row-head {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.1fr) minmax(0, 1.4fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.v2-po-planning-row-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 10px 12px;
+}
+
+.v2-po-planning-row-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.v2-po-planning-metric {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  background: rgba(241, 245, 249, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .v2-po-planning-cell {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
 .v2-po-planning-cell--event {
   align-content: start;
+}
+
+.v2-po-planning-status-tag {
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.v2-po-planning-status-tag--paid {
+  background: rgba(34, 197, 94, 0.14);
+  color: #15803d;
+}
+
+.v2-po-planning-status-tag--open {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.v2-po-planning-status-tag--overdue {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+.v2-po-planning-status-tag--disabled {
+  background: rgba(203, 213, 225, 0.64);
+  color: #64748b;
+}
+
+.v2-po-planning-cell > .ant-typography.ant-typography-secondary {
+  font-size: 12px;
 }
 
 .v2-po-planning-row-actions {
@@ -2314,9 +2582,17 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .v2-po-planning-row,
-  .v2-po-planning-row-main {
+  .v2-po-planning-row {
     grid-template-columns: 1fr;
+  }
+
+  .v2-po-planning-row-head,
+  .v2-po-planning-row-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .v2-po-planning-row-metrics {
+    justify-content: flex-start;
   }
 
   .v2-po-planning-row-actions {
@@ -2324,15 +2600,15 @@
   }
 
   .v2-po-modal-timeline-track {
-    min-height: 180px;
+    min-height: 250px;
   }
 
   .v2-po-modal-timeline-anchor {
-    top: 10px;
+    top: 40px;
   }
 
-  .v2-po-modal-timeline-payment {
-    top: 120px;
+  .v2-po-modal-timeline-month-label {
+    font-size: 10px;
   }
 
   .v2-header {

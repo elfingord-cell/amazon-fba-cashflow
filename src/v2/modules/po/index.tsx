@@ -229,7 +229,48 @@ interface TimelineRange {
   totalDays: number;
 }
 
+interface TimelineMonthBand {
+  key: string;
+  left: number;
+  width: number;
+}
+
+type ModalPaymentVisualState = "paid" | "open" | "overdue" | "disabled";
+
+interface ModalTimelineMarker extends PoPaymentPlanRow {
+  paidDate: string | null;
+  plannedEur: number;
+  status: "open" | "paid";
+}
+
+interface ModalTimelineMarkerLayout extends PoPaymentPlanRow {
+  paidDate: string | null;
+  plannedEur: number;
+  dueDateObj: Date | null;
+  left: number;
+  rowIndex: number;
+  monthKey: string | null;
+  visualState: ModalPaymentVisualState;
+}
+
+interface ModalTimelineSummaryMarker extends ModalTimelineMarker {
+  monthKey: string | null;
+  visualState: ModalPaymentVisualState;
+}
+
+interface ModalTimelineSummaryMonth {
+  monthKey: string;
+  totalPlannedEur: number;
+  visualState: ModalPaymentVisualState;
+  labels: string[];
+  counts: Record<ModalPaymentVisualState, number>;
+}
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MODAL_PAYMENT_ROW_STEP = 32;
+const MODAL_PAYMENT_TRACK_BASE_HEIGHT = 214;
+const MODAL_PAYMENT_LANE_TOP = 150;
+const MODAL_TIMELINE_GRAPH_EXCLUDED_EVENT_TYPES = new Set(["vat_refund"]);
 
 function parseIsoDate(value: unknown): Date | null {
   if (!value) return null;
@@ -265,6 +306,43 @@ function toTimelinePercent(date: Date | null, range: TimelineRange): number {
   const clamped = Math.min(Math.max(date.getTime(), range.startMs), range.endMs);
   const diffDays = (clamped - range.startMs) / MS_PER_DAY;
   return Math.max(0, Math.min(100, (diffDays / range.totalDays) * 100));
+}
+
+function monthKeyFromDate(date: Date | null): string | null {
+  if (!date) return null;
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function startOfUtcMonth(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function addUtcMonths(date: Date, count: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + count, 1));
+}
+
+function formatDueMonth(dueDate: string | null): string {
+  const monthKey = normalizeMonthKey(String(dueDate || "").slice(0, 7));
+  return monthKey ? formatMonthLabel(monthKey) : "—";
+}
+
+function resolveModalPaymentVisualState(input: {
+  enabled: boolean;
+  status: "open" | "paid";
+  dueDate: string | null;
+  todayIso: string;
+}): ModalPaymentVisualState {
+  if (input.enabled === false) return "disabled";
+  if (input.status === "paid") return "paid";
+  if (input.dueDate && input.dueDate < input.todayIso) return "overdue";
+  return "open";
+}
+
+function modalPaymentStateLabel(state: ModalPaymentVisualState): string {
+  if (state === "paid") return "Bezahlt";
+  if (state === "overdue") return "Überfällig";
+  if (state === "disabled") return "Deaktiviert";
+  return "Offen";
 }
 
 function determineTimelineStartMonth(input: {
@@ -1431,7 +1509,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       draftPlanningSnapshot.schedule.etaDate,
       draftPlanningSnapshot.schedule.cnyStartDate,
       draftPlanningSnapshot.schedule.cnyEndDate,
-      ...draftStandardPlanningRows.map((row) => row.dueDate),
+      ...draftStandardPlanningRows
+        .filter((row) => !MODAL_TIMELINE_GRAPH_EXCLUDED_EVENT_TYPES.has(String(row.eventType || "")))
+        .map((row) => row.dueDate),
     ]
       .map((value) => parseIsoDate(value))
       .filter((value): value is Date => Boolean(value));
@@ -1445,7 +1525,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     };
   }, [draftPlanningSnapshot.schedule, draftStandardPlanningRows]);
 
-  const modalTimelineMarkers = useMemo(() => draftStandardPlanningRows.map((row) => {
+  const modalTimelineMarkers = useMemo<ModalTimelineMarker[]>(() => draftStandardPlanningRows.map((row) => {
     const paymentRow = draftPlanningSnapshot.paymentRows.find((entry) => entry.id === row.id) || null;
     return {
       ...row,
@@ -1454,6 +1534,113 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       plannedEur: paymentRow?.plannedEur ?? row.plannedAmountEur,
     };
   }), [draftPlanningSnapshot.paymentRows, draftStandardPlanningRows]);
+
+  const modalTimelineTodayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  const modalTimelineSummaryMarkers = useMemo<ModalTimelineSummaryMarker[]>(() => modalTimelineMarkers.map((marker) => ({
+    ...marker,
+    monthKey: monthKeyFromDate(parseIsoDate(marker.dueDate)),
+    visualState: resolveModalPaymentVisualState({
+      enabled: marker.enabled !== false,
+      status: marker.status,
+      dueDate: marker.dueDate,
+      todayIso: modalTimelineTodayIso,
+    }),
+  })), [modalTimelineMarkers, modalTimelineTodayIso]);
+
+  const modalTimelineGraphMarkers = useMemo(
+    () => modalTimelineSummaryMarkers.filter((marker) => !MODAL_TIMELINE_GRAPH_EXCLUDED_EVENT_TYPES.has(String(marker.eventType || ""))),
+    [modalTimelineSummaryMarkers],
+  );
+
+  const modalTimelineMarkerLayouts = useMemo<ModalTimelineMarkerLayout[]>(() => {
+    if (!modalTimelineRange) return [];
+    const lastLeftByRow: number[] = [];
+    return modalTimelineGraphMarkers.map((marker) => {
+      const dueDateObj = parseIsoDate(marker.dueDate);
+      const left = dueDateObj ? toTimelinePercent(dueDateObj, modalTimelineRange) : 0;
+      let rowIndex = 0;
+      while (lastLeftByRow[rowIndex] != null && Math.abs(left - lastLeftByRow[rowIndex]) < 9.5) {
+        rowIndex += 1;
+      }
+      lastLeftByRow[rowIndex] = left;
+      return {
+        ...marker,
+        dueDateObj,
+        left,
+        rowIndex,
+        monthKey: marker.monthKey,
+        visualState: marker.visualState,
+      };
+    });
+  }, [modalTimelineGraphMarkers, modalTimelineRange]);
+
+  const modalTimelineTrackHeight = useMemo(() => {
+    const maxRowIndex = modalTimelineMarkerLayouts.reduce((max, marker) => Math.max(max, marker.rowIndex), 0);
+    return MODAL_PAYMENT_TRACK_BASE_HEIGHT + (maxRowIndex * MODAL_PAYMENT_ROW_STEP);
+  }, [modalTimelineMarkerLayouts]);
+
+  const modalTimelineLayoutById = useMemo(
+    () => new Map(modalTimelineMarkerLayouts.map((marker) => [marker.id, marker])),
+    [modalTimelineMarkerLayouts],
+  );
+
+  const modalTimelineMonthBands = useMemo<TimelineMonthBand[]>(() => {
+    if (!modalTimelineRange) return [];
+    const start = startOfUtcMonth(new Date(modalTimelineRange.startMs));
+    const end = new Date(modalTimelineRange.endMs);
+    const bands: TimelineMonthBand[] = [];
+    for (let cursor = start; cursor.getTime() <= end.getTime(); cursor = addUtcMonths(cursor, 1)) {
+      const next = addUtcMonths(cursor, 1);
+      const left = toTimelinePercent(cursor, modalTimelineRange);
+      const right = toTimelinePercent(next, modalTimelineRange);
+      bands.push({
+        key: monthKeyFromDate(cursor) || String(cursor.getTime()),
+        left,
+        width: Math.max(6, right - left),
+      });
+    }
+    return bands;
+  }, [modalTimelineRange]);
+
+  const modalTimelineSummaryMonths = useMemo<ModalTimelineSummaryMonth[]>(() => {
+    const monthMap = new Map<string, ModalTimelineSummaryMonth>();
+    modalTimelineSummaryMarkers.forEach((marker) => {
+      if (!marker.monthKey) return;
+      const existing = monthMap.get(marker.monthKey) || {
+        monthKey: marker.monthKey,
+        totalPlannedEur: 0,
+        visualState: marker.visualState,
+        labels: [],
+        counts: {
+          paid: 0,
+          open: 0,
+          overdue: 0,
+          disabled: 0,
+        },
+      };
+      existing.totalPlannedEur += Number(marker.plannedEur || 0);
+      existing.counts[marker.visualState] += 1;
+      if (!existing.labels.includes(planningEventDisplayLabel(marker)) && existing.labels.length < 3) {
+        existing.labels.push(planningEventDisplayLabel(marker));
+      }
+      if (existing.visualState !== "overdue") {
+        if (marker.visualState === "overdue") existing.visualState = "overdue";
+        else if (existing.visualState === "disabled" && marker.visualState !== "disabled") existing.visualState = marker.visualState;
+        else if (existing.visualState === "open" && marker.visualState === "paid") existing.visualState = "open";
+      }
+      monthMap.set(marker.monthKey, existing);
+    });
+    return Array.from(monthMap.values()).sort((left, right) => left.monthKey.localeCompare(right.monthKey));
+  }, [modalTimelineSummaryMarkers]);
+
+  const modalTimelineTotals = useMemo(() => modalTimelineSummaryMarkers.reduce(
+    (acc, marker) => {
+      acc[marker.visualState] += Number(marker.plannedEur || 0);
+      return acc;
+    },
+    { paid: 0, open: 0, overdue: 0, disabled: 0 } as Record<ModalPaymentVisualState, number>,
+  ), [modalTimelineSummaryMarkers]);
 
   function updateDraftAutoEvent(eventId: string, patch: Partial<PoAutoEventDraft>): void {
     const current = Array.isArray(form.getFieldValue("autoEvents"))
@@ -2718,7 +2905,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                     <div key={field.key} className="v2-po-item-row">
                       <div className="v2-po-item-row-main">
                         <Form.Item
-                          {...field}
                           name={[field.name, "sku"]}
                           label="SKU"
                           className="v2-po-item-col v2-po-item-col--sku"
@@ -2738,7 +2924,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "units"]}
                           label="Units"
                           className="v2-po-item-col v2-po-item-col--narrow"
@@ -2747,7 +2932,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="int" min={0} />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "unitCostUsd"]}
                           label="Unit Cost USD"
                           className="v2-po-item-col"
@@ -2756,7 +2940,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="decimal" min={0} />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "unitExtraUsd"]}
                           label="Unit Extra USD"
                           className="v2-po-item-col"
@@ -2764,7 +2947,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="decimal" min={0} />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "extraFlatUsd"]}
                           label="Extra Flat USD"
                           className="v2-po-item-col"
@@ -2772,7 +2954,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="decimal" min={0} />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "freightEur"]}
                           label="Shipping EUR"
                           className="v2-po-item-col"
@@ -2780,7 +2961,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="decimal" min={0} />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "prodDays"]}
                           label="Prod Days"
                           className="v2-po-item-col v2-po-item-col--narrow"
@@ -2789,7 +2969,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="int" min={0} />
                         </Form.Item>
                         <Form.Item
-                          {...field}
                           name={[field.name, "transitDays"]}
                           label="Transit Days"
                           className="v2-po-item-col v2-po-item-col--narrow"
@@ -2972,13 +3151,67 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                       <div className="v2-po-modal-timeline">
                         <div className="v2-po-modal-timeline-summary">
                           <span>Order {formatDate(draftPlanningSnapshot.schedule.orderDate || draftPoRecord?.orderDate)}</span>
+                          <span>Prod Done {formatDate(draftPlanningSnapshot.schedule.prodDoneDate)}</span>
                           <span>ETD {formatDate(draftPlanningSnapshot.schedule.etdDate)}</span>
                           <span>ETA {formatDate(draftPlanningSnapshot.schedule.etaDate)}</span>
+                          <span>{modalTimelineSummaryMonths.length} Zahlungsmonat(e)</span>
                         </div>
-                        <div className="v2-po-modal-timeline-track">
-                          <div className="v2-po-modal-timeline-track-bg" />
+                        <div className="v2-po-modal-timeline-quick-grid">
+                          <div className="v2-po-modal-timeline-quick-card v2-po-modal-timeline-quick-card--overview">
+                            <span className="v2-po-modal-timeline-quick-label">Quick Summary</span>
+                            <strong>{modalTimelineSummaryMonths.length ? `${modalTimelineSummaryMonths.length} Monatsfenster` : "Keine aktiven Payment-Monate"}</strong>
+                            <div className="v2-po-modal-timeline-quick-stats">
+                              <span className="v2-po-modal-timeline-quick-stat v2-po-modal-timeline-quick-stat--paid">
+                                Bezahlt {formatCurrency(modalTimelineTotals.paid)}
+                              </span>
+                              <span className="v2-po-modal-timeline-quick-stat v2-po-modal-timeline-quick-stat--open">
+                                Offen {formatCurrency(modalTimelineTotals.open)}
+                              </span>
+                              <span className="v2-po-modal-timeline-quick-stat v2-po-modal-timeline-quick-stat--overdue">
+                                Überfällig {formatCurrency(modalTimelineTotals.overdue)}
+                              </span>
+                            </div>
+                          </div>
+                          {modalTimelineSummaryMonths.map((month) => (
+                            <div
+                              key={month.monthKey}
+                              className={`v2-po-modal-timeline-quick-card v2-po-modal-timeline-quick-card--${month.visualState}`}
+                            >
+                              <span className="v2-po-modal-timeline-quick-label">{formatMonthLabel(month.monthKey)}</span>
+                              <strong>{formatCurrency(month.totalPlannedEur)}</strong>
+                              <Text type="secondary">{month.labels.join(" · ") || "—"}</Text>
+                              <div className="v2-po-modal-timeline-quick-stats">
+                                {(["paid", "open", "overdue", "disabled"] as ModalPaymentVisualState[])
+                                  .filter((state) => month.counts[state] > 0)
+                                  .map((state) => (
+                                    <span key={state} className={`v2-po-modal-timeline-quick-stat v2-po-modal-timeline-quick-stat--${state}`}>
+                                      {modalPaymentStateLabel(state)} {month.counts[state]}
+                                    </span>
+                                  ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="v2-po-modal-timeline-lane-strip">
+                          <span className="v2-po-modal-timeline-lane-chip v2-po-modal-timeline-lane-chip--logistics">Logistik-Timeline</span>
+                          <span className="v2-po-modal-timeline-lane-chip v2-po-modal-timeline-lane-chip--payments">Payment-Fälligkeiten</span>
+                        </div>
+                        <div className="v2-po-modal-timeline-track" style={{ minHeight: modalTimelineTrackHeight }}>
+                          <div className="v2-po-modal-timeline-track-bg v2-po-modal-timeline-track-bg--logistics" />
+                          <div className="v2-po-modal-timeline-track-bg v2-po-modal-timeline-track-bg--payments" />
                           {modalTimelineRange && (
                             <>
+                              {modalTimelineMonthBands.map((month, index) => (
+                                <div
+                                  key={month.key}
+                                  className={`v2-po-modal-timeline-month ${index % 2 === 0 ? "v2-po-modal-timeline-month--odd" : ""}`}
+                                  style={{ left: `${month.left}%`, width: `${month.width}%` }}
+                                >
+                                  <span className="v2-po-modal-timeline-month-label">{formatMonthLabel(month.key)}</span>
+                                </div>
+                              ))}
+                              <div className="v2-po-modal-timeline-lane-badge v2-po-modal-timeline-lane-badge--logistics">Logistik</div>
+                              <div className="v2-po-modal-timeline-lane-badge v2-po-modal-timeline-lane-badge--payments">Payments</div>
                               <div
                                 className="v2-po-modal-timeline-segment v2-po-modal-timeline-segment--production"
                                 style={{
@@ -3035,26 +3268,26 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                                   </div>
                                 );
                               })}
-                              {modalTimelineMarkers.map((marker) => {
-                                const dueDate = parseIsoDate(marker.dueDate);
-                                if (!dueDate) return null;
-                                const markerClass = marker.enabled === false
-                                  ? "v2-po-modal-timeline-payment v2-po-modal-timeline-payment--disabled"
-                                  : marker.status === "paid"
-                                    ? "v2-po-modal-timeline-payment v2-po-modal-timeline-payment--paid"
-                                    : "v2-po-modal-timeline-payment v2-po-modal-timeline-payment--open";
+                              {modalTimelineMarkerLayouts.map((marker) => {
+                                if (!marker.dueDateObj) return null;
+                                const markerClass = `v2-po-modal-timeline-payment v2-po-modal-timeline-payment--${marker.visualState}`;
                                 const tooltip = [
                                   planningEventDisplayLabel(marker),
                                   marker.formulaLabel || "—",
                                   `Due: ${formatDate(marker.dueDate)}`,
+                                  `Monat: ${formatDueMonth(marker.dueDate)}`,
                                   `Soll: ${formatCurrency(marker.plannedEur)}`,
+                                  `Status: ${modalPaymentStateLabel(marker.visualState)}`,
                                   marker.paidDate ? `Bezahlt am: ${formatDate(marker.paidDate)}` : "Bezahlt am: —",
                                 ].join("\n");
                                 return (
                                   <Tooltip key={marker.id} title={<span style={{ whiteSpace: "pre-line" }}>{tooltip}</span>}>
                                     <div
                                       className={markerClass}
-                                      style={{ left: `${toTimelinePercent(dueDate, modalTimelineRange)}%` }}
+                                      style={{
+                                        left: `${marker.left}%`,
+                                        top: `${MODAL_PAYMENT_LANE_TOP + (marker.rowIndex * MODAL_PAYMENT_ROW_STEP)}px`,
+                                      }}
                                     >
                                       <span className="v2-po-modal-timeline-payment-dot" />
                                       <span className="v2-po-modal-timeline-payment-label">
@@ -3072,6 +3305,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <span><span className="v2-po-modal-timeline-legend-box v2-po-modal-timeline-legend-box--cny" /> Chinese New Year</span>
                           <span><span className="v2-po-modal-timeline-legend-box v2-po-modal-timeline-legend-box--transit" /> Transit</span>
                           <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--open" /> offen</span>
+                          <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--overdue" /> überfällig</span>
                           <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--paid" /> bezahlt</span>
                           <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--disabled" /> deaktiviert</span>
                         </div>
@@ -3094,70 +3328,83 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
                         return (
                           <>
+                            <div className="v2-po-planning-section-title">
+                              <Text strong>Supplier-Zahlungen</Text>
+                              <Text type="secondary">Deposit und Balance bleiben editierbar, die Fälligkeitsdaten kommen weiter aus demselben Snapshot.</Text>
+                            </div>
                             {STANDARD_MANUAL_EVENT_ORDER.map((type) => {
                               const entry = standardFields.get(type);
                               if (!entry) return null;
                               const { field, planning } = entry;
+                              const markerLayout = planning ? modalTimelineLayoutById.get(planning.id) || null : null;
+                              const visualState = markerLayout?.visualState || resolveModalPaymentVisualState({
+                                enabled: planning?.enabled !== false,
+                                status: "open",
+                                dueDate: planning?.dueDate || null,
+                                todayIso: modalTimelineTodayIso,
+                              });
                               return (
                                 <div key={field.key} className="v2-po-planning-row">
                                   <div className="v2-po-planning-row-main">
-                                    <div className="v2-po-planning-cell v2-po-planning-cell--event">
-                                      <Tag color="blue">Milestone</Tag>
-                                      <Text strong>{type === "deposit" ? "Deposit" : "Balance"}</Text>
-                                      <Text type="secondary">{planning?.formulaLabel || "—"}</Text>
+                                    <div className="v2-po-planning-row-head">
+                                      <div className="v2-po-planning-cell v2-po-planning-cell--event">
+                                        <Space size={6} wrap>
+                                          <Tag color="blue">Milestone</Tag>
+                                          <Tag className={`v2-po-planning-status-tag v2-po-planning-status-tag--${visualState}`}>{modalPaymentStateLabel(visualState)}</Tag>
+                                        </Space>
+                                        <Text strong>{type === "deposit" ? "Deposit" : "Balance"}</Text>
+                                        <Text type="secondary">{planning?.formulaLabel || "—"}</Text>
+                                      </div>
+                                      <div className="v2-po-planning-row-metrics">
+                                        <span className="v2-po-planning-metric">Monat: {formatDueMonth(planning?.dueDate || null)}</span>
+                                        <span className="v2-po-planning-metric">Due: {formatDate(planning?.dueDate)}</span>
+                                        <span className="v2-po-planning-metric">Planned EUR: {planning ? formatCurrency(planning.plannedAmountEur) : "—"}</span>
+                                        <span className="v2-po-planning-metric">Quelle: {planning?.source || "PO-Milestone"}</span>
+                                      </div>
                                     </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">% / Status</Text>
-                                      <Form.Item
-                                        {...field}
-                                        name={[field.name, "percent"]}
-                                        style={{ marginBottom: 0 }}
-                                        rules={[{ required: true, message: "%" }]}
-                                      >
-                                        <DeNumberInput mode="percent" min={0} max={100} />
-                                      </Form.Item>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Anchor</Text>
-                                      <Form.Item
-                                        {...field}
-                                        name={[field.name, "anchor"]}
-                                        style={{ marginBottom: 0 }}
-                                        rules={[{ required: true, message: "Anchor fehlt." }]}
-                                      >
-                                        <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
-                                      </Form.Item>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Offset</Text>
-                                      <Space size={4} wrap>
+                                    <div className="v2-po-planning-row-controls">
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">%</Text>
                                         <Form.Item
-                                          {...field}
-                                          name={[field.name, "lagDays"]}
+                                          name={[field.name, "percent"]}
                                           style={{ marginBottom: 0 }}
+                                          rules={[{ required: true, message: "%" }]}
                                         >
-                                          <DeNumberInput mode="int" />
+                                          <DeNumberInput mode="percent" min={0} max={100} />
                                         </Form.Item>
-                                        <Text type="secondary">Tage</Text>
-                                      </Space>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Due</Text>
-                                      <Text>{formatDate(planning?.dueDate)}</Text>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Planned EUR</Text>
-                                      <Text>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</Text>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Quelle</Text>
-                                      <Tag>{planning?.source || "PO-Milestone"}</Tag>
+                                      </div>
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Anchor</Text>
+                                        <Form.Item
+                                          name={[field.name, "anchor"]}
+                                          style={{ marginBottom: 0 }}
+                                          rules={[{ required: true, message: "Anchor fehlt." }]}
+                                        >
+                                          <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
+                                        </Form.Item>
+                                      </div>
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Offset</Text>
+                                        <Space size={4} wrap>
+                                          <Form.Item
+                                            name={[field.name, "lagDays"]}
+                                            style={{ marginBottom: 0 }}
+                                          >
+                                            <DeNumberInput mode="int" />
+                                          </Form.Item>
+                                          <Text type="secondary">Tage</Text>
+                                        </Space>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
                               );
                             })}
 
+                            <div className="v2-po-planning-section-title">
+                              <Text strong>Logistik / Steuern</Text>
+                              <Text type="secondary">Shipping, Zoll, EUSt und Erstattung bleiben an denselben Timeline-Anchor gebunden.</Text>
+                            </div>
                             {PLANNING_AUTO_EVENT_ORDER.map((type) => {
                               const planning = draftStandardPlanningRows.find((row) => String(row.eventType || "") === type) || null;
                               const autoEvt = draftStandardAutoEvents.find((row) => String(row.type || "") === type) || null;
@@ -3167,62 +3414,70 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                                 ? Number(autoEvt.lagMonths || 0)
                                 : Number(autoEvt.lagDays || 0);
                               const ddpLocked = draftValues?.ddp === true && ["freight", "duty", "eust", "vat_refund"].includes(String(autoEvt.type || ""));
+                              const markerLayout = modalTimelineLayoutById.get(planning.id) || null;
+                              const autoVisualState = markerLayout?.visualState || resolveModalPaymentVisualState({
+                                enabled: autoEvt.enabled !== false,
+                                status: "open",
+                                dueDate: planning.dueDate,
+                                todayIso: modalTimelineTodayIso,
+                              });
                               return (
                                 <div key={planning.id} className={`v2-po-planning-row ${planning.direction === "in" ? "v2-po-planning-row--incoming" : ""}`}>
                                   <div className="v2-po-planning-row-main">
-                                    <div className="v2-po-planning-cell v2-po-planning-cell--event">
-                                      <Tag color={planning.direction === "in" ? "green" : "gold"}>Auto</Tag>
-                                      <Text strong>{planningEventDisplayLabel(planning)}</Text>
-                                      <Text type="secondary">{planning.formulaLabel || "—"}</Text>
+                                    <div className="v2-po-planning-row-head">
+                                      <div className="v2-po-planning-cell v2-po-planning-cell--event">
+                                        <Space size={6} wrap>
+                                          <Tag color={planning.direction === "in" ? "green" : "gold"}>Auto</Tag>
+                                          <Tag className={`v2-po-planning-status-tag v2-po-planning-status-tag--${autoVisualState}`}>
+                                            {modalPaymentStateLabel(autoVisualState)}
+                                          </Tag>
+                                        </Space>
+                                        <Text strong>{planningEventDisplayLabel(planning)}</Text>
+                                        <Text type="secondary">{planning.formulaLabel || "—"}</Text>
+                                      </div>
+                                      <div className="v2-po-planning-row-metrics">
+                                        <span className="v2-po-planning-metric">Monat: {formatDueMonth(planning.dueDate)}</span>
+                                        <span className="v2-po-planning-metric">Due: {formatDate(planning.dueDate)}</span>
+                                        <span className="v2-po-planning-metric">Planned EUR: {formatCurrency(planning.plannedAmountEur)}</span>
+                                        <span className="v2-po-planning-metric">Quelle: {planning.source || "Settings-Default"}</span>
+                                        {ddpLocked ? <span className="v2-po-planning-metric">DDP</span> : null}
+                                      </div>
                                     </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Status</Text>
-                                      <Checkbox
-                                        checked={autoEvt.enabled !== false}
-                                        disabled={ddpLocked}
-                                        onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { enabled: event.target.checked })}
-                                      >
-                                        Aktiv
-                                      </Checkbox>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Anchor</Text>
-                                      <Select
-                                        value={autoEvt.anchor || "ETA"}
-                                        options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))}
-                                        onChange={(value) => updateDraftAutoEvent(String(autoEvt.id || ""), { anchor: String(value || "ETA") })}
-                                      />
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Offset</Text>
-                                      <Space size={4} wrap>
-                                        <DeNumberInput
-                                          mode="int"
-                                          value={offsetValue}
-                                          onChange={(value) => updateDraftAutoEvent(
-                                            String(autoEvt.id || ""),
-                                            planning.offsetUnit === "months"
-                                              ? { lagMonths: Number(value || 0) }
-                                              : { lagDays: Number(value || 0) },
-                                          )}
+                                    <div className="v2-po-planning-row-controls">
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Status</Text>
+                                        <Checkbox
+                                          checked={autoEvt.enabled !== false}
+                                          disabled={ddpLocked}
+                                          onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { enabled: event.target.checked })}
+                                        >
+                                          Aktiv
+                                        </Checkbox>
+                                      </div>
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Anchor</Text>
+                                        <Select
+                                          value={autoEvt.anchor || "ETA"}
+                                          options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))}
+                                          onChange={(value) => updateDraftAutoEvent(String(autoEvt.id || ""), { anchor: String(value || "ETA") })}
                                         />
-                                        <Text type="secondary">{unitLabel}</Text>
-                                      </Space>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Due</Text>
-                                      <Text>{formatDate(planning.dueDate)}</Text>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Planned EUR</Text>
-                                      <Text>{formatCurrency(planning.plannedAmountEur)}</Text>
-                                    </div>
-                                    <div className="v2-po-planning-cell">
-                                      <Text type="secondary">Quelle</Text>
-                                      <Space wrap>
-                                        <Tag>{planning.source || "Settings-Default"}</Tag>
-                                        {ddpLocked ? <Tag>DDP</Tag> : null}
-                                      </Space>
+                                      </div>
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Offset</Text>
+                                        <Space size={4} wrap>
+                                          <DeNumberInput
+                                            mode="int"
+                                            value={offsetValue}
+                                            onChange={(value) => updateDraftAutoEvent(
+                                              String(autoEvt.id || ""),
+                                              planning.offsetUnit === "months"
+                                                ? { lagMonths: Number(value || 0) }
+                                                : { lagDays: Number(value || 0) },
+                                            )}
+                                          />
+                                          <Text type="secondary">{unitLabel}</Text>
+                                        </Space>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -3236,74 +3491,82 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                               </div>
                             ) : null}
 
-                            {customFields.map(({ field, planning }) => (
-                              <div key={field.key} className="v2-po-planning-row">
-                                <div className="v2-po-planning-row-main">
-                                  <div className="v2-po-planning-cell v2-po-planning-cell--event">
-                                    <Tag color="default">Custom</Tag>
-                                    <Form.Item
-                                      {...field}
-                                      name={[field.name, "label"]}
-                                      style={{ marginBottom: 0 }}
-                                      rules={[{ required: true, message: "Label fehlt." }]}
-                                    >
-                                      <Input placeholder="Milestone" />
-                                    </Form.Item>
-                                    <Text type="secondary">{planning?.formulaLabel || "—"}</Text>
+                            {customFields.map(({ field, planning }) => {
+                              const markerLayout = planning ? modalTimelineLayoutById.get(planning.id) || null : null;
+                              const customVisualState = markerLayout?.visualState || resolveModalPaymentVisualState({
+                                enabled: planning?.enabled !== false,
+                                status: "open",
+                                dueDate: planning?.dueDate || null,
+                                todayIso: modalTimelineTodayIso,
+                              });
+                              return (
+                                <div key={field.key} className="v2-po-planning-row">
+                                  <div className="v2-po-planning-row-main">
+                                    <div className="v2-po-planning-row-head">
+                                      <div className="v2-po-planning-cell v2-po-planning-cell--event">
+                                        <Space size={6} wrap>
+                                          <Tag color="default">Custom</Tag>
+                                          <Tag className={`v2-po-planning-status-tag v2-po-planning-status-tag--${customVisualState}`}>
+                                            {modalPaymentStateLabel(customVisualState)}
+                                          </Tag>
+                                        </Space>
+                                        <Form.Item
+                                          name={[field.name, "label"]}
+                                          style={{ marginBottom: 0 }}
+                                          rules={[{ required: true, message: "Label fehlt." }]}
+                                        >
+                                          <Input placeholder="Milestone" />
+                                        </Form.Item>
+                                        <Text type="secondary">{planning?.formulaLabel || "—"}</Text>
+                                      </div>
+                                      <div className="v2-po-planning-row-metrics">
+                                        <span className="v2-po-planning-metric">Monat: {formatDueMonth(planning?.dueDate || null)}</span>
+                                        <span className="v2-po-planning-metric">Due: {formatDate(planning?.dueDate)}</span>
+                                        <span className="v2-po-planning-metric">Planned EUR: {planning ? formatCurrency(planning.plannedAmountEur) : "—"}</span>
+                                        <span className="v2-po-planning-metric">Quelle: {planning?.source || "PO-Milestone"}</span>
+                                      </div>
+                                    </div>
+                                    <div className="v2-po-planning-row-controls">
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">%</Text>
+                                        <Form.Item
+                                          name={[field.name, "percent"]}
+                                          style={{ marginBottom: 0 }}
+                                          rules={[{ required: true, message: "%" }]}
+                                        >
+                                          <DeNumberInput mode="percent" min={0} max={100} />
+                                        </Form.Item>
+                                      </div>
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Anchor</Text>
+                                        <Form.Item
+                                          name={[field.name, "anchor"]}
+                                          style={{ marginBottom: 0 }}
+                                          rules={[{ required: true, message: "Anchor fehlt." }]}
+                                        >
+                                          <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
+                                        </Form.Item>
+                                      </div>
+                                      <div className="v2-po-planning-cell">
+                                        <Text type="secondary">Offset</Text>
+                                        <Space size={4} wrap>
+                                          <Form.Item
+                                            name={[field.name, "lagDays"]}
+                                            style={{ marginBottom: 0 }}
+                                          >
+                                            <DeNumberInput mode="int" />
+                                          </Form.Item>
+                                          <Text type="secondary">Tage</Text>
+                                        </Space>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="v2-po-planning-cell">
-                                    <Text type="secondary">% / Status</Text>
-                                    <Form.Item
-                                      {...field}
-                                      name={[field.name, "percent"]}
-                                      style={{ marginBottom: 0 }}
-                                      rules={[{ required: true, message: "%" }]}
-                                    >
-                                      <DeNumberInput mode="percent" min={0} max={100} />
-                                    </Form.Item>
-                                  </div>
-                                  <div className="v2-po-planning-cell">
-                                    <Text type="secondary">Anchor</Text>
-                                    <Form.Item
-                                      {...field}
-                                      name={[field.name, "anchor"]}
-                                      style={{ marginBottom: 0 }}
-                                      rules={[{ required: true, message: "Anchor fehlt." }]}
-                                    >
-                                      <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
-                                    </Form.Item>
-                                  </div>
-                                  <div className="v2-po-planning-cell">
-                                    <Text type="secondary">Offset</Text>
-                                    <Space size={4} wrap>
-                                      <Form.Item
-                                        {...field}
-                                        name={[field.name, "lagDays"]}
-                                        style={{ marginBottom: 0 }}
-                                      >
-                                        <DeNumberInput mode="int" />
-                                      </Form.Item>
-                                      <Text type="secondary">Tage</Text>
-                                    </Space>
-                                  </div>
-                                  <div className="v2-po-planning-cell">
-                                    <Text type="secondary">Due</Text>
-                                    <Text>{formatDate(planning?.dueDate)}</Text>
-                                  </div>
-                                  <div className="v2-po-planning-cell">
-                                    <Text type="secondary">Planned EUR</Text>
-                                    <Text>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</Text>
-                                  </div>
-                                  <div className="v2-po-planning-cell">
-                                    <Text type="secondary">Quelle</Text>
-                                    <Tag>{planning?.source || "PO-Milestone"}</Tag>
+                                  <div className="v2-po-planning-row-actions">
+                                    <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
                                   </div>
                                 </div>
-                                <div className="v2-po-planning-row-actions">
-                                  <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </>
                         );
                       })()}
