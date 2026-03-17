@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Input,
   Modal,
   Segmented,
   Space,
@@ -56,6 +57,7 @@ interface IncomingDraft {
 interface ExtraDraft {
   id: string;
   date: string;
+  month: string;
   label: string;
   amountEur: number | null;
 }
@@ -160,6 +162,17 @@ function normalizeMonth(value: unknown, fallback = currentMonthKey()): string {
   const raw = String(value || "").trim();
   if (/^\d{4}-\d{2}$/.test(raw)) return raw;
   return fallback;
+}
+
+function normalizeIsoDate(value: unknown): string {
+  const raw = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function resolveExtraMonth(row: Pick<ExtraDraft, "date" | "month">, fallback = currentMonthKey()): string {
+  const date = normalizeIsoDate(row.date);
+  if (date) return date.slice(0, 7);
+  return normalizeMonth(row.month, fallback);
 }
 
 function normalizeIncomingRow(entry: Record<string, unknown>, fallbackMonth: string): IncomingDraft {
@@ -376,6 +389,7 @@ function normalizeSnapshot(snapshot: InputsDraftSnapshot): string {
       .map((row) => ({
         id: String(row.id || ""),
         date: String(row.date || ""),
+        month: String(row.month || ""),
         label: String(row.label || ""),
         amountEur: toNumber(row.amountEur),
       })),
@@ -483,9 +497,11 @@ export default function InputsModule(): JSX.Element {
     const nextExtras = (Array.isArray(state.extras) ? state.extras : [])
       .map((entry) => {
         const row = entry as Record<string, unknown>;
+        const date = normalizeIsoDate(row.date);
         return {
           id: String(row.id || randomId("extra")),
-          date: String(row.date || ""),
+          date,
+          month: normalizeMonth(date ? date.slice(0, 7) : row.month, nextStartMonth),
           label: String(row.label || "Extra"),
           amountEur: toNumber(row.amountEur),
         } satisfies ExtraDraft;
@@ -941,8 +957,8 @@ export default function InputsModule(): JSX.Element {
 
       next.extras = snapshot.extras.map((row) => ({
         id: row.id,
-        date: row.date || null,
-        month: row.date ? row.date.slice(0, 7) : null,
+        date: normalizeIsoDate(row.date) || null,
+        month: resolveExtraMonth(row, snapshot.startMonth),
         label: row.label,
         amountEur: Number(row.amountEur || 0),
       }));
@@ -1331,6 +1347,27 @@ export default function InputsModule(): JSX.Element {
     });
   }
 
+  function addExtraRow(): void {
+    setExtras((prev) => [
+      ...prev,
+      {
+        id: randomId("extra"),
+        date: "",
+        month: startMonth,
+        label: "",
+        amountEur: null,
+      },
+    ]);
+  }
+
+  function updateExtraRow(id: string, updater: (row: ExtraDraft) => ExtraDraft): void {
+    setExtras((prev) => prev.map((row) => (row.id === id ? updater({ ...row }) : row)));
+  }
+
+  function removeExtraRow(id: string): void {
+    setExtras((prev) => prev.filter((row) => row.id !== id));
+  }
+
   return (
     <div
       className="v2-page"
@@ -1669,6 +1706,117 @@ export default function InputsModule(): JSX.Element {
                   )}
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </StatsTableShell>
+      </Card>
+
+      <Card>
+        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+          <div>
+            <Title level={5} style={{ margin: 0 }}>Extras (Ein-/Auszahlungen)</Title>
+            <Text type="secondary">
+              Negative Beträge erscheinen im Dashboard als sonstige Auszahlungen, positive als sonstige Einzahlungen.
+            </Text>
+          </div>
+          <Button size="small" onClick={addExtraRow}>
+            + Extra hinzufügen
+          </Button>
+        </Space>
+        <StatsTableShell>
+          <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 1080, marginTop: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ width: 170 }}>Datum</th>
+                <th style={{ width: 170 }}>Monat</th>
+                <th style={{ width: 320 }}>Label</th>
+                <th style={{ width: 180 }}>Betrag (EUR)</th>
+                <th style={{ width: 140 }}>Wirkung</th>
+                <th style={{ width: 120 }}>Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {extras.length ? extras.map((row) => {
+                const resolvedMonth = resolveExtraMonth(row, startMonth);
+                const amount = toNumber(row.amountEur);
+                const effectColor = Number(amount || 0) < 0 ? "red" : Number(amount || 0) > 0 ? "green" : "default";
+                const effectLabel = Number(amount || 0) < 0
+                  ? "Auszahlung"
+                  : Number(amount || 0) > 0
+                    ? "Einzahlung"
+                    : "Neutral";
+                return (
+                  <tr key={row.id}>
+                    <td>
+                      <div data-field-key={`inputs.extras.${row.id}.date`}>
+                        <Input
+                          type="date"
+                          value={row.date}
+                          onChange={(event) => {
+                            const nextDate = normalizeIsoDate(event.target.value);
+                            updateExtraRow(row.id, (current) => ({
+                              ...current,
+                              date: nextDate,
+                              month: nextDate ? nextDate.slice(0, 7) : current.month,
+                            }));
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <Text strong>{formatMonthLabel(resolvedMonth)}</Text>
+                      <div><Text type="secondary">{resolvedMonth}</Text></div>
+                    </td>
+                    <td>
+                      <div data-field-key={`inputs.extras.${row.id}.label`}>
+                        <Input
+                          value={row.label}
+                          placeholder="z. B. Versicherung, Rückerstattung"
+                          onChange={(event) => {
+                            updateExtraRow(row.id, (current) => ({
+                              ...current,
+                              label: event.target.value,
+                            }));
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <div data-field-key={`inputs.extras.${row.id}.amountEur`}>
+                        <DeNumberInput
+                          value={row.amountEur ?? undefined}
+                          mode="decimal"
+                          step={100}
+                          onChange={(value) => {
+                            updateExtraRow(row.id, (current) => ({
+                              ...current,
+                              amountEur: toNumber(value),
+                            }));
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <Tag color={effectColor}>{effectLabel}</Tag>
+                    </td>
+                    <td>
+                      <Button
+                        size="small"
+                        danger
+                        onClick={() => removeExtraRow(row.id)}
+                      >
+                        Entfernen
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr>
+                  <td colSpan={6}>
+                    <Text type="secondary">Keine Extras erfasst.</Text>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </StatsTableShell>
