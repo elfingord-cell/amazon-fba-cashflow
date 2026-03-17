@@ -20,7 +20,7 @@
     "test:parity:month-planning": "npm run test:parity:migration:build && npm run test:parity:month-planning:run",
     "test:parity:supplier-outlook:run": "node --test tests/v2/supplier-outlook.parity.test.cjs",
     "test:parity:supplier-outlook": "npm run test:parity:migration:build && npm run test:parity:supplier-outlook:run",
-    "test:parity:routes:run": "node --test tests/v2/routes-load.parity.test.cjs",
+    "test:parity:routes:run": "node --test tests/v2/routes-load.parity.test.cjs tests/v2/local-test-mode.parity.test.mjs",
     "test:parity:routes": "npm run test:parity:routes:run",
     "test:parity:performance:run": "node --test tests/v2/performance.parity.test.cjs",
     "test:parity:performance": "npm run test:parity:migration:build && npm run test:parity:performance:run",

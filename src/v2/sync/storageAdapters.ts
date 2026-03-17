@@ -1,5 +1,6 @@
 import { loadState, commitState } from "../../data/storageLocal.js";
 import { backfillPoPaymentState } from "../../domain/poPaymentIdentity.js";
+import { ensureLocalTestWorkspaceSeed, isLocalV2TestModeEnabled } from "../app/localTestMode.js";
 import { ensureAppStateV2 } from "../state/appState";
 import type { AppStateV2 } from "../state/types";
 import type { StorageAdapter, WorkspaceBackupEntry } from "./types";
@@ -95,6 +96,9 @@ export function createWorkspaceBackup(source: string, state: AppStateV2): string
 
 export class LocalStorageAdapter implements StorageAdapter {
   async load(): Promise<AppStateV2> {
+    if (isLocalV2TestModeEnabled()) {
+      return ensureLocalTestWorkspaceSeed();
+    }
     return ensureAppStateV2(loadState());
   }
 
@@ -195,5 +199,8 @@ export class SupabaseFirstStorageAdapter implements StorageAdapter {
 }
 
 export function createDefaultStorageAdapter(): StorageAdapter {
+  if (isLocalV2TestModeEnabled()) {
+    return new LocalStorageAdapter();
+  }
   return new SupabaseFirstStorageAdapter();
 }

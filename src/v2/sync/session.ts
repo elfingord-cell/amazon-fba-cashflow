@@ -4,6 +4,7 @@ import {
   getCurrentUser,
   onAuthSessionChange,
 } from "../../storage/authSession.js";
+import { createLocalTestSyncSession, isLocalV2TestModeEnabled } from "../app/localTestMode.js";
 import { isDbSyncEnabled } from "../../storage/syncBackend.js";
 import type { SyncSession, StorageAdapter } from "./types";
 import { createDefaultStorageAdapter } from "./storageAdapters";
@@ -14,19 +15,37 @@ function readOnline(): boolean {
 }
 
 export function useSyncSession(): SyncSession {
+  const localTestMode = isLocalV2TestModeEnabled();
   const [session, setSession] = useState<SyncSession>({
-    userId: null,
-    email: null,
-    workspaceId: null,
-    role: null,
-    online: readOnline(),
-    isAuthenticated: false,
-    hasWorkspaceAccess: false,
-    requiresAuth: isDbSyncEnabled(),
+    ...(localTestMode
+      ? createLocalTestSyncSession({ online: readOnline() })
+      : {
+        userId: null,
+        email: null,
+        workspaceId: null,
+        role: null,
+        online: readOnline(),
+        isAuthenticated: false,
+        hasWorkspaceAccess: false,
+        requiresAuth: isDbSyncEnabled(),
+      }),
   });
 
   useEffect(() => {
     let mounted = true;
+
+    if (localTestMode) {
+      setSession(createLocalTestSyncSession({ online: readOnline() }));
+      const onOnline = () => setSession(createLocalTestSyncSession({ online: true }));
+      const onOffline = () => setSession(createLocalTestSyncSession({ online: false }));
+      window.addEventListener("online", onOnline);
+      window.addEventListener("offline", onOffline);
+      return () => {
+        mounted = false;
+        window.removeEventListener("online", onOnline);
+        window.removeEventListener("offline", onOffline);
+      };
+    }
 
     const refresh = async () => {
       try {
@@ -70,11 +89,12 @@ export function useSyncSession(): SyncSession {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
     };
-  }, []);
+  }, [localTestMode]);
 
   return session;
 }
 
 export function useStorageAdapter(): StorageAdapter {
-  return useMemo(() => createDefaultStorageAdapter(), []);
+  const localTestMode = isLocalV2TestModeEnabled();
+  return useMemo(() => createDefaultStorageAdapter(), [localTestMode]);
 }
