@@ -87,6 +87,7 @@ interface ProductDraft {
   id?: string;
   sku: string;
   alias: string;
+  fnsku: string;
   hsCode: string;
   goodsDescription: string;
   supplierId: string;
@@ -127,6 +128,7 @@ interface ProductDraft {
 const PRODUCT_FIELD_LABELS: Partial<Record<keyof ProductDraft, string>> = {
   sku: "SKU",
   alias: "Alias",
+  fnsku: "FNSKU",
   hsCode: "HS-Code",
   goodsDescription: "Warenbeschreibung",
   supplierId: "Supplier",
@@ -283,6 +285,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
     id: row?.id,
     sku: row?.sku || "",
     alias: row?.alias || "",
+    fnsku: String(row?.raw.fnsku || ""),
     hsCode: String(row?.raw.hsCode || ""),
     goodsDescription: String(row?.raw.goodsDescription || ""),
     supplierId: row?.supplierId || "",
@@ -558,9 +561,10 @@ export default function ProductsModule(): JSX.Element {
   }
 
   async function copyLogistics(row: ProductRow): Promise<void> {
-    const payload = `${row.hsCode || ""}\t${row.goodsDescription || ""}`;
+    const payload = [row.hsCode || "", row.goodsDescription || ""];
+    if (row.fnsku) payload.push(row.fnsku);
     try {
-      await navigator.clipboard.writeText(payload);
+      await navigator.clipboard.writeText(payload.join("\t"));
       message.success("Kopiert");
     } catch {
       message.error("Kopieren fehlgeschlagen");
@@ -632,6 +636,12 @@ export default function ProductsModule(): JSX.Element {
           accessorKey: "hsCode",
           meta: { width: 160 },
           cell: ({ row }) => row.original.hsCode || "—",
+        },
+        {
+          header: "FNSKU",
+          accessorKey: "fnsku",
+          meta: { width: 180 },
+          cell: ({ row }) => row.original.fnsku || "—",
         },
         {
           header: "Warenbeschreibung",
@@ -722,6 +732,7 @@ export default function ProductsModule(): JSX.Element {
       ...baseRaw,
       sku: current.sku || baseRaw.sku || "",
       alias: current.alias || baseRaw.alias || "",
+      fnsku: current.fnsku || baseRaw.fnsku || "",
       portfolioBucket: normalizePortfolioBucket(current.portfolioBucket ?? baseRaw.portfolioBucket, PORTFOLIO_BUCKET.CORE),
       includeInForecast: current.includeInForecast !== false,
       launchCosts: normalizeLaunchCosts((current.launchCosts as unknown[]) ?? (baseRaw.launchCosts as unknown[]), "draft-lc"),
@@ -1260,6 +1271,7 @@ export default function ProductsModule(): JSX.Element {
         id: values.id || existing?.id || randomId("prod"),
         sku,
         alias: values.alias.trim() || sku,
+        fnsku: String(values.fnsku || "").trim(),
         hsCode: String(values.hsCode || "").trim(),
         goodsDescription: String(values.goodsDescription || "").trim(),
         supplierId: values.supplierId || "",
@@ -1337,7 +1349,7 @@ export default function ProductsModule(): JSX.Element {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Suche SKU, Alias, Supplier, Kategorie, HS-Code, Warenbeschreibung"
+                placeholder="Suche SKU, Alias, FNSKU, Supplier, Kategorie, HS-Code, Warenbeschreibung"
                 style={{ width: 340, maxWidth: "100%" }}
               />
               <Select
@@ -1455,7 +1467,7 @@ export default function ProductsModule(): JSX.Element {
                     className="v2-products-grid-wrap"
                     data={group.rows}
                     columns={columns}
-                    minTableWidth={productsGridMode === "management" ? 1120 : 940}
+                    minTableWidth={productsGridMode === "management" ? 1120 : 1120}
                     tableLayout="fixed"
                   />
                 </div>
@@ -1709,6 +1721,9 @@ export default function ProductsModule(): JSX.Element {
               </Form.Item>
               <Form.Item name="alias" label="Alias" style={{ flex: 1 }} rules={[{ required: true, message: "Alias fehlt." }]}>
                 <Input />
+              </Form.Item>
+              <Form.Item name="fnsku" label="FNSKU" style={{ flex: 1 }}>
+                <Input placeholder="Optional für Amazon-Label / Versand" />
               </Form.Item>
               <Form.Item name="portfolioBucket" label="Portfolio Bucket" style={{ width: 190 }} rules={[{ required: true }]}>
                 <Select options={PORTFOLIO_BUCKET_OPTIONS} />

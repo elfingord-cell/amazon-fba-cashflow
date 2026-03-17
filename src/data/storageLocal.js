@@ -938,6 +938,7 @@ function migrateProducts(state) {
         categoryId: prod.categoryId || prod.category_id || base.categoryId || null,
         hsCode: cleanOptionalText(prod.hsCode ?? base.hsCode),
         goodsDescription: cleanOptionalText(prod.goodsDescription ?? base.goodsDescription),
+        fnsku: cleanOptionalText(prod.fnsku ?? base.fnsku),
         avgSellingPriceGrossEUR: Number.isFinite(Number(prod.avgSellingPriceGrossEUR))
           ? Number(prod.avgSellingPriceGrossEUR)
           : (Number.isFinite(Number(base.avgSellingPriceGrossEUR)) ? Number(base.avgSellingPriceGrossEUR) : null),
@@ -1006,6 +1007,7 @@ function migrateProducts(state) {
         tags: [],
         hsCode: "",
         goodsDescription: "",
+        fnsku: "",
         template: null,
         avgSellingPriceGrossEUR: null,
         sellerboardMarginPct: null,
@@ -1097,6 +1099,7 @@ function normaliseProductInput(input) {
   const tags = Array.isArray(input.tags) ? input.tags.filter(Boolean).map(t => String(t).trim()) : [];
   const hsCode = cleanOptionalText(input.hsCode);
   const goodsDescription = cleanOptionalText(input.goodsDescription);
+  const fnsku = cleanOptionalText(input.fnsku);
   const template = normaliseTemplate(input.template);
   const vatRate = Number(String(input.vatRate ?? "19").replace(",", ".")) || 19;
   const jurisdiction = input.jurisdiction || "DE";
@@ -1128,6 +1131,7 @@ function normaliseProductInput(input) {
     tags,
     hsCode,
     goodsDescription,
+    fnsku,
     template,
     vatRate,
     jurisdiction,
@@ -1488,6 +1492,7 @@ export function upsertProduct(input){
       tags: normalised.tags,
       hsCode: normalised.hsCode,
       goodsDescription: normalised.goodsDescription,
+      fnsku: normalised.fnsku,
       template: normalised.template,
       moqUnits: normalised.moqUnits,
       unitsPerCarton: normalised.unitsPerCarton,
@@ -1516,6 +1521,7 @@ export function upsertProduct(input){
     target.tags = normalised.tags;
     target.hsCode = normalised.hsCode;
     target.goodsDescription = normalised.goodsDescription;
+    target.fnsku = normalised.fnsku;
     target.template = normalised.template;
     target.moqUnits = normalised.moqUnits;
     target.unitsPerCarton = normalised.unitsPerCarton;
