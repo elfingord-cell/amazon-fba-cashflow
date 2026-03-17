@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { buildEffectiveCashInByMonth, computeSeries, expandFixcostInstances, getEffectiveCashInMonth } from "./cashflow.js";
 import { CASH_IN_SEASONALITY_PROFILE_SOURCE_LABEL } from "./cashInRules.js";
-import { buildResolvedPoPaymentMilestones } from "./poPaymentResolver.js";
+import { buildResolvedPoPaymentListSummary, buildResolvedPoPaymentMilestones } from "./poPaymentResolver.js";
 import { PORTFOLIO_BUCKET } from "./portfolioBuckets.js";
 import { createEmptyState, saveState, STORAGE_KEY } from "../data/storageLocal.js";
 
@@ -820,6 +820,64 @@ test("po payment resolver ignores stray generic auto-event payments without an e
     { id: "po-auto-po-260002-eust", amount: 3162.94, month: "2026-05", status: "open", paidDate: null },
     { id: "po-auto-po-260002-fx_fee", amount: 95.21, month: "2026-01", status: "paid", paidDate: "2026-01-23" },
   ]);
+});
+
+test("po payment list summary reuses resolved event-level truth for outgoing open and paid totals", () => {
+  const settings = {
+    ...createPoResolverSettings(),
+    fxFeePct: 0.9521,
+    dutyRatePct: 10,
+    dutyIncludeFreight: true,
+    eustRatePct: 20,
+  };
+  const record = createPoResolverRecord({
+    orderDate: "2025-03-01",
+    prodDays: 75,
+    transitDays: 0,
+    freightEur: "500,00",
+    items: [
+      {
+        id: "po-item-1",
+        sku: "SKU-1",
+        units: "100",
+        unitCostUsd: "10,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      },
+    ],
+    milestones: [
+      { id: "po-ms-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "po-ms-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+    paymentLog: {
+      "po-ms-deposit": {
+        status: "paid",
+        paidDate: "2025-03-05",
+        amountActualEur: 290,
+      },
+    },
+    autoEvents: [
+      { id: "po-auto-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+      { id: "po-auto-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 10 },
+      { id: "po-auto-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 20 },
+      { id: "po-auto-vat", type: "vat_refund", enabled: true, anchor: "ETA", lagDays: 60, label: "EUSt-Erstattung" },
+      { id: "po-auto-fx", type: "fx_fee", enabled: false, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr" },
+    ],
+  });
+
+  const milestones = buildResolvedPoPaymentMilestones(record, settings, [], { today: "2025-03-16" });
+  const summary = buildResolvedPoPaymentListSummary(record, settings, [], { today: "2025-03-16" });
+
+  const outgoingMilestones = milestones.filter((entry) => entry.direction !== "in");
+  const directPaidEur = outgoingMilestones.reduce((sum, entry) => sum + Number(entry.paidEur || 0), 0);
+  const directOpenEur = outgoingMilestones.reduce((sum, entry) => sum + Number(entry.remainingEur || 0), 0);
+
+  assert.equal(summary.milestones.some((entry) => entry.direction === "in"), false, "incoming refund rows must stay out of PO list totals");
+  assert.equal(summary.paidEur, directPaidEur);
+  assert.equal(summary.openEur, directOpenEur);
+  assert.equal(summary.paidEur, 290);
+  assert.equal(summary.openEur, 1680);
+  assert.equal(summary.statusText, "mixed");
 });
 
 test("computeSeries uses manual quote first and recommendation for future months without manual quote", () => {

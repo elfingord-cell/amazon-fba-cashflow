@@ -647,6 +647,17 @@ test("po timeline integration: table and timeline reuse shared filtered rows", (
   assert.match(source, /EUSt-Erstattung wird automatisch verbucht/);
 });
 
+test("po visible summary uses shared resolved payment truth instead of local paymentRows sums", () => {
+  const source = readPoModuleSource();
+
+  assert.match(source, /buildResolvedPoPaymentListSummary/);
+  assert.match(source, /openEur: resolvedPaymentSummary\.openEur/);
+  assert.match(source, /paidEur: resolvedPaymentSummary\.paidEur/);
+  assert.match(source, /statusText: resolvedPaymentSummary\.statusText/);
+  assert.doesNotMatch(source, /const paidEur = paymentRows/);
+  assert.doesNotMatch(source, /const openEur = paymentRows/);
+});
+
 test("po modal planning uses one schedule truth and shows the fixed payment event basis", () => {
   const source = readPoModuleSource();
 

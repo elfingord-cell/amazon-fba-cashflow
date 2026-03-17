@@ -763,3 +763,31 @@ export function buildResolvedPoPaymentMilestones(record, settings, paymentRecord
     })
     .filter(Boolean);
 }
+
+export function buildResolvedPoPaymentListSummary(record, settings, paymentRecords = [], options = {}) {
+  const milestones = buildResolvedPoPaymentMilestones(record, settings, paymentRecords, options)
+    .filter((milestone) => {
+      if (!milestone || typeof milestone !== "object") return false;
+      if (String(milestone.direction || "").trim().toLowerCase() === "in") return false;
+      return Number(milestone.plannedEur || 0) > 0;
+    });
+
+  const paidEur = round2(milestones.reduce(
+    (sum, milestone) => sum + Math.abs(Number(milestone?.paidEur || 0)),
+    0,
+  )) || 0;
+  const openEur = round2(milestones.reduce(
+    (sum, milestone) => sum + Math.max(0, Number(milestone?.remainingEur || 0)),
+    0,
+  )) || 0;
+  const statusText = openEur <= 0 && paidEur > 0
+    ? "paid_only"
+    : (openEur > 0 && paidEur > 0 ? "mixed" : "open");
+
+  return {
+    milestones,
+    paidEur,
+    openEur,
+    statusText,
+  };
+}

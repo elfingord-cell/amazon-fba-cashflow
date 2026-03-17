@@ -1,0 +1,581 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - img "bank" [ref=e8]:
+            - img [ref=e9]
+          - generic [ref=e11]: FBA Cashflow V2
+        - button "Sidebar minimieren" [expanded] [ref=e12] [cursor=pointer]:
+          - img "menu-fold" [ref=e14]:
+            - img [ref=e15]
+      - menu [ref=e17]:
+        - text: Cockpit
+        - group [ref=e18]:
+          - menuitem "dashboard Dashboard" [ref=e19] [cursor=pointer]:
+            - img "dashboard" [ref=e20]:
+              - img [ref=e21]
+            - generic [ref=e23]: Dashboard
+          - menuitem "project Monatsplanung" [ref=e24] [cursor=pointer]:
+            - img "project" [ref=e25]:
+              - img [ref=e26]
+            - generic [ref=e28]: Monatsplanung
+          - menuitem "credit-card Soll vs. Ist" [ref=e29] [cursor=pointer]:
+            - img "credit-card" [ref=e30]:
+              - img [ref=e31]
+            - generic [ref=e33]: Soll vs. Ist
+        - text: Operativ
+        - group [ref=e34]:
+          - menuitem "line-chart Absatzprognose" [ref=e35] [cursor=pointer]:
+            - img "line-chart" [ref=e36]:
+              - img [ref=e37]
+            - generic [ref=e39]: Absatzprognose
+          - menuitem "inbox Bestand" [ref=e40] [cursor=pointer]:
+            - img "inbox" [ref=e41]:
+              - img [ref=e42]
+            - generic [ref=e44]: Bestand
+          - menuitem "shopping-cart Bestellungen" [ref=e45] [cursor=pointer]:
+            - img "shopping-cart" [ref=e46]:
+              - img [ref=e47]
+            - generic [ref=e49]: Bestellungen
+          - menuitem "fund-projection-screen SKU Planung" [ref=e50] [cursor=pointer]:
+            - img "fund-projection-screen" [ref=e51]:
+              - img [ref=e52]
+            - generic [ref=e55]: SKU Planung
+          - menuitem "form Cash-in Setup" [ref=e56] [cursor=pointer]:
+            - img "form" [ref=e57]:
+              - img [ref=e58]
+            - generic [ref=e61]: Cash-in Setup
+          - menuitem "tags Neue Produkte" [ref=e62] [cursor=pointer]:
+            - img "tags" [ref=e63]:
+              - img [ref=e64]
+            - generic [ref=e66]: Neue Produkte
+        - text: Stammdaten
+        - group [ref=e67]:
+          - menuitem "tags Produkte" [ref=e68] [cursor=pointer]:
+            - img "tags" [ref=e69]:
+              - img [ref=e70]
+            - generic [ref=e72]: Produkte
+          - menuitem "team Suppliers" [ref=e73] [cursor=pointer]:
+            - img "team" [ref=e74]:
+              - img [ref=e75]
+            - generic [ref=e77]: Suppliers
+        - text: Finanzen & Abschluss
+        - group [ref=e78]:
+          - menuitem "project Fixkosten" [ref=e79] [cursor=pointer]:
+            - img "project" [ref=e80]:
+              - img [ref=e81]
+            - generic [ref=e83]: Fixkosten
+          - menuitem "calculator Steuern" [ref=e84] [cursor=pointer]:
+            - img "calculator" [ref=e85]:
+              - img [ref=e86]
+            - generic [ref=e88]: Steuern
+          - menuitem "file-text Buchhalter Export" [ref=e89] [cursor=pointer]:
+            - img "file-text" [ref=e90]:
+              - img [ref=e91]
+            - generic [ref=e93]: Buchhalter Export
+          - menuitem "pie-chart Dividendenplanung" [ref=e94] [cursor=pointer]:
+            - img "pie-chart" [ref=e95]:
+              - img [ref=e96]
+            - generic [ref=e98]: Dividendenplanung
+        - text: System & Tools
+        - group [ref=e99]:
+          - menuitem "calculator Methodik & Regeln" [ref=e100] [cursor=pointer]:
+            - img "calculator" [ref=e101]:
+              - img [ref=e102]
+            - generic [ref=e104]: Methodik & Regeln
+          - menuitem "setting Settings" [ref=e105] [cursor=pointer]:
+            - img "setting" [ref=e106]:
+              - img [ref=e107]
+            - generic [ref=e109]: Settings
+          - menuitem "upload Export / Import" [ref=e110] [cursor=pointer]:
+            - img "upload" [ref=e111]:
+              - img [ref=e112]
+            - generic [ref=e114]: Export / Import
+          - menuitem "experiment Sandbox" [ref=e115] [cursor=pointer]:
+            - img "experiment" [ref=e116]:
+              - img [ref=e117]
+            - generic [ref=e119]: Sandbox
+          - menuitem "pie-chart ABC Insights" [ref=e120] [cursor=pointer]:
+            - img "pie-chart" [ref=e121]:
+              - img [ref=e122]
+            - generic [ref=e124]: ABC Insights
+          - menuitem "bug Debug" [ref=e125] [cursor=pointer]:
+            - img "bug" [ref=e126]:
+              - img [ref=e127]
+            - generic [ref=e130]: Debug
+  - generic [ref=e131]:
+    - banner [ref=e132]:
+      - generic [ref=e134]:
+        - button "rollback Legacy App" [ref=e136] [cursor=pointer]:
+          - img "rollback" [ref=e138]:
+            - img [ref=e139]
+          - generic [ref=e141]: Legacy App
+        - button "user Anmelden" [ref=e143] [cursor=pointer]:
+          - img "user" [ref=e145]:
+            - img [ref=e146]
+          - generic [ref=e148]: Anmelden
+      - generic [ref=e149]:
+        - generic [ref=e150]: Online
+        - generic [ref=e151]: nicht verbunden
+        - generic [ref=e152]: Realtime inaktiv
+        - generic [ref=e153]: Nicht angemeldet
+    - main [ref=e154]:
+      - generic [ref=e155]:
+        - generic [ref=e157]:
+          - generic [ref=e158]:
+            - generic [ref=e160]:
+              - heading "Dashboard" [level=3] [ref=e161]
+              - generic [ref=e162]: Berechnungs-Cockpit für Kontostand und Cashflow. Details öffnest du bei Bedarf in den Fach-Tabs.
+            - generic [ref=e164]:
+              - generic [ref=e165]: Zeitraum
+              - generic [ref=e166] [cursor=pointer]:
+                - generic [ref=e168]:
+                  - combobox [ref=e170]
+                  - generic "Nächste 6 Monate" [ref=e171]
+                - generic:
+                  - img:
+                    - img
+          - generic [ref=e174]: "Zeitraum: Nächste 6 Monate (6 Monate)"
+        - generic [ref=e175]:
+          - generic [ref=e176]:
+            - generic [ref=e177]:
+              - generic [ref=e179]:
+                - text: "Min. Kontostand:"
+                - strong [ref=e180]: 157.050 €
+              - generic [ref=e182]:
+                - text: "Summe Netto:"
+                - strong [ref=e183]: 207.466 €
+            - button "Zurücksetzen" [ref=e184] [cursor=pointer]:
+              - generic [ref=e185]: Zurücksetzen
+          - group "Cockpit-Steuerung" [ref=e186]:
+            - generic [ref=e187]:
+              - generic [ref=e188]:
+                - strong [ref=e191]: Portfolio-Scope
+                - img "info-circle" [ref=e193]:
+                  - img [ref=e194]
+              - generic [ref=e197]: Wirkt auf Kontostand & PnL
+              - generic [ref=e198]:
+                - generic [ref=e199]:
+                  - generic [ref=e200]: Kernportfolio
+                  - radiogroup "segmented control" [ref=e201]:
+                    - generic [ref=e202]:
+                      - generic [ref=e203] [cursor=pointer]:
+                        - radio "An" [checked]
+                        - generic "An" [ref=e204]
+                      - generic [ref=e205] [cursor=pointer]:
+                        - radio "Aus"
+                        - generic "Aus" [ref=e206]
+                - generic [ref=e207]:
+                  - generic [ref=e208]: Planprodukte
+                  - radiogroup "segmented control" [ref=e209]:
+                    - generic [ref=e210]:
+                      - generic [ref=e211] [cursor=pointer]:
+                        - radio "An" [checked]
+                        - generic "An" [ref=e212]
+                      - generic [ref=e213] [cursor=pointer]:
+                        - radio "Aus"
+                        - generic "Aus" [ref=e214]
+                - generic [ref=e215]:
+                  - generic [ref=e216]: Ideenprodukte
+                  - radiogroup "segmented control" [ref=e217]:
+                    - generic [ref=e218]:
+                      - generic [ref=e219] [cursor=pointer]:
+                        - radio "An"
+                        - generic "An" [ref=e220]
+                      - generic [ref=e221] [cursor=pointer]:
+                        - radio "Aus" [checked]
+                        - generic "Aus" [ref=e222]
+              - generic [ref=e223]: Bestimmt nur die aktuelle Berechnung im Dashboard. Mindestens eine Produktgruppe bleibt aktiv.
+            - generic [ref=e224]:
+              - generic [ref=e225]:
+                - strong [ref=e228]: Umsatzbasis
+                - img "info-circle" [ref=e230]:
+                  - img [ref=e231]
+              - generic [ref=e234]: Wirkt auf Kontostand & PnL
+              - radiogroup "segmented control" [ref=e235]:
+                - generic [ref=e236]:
+                  - generic [ref=e237] [cursor=pointer]:
+                    - radio "Plan-Umsatz (Hybrid)" [checked]
+                    - generic "Plan-Umsatz (Hybrid)" [ref=e238]
+                  - generic [ref=e239] [cursor=pointer]:
+                    - radio "Forecast-Umsatz (direkt)"
+                    - generic "Forecast-Umsatz (direkt)" [ref=e240]
+              - generic [ref=e241]:
+                - strong [ref=e244]: Kalibrierung
+                - switch [checked] [ref=e246] [cursor=pointer]
+                - img "info-circle" [ref=e250]:
+                  - img [ref=e251]
+                - button "Cash-in Setup öffnen" [ref=e255] [cursor=pointer]:
+                  - generic [ref=e256]: Cash-in Setup öffnen
+              - generic [ref=e257]: Keine verwertbaren Kalibrierdaten gefunden. Das Diagramm entspricht aktuell dem Forecast-Umsatz.
+            - generic [ref=e258]:
+              - generic [ref=e259]:
+                - strong [ref=e262]: Amazon Auszahlungsquote
+                - img "info-circle" [ref=e264]:
+                  - img [ref=e265]
+              - generic [ref=e268]: Wirkt auf Kontostand & PnL
+              - radiogroup "segmented control" [ref=e269]:
+                - generic [ref=e270]:
+                  - generic [ref=e271] [cursor=pointer]:
+                    - radio "Manuell" [checked]
+                    - generic "Manuell" [ref=e272]
+                  - generic [ref=e273] [cursor=pointer]:
+                    - radio "Empfohlen (Plan)"
+                    - generic "Empfohlen (Plan)" [ref=e274]
+              - generic [ref=e275]: Nutzt deine Monatswerte aus dem Tab Cash-in Setup.
+              - button "Sandbox öffnen" [ref=e276] [cursor=pointer]:
+                - generic [ref=e277]: Sandbox öffnen
+        - generic [ref=e279]:
+          - heading "Kontostand & Cashflow" [level=4] [ref=e280]
+          - generic [ref=e281]:
+            - generic [ref=e282]: "Einzahlungen: 316.941 €"
+            - generic [ref=e283]: "Auszahlungen: 109.475 €"
+            - generic [ref=e284]: "Netto: 207.466 €"
+          - generic [ref=e285]:
+            - generic [ref=e286]: "Simulation: PFOs im Cashflow anzeigen"
+            - switch [ref=e288] [cursor=pointer]
+          - generic [ref=e291]: Robustheit und Coverage bleiben immer im Realzustand; der Schalter wirkt nur auf die Cashflow-Simulation.
+          - generic [ref=e292]: Klick auf Monat oder Balken für Details. Legende ist scrollbar.
+        - generic [ref=e297]:
+          - generic [ref=e298]:
+            - generic [ref=e300]:
+              - heading "Monatliche PnL (Matrix)" [level=4] [ref=e301]
+              - generic [ref=e302]: Zeilen = Einnahmen/Ausgaben-Struktur, Spalten = gewählter Zeitraum. Bei PO/FO/Phantom siehst du auf Wunsch die einzelnen Zahlungen.
+            - button "Alles aufklappen" [ref=e304] [cursor=pointer]:
+              - generic [ref=e305]: Alles aufklappen
+          - table [ref=e312]:
+            - rowgroup [ref=e321]:
+              - row "Position Okt. 2024 Nov. 2024 Dez. 2024 Jan. 2025 Feb. 2025 März 2025" [ref=e322]:
+                - columnheader "Position" [ref=e323]
+                - columnheader "Okt. 2024" [ref=e324]:
+                  - generic [ref=e326]: Okt. 2024
+                - columnheader "Nov. 2024" [ref=e327]:
+                  - generic [ref=e329]: Nov. 2024
+                - columnheader "Dez. 2024" [ref=e330]:
+                  - generic [ref=e332]: Dez. 2024
+                - columnheader "Jan. 2025" [ref=e333]:
+                  - generic [ref=e335]: Jan. 2025
+                - columnheader "Feb. 2025" [ref=e336]:
+                  - generic [ref=e338]: Feb. 2025
+                - columnheader "März 2025" [ref=e339]:
+                  - generic [ref=e341]: März 2025
+            - rowgroup [ref=e342]:
+              - generic:
+                - generic: Okt. 2024
+              - generic:
+                - generic: Nov. 2024
+              - generic:
+                - generic: Dez. 2024
+              - generic:
+                - generic: Jan. 2025
+              - generic:
+                - generic: Feb. 2025
+              - generic:
+                - generic: März 2025
+              - row "Collapse row Einnahmen 49.000 € 40.425 € 74.050 € 46.000 € 51.840 € 55.626 €" [ref=e343]:
+                - cell "Collapse row Einnahmen" [ref=e344]:
+                  - button "Collapse row" [expanded] [ref=e345] [cursor=pointer]
+                  - strong [ref=e347]: Einnahmen
+                - cell "49.000 €" [ref=e348]:
+                  - generic [ref=e350]: 49.000 €
+                - cell "40.425 €" [ref=e351]:
+                  - generic [ref=e353]: 40.425 €
+                - cell "74.050 €" [ref=e354]:
+                  - generic [ref=e356]: 74.050 €
+                - cell "46.000 €" [ref=e357]:
+                  - generic [ref=e359]: 46.000 €
+                - cell "51.840 €" [ref=e360]:
+                  - generic [ref=e362]: 51.840 €
+                - cell "55.626 €" [ref=e363]:
+                  - generic [ref=e365]: 55.626 €
+              - row "Amazon Kernprodukte 49.000 € 40.425 € 68.850 € 46.000 € 51.840 € 46.305 €" [ref=e366]:
+                - cell "Amazon Kernprodukte" [ref=e367]: Amazon Kernprodukte
+                - cell "49.000 €" [ref=e369]:
+                  - generic [ref=e371]: 49.000 €
+                - cell "40.425 €" [ref=e372]:
+                  - generic [ref=e374]: 40.425 €
+                - cell "68.850 €" [ref=e375]:
+                  - generic [ref=e377]: 68.850 €
+                - cell "46.000 €" [ref=e378]:
+                  - generic [ref=e380]: 46.000 €
+                - cell "51.840 €" [ref=e381]:
+                  - generic [ref=e383]: 51.840 €
+                - cell "46.305 €" [ref=e384]:
+                  - generic [ref=e386]: 46.305 €
+              - row "Amazon geplante Produkte 0 € 0 € 0 € 0 € 0 € 0 €" [ref=e387]:
+                - cell "Amazon geplante Produkte" [ref=e388]: Amazon geplante Produkte
+                - cell "0 €" [ref=e390]:
+                  - generic [ref=e392]: 0 €
+                - cell "0 €" [ref=e393]:
+                  - generic [ref=e395]: 0 €
+                - cell "0 €" [ref=e396]:
+                  - generic [ref=e398]: 0 €
+                - cell "0 €" [ref=e399]:
+                  - generic [ref=e401]: 0 €
+                - cell "0 €" [ref=e402]:
+                  - generic [ref=e404]: 0 €
+                - cell "0 €" [ref=e405]:
+                  - generic [ref=e407]: 0 €
+              - row "Amazon neue Produkte 0 € 0 € 0 € 0 € 0 € 0 €" [ref=e408]:
+                - cell "Amazon neue Produkte" [ref=e409]: Amazon neue Produkte
+                - cell "0 €" [ref=e411]:
+                  - generic [ref=e413]: 0 €
+                - cell "0 €" [ref=e414]:
+                  - generic [ref=e416]: 0 €
+                - cell "0 €" [ref=e417]:
+                  - generic [ref=e419]: 0 €
+                - cell "0 €" [ref=e420]:
+                  - generic [ref=e422]: 0 €
+                - cell "0 €" [ref=e423]:
+                  - generic [ref=e425]: 0 €
+                - cell "0 €" [ref=e426]:
+                  - generic [ref=e428]: 0 €
+              - row "Sonstige Einzahlungen 0 € 0 € 5.200 € 0 € 0 € 9.321 €" [ref=e429]:
+                - cell "Sonstige Einzahlungen" [ref=e430]: Sonstige Einzahlungen
+                - cell "0 €" [ref=e432]:
+                  - generic [ref=e434]: 0 €
+                - cell "0 €" [ref=e435]:
+                  - generic [ref=e437]: 0 €
+                - cell "5.200 €" [ref=e438]:
+                  - generic [ref=e440]: 5.200 €
+                - cell "0 €" [ref=e441]:
+                  - generic [ref=e443]: 0 €
+                - cell "0 €" [ref=e444]:
+                  - generic [ref=e446]: 0 €
+                - cell "9.321 €" [ref=e447]:
+                  - generic [ref=e449]: 9.321 €
+              - row "Collapse row Ausgaben −11.950 € −16.122 € −16.482 € −32.409 € −15.719 € −16.792 €" [ref=e450]:
+                - cell "Collapse row Ausgaben" [ref=e451]:
+                  - button "Collapse row" [expanded] [ref=e452] [cursor=pointer]
+                  - strong [ref=e454]: Ausgaben
+                - cell "−11.950 €" [ref=e455]:
+                  - generic [ref=e457]: −11.950 €
+                - cell "−16.122 €" [ref=e458]:
+                  - generic [ref=e460]: −16.122 €
+                - cell "−16.482 €" [ref=e461]:
+                  - generic [ref=e463]: −16.482 €
+                - cell "−32.409 €" [ref=e464]:
+                  - generic [ref=e466]: −32.409 €
+                - cell "−15.719 €" [ref=e467]:
+                  - generic [ref=e469]: −15.719 €
+                - cell "−16.792 €" [ref=e470]:
+                  - generic [ref=e472]: −16.792 €
+              - row "Collapse row PO 0 € 0 € 0 € −11.406 € 0 € 0 €" [ref=e636]:
+                - cell "Collapse row PO" [ref=e637]:
+                  - button "Collapse row" [expanded] [ref=e638] [cursor=pointer]
+                  - text: PO
+                - cell "0 €" [ref=e477]:
+                  - generic [ref=e479]: 0 €
+                - cell "0 €" [ref=e480]:
+                  - generic [ref=e482]: 0 €
+                - cell "0 €" [ref=e483]:
+                  - generic [ref=e485]: 0 €
+                - cell "−11.406 €" [ref=e486]:
+                  - generic [ref=e488]: −11.406 €
+                - cell "0 €" [ref=e489]:
+                  - generic [ref=e491]: 0 €
+                - cell "0 €" [ref=e492]:
+                  - generic [ref=e494]: 0 €
+              - 'row "Collapse row PO 24010 Alias: Premium French Press Set 0 € 0 € 0 € −4.056 € 0 € 0 €" [ref=e732]':
+                - 'cell "Collapse row PO 24010 Alias: Premium French Press Set" [ref=e733]':
+                  - button "Collapse row" [expanded] [active] [ref=e734] [cursor=pointer]
+                  - generic [ref=e643]:
+                    - generic [ref=e644]:
+                      - strong [ref=e647]: PO 24010
+                      - generic [ref=e649]: "Alias: Premium French Press Set"
+                    - generic "Bezahlt 0 € · Offen 0 € · Überfällig 4.056 € · Unklar 0 €" [ref=e650]
+                - cell "0 €" [ref=e652]:
+                  - generic [ref=e654]: 0 €
+                - cell "0 €" [ref=e655]:
+                  - generic [ref=e657]: 0 €
+                - cell "0 €" [ref=e658]:
+                  - generic [ref=e660]: 0 €
+                - cell "−4.056 €" [ref=e661]:
+                  - generic [ref=e663]: −4.056 €
+                - cell "0 €" [ref=e664]:
+                  - generic [ref=e666]: 0 €
+                - cell "0 €" [ref=e667]:
+                  - generic [ref=e669]: 0 €
+              - 'row "PO 24010 – Fracht Fällig: 22.1.2025 Offen 0 € 0 € 0 € −3.200 € 0 € 0 €" [ref=e735]':
+                - 'cell "PO 24010 – Fracht Fällig: 22.1.2025 Offen" [ref=e736]':
+                  - generic [ref=e738]:
+                    - generic [ref=e739]: PO 24010 – Fracht
+                    - generic [ref=e741]: "Fällig: 22.1.2025"
+                    - generic [ref=e743]: Offen
+                - cell "0 €" [ref=e744]:
+                  - generic [ref=e746]: 0 €
+                - cell "0 €" [ref=e747]:
+                  - generic [ref=e749]: 0 €
+                - cell "0 €" [ref=e750]:
+                  - generic [ref=e752]: 0 €
+                - cell "−3.200 €" [ref=e753]:
+                  - generic [ref=e755]: −3.200 €
+                - cell "0 €" [ref=e756]:
+                  - generic [ref=e758]: 0 €
+                - cell "0 €" [ref=e759]:
+                  - generic [ref=e761]: 0 €
+              - 'row "PO 24010 – EUSt Fällig: 22.1.2025 Offen 0 € 0 € 0 € −648 € 0 € 0 €" [ref=e762]':
+                - 'cell "PO 24010 – EUSt Fällig: 22.1.2025 Offen" [ref=e763]':
+                  - generic [ref=e765]:
+                    - generic [ref=e766]: PO 24010 – EUSt
+                    - generic [ref=e768]: "Fällig: 22.1.2025"
+                    - generic [ref=e770]: Offen
+                - cell "0 €" [ref=e771]:
+                  - generic [ref=e773]: 0 €
+                - cell "0 €" [ref=e774]:
+                  - generic [ref=e776]: 0 €
+                - cell "0 €" [ref=e777]:
+                  - generic [ref=e779]: 0 €
+                - cell "−648 €" [ref=e780]:
+                  - generic [ref=e782]: −648 €
+                - cell "0 €" [ref=e783]:
+                  - generic [ref=e785]: 0 €
+                - cell "0 €" [ref=e786]:
+                  - generic [ref=e788]: 0 €
+              - 'row "PO 24010 – Zoll Fällig: 22.1.2025 Offen 0 € 0 € 0 € −208 € 0 € 0 €" [ref=e789]':
+                - 'cell "PO 24010 – Zoll Fällig: 22.1.2025 Offen" [ref=e790]':
+                  - generic [ref=e792]:
+                    - generic [ref=e793]: PO 24010 – Zoll
+                    - generic [ref=e795]: "Fällig: 22.1.2025"
+                    - generic [ref=e797]: Offen
+                - cell "0 €" [ref=e798]:
+                  - generic [ref=e800]: 0 €
+                - cell "0 €" [ref=e801]:
+                  - generic [ref=e803]: 0 €
+                - cell "0 €" [ref=e804]:
+                  - generic [ref=e806]: 0 €
+                - cell "−208 €" [ref=e807]:
+                  - generic [ref=e809]: −208 €
+                - cell "0 €" [ref=e810]:
+                  - generic [ref=e812]: 0 €
+                - cell "0 €" [ref=e813]:
+                  - generic [ref=e815]: 0 €
+              - 'row "Expand row PO 24012 Alias: Premium French Press Set 0 € 0 € 0 € −3.802 € 0 € 0 €" [ref=e670]':
+                - 'cell "Expand row PO 24012 Alias: Premium French Press Set" [ref=e671]':
+                  - button "Expand row" [ref=e673] [cursor=pointer]
+                  - generic [ref=e674]:
+                    - generic [ref=e675]:
+                      - strong [ref=e678]: PO 24012
+                      - generic [ref=e680]: "Alias: Premium French Press Set"
+                    - generic "Bezahlt 0 € · Offen 0 € · Überfällig 3.802 € · Unklar 0 €" [ref=e681]
+                - cell "0 €" [ref=e683]:
+                  - generic [ref=e685]: 0 €
+                - cell "0 €" [ref=e686]:
+                  - generic [ref=e688]: 0 €
+                - cell "0 €" [ref=e689]:
+                  - generic [ref=e691]: 0 €
+                - cell "−3.802 €" [ref=e692]:
+                  - generic [ref=e694]: −3.802 €
+                - cell "0 €" [ref=e695]:
+                  - generic [ref=e697]: 0 €
+                - cell "0 €" [ref=e698]:
+                  - generic [ref=e700]: 0 €
+              - 'row "Expand row PO 24011 Alias: Premium French Press Set 0 € 0 € 0 € −3.549 € 0 € 0 €" [ref=e701]':
+                - 'cell "Expand row PO 24011 Alias: Premium French Press Set" [ref=e702]':
+                  - button "Expand row" [ref=e704] [cursor=pointer]
+                  - generic [ref=e705]:
+                    - generic [ref=e706]:
+                      - strong [ref=e709]: PO 24011
+                      - generic [ref=e711]: "Alias: Premium French Press Set"
+                    - generic "Bezahlt 0 € · Offen 0 € · Überfällig 3.549 € · Unklar 0 €" [ref=e712]
+                - cell "0 €" [ref=e714]:
+                  - generic [ref=e716]: 0 €
+                - cell "0 €" [ref=e717]:
+                  - generic [ref=e719]: 0 €
+                - cell "0 €" [ref=e720]:
+                  - generic [ref=e722]: 0 €
+                - cell "−3.549 €" [ref=e723]:
+                  - generic [ref=e725]: −3.549 €
+                - cell "0 €" [ref=e726]:
+                  - generic [ref=e728]: 0 €
+                - cell "0 €" [ref=e729]:
+                  - generic [ref=e731]: 0 €
+              - row "FO 0 € 0 € 0 € 0 € 0 € 0 €" [ref=e495]:
+                - cell "FO" [ref=e496]: FO
+                - cell "0 €" [ref=e498]:
+                  - generic [ref=e500]: 0 €
+                - cell "0 €" [ref=e501]:
+                  - generic [ref=e503]: 0 €
+                - cell "0 €" [ref=e504]:
+                  - generic [ref=e506]: 0 €
+                - cell "0 €" [ref=e507]:
+                  - generic [ref=e509]: 0 €
+                - cell "0 €" [ref=e510]:
+                  - generic [ref=e512]: 0 €
+                - cell "0 €" [ref=e513]:
+                  - generic [ref=e515]: 0 €
+              - row "Fixkosten −11.950 € −9.550 € −10.950 € −11.950 € −9.550 € −9.550 €" [ref=e516]:
+                - cell "Fixkosten" [ref=e517]: Fixkosten
+                - cell "−11.950 €" [ref=e519]:
+                  - generic [ref=e521]: −11.950 €
+                - cell "−9.550 €" [ref=e522]:
+                  - generic [ref=e524]: −9.550 €
+                - cell "−10.950 €" [ref=e525]:
+                  - generic [ref=e527]: −10.950 €
+                - cell "−11.950 €" [ref=e528]:
+                  - generic [ref=e530]: −11.950 €
+                - cell "−9.550 €" [ref=e531]:
+                  - generic [ref=e533]: −9.550 €
+                - cell "−9.550 €" [ref=e534]:
+                  - generic [ref=e536]: −9.550 €
+              - row "Expand row Steuern -0 € −6.572 € −5.532 € −9.053 € −6.169 € −7.242 €" [ref=e537]:
+                - cell "Expand row Steuern" [ref=e538]:
+                  - button "Expand row" [ref=e540] [cursor=pointer]
+                  - text: Steuern
+                - cell "-0 €" [ref=e541]:
+                  - generic [ref=e543]: "-0 €"
+                - cell "−6.572 €" [ref=e544]:
+                  - generic [ref=e546]: −6.572 €
+                - cell "−5.532 €" [ref=e547]:
+                  - generic [ref=e549]: −5.532 €
+                - cell "−9.053 €" [ref=e550]:
+                  - generic [ref=e552]: −9.053 €
+                - cell "−6.169 €" [ref=e553]:
+                  - generic [ref=e555]: −6.169 €
+                - cell "−7.242 €" [ref=e556]:
+                  - generic [ref=e558]: −7.242 €
+              - row "Sonstige Auszahlungen 0 € 0 € 0 € 0 € 0 € 0 €" [ref=e559]:
+                - cell "Sonstige Auszahlungen" [ref=e560]: Sonstige Auszahlungen
+                - cell "0 €" [ref=e562]:
+                  - generic [ref=e564]: 0 €
+                - cell "0 €" [ref=e565]:
+                  - generic [ref=e567]: 0 €
+                - cell "0 €" [ref=e568]:
+                  - generic [ref=e570]: 0 €
+                - cell "0 €" [ref=e571]:
+                  - generic [ref=e573]: 0 €
+                - cell "0 €" [ref=e574]:
+                  - generic [ref=e576]: 0 €
+                - cell "0 €" [ref=e577]:
+                  - generic [ref=e579]: 0 €
+              - row "Netto Cashflow 37.050 € 24.303 € 57.568 € 13.591 € 36.121 € 38.834 €" [ref=e580]:
+                - cell "Netto Cashflow" [ref=e581]:
+                  - strong [ref=e583]: Netto Cashflow
+                - cell "37.050 €" [ref=e584]:
+                  - strong [ref=e587]: 37.050 €
+                - cell "24.303 €" [ref=e588]:
+                  - strong [ref=e591]: 24.303 €
+                - cell "57.568 €" [ref=e592]:
+                  - strong [ref=e595]: 57.568 €
+                - cell "13.591 €" [ref=e596]:
+                  - strong [ref=e599]: 13.591 €
+                - cell "36.121 €" [ref=e600]:
+                  - strong [ref=e603]: 36.121 €
+                - cell "38.834 €" [ref=e604]:
+                  - strong [ref=e607]: 38.834 €
+              - row "Kontostand 157.050 € 181.353 € 238.921 € 252.512 € 288.632 € 327.466 €" [ref=e608]:
+                - cell "Kontostand" [ref=e609]:
+                  - strong [ref=e611]: Kontostand
+                - cell "157.050 €" [ref=e612]:
+                  - strong [ref=e615]: 157.050 €
+                - cell "181.353 €" [ref=e616]:
+                  - strong [ref=e619]: 181.353 €
+                - cell "238.921 €" [ref=e620]:
+                  - strong [ref=e623]: 238.921 €
+                - cell "252.512 €" [ref=e624]:
+                  - strong [ref=e627]: 252.512 €
+                - cell "288.632 €" [ref=e628]:
+                  - strong [ref=e631]: 288.632 €
+                - cell "327.466 €" [ref=e632]:
+                  - strong [ref=e635]: 327.466 €

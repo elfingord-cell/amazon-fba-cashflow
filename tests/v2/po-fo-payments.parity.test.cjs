@@ -15,6 +15,7 @@ const PO_CONFIG = {
 };
 
 let legacyPaymentsExportPromise = null;
+let poPaymentResolverPromise = null;
 
 function loadLegacyPaymentsExport() {
   if (!legacyPaymentsExportPromise) {
@@ -23,6 +24,15 @@ function loadLegacyPaymentsExport() {
     legacyPaymentsExportPromise = import(moduleUrl);
   }
   return legacyPaymentsExportPromise;
+}
+
+function loadPoPaymentResolver() {
+  if (!poPaymentResolverPromise) {
+    const modulePath = path.resolve(__dirname, "../../src/domain/poPaymentResolver.js");
+    const moduleUrl = pathToFileURL(modulePath).href;
+    poPaymentResolverPromise = import(moduleUrl);
+  }
+  return poPaymentResolverPromise;
 }
 
 function round2(value) {
@@ -429,6 +439,76 @@ test("PO payment rows and journal ignore stray generic auto-event payments witho
     [],
     "the freight journal row must stay open even when a stray generic payment exists",
   );
+});
+
+test("v2 PO list summary matches shared resolved outgoing event truth", async () => {
+  const { buildResolvedPoPaymentListSummary, buildResolvedPoPaymentMilestones } = await loadPoPaymentResolver();
+  const settings = {
+    fxRate: 1,
+    fxFeePct: 0,
+    eurUsdRate: 1,
+    dutyRatePct: 10,
+    dutyIncludeFreight: true,
+    eustRatePct: 20,
+    vatRefundEnabled: true,
+    vatRefundLagMonths: 2,
+    freightLagDays: 0,
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+  const po = {
+    id: "po-list-shared-truth",
+    poNo: "PO-LIST-SHARED",
+    supplierId: "sup-a",
+    orderDate: "2025-03-01",
+    prodDays: 75,
+    transitDays: 0,
+    freightEur: "500,00",
+    items: [
+      {
+        id: "po-shared-item-1",
+        sku: "SKU-A",
+        units: "100",
+        unitCostUsd: "10,00",
+        unitExtraUsd: "0,00",
+        extraFlatUsd: "0,00",
+      },
+    ],
+    milestones: [
+      { id: "po-shared-deposit", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "po-shared-balance", label: "Balance", percent: 70, anchor: "PROD_DONE", lagDays: 0 },
+    ],
+    paymentLog: {
+      "po-shared-deposit": {
+        status: "paid",
+        paidDate: "2025-03-05",
+        amountActualEur: 290,
+      },
+    },
+    autoEvents: [
+      { id: "po-shared-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+      { id: "po-shared-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 10 },
+      { id: "po-shared-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 20 },
+      { id: "po-shared-vat", type: "vat_refund", enabled: true, anchor: "ETA", lagDays: 60, label: "EUSt-Erstattung" },
+    ],
+  };
+
+  const milestones = buildResolvedPoPaymentMilestones(po, settings, [], { today: "2025-03-16" });
+  const summary = buildResolvedPoPaymentListSummary(po, settings, [], { today: "2025-03-16" });
+  const outgoingMilestones = milestones.filter((entry) => entry.direction !== "in");
+
+  assert.equal(summary.milestones.some((entry) => entry.direction === "in"), false);
+  assert.equal(
+    summary.paidEur,
+    outgoingMilestones.reduce((sum, entry) => sum + Number(entry.paidEur || 0), 0),
+  );
+  assert.equal(
+    summary.openEur,
+    outgoingMilestones.reduce((sum, entry) => sum + Number(entry.remainingEur || 0), 0),
+  );
+  assert.equal(summary.paidEur, 290);
+  assert.equal(summary.openEur, 1680);
+  assert.equal(summary.statusText, "mixed");
 });
 
 test("PO planning snapshot keeps milestone offsets and settings-derived auto-event due dates aligned", () => {

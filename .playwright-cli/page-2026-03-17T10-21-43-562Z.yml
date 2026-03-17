@@ -1,0 +1,534 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - img "bank" [ref=e8]:
+            - img [ref=e9]
+          - generic [ref=e11]: FBA Cashflow V2
+        - button "Sidebar minimieren" [expanded] [ref=e12] [cursor=pointer]:
+          - img "menu-fold" [ref=e14]:
+            - img [ref=e15]
+      - menu [ref=e17]:
+        - text: Cockpit
+        - group [ref=e18]:
+          - menuitem "dashboard Dashboard" [ref=e19] [cursor=pointer]:
+            - img "dashboard" [ref=e20]:
+              - img [ref=e21]
+            - generic [ref=e23]: Dashboard
+          - menuitem "project Monatsplanung" [ref=e24] [cursor=pointer]:
+            - img "project" [ref=e25]:
+              - img [ref=e26]
+            - generic [ref=e28]: Monatsplanung
+          - menuitem "credit-card Soll vs. Ist" [ref=e29] [cursor=pointer]:
+            - img "credit-card" [ref=e30]:
+              - img [ref=e31]
+            - generic [ref=e33]: Soll vs. Ist
+        - text: Operativ
+        - group [ref=e34]:
+          - menuitem "line-chart Absatzprognose" [ref=e35] [cursor=pointer]:
+            - img "line-chart" [ref=e36]:
+              - img [ref=e37]
+            - generic [ref=e39]: Absatzprognose
+          - menuitem "inbox Bestand" [ref=e40] [cursor=pointer]:
+            - img "inbox" [ref=e41]:
+              - img [ref=e42]
+            - generic [ref=e44]: Bestand
+          - menuitem "shopping-cart Bestellungen" [ref=e45] [cursor=pointer]:
+            - img "shopping-cart" [ref=e46]:
+              - img [ref=e47]
+            - generic [ref=e49]: Bestellungen
+          - menuitem "fund-projection-screen SKU Planung" [ref=e50] [cursor=pointer]:
+            - img "fund-projection-screen" [ref=e51]:
+              - img [ref=e52]
+            - generic [ref=e55]: SKU Planung
+          - menuitem "form Cash-in Setup" [ref=e56] [cursor=pointer]:
+            - img "form" [ref=e57]:
+              - img [ref=e58]
+            - generic [ref=e61]: Cash-in Setup
+          - menuitem "tags Neue Produkte" [ref=e62] [cursor=pointer]:
+            - img "tags" [ref=e63]:
+              - img [ref=e64]
+            - generic [ref=e66]: Neue Produkte
+        - text: Stammdaten
+        - group [ref=e67]:
+          - menuitem "tags Produkte" [ref=e68] [cursor=pointer]:
+            - img "tags" [ref=e69]:
+              - img [ref=e70]
+            - generic [ref=e72]: Produkte
+          - menuitem "team Suppliers" [ref=e73] [cursor=pointer]:
+            - img "team" [ref=e74]:
+              - img [ref=e75]
+            - generic [ref=e77]: Suppliers
+        - text: Finanzen & Abschluss
+        - group [ref=e78]:
+          - menuitem "project Fixkosten" [ref=e79] [cursor=pointer]:
+            - img "project" [ref=e80]:
+              - img [ref=e81]
+            - generic [ref=e83]: Fixkosten
+          - menuitem "calculator Steuern" [ref=e84] [cursor=pointer]:
+            - img "calculator" [ref=e85]:
+              - img [ref=e86]
+            - generic [ref=e88]: Steuern
+          - menuitem "file-text Buchhalter Export" [ref=e89] [cursor=pointer]:
+            - img "file-text" [ref=e90]:
+              - img [ref=e91]
+            - generic [ref=e93]: Buchhalter Export
+          - menuitem "pie-chart Dividendenplanung" [ref=e94] [cursor=pointer]:
+            - img "pie-chart" [ref=e95]:
+              - img [ref=e96]
+            - generic [ref=e98]: Dividendenplanung
+        - text: System & Tools
+        - group [ref=e99]:
+          - menuitem "calculator Methodik & Regeln" [ref=e100] [cursor=pointer]:
+            - img "calculator" [ref=e101]:
+              - img [ref=e102]
+            - generic [ref=e104]: Methodik & Regeln
+          - menuitem "setting Settings" [ref=e105] [cursor=pointer]:
+            - img "setting" [ref=e106]:
+              - img [ref=e107]
+            - generic [ref=e109]: Settings
+          - menuitem "upload Export / Import" [ref=e110] [cursor=pointer]:
+            - img "upload" [ref=e111]:
+              - img [ref=e112]
+            - generic [ref=e114]: Export / Import
+          - menuitem "experiment Sandbox" [ref=e115] [cursor=pointer]:
+            - img "experiment" [ref=e116]:
+              - img [ref=e117]
+            - generic [ref=e119]: Sandbox
+          - menuitem "pie-chart ABC Insights" [ref=e120] [cursor=pointer]:
+            - img "pie-chart" [ref=e121]:
+              - img [ref=e122]
+            - generic [ref=e124]: ABC Insights
+          - menuitem "bug Debug" [ref=e125] [cursor=pointer]:
+            - img "bug" [ref=e126]:
+              - img [ref=e127]
+            - generic [ref=e130]: Debug
+  - generic [ref=e131]:
+    - banner [ref=e132]:
+      - generic [ref=e134]:
+        - button "rollback Legacy App" [ref=e136] [cursor=pointer]:
+          - img "rollback" [ref=e138]:
+            - img [ref=e139]
+          - generic [ref=e141]: Legacy App
+        - button "user Anmelden" [ref=e143] [cursor=pointer]:
+          - img "user" [ref=e145]:
+            - img [ref=e146]
+          - generic [ref=e148]: Anmelden
+      - generic [ref=e149]:
+        - generic [ref=e150]: Online
+        - generic [ref=e151]: nicht verbunden
+        - generic [ref=e152]: Realtime inaktiv
+        - generic [ref=e153]: Nicht angemeldet
+    - main [ref=e154]:
+      - generic [ref=e816]:
+        - generic [ref=e820]:
+          - heading "Bestellungen" [level=3] [ref=e821]
+          - generic [ref=e822]: Gemeinsamer Arbeitsbereich für Forecast Orders und Purchase Orders mit schneller FO-zu-PO Übergabe.
+        - generic [ref=e824]:
+          - generic [ref=e826]:
+            - heading "Zahlungsprotokoll (PO-Ist)" [level=5] [ref=e827]
+            - generic [ref=e828]: Tatsächlich bestätigte Zahlungen werden nur auf POs gebucht. FOs bleiben Planobjekte.
+          - generic [ref=e829]:
+            - generic [ref=e830]: "Eintraege: 0"
+            - generic [ref=e831]: "Summe Ist: 0,00 €"
+          - table [ref=e833]:
+            - rowgroup [ref=e834]:
+              - row "Payment-ID Paid Date Methode Durch Ist EUR Abgedeckte Events" [ref=e835]:
+                - columnheader "Payment-ID" [ref=e836]
+                - columnheader "Paid Date" [ref=e837]
+                - columnheader "Methode" [ref=e838]
+                - columnheader "Durch" [ref=e839]
+                - columnheader "Ist EUR" [ref=e840]
+                - columnheader "Abgedeckte Events" [ref=e841]
+            - rowgroup [ref=e842]:
+              - row "Noch keine Zahlungen verbucht." [ref=e843]:
+                - cell "Noch keine Zahlungen verbucht." [ref=e844]
+        - generic [ref=e845]:
+          - tablist [ref=e846]:
+            - generic [ref=e848]:
+              - tab "Bestellungen (PO)" [selected] [ref=e850] [cursor=pointer]
+              - tab "Forecast Orders (FO)" [ref=e852] [cursor=pointer]
+              - tab "Phantom Forecast Orders (PFO)" [ref=e854] [cursor=pointer]
+              - tab "SKU Sicht" [ref=e856] [cursor=pointer]
+              - tab "Lieferantenausblick" [ref=e858] [cursor=pointer]
+          - tabpanel "Bestellungen (PO)" [ref=e861]:
+            - generic [ref=e862]:
+              - generic [ref=e866]:
+                - button "Neue PO" [ref=e867] [cursor=pointer]:
+                  - generic [ref=e868]: Neue PO
+                - radiogroup "segmented control" [ref=e869]:
+                  - generic [ref=e870]:
+                    - generic [ref=e871] [cursor=pointer]:
+                      - radio "Tabelle" [checked]
+                      - generic "Tabelle" [ref=e872]
+                    - generic [ref=e873] [cursor=pointer]:
+                      - radio "Timeline"
+                      - generic "Timeline" [ref=e874]
+              - generic [ref=e876]:
+                - generic [ref=e877]:
+                  - textbox "PO Nummer, SKU, Alias, Supplier" [ref=e878]
+                  - generic [ref=e879] [cursor=pointer]:
+                    - generic [ref=e881]:
+                      - combobox [ref=e883]
+                      - generic "Aktiv" [ref=e884]
+                    - generic:
+                      - img:
+                        - img
+                  - generic [ref=e885] [cursor=pointer]:
+                    - generic [ref=e887]:
+                      - combobox [ref=e889]
+                      - 'generic "Status: Alle" [ref=e890]'
+                    - generic:
+                      - img:
+                        - img
+                  - generic [ref=e891] [cursor=pointer]:
+                    - checkbox "Nur POs mit offenen Zahlungen" [ref=e893]
+                    - generic [ref=e895]: Nur POs mit offenen Zahlungen
+                - table [ref=e897]:
+                  - rowgroup [ref=e898]:
+                    - row "PO Produkt Supplier Order ETD / ETA Warenwert Open / Paid Status Aktionen" [ref=e899]:
+                      - columnheader "PO" [ref=e900]:
+                        - button "PO" [ref=e901] [cursor=pointer]:
+                          - generic [ref=e902]: PO
+                          - generic [ref=e903]: ↕
+                      - columnheader "Produkt" [ref=e904]
+                      - columnheader "Supplier" [ref=e905]:
+                        - button "Supplier" [ref=e906] [cursor=pointer]:
+                          - generic [ref=e907]: Supplier
+                          - generic [ref=e908]: ↕
+                      - columnheader "Order" [ref=e909]
+                      - columnheader "ETD / ETA" [ref=e910]:
+                        - button "ETD / ETA" [ref=e911] [cursor=pointer]:
+                          - generic [ref=e912]: ETD / ETA
+                          - generic [ref=e913]: ↕
+                      - columnheader "Warenwert" [ref=e914]
+                      - columnheader "Open / Paid" [ref=e915]
+                      - columnheader "Status" [ref=e916]
+                      - columnheader "Aktionen" [ref=e917]
+                  - rowgroup [ref=e918]:
+                    - 'row "24010 Premium French Press Set SKU-ALPHA — 05.10.2024 ETD 14.11.2024 ETA 08.01.2025 0,00 € Open: 3.808,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e919]':
+                      - cell "24010" [ref=e920]
+                      - cell "Premium French Press Set SKU-ALPHA" [ref=e921]:
+                        - generic [ref=e922]:
+                          - generic "Premium French Press Set" [ref=e923]
+                          - generic "SKU-ALPHA" [ref=e924]
+                      - cell "—" [ref=e925]
+                      - cell "05.10.2024" [ref=e926]
+                      - cell "ETD 14.11.2024 ETA 08.01.2025" [ref=e927]:
+                        - generic [ref=e928]:
+                          - generic [ref=e930]: ETD 14.11.2024
+                          - generic [ref=e932]: ETA 08.01.2025
+                      - cell "0,00 €" [ref=e933]
+                      - 'cell "Open: 3.808,00 € Paid: 0,00 €" [ref=e934]':
+                        - generic [ref=e935]:
+                          - generic [ref=e937]: "Open: 3.808,00 €"
+                          - generic [ref=e939]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e940]:
+                        - generic [ref=e941]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e942]:
+                        - generic [ref=e943]:
+                          - button "Bearbeiten" [ref=e944] [cursor=pointer]:
+                            - generic [ref=e945]: Bearbeiten
+                          - button "Loeschen" [ref=e946] [cursor=pointer]:
+                            - generic [ref=e947]: Loeschen
+                    - 'row "24011 Premium French Press Set SKU-ALPHA — 07.11.2024 ETD 09.12.2024 ETA 08.01.2025 0,00 € Open: 3.332,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e948]':
+                      - cell "24011" [ref=e949]
+                      - cell "Premium French Press Set SKU-ALPHA" [ref=e950]:
+                        - generic [ref=e951]:
+                          - generic "Premium French Press Set" [ref=e952]
+                          - generic "SKU-ALPHA" [ref=e953]
+                      - cell "—" [ref=e954]
+                      - cell "07.11.2024" [ref=e955]
+                      - cell "ETD 09.12.2024 ETA 08.01.2025" [ref=e956]:
+                        - generic [ref=e957]:
+                          - generic [ref=e959]: ETD 09.12.2024
+                          - generic [ref=e961]: ETA 08.01.2025
+                      - cell "0,00 €" [ref=e962]
+                      - 'cell "Open: 3.332,00 € Paid: 0,00 €" [ref=e963]':
+                        - generic [ref=e964]:
+                          - generic [ref=e966]: "Open: 3.332,00 €"
+                          - generic [ref=e968]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e969]:
+                        - generic [ref=e970]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e971]:
+                        - generic [ref=e972]:
+                          - button "Bearbeiten" [ref=e973] [cursor=pointer]:
+                            - generic [ref=e974]: Bearbeiten
+                          - button "Loeschen" [ref=e975] [cursor=pointer]:
+                            - generic [ref=e976]: Loeschen
+                    - 'row "24012 Premium French Press Set SKU-ALPHA — 03.12.2024 ETD 31.12.2024 ETA 12.01.2025 0,00 € Open: 3.570,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e977]':
+                      - cell "24012" [ref=e978]
+                      - cell "Premium French Press Set SKU-ALPHA" [ref=e979]:
+                        - generic [ref=e980]:
+                          - generic "Premium French Press Set" [ref=e981]
+                          - generic "SKU-ALPHA" [ref=e982]
+                      - cell "—" [ref=e983]
+                      - cell "03.12.2024" [ref=e984]
+                      - cell "ETD 31.12.2024 ETA 12.01.2025" [ref=e985]:
+                        - generic [ref=e986]:
+                          - generic [ref=e988]: ETD 31.12.2024
+                          - generic [ref=e990]: ETA 12.01.2025
+                      - cell "0,00 €" [ref=e991]
+                      - 'cell "Open: 3.570,00 € Paid: 0,00 €" [ref=e992]':
+                        - generic [ref=e993]:
+                          - generic [ref=e995]: "Open: 3.570,00 €"
+                          - generic [ref=e997]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e998]:
+                        - generic [ref=e999]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1000]:
+                        - generic [ref=e1001]:
+                          - button "Bearbeiten" [ref=e1002] [cursor=pointer]:
+                            - generic [ref=e1003]: Bearbeiten
+                          - button "Loeschen" [ref=e1004] [cursor=pointer]:
+                            - generic [ref=e1005]: Loeschen
+                    - 'row "25001 Ergonomischer Bürostuhl SKU-BRAVO — 10.01.2025 ETD 15.02.2025 ETA 06.04.2025 0,00 € Open: 4.284,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1006]':
+                      - cell "25001" [ref=e1007]
+                      - cell "Ergonomischer Bürostuhl SKU-BRAVO" [ref=e1008]:
+                        - generic [ref=e1009]:
+                          - generic "Ergonomischer Bürostuhl" [ref=e1010]
+                          - generic "SKU-BRAVO" [ref=e1011]
+                      - cell "—" [ref=e1012]
+                      - cell "10.01.2025" [ref=e1013]
+                      - cell "ETD 15.02.2025 ETA 06.04.2025" [ref=e1014]:
+                        - generic [ref=e1015]:
+                          - generic [ref=e1017]: ETD 15.02.2025
+                          - generic [ref=e1019]: ETA 06.04.2025
+                      - cell "0,00 €" [ref=e1020]
+                      - 'cell "Open: 4.284,00 € Paid: 0,00 €" [ref=e1021]':
+                        - generic [ref=e1022]:
+                          - generic [ref=e1024]: "Open: 4.284,00 €"
+                          - generic [ref=e1026]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1027]:
+                        - generic [ref=e1028]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1029]:
+                        - generic [ref=e1030]:
+                          - button "Bearbeiten" [ref=e1031] [cursor=pointer]:
+                            - generic [ref=e1032]: Bearbeiten
+                          - button "Loeschen" [ref=e1033] [cursor=pointer]:
+                            - generic [ref=e1034]: Loeschen
+                    - 'row "25002 Ergonomischer Bürostuhl SKU-BRAVO — 06.02.2025 ETD 12.03.2025 ETA 09.04.2025 0,00 € Open: 3.689,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1035]':
+                      - cell "25002" [ref=e1036]
+                      - cell "Ergonomischer Bürostuhl SKU-BRAVO" [ref=e1037]:
+                        - generic [ref=e1038]:
+                          - generic "Ergonomischer Bürostuhl" [ref=e1039]
+                          - generic "SKU-BRAVO" [ref=e1040]
+                      - cell "—" [ref=e1041]
+                      - cell "06.02.2025" [ref=e1042]
+                      - cell "ETD 12.03.2025 ETA 09.04.2025" [ref=e1043]:
+                        - generic [ref=e1044]:
+                          - generic [ref=e1046]: ETD 12.03.2025
+                          - generic [ref=e1048]: ETA 09.04.2025
+                      - cell "0,00 €" [ref=e1049]
+                      - 'cell "Open: 3.689,00 € Paid: 0,00 €" [ref=e1050]':
+                        - generic [ref=e1051]:
+                          - generic [ref=e1053]: "Open: 3.689,00 €"
+                          - generic [ref=e1055]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1056]:
+                        - generic [ref=e1057]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1058]:
+                        - generic [ref=e1059]:
+                          - button "Bearbeiten" [ref=e1060] [cursor=pointer]:
+                            - generic [ref=e1061]: Bearbeiten
+                          - button "Loeschen" [ref=e1062] [cursor=pointer]:
+                            - generic [ref=e1063]: Loeschen
+                    - 'row "25003 Ergonomischer Bürostuhl SKU-BRAVO — 04.03.2025 ETD 06.04.2025 ETA 30.05.2025 0,00 € Open: 3.927,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1064]':
+                      - cell "25003" [ref=e1065]
+                      - cell "Ergonomischer Bürostuhl SKU-BRAVO" [ref=e1066]:
+                        - generic [ref=e1067]:
+                          - generic "Ergonomischer Bürostuhl" [ref=e1068]
+                          - generic "SKU-BRAVO" [ref=e1069]
+                      - cell "—" [ref=e1070]
+                      - cell "04.03.2025" [ref=e1071]
+                      - cell "ETD 06.04.2025 ETA 30.05.2025" [ref=e1072]:
+                        - generic [ref=e1073]:
+                          - generic [ref=e1075]: ETD 06.04.2025
+                          - generic [ref=e1077]: ETA 30.05.2025
+                      - cell "0,00 €" [ref=e1078]
+                      - 'cell "Open: 3.927,00 € Paid: 0,00 €" [ref=e1079]':
+                        - generic [ref=e1080]:
+                          - generic [ref=e1082]: "Open: 3.927,00 €"
+                          - generic [ref=e1084]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1085]:
+                        - generic [ref=e1086]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1087]:
+                        - generic [ref=e1088]:
+                          - button "Bearbeiten" [ref=e1089] [cursor=pointer]:
+                            - generic [ref=e1090]: Bearbeiten
+                          - button "Loeschen" [ref=e1091] [cursor=pointer]:
+                            - generic [ref=e1092]: Loeschen
+                    - 'row "25004 Fitness Resistance Bands Set SKU-CHARLIE — 08.04.2025 ETD 09.05.2025 ETA 07.06.2025 0,00 € Open: 4.165,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1093]':
+                      - cell "25004" [ref=e1094]
+                      - cell "Fitness Resistance Bands Set SKU-CHARLIE" [ref=e1095]:
+                        - generic [ref=e1096]:
+                          - generic "Fitness Resistance Bands Set" [ref=e1097]
+                          - generic "SKU-CHARLIE" [ref=e1098]
+                      - cell "—" [ref=e1099]
+                      - cell "08.04.2025" [ref=e1100]
+                      - cell "ETD 09.05.2025 ETA 07.06.2025" [ref=e1101]:
+                        - generic [ref=e1102]:
+                          - generic [ref=e1104]: ETD 09.05.2025
+                          - generic [ref=e1106]: ETA 07.06.2025
+                      - cell "0,00 €" [ref=e1107]
+                      - 'cell "Open: 4.165,00 € Paid: 0,00 €" [ref=e1108]':
+                        - generic [ref=e1109]:
+                          - generic [ref=e1111]: "Open: 4.165,00 €"
+                          - generic [ref=e1113]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1114]:
+                        - generic [ref=e1115]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1116]:
+                        - generic [ref=e1117]:
+                          - button "Bearbeiten" [ref=e1118] [cursor=pointer]:
+                            - generic [ref=e1119]: Bearbeiten
+                          - button "Loeschen" [ref=e1120] [cursor=pointer]:
+                            - generic [ref=e1121]: Loeschen
+                    - 'row "25005 Fitness Resistance Bands Set SKU-CHARLIE — 09.05.2025 ETD 07.06.2025 ETA 20.06.2025 0,00 € Open: 3.570,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1122]':
+                      - cell "25005" [ref=e1123]
+                      - cell "Fitness Resistance Bands Set SKU-CHARLIE" [ref=e1124]:
+                        - generic [ref=e1125]:
+                          - generic "Fitness Resistance Bands Set" [ref=e1126]
+                          - generic "SKU-CHARLIE" [ref=e1127]
+                      - cell "—" [ref=e1128]
+                      - cell "09.05.2025" [ref=e1129]
+                      - cell "ETD 07.06.2025 ETA 20.06.2025" [ref=e1130]:
+                        - generic [ref=e1131]:
+                          - generic [ref=e1133]: ETD 07.06.2025
+                          - generic [ref=e1135]: ETA 20.06.2025
+                      - cell "0,00 €" [ref=e1136]
+                      - 'cell "Open: 3.570,00 € Paid: 0,00 €" [ref=e1137]':
+                        - generic [ref=e1138]:
+                          - generic [ref=e1140]: "Open: 3.570,00 €"
+                          - generic [ref=e1142]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1143]:
+                        - generic [ref=e1144]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1145]:
+                        - generic [ref=e1146]:
+                          - button "Bearbeiten" [ref=e1147] [cursor=pointer]:
+                            - generic [ref=e1148]: Bearbeiten
+                          - button "Loeschen" [ref=e1149] [cursor=pointer]:
+                            - generic [ref=e1150]: Loeschen
+                    - 'row "25006 Fitness Resistance Bands Set SKU-CHARLIE — 06.06.2025 ETD 11.07.2025 ETA 05.09.2025 0,00 € Open: 4.046,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1151]':
+                      - cell "25006" [ref=e1152]
+                      - cell "Fitness Resistance Bands Set SKU-CHARLIE" [ref=e1153]:
+                        - generic [ref=e1154]:
+                          - generic "Fitness Resistance Bands Set" [ref=e1155]
+                          - generic "SKU-CHARLIE" [ref=e1156]
+                      - cell "—" [ref=e1157]
+                      - cell "06.06.2025" [ref=e1158]
+                      - cell "ETD 11.07.2025 ETA 05.09.2025" [ref=e1159]:
+                        - generic [ref=e1160]:
+                          - generic [ref=e1162]: ETD 11.07.2025
+                          - generic [ref=e1164]: ETA 05.09.2025
+                      - cell "0,00 €" [ref=e1165]
+                      - 'cell "Open: 4.046,00 € Paid: 0,00 €" [ref=e1166]':
+                        - generic [ref=e1167]:
+                          - generic [ref=e1169]: "Open: 4.046,00 €"
+                          - generic [ref=e1171]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1172]:
+                        - generic [ref=e1173]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1174]:
+                        - generic [ref=e1175]:
+                          - button "Bearbeiten" [ref=e1176] [cursor=pointer]:
+                            - generic [ref=e1177]: Bearbeiten
+                          - button "Loeschen" [ref=e1178] [cursor=pointer]:
+                            - generic [ref=e1179]: Loeschen
+                    - 'row "25007 Ohne Alias (SKU-DELTA) SKU-DELTA — 04.07.2025 ETD 03.08.2025 ETA 30.08.2025 0,00 € Open: 3.451,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1180]':
+                      - cell "25007" [ref=e1181]
+                      - cell "Ohne Alias (SKU-DELTA) SKU-DELTA" [ref=e1182]:
+                        - generic [ref=e1183]:
+                          - generic "Ohne Alias (SKU-DELTA)" [ref=e1184]
+                          - generic "SKU-DELTA" [ref=e1185]
+                      - cell "—" [ref=e1186]
+                      - cell "04.07.2025" [ref=e1187]
+                      - cell "ETD 03.08.2025 ETA 30.08.2025" [ref=e1188]:
+                        - generic [ref=e1189]:
+                          - generic [ref=e1191]: ETD 03.08.2025
+                          - generic [ref=e1193]: ETA 30.08.2025
+                      - cell "0,00 €" [ref=e1194]
+                      - 'cell "Open: 3.451,00 € Paid: 0,00 €" [ref=e1195]':
+                        - generic [ref=e1196]:
+                          - generic [ref=e1198]: "Open: 3.451,00 €"
+                          - generic [ref=e1200]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1201]:
+                        - generic [ref=e1202]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1203]:
+                        - generic [ref=e1204]:
+                          - button "Bearbeiten" [ref=e1205] [cursor=pointer]:
+                            - generic [ref=e1206]: Bearbeiten
+                          - button "Loeschen" [ref=e1207] [cursor=pointer]:
+                            - generic [ref=e1208]: Loeschen
+                    - 'row "25008 Ohne Alias (SKU-DELTA) SKU-DELTA — 05.08.2025 ETD 02.09.2025 ETA 13.09.2025 0,00 € Open: 3.213,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1209]':
+                      - cell "25008" [ref=e1210]
+                      - cell "Ohne Alias (SKU-DELTA) SKU-DELTA" [ref=e1211]:
+                        - generic [ref=e1212]:
+                          - generic "Ohne Alias (SKU-DELTA)" [ref=e1213]
+                          - generic "SKU-DELTA" [ref=e1214]
+                      - cell "—" [ref=e1215]
+                      - cell "05.08.2025" [ref=e1216]
+                      - cell "ETD 02.09.2025 ETA 13.09.2025" [ref=e1217]:
+                        - generic [ref=e1218]:
+                          - generic [ref=e1220]: ETD 02.09.2025
+                          - generic [ref=e1222]: ETA 13.09.2025
+                      - cell "0,00 €" [ref=e1223]
+                      - 'cell "Open: 3.213,00 € Paid: 0,00 €" [ref=e1224]':
+                        - generic [ref=e1225]:
+                          - generic [ref=e1227]: "Open: 3.213,00 €"
+                          - generic [ref=e1229]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1230]:
+                        - generic [ref=e1231]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1232]:
+                        - generic [ref=e1233]:
+                          - button "Bearbeiten" [ref=e1234] [cursor=pointer]:
+                            - generic [ref=e1235]: Bearbeiten
+                          - button "Loeschen" [ref=e1236] [cursor=pointer]:
+                            - generic [ref=e1237]: Loeschen
+                    - 'row "25009 Ohne Alias (SKU-DELTA) SKU-DELTA — 09.09.2025 ETD 11.10.2025 ETA 07.12.2025 0,00 € Open: 3.689,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1238]':
+                      - cell "25009" [ref=e1239]
+                      - cell "Ohne Alias (SKU-DELTA) SKU-DELTA" [ref=e1240]:
+                        - generic [ref=e1241]:
+                          - generic "Ohne Alias (SKU-DELTA)" [ref=e1242]
+                          - generic "SKU-DELTA" [ref=e1243]
+                      - cell "—" [ref=e1244]
+                      - cell "09.09.2025" [ref=e1245]
+                      - cell "ETD 11.10.2025 ETA 07.12.2025" [ref=e1246]:
+                        - generic [ref=e1247]:
+                          - generic [ref=e1249]: ETD 11.10.2025
+                          - generic [ref=e1251]: ETA 07.12.2025
+                      - cell "0,00 €" [ref=e1252]
+                      - 'cell "Open: 3.689,00 € Paid: 0,00 €" [ref=e1253]':
+                        - generic [ref=e1254]:
+                          - generic [ref=e1256]: "Open: 3.689,00 €"
+                          - generic [ref=e1258]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1259]:
+                        - generic [ref=e1260]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1261]:
+                        - generic [ref=e1262]:
+                          - button "Bearbeiten" [ref=e1263] [cursor=pointer]:
+                            - generic [ref=e1264]: Bearbeiten
+                          - button "Loeschen" [ref=e1265] [cursor=pointer]:
+                            - generic [ref=e1266]: Loeschen
+                    - 'row "25010 Ohne Alias (SKU-DELTA) SKU-DELTA — 06.10.2025 ETD 04.11.2025 ETA 02.12.2025 0,00 € Open: 3.332,00 € Paid: 0,00 € Offen Bearbeiten Loeschen" [ref=e1267]':
+                      - cell "25010" [ref=e1268]
+                      - cell "Ohne Alias (SKU-DELTA) SKU-DELTA" [ref=e1269]:
+                        - generic [ref=e1270]:
+                          - generic "Ohne Alias (SKU-DELTA)" [ref=e1271]
+                          - generic "SKU-DELTA" [ref=e1272]
+                      - cell "—" [ref=e1273]
+                      - cell "06.10.2025" [ref=e1274]
+                      - cell "ETD 04.11.2025 ETA 02.12.2025" [ref=e1275]:
+                        - generic [ref=e1276]:
+                          - generic [ref=e1278]: ETD 04.11.2025
+                          - generic [ref=e1280]: ETA 02.12.2025
+                      - cell "0,00 €" [ref=e1281]
+                      - 'cell "Open: 3.332,00 € Paid: 0,00 €" [ref=e1282]':
+                        - generic [ref=e1283]:
+                          - generic [ref=e1285]: "Open: 3.332,00 €"
+                          - generic [ref=e1287]: "Paid: 0,00 €"
+                      - cell "Offen" [ref=e1288]:
+                        - generic [ref=e1289]: Offen
+                      - cell "Bearbeiten Loeschen" [ref=e1290]:
+                        - generic [ref=e1291]:
+                          - button "Bearbeiten" [ref=e1292] [cursor=pointer]:
+                            - generic [ref=e1293]: Bearbeiten
+                          - button "Loeschen" [ref=e1294] [cursor=pointer]:
+                            - generic [ref=e1295]: Loeschen

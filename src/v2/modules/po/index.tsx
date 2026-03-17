@@ -18,6 +18,7 @@ import {
 import type { ColumnDef } from "@tanstack/react-table";
 import { useLocation, useNavigate } from "react-router-dom";
 import { buildPaymentRows, buildPoPaymentPlanning } from "../../../ui/orderEditorFactory.js";
+import { buildResolvedPoPaymentListSummary } from "../../../domain/poPaymentResolver.js";
 import { allocatePayment, isHttpUrl, normalizePaymentId } from "../../../ui/utils/paymentValidation.js";
 import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
@@ -931,6 +932,19 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             return [] as PoPaymentRow[];
           }
         })();
+        const resolvedPaymentSummary = (() => {
+          try {
+            const cloned = structuredClone(po);
+            return buildResolvedPoPaymentListSummary(cloned, poSettings, paymentRecords as Record<string, unknown>[]);
+          } catch {
+            return {
+              milestones: [],
+              paidEur: 0,
+              openEur: 0,
+              statusText: "open" as const,
+            };
+          }
+        })();
         const timelineMarkers = (() => {
           try {
             const flowRows = sortPaymentRowsByFlow(
@@ -963,15 +977,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             return [] as PoTimelineMarkerRow[];
           }
         })();
-        const paidEur = paymentRows
-          .filter((row) => row.status === "paid")
-          .reduce((sum, row) => sum + Number(row.plannedEur || 0), 0);
-        const openEur = paymentRows
-          .filter((row) => row.status !== "paid")
-          .reduce((sum, row) => sum + Number(row.plannedEur || 0), 0);
-        const statusText: PoViewRow["statusText"] = openEur <= 0 && paidEur > 0
-          ? "paid_only"
-          : (openEur > 0 && paidEur > 0 ? "mixed" : "open");
         return {
           id: String(po.id || ""),
           poNo: String(po.poNo || ""),
@@ -985,9 +990,9 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           etaDate: etaDate || null,
           arrivalDate: po.arrivalDate ? String(po.arrivalDate) : null,
           goodsEur,
-          openEur,
-          paidEur,
-          statusText,
+          openEur: resolvedPaymentSummary.openEur,
+          paidEur: resolvedPaymentSummary.paidEur,
+          statusText: resolvedPaymentSummary.statusText as PoViewRow["statusText"],
           itemSkusText,
           timelineMarkers,
           raw: po,
