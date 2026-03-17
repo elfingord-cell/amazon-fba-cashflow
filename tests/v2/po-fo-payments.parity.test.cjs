@@ -497,12 +497,12 @@ test("PO planning snapshot keeps milestone offsets and settings-derived auto-eve
   const requiredVisibleEvents = snapshot.planningRows
     .filter((row) => {
       const eventType = String(row.eventType || "");
-      return String(row.kind || "") === "manual" || ["freight", "eust", "duty", "vat_refund"].includes(eventType);
+      return ["deposit", "balance", "freight", "eust", "duty", "vat_refund"].includes(eventType);
     })
-    .map((row) => (
-      String(row.kind || "") === "manual"
-        ? String(row.label || "").split("–").pop()?.trim() || String(row.label || "")
-        : String(row.eventType || "")
+    .map((row) => String(row.eventType || ""))
+    .sort((left, right) => (
+      ["deposit", "balance", "freight", "eust", "duty", "vat_refund"].indexOf(left)
+      - ["deposit", "balance", "freight", "eust", "duty", "vat_refund"].indexOf(right)
     ));
 
   assert.ok(balancePlan);
@@ -511,6 +511,7 @@ test("PO planning snapshot keeps milestone offsets and settings-derived auto-eve
   assert.ok(eustPlan);
   assert.ok(refundPlan);
   assert.equal(snapshot.schedule.etaDate, "2026-05-08");
+  assert.equal(snapshot.schedule.cnyAdjustmentDays, 0);
   assert.equal(balancePlan.dueDate, "2026-04-28");
   assert.equal(balancePaymentRow?.dueDate, "2026-04-28");
   assert.equal(freightPlan.dueDate, "2026-06-13");
@@ -518,11 +519,15 @@ test("PO planning snapshot keeps milestone offsets and settings-derived auto-eve
   assert.equal(eustPlan.dueDate, "2026-06-13");
   assert.equal(refundPlan.dueDate, "2026-10-31");
   assert.equal(freightPlan.source, "Settings-Default");
+  assert.equal(balancePlan.formulaLabel, "ETA - 10 Tage");
+  assert.equal(refundPlan.formulaLabel, "EUSt-Datum + 4 Monate -> Monatsende");
+  assert.equal(balancePlan.removable, false);
+  assert.equal(refundPlan.removable, false);
   assert.equal(Array.isArray(snapshot.record?.autoEvents), true);
   assert.equal(snapshot.record.autoEvents.length >= 5, true);
   assert.deepEqual(requiredVisibleEvents, [
-    "Deposit",
-    "Balance",
+    "deposit",
+    "balance",
     "freight",
     "eust",
     "duty",

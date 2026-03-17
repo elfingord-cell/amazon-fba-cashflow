@@ -1011,6 +1011,8 @@ function suggestedInvoiceFilename(record, paidDate) {
 }
 
 function mapPaymentType(evt, milestone) {
+  if (evt.type === "deposit") return "Deposit";
+  if (evt.type === "balance") return "Balance";
   if (evt.type === "freight") return "Fracht";
   if (evt.type === "eust") return "EUSt";
   if (evt.type === "vat_refund") return "EUSt-Erstattung";
@@ -1191,7 +1193,47 @@ function serialiseTimeline(schedule) {
     prodDoneDate: isoDate(schedule?.prodDone),
     etdDate: isoDate(schedule?.etd),
     etaDate: isoDate(schedule?.eta),
+    etdComputedDate: isoDate(schedule?.etdComputed),
+    etaComputedDate: isoDate(schedule?.etaComputed),
+    cnyAdjustmentDays: Number(schedule?.cnyAdjustmentDays || 0),
+    cnyStartDate: isoDate(schedule?.cnyStart),
+    cnyEndDate: isoDate(schedule?.cnyEnd),
   };
+}
+
+function classifyManualMilestoneType(label) {
+  const text = String(label || "").trim().toLowerCase();
+  if (text.includes("deposit") || text.includes("anzahlung")) return "deposit";
+  if (text.includes("balance") || text.includes("rest")) return "balance";
+  return "milestone";
+}
+
+function planningAnchorLabel(anchor) {
+  const normalized = String(anchor || "ETA").trim().toUpperCase();
+  if (normalized === "ORDER_DATE") return "Order";
+  if (normalized === "PROD_DONE") return "Prod Done";
+  if (normalized === "ETD") return "ETD";
+  return "ETA";
+}
+
+function planningOffsetFormula(anchor, offsetValue, offsetUnit) {
+  const base = planningAnchorLabel(anchor);
+  const unit = String(offsetUnit || "days") === "months" ? "Monate" : "Tage";
+  const offset = Number(offsetValue || 0);
+  if (!offset) return base;
+  const sign = offset > 0 ? "+" : "-";
+  return `${base} ${sign} ${Math.abs(offset)} ${unit}`;
+}
+
+function buildPlanningFormulaLabel(input) {
+  if (String(input?.eventType || "") === "vat_refund") {
+    const offset = Number(input?.offsetValue || 0);
+    const sign = offset > 0 ? "+" : (offset < 0 ? "-" : "");
+    const unit = String(input?.offsetUnit || "months") === "months" ? "Monate" : "Tage";
+    if (!offset) return "EUSt-Datum -> Monatsende";
+    return `EUSt-Datum ${sign} ${Math.abs(offset)} ${unit} -> Monatsende`;
+  }
+  return planningOffsetFormula(input?.anchor, input?.offsetValue, input?.offsetUnit);
 }
 
 function derivePoPlanningRows(record, config, settings, options = {}) {
@@ -1202,7 +1244,6 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
     if (fallback) goods = fallback;
   }
   const freight = resolveFreightTotal(record, totals);
-  const prefix = record[config.numberField] ? `${config.entityLabel} ${record[config.numberField]} – ` : "";
   const manual = Array.isArray(record.milestones) ? record.milestones : [];
   const auto = ensureAutoEvents(record, settings, manual);
   const schedule = computeTimeline(record, settings);
@@ -1222,12 +1263,13 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
     if (!dueIso) return null;
     const amount = -(goods * (pct / 100));
     if (!Number.isFinite(amount)) return null;
+    const type = classifyManualMilestoneType(m.label);
     return {
       id: m.id,
-      label: `${prefix}${m.label || "Zahlung"}`.trim(),
+      label: String(m.label || "Zahlung").trim(),
       date: dueIso,
       amount,
-      type: "manual",
+      type,
       due,
       auto: false,
       direction: mapPlanningDirection(amount),
@@ -1259,7 +1301,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
     if (!(baseDate instanceof Date) || Number.isNaN(baseDate.getTime())) {
       rows.push({
         id: autoEvt.id,
-        label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
+        label: String(autoEvt.label || "").trim(),
         date: null,
         amount: 0,
         type: autoEvt.type,
@@ -1284,7 +1326,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
       const amount = -(amountAbs || 0);
       rows.push({
         id: autoEvt.id,
-        label: `${prefix}${autoEvt.label ? ` – ${autoEvt.label}` : ""}`.trim(),
+        label: String(autoEvt.label || "").trim(),
         date: dueIso,
         amount,
         type: "freight",
@@ -1311,7 +1353,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
       autoResults.duty = { amount, due };
       rows.push({
         id: autoEvt.id,
-        label: `${prefix}${autoEvt.label || "Zoll"}`.trim(),
+        label: String(autoEvt.label || "Zoll").trim(),
         date: dueIso,
         amount,
         type: "duty",
@@ -1339,7 +1381,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
       autoResults.eust = { amount, due };
       rows.push({
         id: autoEvt.id,
-        label: `${prefix}${autoEvt.label || "EUSt"}`.trim(),
+        label: String(autoEvt.label || "EUSt").trim(),
         date: dueIso,
         amount,
         type: "eust",
@@ -1371,7 +1413,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
       autoResults.vat = { amount, due };
       rows.push({
         id: autoEvt.id,
-        label: `${prefix}${autoEvt.label || "EUSt-Erstattung"}`.trim(),
+        label: String(autoEvt.label || "EUSt-Erstattung").trim(),
         date: dueIso,
         amount,
         type: "vat_refund",
@@ -1396,7 +1438,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
       const amount = -(goods * (percent / 100));
       rows.push({
         id: autoEvt.id,
-        label: `${prefix}${autoEvt.label || "FX"}`.trim(),
+        label: String(autoEvt.label || "FX").trim(),
         date: dueIso,
         amount,
         type: "fx_fee",
@@ -1502,6 +1544,14 @@ function buildPoPaymentPlanning(record, config, settings, paymentRecords = []) {
       plannedAmountEur: Math.abs(Number(row.amount || 0)),
       direction: row.direction,
       typeLabel: mapPaymentType(row, msMap.get(row.id)),
+      locked: ["deposit", "balance", "freight", "eust", "duty", "vat_refund"].includes(String(row.type || "")),
+      removable: !["deposit", "balance", "freight", "eust", "duty", "vat_refund"].includes(String(row.type || "")),
+      formulaLabel: buildPlanningFormulaLabel({
+        eventType: row.type,
+        anchor: row.anchor,
+        offsetValue: row.offsetValue,
+        offsetUnit: row.offsetUnit,
+      }),
     })),
     paymentRows,
   };

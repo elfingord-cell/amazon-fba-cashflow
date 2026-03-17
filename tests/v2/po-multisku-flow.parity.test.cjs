@@ -654,10 +654,14 @@ test("po modal planning uses one schedule truth and shows the fixed payment even
   assert.match(source, /draftPlanningSnapshot\.schedule\.etaDate/);
   assert.match(source, /aggregateEtaStart/);
   assert.match(source, /aggregateEtaEnd/);
+  assert.match(source, /PLANNING_EVENT_ORDER = \[\.\.\.STANDARD_MANUAL_EVENT_ORDER, \.\.\.PLANNING_AUTO_EVENT_ORDER\]/);
   assert.match(source, /PLANNING_AUTO_EVENT_ORDER = \["freight", "eust", "duty", "vat_refund"\]/);
-  assert.match(source, /visiblePlanningAutoEvents/);
+  assert.match(source, /draftStandardPlanningRows/);
+  assert.match(source, /draftStandardAutoEvents/);
   assert.match(source, /planningEventDisplayLabel/);
-  assert.equal(source.includes("draftAutoEvents.map"), false);
+  assert.match(source, /Timeline \/ Zahlungslogik/);
+  assert.match(source, /v2-po-modal-timeline/);
+  assert.equal(source.includes("visiblePlanningAutoEvents"), false);
 });
 
 test("po timeline marker click opens payment flow with modal fallback", () => {

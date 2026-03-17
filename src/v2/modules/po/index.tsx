@@ -172,9 +172,26 @@ interface PoPaymentPlanRow {
   plannedAmountEur: number;
   direction: "out" | "in" | "neutral";
   typeLabel: string;
+  locked: boolean;
+  removable: boolean;
+  formulaLabel: string;
 }
 
+interface PoPlanningSchedule {
+  orderDate?: unknown;
+  prodDoneDate?: unknown;
+  etdDate?: unknown;
+  etaDate?: unknown;
+  etdComputedDate?: unknown;
+  etaComputedDate?: unknown;
+  cnyAdjustmentDays?: unknown;
+  cnyStartDate?: unknown;
+  cnyEndDate?: unknown;
+}
+
+const STANDARD_MANUAL_EVENT_ORDER = ["deposit", "balance"] as const;
 const PLANNING_AUTO_EVENT_ORDER = ["freight", "eust", "duty", "vat_refund"] as const;
+const PLANNING_EVENT_ORDER = [...STANDARD_MANUAL_EVENT_ORDER, ...PLANNING_AUTO_EVENT_ORDER] as const;
 
 interface PoPaymentFormValues {
   selectedEventIds: string[];
@@ -378,6 +395,58 @@ function normalizeAutoEventDraft(row: Record<string, unknown> | PoAutoEventDraft
   };
 }
 
+function milestoneDraftType(label: unknown): "deposit" | "balance" | "milestone" {
+  const text = String(label || "").trim().toLowerCase();
+  if (text.includes("deposit") || text.includes("anzahlung")) return "deposit";
+  if (text.includes("balance") || text.includes("rest")) return "balance";
+  return "milestone";
+}
+
+function normalizeMilestoneDrafts(
+  milestones: Array<Partial<PoMilestoneDraft>> | null | undefined,
+  fallbackMilestones: Array<Partial<PoMilestoneDraft>> = defaultMilestones(),
+): PoMilestoneDraft[] {
+  const source = Array.isArray(milestones) ? milestones : [];
+  const fallback = Array.isArray(fallbackMilestones) ? fallbackMilestones : [];
+  const fallbackDefaults = defaultMilestones();
+  const used = new Set<number>();
+
+  const pickSeed = (type: "deposit" | "balance"): Partial<PoMilestoneDraft> | undefined => {
+    const existingIndex = source.findIndex((row, index) => !used.has(index) && milestoneDraftType(row?.label) === type);
+    if (existingIndex >= 0) {
+      used.add(existingIndex);
+      return source[existingIndex];
+    }
+    const fallbackRow = fallback.find((row) => milestoneDraftType(row?.label) === type);
+    if (fallbackRow) return fallbackRow;
+    return fallbackDefaults.find((row) => milestoneDraftType(row.label) === type);
+  };
+
+  const standard = STANDARD_MANUAL_EVENT_ORDER.map((type) => {
+    const seed = pickSeed(type) || {};
+    const fallbackRow = fallbackDefaults.find((row) => milestoneDraftType(row.label) === type) || fallbackDefaults[0];
+    return {
+      id: String(seed.id || randomId("ms")),
+      label: type === "deposit" ? "Deposit" : "Balance",
+      percent: Number(seed.percent ?? fallbackRow.percent ?? 0),
+      anchor: String(seed.anchor || fallbackRow.anchor || "ORDER_DATE"),
+      lagDays: Number(seed.lagDays ?? fallbackRow.lagDays ?? 0),
+    };
+  });
+
+  const custom = source
+    .filter((_, index) => !used.has(index))
+    .map((row) => ({
+      id: String(row.id || randomId("ms")),
+      label: String(row.label || "Milestone"),
+      percent: Number(row.percent || 0),
+      anchor: String(row.anchor || "ORDER_DATE"),
+      lagDays: Number(row.lagDays || 0),
+    }));
+
+  return [...standard, ...custom];
+}
+
 function mapPlanningRow(row: Record<string, unknown>): PoPaymentPlanRow {
   return {
     id: String(row.id || ""),
@@ -393,6 +462,9 @@ function mapPlanningRow(row: Record<string, unknown>): PoPaymentPlanRow {
     plannedAmountEur: Number(row.plannedAmountEur || 0),
     direction: row.direction === "in" ? "in" : (row.direction === "neutral" ? "neutral" : "out"),
     typeLabel: String(row.typeLabel || ""),
+    locked: row.locked === true,
+    removable: row.removable === true,
+    formulaLabel: String(row.formulaLabel || ""),
   };
 }
 
@@ -675,7 +747,7 @@ function toPoRecord(values: PoFormValues, existing: Record<string, unknown> | nu
     fallback: existing,
   });
   const firstItem = normalizedItems[0] || null;
-  const milestones = (values.milestones || []).map((row) => ({
+  const milestones = normalizeMilestoneDrafts(values.milestones, defaultMilestones()).map((row) => ({
     id: String(row.id || randomId("ms")),
     label: String(row.label || "Milestone"),
     percent: Number(row.percent || 0),
@@ -1255,15 +1327,17 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   }, [draftItems]);
 
   const draftPlanningSnapshot = useMemo<{
-    schedule: { orderDate?: unknown; prodDoneDate?: unknown; etdDate?: unknown; etaDate?: unknown };
+    schedule: PoPlanningSchedule;
     planningRows: PoPaymentPlanRow[];
     paymentRows: PoPaymentRow[];
+    autoEvents: PoAutoEventDraft[];
   }>(() => {
     if (!draftPoRecord) {
       return {
         schedule: {},
         planningRows: [],
         paymentRows: [],
+        autoEvents: [],
       };
     }
     try {
@@ -1275,15 +1349,19 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         (Array.isArray(state.payments) ? state.payments : []) as Record<string, unknown>[],
       );
       return {
-        schedule: snapshot.schedule as Record<string, unknown>,
+        schedule: snapshot.schedule as PoPlanningSchedule,
         planningRows: (Array.isArray(snapshot.planningRows) ? snapshot.planningRows : []).map((row) => mapPlanningRow(row as Record<string, unknown>)),
         paymentRows: (Array.isArray(snapshot.paymentRows) ? snapshot.paymentRows : []).map((row) => mapBuiltPaymentRow(row as Record<string, unknown>)),
+        autoEvents: Array.isArray(snapshot.record?.autoEvents)
+          ? (snapshot.record.autoEvents as Record<string, unknown>[]).map((row) => normalizeAutoEventDraft(row))
+          : [],
       };
     } catch {
       return {
         schedule: {},
         planningRows: [],
         paymentRows: [],
+        autoEvents: [],
       };
     }
   }, [draftPoRecord, poSettings, state.payments]);
@@ -1311,21 +1389,19 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     [draftPlanningSnapshot],
   );
 
-  const draftAutoEvents = useMemo<PoAutoEventDraft[]>(
-    () => (Array.isArray(draftValues?.autoEvents) ? draftValues.autoEvents.map((row) => normalizeAutoEventDraft(row)) : []),
-    [draftValues?.autoEvents],
+  const draftStandardPlanningRows = useMemo<PoPaymentPlanRow[]>(
+    () => PLANNING_EVENT_ORDER
+      .map((type) => draftPaymentPlanRows.find((row) => String(row.eventType || "") === type))
+      .filter((row): row is PoPaymentPlanRow => Boolean(row)),
+    [draftPaymentPlanRows],
   );
 
-  const visiblePlanningAutoEvents = useMemo<PoAutoEventDraft[]>(() => {
-    const byType = new Map(
-      draftAutoEvents
-        .map((row) => [String(row.type || ""), row] as const)
-        .filter(([type]) => Boolean(type)),
-    );
-    return PLANNING_AUTO_EVENT_ORDER
-      .map((type) => byType.get(type))
-      .filter((row): row is PoAutoEventDraft => Boolean(row));
-  }, [draftAutoEvents]);
+  const draftStandardAutoEvents = useMemo<PoAutoEventDraft[]>(
+    () => PLANNING_AUTO_EVENT_ORDER
+      .map((type) => draftPlanningSnapshot.autoEvents.find((row) => String(row.type || "") === type))
+      .filter((row): row is PoAutoEventDraft => Boolean(row)),
+    [draftPlanningSnapshot.autoEvents],
+  );
 
   const draftPlanRowById = useMemo(
     () => new Map(draftPaymentPlanRows.map((row) => [row.id, row])),
@@ -1342,10 +1418,42 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     return draftAggregate.maxEtaDate || null;
   }, [draftAggregate.maxEtaDate, draftPlanningSnapshot.schedule.etaDate]);
 
+  const modalTimelineRange = useMemo<TimelineRange | null>(() => {
+    const timelineDates = [
+      draftPlanningSnapshot.schedule.orderDate,
+      draftPlanningSnapshot.schedule.prodDoneDate,
+      draftPlanningSnapshot.schedule.etdDate,
+      draftPlanningSnapshot.schedule.etaDate,
+      draftPlanningSnapshot.schedule.cnyStartDate,
+      draftPlanningSnapshot.schedule.cnyEndDate,
+      ...draftStandardPlanningRows.map((row) => row.dueDate),
+    ]
+      .map((value) => parseIsoDate(value))
+      .filter((value): value is Date => Boolean(value));
+    if (!timelineDates.length) return null;
+    const minMs = Math.min(...timelineDates.map((value) => value.getTime())) - (4 * MS_PER_DAY);
+    const maxMs = Math.max(...timelineDates.map((value) => value.getTime())) + (4 * MS_PER_DAY);
+    return {
+      startMs: minMs,
+      endMs: maxMs,
+      totalDays: Math.max(1, Math.ceil((maxMs - minMs) / MS_PER_DAY)),
+    };
+  }, [draftPlanningSnapshot.schedule, draftStandardPlanningRows]);
+
+  const modalTimelineMarkers = useMemo(() => draftStandardPlanningRows.map((row) => {
+    const paymentRow = draftPlanningSnapshot.paymentRows.find((entry) => entry.id === row.id) || null;
+    return {
+      ...row,
+      status: paymentRow?.status === "paid" ? "paid" : "open",
+      paidDate: paymentRow?.paidDate || null,
+      plannedEur: paymentRow?.plannedEur ?? row.plannedAmountEur,
+    };
+  }), [draftPlanningSnapshot.paymentRows, draftStandardPlanningRows]);
+
   function updateDraftAutoEvent(eventId: string, patch: Partial<PoAutoEventDraft>): void {
     const current = Array.isArray(form.getFieldValue("autoEvents"))
       ? (form.getFieldValue("autoEvents") as Record<string, unknown>[]).map((row) => normalizeAutoEventDraft(row))
-      : [];
+      : draftPlanningSnapshot.autoEvents;
     const next = current.map((row) => (row.id === eventId ? { ...row, ...patch } : row));
     form.setFieldValue("autoEvents", next);
   }
@@ -1578,15 +1686,18 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       fxOverride: Number(existing?.fxOverride ?? defaults.fxOverride ?? settings.fxRate ?? 0),
       ddp: existing?.ddp === true ? true : Boolean(defaults.ddp),
       archived: existing?.archived === true,
-      milestones: Array.isArray(existing?.milestones)
-        ? (existing?.milestones as Record<string, unknown>[]).map((row) => ({
-          id: String(row.id || randomId("ms")),
-          label: String(row.label || "Milestone"),
-          percent: Number(row.percent || 0),
-          anchor: String(row.anchor || "ORDER_DATE"),
-          lagDays: Number(row.lagDays || 0),
-        }))
-        : (supplierMilestones.length ? supplierMilestones : defaultMilestones()),
+      milestones: normalizeMilestoneDrafts(
+        Array.isArray(existing?.milestones)
+          ? (existing?.milestones as Record<string, unknown>[]).map((row) => ({
+            id: String(row.id || randomId("ms")),
+            label: String(row.label || "Milestone"),
+            percent: Number(row.percent || 0),
+            anchor: String(row.anchor || "ORDER_DATE"),
+            lagDays: Number(row.lagDays || 0),
+          }))
+          : (supplierMilestones.length ? supplierMilestones : defaultMilestones()),
+        supplierMilestones.length ? supplierMilestones : defaultMilestones(),
+      ),
       items: supplierScopedItems,
     };
     try {
@@ -1730,15 +1841,17 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       anchor: row.anchor,
       lagDays: row.lagDays,
     }));
+    const milestoneDefaults = supplierMilestones.length ? supplierMilestones : defaultMilestones();
     const shouldReplaceMilestones = !editingId && (!Array.isArray(current.milestones) || milestoneSum(current.milestones) === milestoneSum(defaultMilestones()));
     manualFreightOverrideIdsRef.current.clear();
     withSuppressedFreightTracking(() => {
       form.setFieldsValue({
         supplierId,
         items: filteredItems,
-        milestones: shouldReplaceMilestones
-          ? (supplierMilestones.length ? supplierMilestones : defaultMilestones())
-          : current.milestones,
+        milestones: normalizeMilestoneDrafts(
+          shouldReplaceMilestones ? milestoneDefaults : current.milestones,
+          milestoneDefaults,
+        ),
       });
     });
     setSkuPickerValues([]);
@@ -2680,14 +2793,15 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                           <DeNumberInput mode="int" min={0} />
                         </Form.Item>
                       </div>
-                      <Button
-                        danger
-                        size="small"
-                        style={{ marginTop: 31 }}
-                        onClick={() => remove(field.name)}
-                      >
-                        Entfernen
-                      </Button>
+                      <div className="v2-po-item-row-actions">
+                        <Button
+                          danger
+                          size="small"
+                          onClick={() => remove(field.name)}
+                        >
+                          Entfernen
+                        </Button>
+                      </div>
                     </div>
                   ))}
                   <Button
@@ -2838,153 +2952,357 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               <Form.List name="milestones">
                 {(fields, { add, remove }) => (
                   <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                    <StatsTableShell>
-                      <table className="v2-stats-table">
-                        <thead>
-                          <tr>
-                            <th>Art</th>
-                            <th>Event</th>
-                            <th>% / Status</th>
-                            <th>Anchor</th>
-                            <th>Offset</th>
-                            <th>Due</th>
-                            <th>Planned EUR</th>
-                            <th>Quelle</th>
-                            <th>Aktion</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {fields.map((field) => {
-                            const milestoneId = String(form.getFieldValue(["milestones", field.name, "id"]) || "");
-                            const planning = draftPlanRowById.get(milestoneId) || null;
-                            return (
-                              <tr key={field.key}>
-                                <td><Tag color="blue">Milestone</Tag></td>
-                                <td>
-                                  <Form.Item
-                                    {...field}
-                                    name={[field.name, "label"]}
-                                    style={{ marginBottom: 0, minWidth: 220 }}
-                                    rules={[{ required: true, message: "Label fehlt." }]}
+                    <div className="v2-po-modal-timeline-card">
+                      <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+                        <Text strong>Timeline / Zahlungslogik</Text>
+                        {Number(draftPlanningSnapshot.schedule.cnyAdjustmentDays || 0) > 0 ? (
+                          <Tag color="processing">
+                            CNY +{formatNumber(draftPlanningSnapshot.schedule.cnyAdjustmentDays, 0)} Tage
+                          </Tag>
+                        ) : null}
+                      </Space>
+                      <Text type="secondary">
+                        Order, Produktion, CNY, ETD, Transit, ETA und die sechs Standard-Payment-Events werden aus demselben Timeline-Snapshot abgeleitet.
+                      </Text>
+                      <div className="v2-po-modal-timeline">
+                        <div className="v2-po-modal-timeline-summary">
+                          <span>Order {formatDate(draftPlanningSnapshot.schedule.orderDate || draftPoRecord?.orderDate)}</span>
+                          <span>ETD {formatDate(draftPlanningSnapshot.schedule.etdDate)}</span>
+                          <span>ETA {formatDate(draftPlanningSnapshot.schedule.etaDate)}</span>
+                        </div>
+                        <div className="v2-po-modal-timeline-track">
+                          <div className="v2-po-modal-timeline-track-bg" />
+                          {modalTimelineRange && (
+                            <>
+                              <div
+                                className="v2-po-modal-timeline-segment v2-po-modal-timeline-segment--production"
+                                style={{
+                                  left: `${toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.orderDate), modalTimelineRange)}%`,
+                                  width: `${Math.max(
+                                    0.75,
+                                    toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.prodDoneDate), modalTimelineRange)
+                                      - toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.orderDate), modalTimelineRange),
+                                  )}%`,
+                                }}
+                              />
+                              {Number(draftPlanningSnapshot.schedule.cnyAdjustmentDays || 0) > 0
+                                && parseIsoDate(draftPlanningSnapshot.schedule.cnyStartDate)
+                                && parseIsoDate(draftPlanningSnapshot.schedule.cnyEndDate) ? (
+                                  <div
+                                    className="v2-po-modal-timeline-segment v2-po-modal-timeline-segment--cny"
+                                    style={{
+                                      left: `${toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.cnyStartDate), modalTimelineRange)}%`,
+                                      width: `${Math.max(
+                                        0.75,
+                                        toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.cnyEndDate), modalTimelineRange)
+                                          - toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.cnyStartDate), modalTimelineRange),
+                                      )}%`,
+                                    }}
+                                  />
+                                ) : null}
+                              <div
+                                className="v2-po-modal-timeline-segment v2-po-modal-timeline-segment--transit"
+                                style={{
+                                  left: `${toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.etdDate), modalTimelineRange)}%`,
+                                  width: `${Math.max(
+                                    0.75,
+                                    toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.etaDate), modalTimelineRange)
+                                      - toTimelinePercent(parseIsoDate(draftPlanningSnapshot.schedule.etdDate), modalTimelineRange),
+                                  )}%`,
+                                }}
+                              />
+                              {[
+                                { key: "order", label: "Order", date: draftPlanningSnapshot.schedule.orderDate, tone: "order" },
+                                { key: "prod", label: "Prod Done", date: draftPlanningSnapshot.schedule.prodDoneDate, tone: "prod" },
+                                { key: "etd", label: "ETD", date: draftPlanningSnapshot.schedule.etdDate, tone: "etd" },
+                                { key: "eta", label: "ETA", date: draftPlanningSnapshot.schedule.etaDate, tone: "eta" },
+                              ].map((anchor) => {
+                                const anchorDate = parseIsoDate(anchor.date);
+                                if (!anchorDate) return null;
+                                return (
+                                  <div
+                                    key={anchor.key}
+                                    className={`v2-po-modal-timeline-anchor v2-po-modal-timeline-anchor--${anchor.tone}`}
+                                    style={{ left: `${toTimelinePercent(anchorDate, modalTimelineRange)}%` }}
                                   >
-                                    <Input placeholder="Label" />
-                                  </Form.Item>
-                                </td>
-                                <td>
-                                  <Form.Item
-                                    {...field}
-                                    name={[field.name, "percent"]}
-                                    style={{ marginBottom: 0, width: 100 }}
-                                    rules={[{ required: true, message: "%" }]}
-                                  >
-                                    <DeNumberInput mode="percent" min={0} max={100} />
-                                  </Form.Item>
-                                </td>
-                                <td>
-                                  <Form.Item
-                                    {...field}
-                                    name={[field.name, "anchor"]}
-                                    style={{ marginBottom: 0, minWidth: 140 }}
-                                    rules={[{ required: true, message: "Anchor fehlt." }]}
-                                  >
-                                    <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
-                                  </Form.Item>
-                                </td>
-                                <td>
-                                  <Space size={4} wrap>
+                                    <span className="v2-po-modal-timeline-anchor-line" />
+                                    <span className="v2-po-modal-timeline-anchor-label">{anchor.label}</span>
+                                  </div>
+                                );
+                              })}
+                              {modalTimelineMarkers.map((marker) => {
+                                const dueDate = parseIsoDate(marker.dueDate);
+                                if (!dueDate) return null;
+                                const markerClass = marker.enabled === false
+                                  ? "v2-po-modal-timeline-payment v2-po-modal-timeline-payment--disabled"
+                                  : marker.status === "paid"
+                                    ? "v2-po-modal-timeline-payment v2-po-modal-timeline-payment--paid"
+                                    : "v2-po-modal-timeline-payment v2-po-modal-timeline-payment--open";
+                                const tooltip = [
+                                  planningEventDisplayLabel(marker),
+                                  marker.formulaLabel || "—",
+                                  `Due: ${formatDate(marker.dueDate)}`,
+                                  `Soll: ${formatCurrency(marker.plannedEur)}`,
+                                  marker.paidDate ? `Bezahlt am: ${formatDate(marker.paidDate)}` : "Bezahlt am: —",
+                                ].join("\n");
+                                return (
+                                  <Tooltip key={marker.id} title={<span style={{ whiteSpace: "pre-line" }}>{tooltip}</span>}>
+                                    <div
+                                      className={markerClass}
+                                      style={{ left: `${toTimelinePercent(dueDate, modalTimelineRange)}%` }}
+                                    >
+                                      <span className="v2-po-modal-timeline-payment-dot" />
+                                      <span className="v2-po-modal-timeline-payment-label">
+                                        {planningEventDisplayLabel(marker)}
+                                      </span>
+                                    </div>
+                                  </Tooltip>
+                                );
+                              })}
+                            </>
+                          )}
+                        </div>
+                        <div className="v2-po-modal-timeline-legend">
+                          <span><span className="v2-po-modal-timeline-legend-box v2-po-modal-timeline-legend-box--production" /> Produktion</span>
+                          <span><span className="v2-po-modal-timeline-legend-box v2-po-modal-timeline-legend-box--cny" /> Chinese New Year</span>
+                          <span><span className="v2-po-modal-timeline-legend-box v2-po-modal-timeline-legend-box--transit" /> Transit</span>
+                          <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--open" /> offen</span>
+                          <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--paid" /> bezahlt</span>
+                          <span><span className="v2-po-modal-timeline-legend-dot v2-po-modal-timeline-legend-dot--disabled" /> deaktiviert</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="v2-po-planning-list">
+                      {(() => {
+                        const standardFields = new Map<string, { field: typeof fields[number]; planning: PoPaymentPlanRow | null }>();
+                        const customFields: Array<{ field: typeof fields[number]; planning: PoPaymentPlanRow | null }> = [];
+                        fields.forEach((field) => {
+                          const milestoneId = String(form.getFieldValue(["milestones", field.name, "id"]) || "");
+                          const planning = draftPlanRowById.get(milestoneId) || null;
+                          const type = String(planning?.eventType || milestoneDraftType(form.getFieldValue(["milestones", field.name, "label"])));
+                          if (STANDARD_MANUAL_EVENT_ORDER.includes(type as typeof STANDARD_MANUAL_EVENT_ORDER[number])) {
+                            standardFields.set(type, { field, planning });
+                          } else {
+                            customFields.push({ field, planning });
+                          }
+                        });
+
+                        return (
+                          <>
+                            {STANDARD_MANUAL_EVENT_ORDER.map((type) => {
+                              const entry = standardFields.get(type);
+                              if (!entry) return null;
+                              const { field, planning } = entry;
+                              return (
+                                <div key={field.key} className="v2-po-planning-row">
+                                  <div className="v2-po-planning-row-main">
+                                    <div className="v2-po-planning-cell v2-po-planning-cell--event">
+                                      <Tag color="blue">Milestone</Tag>
+                                      <Text strong>{type === "deposit" ? "Deposit" : "Balance"}</Text>
+                                      <Text type="secondary">{planning?.formulaLabel || "—"}</Text>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">% / Status</Text>
+                                      <Form.Item
+                                        {...field}
+                                        name={[field.name, "percent"]}
+                                        style={{ marginBottom: 0 }}
+                                        rules={[{ required: true, message: "%" }]}
+                                      >
+                                        <DeNumberInput mode="percent" min={0} max={100} />
+                                      </Form.Item>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Anchor</Text>
+                                      <Form.Item
+                                        {...field}
+                                        name={[field.name, "anchor"]}
+                                        style={{ marginBottom: 0 }}
+                                        rules={[{ required: true, message: "Anchor fehlt." }]}
+                                      >
+                                        <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
+                                      </Form.Item>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Offset</Text>
+                                      <Space size={4} wrap>
+                                        <Form.Item
+                                          {...field}
+                                          name={[field.name, "lagDays"]}
+                                          style={{ marginBottom: 0 }}
+                                        >
+                                          <DeNumberInput mode="int" />
+                                        </Form.Item>
+                                        <Text type="secondary">Tage</Text>
+                                      </Space>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Due</Text>
+                                      <Text>{formatDate(planning?.dueDate)}</Text>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Planned EUR</Text>
+                                      <Text>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</Text>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Quelle</Text>
+                                      <Tag>{planning?.source || "PO-Milestone"}</Tag>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {PLANNING_AUTO_EVENT_ORDER.map((type) => {
+                              const planning = draftStandardPlanningRows.find((row) => String(row.eventType || "") === type) || null;
+                              const autoEvt = draftStandardAutoEvents.find((row) => String(row.type || "") === type) || null;
+                              if (!planning || !autoEvt) return null;
+                              const unitLabel = planning.offsetUnit === "months" ? "Monate" : "Tage";
+                              const offsetValue = planning.offsetUnit === "months"
+                                ? Number(autoEvt.lagMonths || 0)
+                                : Number(autoEvt.lagDays || 0);
+                              const ddpLocked = draftValues?.ddp === true && ["freight", "duty", "eust", "vat_refund"].includes(String(autoEvt.type || ""));
+                              return (
+                                <div key={planning.id} className={`v2-po-planning-row ${planning.direction === "in" ? "v2-po-planning-row--incoming" : ""}`}>
+                                  <div className="v2-po-planning-row-main">
+                                    <div className="v2-po-planning-cell v2-po-planning-cell--event">
+                                      <Tag color={planning.direction === "in" ? "green" : "gold"}>Auto</Tag>
+                                      <Text strong>{planningEventDisplayLabel(planning)}</Text>
+                                      <Text type="secondary">{planning.formulaLabel || "—"}</Text>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Status</Text>
+                                      <Checkbox
+                                        checked={autoEvt.enabled !== false}
+                                        disabled={ddpLocked}
+                                        onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { enabled: event.target.checked })}
+                                      >
+                                        Aktiv
+                                      </Checkbox>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Anchor</Text>
+                                      <Select
+                                        value={autoEvt.anchor || "ETA"}
+                                        options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))}
+                                        onChange={(value) => updateDraftAutoEvent(String(autoEvt.id || ""), { anchor: String(value || "ETA") })}
+                                      />
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Offset</Text>
+                                      <Space size={4} wrap>
+                                        <DeNumberInput
+                                          mode="int"
+                                          value={offsetValue}
+                                          onChange={(value) => updateDraftAutoEvent(
+                                            String(autoEvt.id || ""),
+                                            planning.offsetUnit === "months"
+                                              ? { lagMonths: Number(value || 0) }
+                                              : { lagDays: Number(value || 0) },
+                                          )}
+                                        />
+                                        <Text type="secondary">{unitLabel}</Text>
+                                      </Space>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Due</Text>
+                                      <Text>{formatDate(planning.dueDate)}</Text>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Planned EUR</Text>
+                                      <Text>{formatCurrency(planning.plannedAmountEur)}</Text>
+                                    </div>
+                                    <div className="v2-po-planning-cell">
+                                      <Text type="secondary">Quelle</Text>
+                                      <Space wrap>
+                                        <Tag>{planning.source || "Settings-Default"}</Tag>
+                                        {ddpLocked ? <Tag>DDP</Tag> : null}
+                                      </Space>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {customFields.length ? (
+                              <div className="v2-po-planning-section-title">
+                                <Text strong>Zusätzliche Milestones</Text>
+                                <Text type="secondary">Diese Zeilen sind optional und löschbar.</Text>
+                              </div>
+                            ) : null}
+
+                            {customFields.map(({ field, planning }) => (
+                              <div key={field.key} className="v2-po-planning-row">
+                                <div className="v2-po-planning-row-main">
+                                  <div className="v2-po-planning-cell v2-po-planning-cell--event">
+                                    <Tag color="default">Custom</Tag>
                                     <Form.Item
                                       {...field}
-                                      name={[field.name, "lagDays"]}
-                                      style={{ marginBottom: 0, width: 100 }}
+                                      name={[field.name, "label"]}
+                                      style={{ marginBottom: 0 }}
+                                      rules={[{ required: true, message: "Label fehlt." }]}
                                     >
-                                      <DeNumberInput mode="int" />
+                                      <Input placeholder="Milestone" />
                                     </Form.Item>
-                                    <Text type="secondary">Tage</Text>
-                                  </Space>
-                                </td>
-                                <td>{formatDate(planning?.dueDate)}</td>
-                                <td>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</td>
-                                <td><Tag>{planning?.source || "PO-Milestone"}</Tag></td>
-                                <td><Button danger onClick={() => remove(field.name)}>X</Button></td>
-                              </tr>
-                            );
-                          })}
-                          {visiblePlanningAutoEvents.map((autoEvt) => {
-                            const planning = autoEvt.id ? draftPlanRowById.get(autoEvt.id) || null : null;
-                            const unitLabel = planning?.offsetUnit === "months" ? "Monate" : "Tage";
-                            const offsetValue = planning?.offsetUnit === "months"
-                              ? Number(autoEvt.lagMonths || 0)
-                              : Number(autoEvt.lagDays || 0);
-                            const ddpLocked = draftValues?.ddp === true && ["freight", "duty", "eust", "vat_refund"].includes(String(autoEvt.type || ""));
-                            return (
-                              <tr key={`auto-${autoEvt.id || autoEvt.type}`}>
-                                <td>
-                                  <Space direction="vertical" size={0}>
-                                    <Tag color={planning?.direction === "in" ? "green" : "gold"}>Auto</Tag>
-                                    {planning?.direction === "in" ? <Text type="secondary">Incoming</Text> : null}
-                                  </Space>
-                                </td>
-                                <td>
-                                  <Space direction="vertical" size={0} style={{ width: "100%" }}>
-                                    <Text>{planningEventDisplayLabel(planning || {
-                                      kind: "auto",
-                                      eventType: autoEvt.type,
-                                      label: autoEvt.label,
-                                      typeLabel: autoEvt.label,
-                                    })}</Text>
-                                    {autoEvt.label && autoEvt.label !== planningEventDisplayLabel(planning || {
-                                      kind: "auto",
-                                      eventType: autoEvt.type,
-                                      label: autoEvt.label,
-                                      typeLabel: autoEvt.label,
-                                    }) ? (
-                                      <Text type="secondary">{autoEvt.label}</Text>
-                                    ) : null}
-                                  </Space>
-                                </td>
-                                <td>
-                                  <Checkbox
-                                    checked={autoEvt.enabled !== false}
-                                    disabled={ddpLocked}
-                                    onChange={(event) => updateDraftAutoEvent(String(autoEvt.id || ""), { enabled: event.target.checked })}
-                                  >
-                                    Aktiv
-                                  </Checkbox>
-                                </td>
-                                <td>
-                                  <Select
-                                    value={autoEvt.anchor || "ETA"}
-                                    style={{ minWidth: 140 }}
-                                    options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))}
-                                    onChange={(value) => updateDraftAutoEvent(String(autoEvt.id || ""), { anchor: String(value || "ETA") })}
-                                  />
-                                </td>
-                                <td>
-                                  <Space size={4} wrap>
-                                    <DeNumberInput
-                                      mode="int"
-                                      value={offsetValue}
-                                      style={{ width: 100 }}
-                                      onChange={(value) => updateDraftAutoEvent(
-                                        String(autoEvt.id || ""),
-                                        planning?.offsetUnit === "months"
-                                          ? { lagMonths: Number(value || 0) }
-                                          : { lagDays: Number(value || 0) },
-                                      )}
-                                    />
-                                    <Text type="secondary">{unitLabel}</Text>
-                                  </Space>
-                                </td>
-                                <td>{formatDate(planning?.dueDate)}</td>
-                                <td>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</td>
-                                <td><Tag>{planning?.source || "Settings-Default"}</Tag></td>
-                                <td>{ddpLocked ? <Text type="secondary">DDP</Text> : <Text type="secondary">—</Text>}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </StatsTableShell>
+                                    <Text type="secondary">{planning?.formulaLabel || "—"}</Text>
+                                  </div>
+                                  <div className="v2-po-planning-cell">
+                                    <Text type="secondary">% / Status</Text>
+                                    <Form.Item
+                                      {...field}
+                                      name={[field.name, "percent"]}
+                                      style={{ marginBottom: 0 }}
+                                      rules={[{ required: true, message: "%" }]}
+                                    >
+                                      <DeNumberInput mode="percent" min={0} max={100} />
+                                    </Form.Item>
+                                  </div>
+                                  <div className="v2-po-planning-cell">
+                                    <Text type="secondary">Anchor</Text>
+                                    <Form.Item
+                                      {...field}
+                                      name={[field.name, "anchor"]}
+                                      style={{ marginBottom: 0 }}
+                                      rules={[{ required: true, message: "Anchor fehlt." }]}
+                                    >
+                                      <Select options={PO_ANCHORS.map((anchor) => ({ value: anchor, label: anchor }))} />
+                                    </Form.Item>
+                                  </div>
+                                  <div className="v2-po-planning-cell">
+                                    <Text type="secondary">Offset</Text>
+                                    <Space size={4} wrap>
+                                      <Form.Item
+                                        {...field}
+                                        name={[field.name, "lagDays"]}
+                                        style={{ marginBottom: 0 }}
+                                      >
+                                        <DeNumberInput mode="int" />
+                                      </Form.Item>
+                                      <Text type="secondary">Tage</Text>
+                                    </Space>
+                                  </div>
+                                  <div className="v2-po-planning-cell">
+                                    <Text type="secondary">Due</Text>
+                                    <Text>{formatDate(planning?.dueDate)}</Text>
+                                  </div>
+                                  <div className="v2-po-planning-cell">
+                                    <Text type="secondary">Planned EUR</Text>
+                                    <Text>{planning ? formatCurrency(planning.plannedAmountEur) : "—"}</Text>
+                                  </div>
+                                  <div className="v2-po-planning-cell">
+                                    <Text type="secondary">Quelle</Text>
+                                    <Tag>{planning?.source || "PO-Milestone"}</Tag>
+                                  </div>
+                                </div>
+                                <div className="v2-po-planning-row-actions">
+                                  <Button danger onClick={() => remove(field.name)}>Entfernen</Button>
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        );
+                      })()}
+                    </div>
                     <Button
                       onClick={() => add({
                         id: randomId("ms"),
