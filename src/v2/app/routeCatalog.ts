@@ -120,7 +120,7 @@ export const V2_ROUTES: V2RouteItem[] = [
   },
   { key: "plan-products", path: "plan-products", label: "Neue Produkte", section: "operations", icon: TagsOutlined, Component: PlanProductsModule },
 
-  { key: "products", path: "products", label: "Produkte", section: "masterdata", icon: TagsOutlined, Component: ProductsModule },
+  { key: "products", path: "products", label: "Produkte", section: "masterdata", icon: TagsOutlined, Component: ProductsModule, redirectFrom: ["produkte"] },
   { key: "suppliers", path: "suppliers", label: "Suppliers", section: "masterdata", icon: TeamOutlined, Component: SuppliersModule },
 
   {

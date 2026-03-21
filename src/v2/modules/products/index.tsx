@@ -1511,6 +1511,10 @@ export default function ProductsModule(): JSX.Element {
                   { value: "logistics", label: "Logistik" },
                 ]}
               />
+            </Space>
+          </div>
+          <div className="v2-toolbar-row v2-toolbar-actions">
+            <div className="v2-actions-inline">
               <Button
                 type="primary"
                 onClick={openCreateModal}
@@ -1521,9 +1525,9 @@ export default function ProductsModule(): JSX.Element {
                 Bulk bearbeiten
               </Button>
               <Button onClick={downloadProductsJson} disabled={!allProductRows.length}>
-                JSON herunterladen
+                Produkte als JSON
               </Button>
-            </Space>
+            </div>
             <Space wrap>
               <Tag color={issueCounts.needsFix > 0 ? "gold" : "green"}>Korrekturbedarf: {issueCounts.needsFix}</Tag>
               <Tag color={issueCounts.revenue > 0 ? "volcano" : "green"}>Umsatzrelevant: {issueCounts.revenue}</Tag>
