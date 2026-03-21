@@ -265,6 +265,105 @@ function normalizeIssueFilter(value: unknown): ProductIssueFilter {
   return "all";
 }
 
+function optionalText(value: unknown): string | null {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+function exportDateStamp(date = new Date()): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function extractTemplateAndFields(product: Record<string, unknown>): {
+  template: Record<string, unknown>;
+  fields: Record<string, unknown>;
+} {
+  const templateSource = (product.template && typeof product.template === "object")
+    ? product.template as Record<string, unknown>
+    : {};
+  const fieldSource = (templateSource.fields && typeof templateSource.fields === "object")
+    ? templateSource.fields as Record<string, unknown>
+    : templateSource;
+  return {
+    template: templateSource,
+    fields: fieldSource,
+  };
+}
+
+function buildProductsJsonExport(input: {
+  state: Record<string, unknown>;
+  rows: ProductRow[];
+  categoryLabelById: Map<string, string>;
+  supplierLabelById: Map<string, string>;
+}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    exportedAt: nowIso(),
+    productCount: input.rows.length,
+    products: input.rows.map((row) => {
+      const raw = row.raw || {};
+      const { template, fields } = extractTemplateAndFields(raw);
+      const resolved = resolveProductFieldResolution({
+        product: raw,
+        state: input.state,
+        supplierId: row.supplierId,
+      });
+
+      return {
+        id: optionalText(raw.id) || row.id,
+        sku: row.sku,
+        alias: row.alias || row.sku,
+        asin: optionalText(raw.asin ?? raw.ASIN),
+        fnsku: optionalText(row.fnsku),
+        supplierId: optionalText(row.supplierId),
+        supplierName: row.supplierId ? input.supplierLabelById.get(row.supplierId) || row.supplierId : null,
+        categoryId: row.categoryId || null,
+        categoryName: row.categoryId ? input.categoryLabelById.get(row.categoryId) || row.categoryId : null,
+        status: row.status,
+        portfolioBucket: row.portfolioBucket,
+        includeInForecast: row.includeInForecast,
+        completeness: row.completeness,
+        hsCode: optionalText(row.hsCode),
+        goodsDescription: optionalText(row.goodsDescription),
+        tags: Array.isArray(raw.tags) ? raw.tags.filter(Boolean).map((entry) => String(entry).trim()).filter(Boolean) : [],
+        launchCosts: Array.isArray(raw.launchCosts) ? raw.launchCosts : [],
+        avgSellingPriceGrossEUR: row.avgSellingPriceGrossEUR,
+        sellerboardMarginPct: row.sellerboardMarginPct,
+        moqUnits: row.moqUnits,
+        unitsPerCarton: asNumber(raw.unitsPerCarton),
+        safetyStockDohOverride: asNumber(raw.safetyStockDohOverride),
+        foCoverageDohOverride: asNumber(raw.foCoverageDohOverride),
+        moqOverrideUnits: asNumber(raw.moqOverrideUnits),
+        templateUnitPriceUsd: row.templateUnitPriceUsd,
+        landedUnitCostEur: row.landedUnitCostEur,
+        logisticsPerUnitEur: row.shippingPerUnitEur,
+        freightPerUnitEur: asNumber(raw.freightPerUnitEur ?? raw.logisticsPerUnitEur),
+        productionLeadTimeDaysDefault: asNumber(raw.productionLeadTimeDaysDefault),
+        template,
+        templateFields: fields,
+        effective: {
+          moqUnits: resolved.moqEffective,
+          safetyStockDoh: resolved.safetyDohEffective,
+          coverageDoh: resolved.coverageDohEffective,
+          productionLeadTimeDays: resolved.productionLeadDays,
+          unitPriceUsd: resolved.unitPriceUsd,
+          fxRateUsdPerEur: resolved.fxRate,
+          logisticsPerUnitEur: resolved.logisticsPerUnitEur,
+          transportMode: resolved.transportMode,
+          transitDays: resolved.transitDays,
+          currency: resolved.currency,
+          dutyPct: resolved.dutyPct,
+          eustPct: resolved.eustPct,
+          ddp: resolved.ddp,
+          shippingSuggestion: resolved.shippingSuggestion,
+        },
+        createdAt: optionalText(raw.createdAt),
+        updatedAt: optionalText(raw.updatedAt),
+      };
+    }),
+  };
+}
+
 function hasRevenueIssue(row: ProductRow): boolean {
   if (!row.includeInForecast) return false;
   const price = Number(row.avgSellingPriceGrossEUR);
@@ -273,12 +372,7 @@ function hasRevenueIssue(row: ProductRow): boolean {
 }
 
 function productDraftFromRow(row?: ProductRow): ProductDraft {
-  const templateSource = (row?.raw.template as Record<string, unknown> | undefined) || {};
-  const template = (
-    templateSource.fields && typeof templateSource.fields === "object"
-      ? templateSource.fields
-      : templateSource
-  ) as Record<string, unknown>;
+  const { fields: template } = extractTemplateAndFields((row?.raw || {}) as Record<string, unknown>);
   const launchCostsRaw = Array.isArray(row?.raw.launchCosts) ? row?.raw.launchCosts : [];
   const unitsPerCartonRaw = asNumber(row?.raw.unitsPerCarton);
   return {
@@ -418,6 +512,15 @@ export default function ProductsModule(): JSX.Element {
   const categoryLabelById = useMemo(() => new Map(categories.map((entry) => [entry.id, entry.name])), [categories]);
   const supplierLabelById = useMemo(() => new Map(suppliers.map((entry) => [entry.id, entry.name])), [suppliers]);
   const categoryOrderMap = useMemo(() => buildCategoryOrderMap(stateObject), [state.productCategories]);
+  const allProductRows = useMemo(() => {
+    return buildProductGridRows({
+      state: stateObject,
+      search: "",
+      statusFilter: "all",
+      categoryLabelById,
+      supplierLabelById,
+    });
+  }, [categoryLabelById, stateObject, supplierLabelById]);
 
   const baseRows = useMemo(() => {
     return buildProductGridRows({
@@ -1094,20 +1197,27 @@ export default function ProductsModule(): JSX.Element {
     setBulkModalOpen(true);
   }
 
-  function extractTemplateAndFields(product: Record<string, unknown>): {
-    template: Record<string, unknown>;
-    fields: Record<string, unknown>;
-  } {
-    const templateSource = (product.template && typeof product.template === "object")
-      ? product.template as Record<string, unknown>
-      : {};
-    const fieldSource = (templateSource.fields && typeof templateSource.fields === "object")
-      ? templateSource.fields as Record<string, unknown>
-      : templateSource;
-    return {
-      template: templateSource,
-      fields: fieldSource,
-    };
+  function downloadProductsJson(): void {
+    if (!allProductRows.length) {
+      message.warning("Keine Produkte für den JSON-Export vorhanden.");
+      return;
+    }
+    const payload = buildProductsJsonExport({
+      state: stateObject,
+      rows: allProductRows,
+      categoryLabelById,
+      supplierLabelById,
+    });
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `produkte-export-${exportDateStamp()}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    message.success(`JSON exportiert (${allProductRows.length} Produkte).`);
   }
 
   function validateBulkInput(values: BulkEditDraft, targetSkus: string[]): void {
@@ -1409,6 +1519,9 @@ export default function ProductsModule(): JSX.Element {
               </Button>
               <Button onClick={openBulkModal}>
                 Bulk bearbeiten
+              </Button>
+              <Button onClick={downloadProductsJson} disabled={!allProductRows.length}>
+                JSON herunterladen
               </Button>
             </Space>
             <Space wrap>
