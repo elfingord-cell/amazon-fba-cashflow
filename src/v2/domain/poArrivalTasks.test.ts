@@ -45,6 +45,20 @@ function createState(): Record<string, unknown> {
           { sku: "SKU-B", units: 15 },
         ],
       },
+      {
+        id: "po-upcoming-window",
+        poNo: "PO-1005",
+        supplierId: "sup-1",
+        etaManual: "2026-03-10",
+        items: [{ sku: "SKU-A", units: 55 }],
+      },
+      {
+        id: "po-outside-window",
+        poNo: "PO-1006",
+        supplierId: "sup-1",
+        etaManual: "2026-03-20",
+        items: [{ sku: "SKU-B", units: 80 }],
+      },
     ],
   };
 }
@@ -65,6 +79,7 @@ test("po arrival tasks: includes overdue ETA without arrival date", () => {
     state: createState(),
     month: "2026-02",
     todayIso: "2026-02-15",
+    lookaheadDays: 28,
   });
 
   const overdue = tasks.find((row) => row.poNumber === "PO-1002");
@@ -78,6 +93,7 @@ test("po arrival tasks: arrived overdue PO is not shown in pending scope", () =>
     state: createState(),
     month: "2026-02",
     todayIso: "2026-02-15",
+    lookaheadDays: 28,
   });
   assert.equal(tasks.some((row) => row.poNumber === "PO-1003"), false);
 });
@@ -87,10 +103,33 @@ test("po arrival tasks: resolves multi-sku aliases and unit sums", () => {
     state: createState(),
     month: "2026-02",
     todayIso: "2026-02-15",
+    lookaheadDays: 28,
   });
 
   const multiSku = tasks.find((row) => row.poNumber === "PO-1004");
   assert.ok(multiSku);
   assert.equal(multiSku?.skuAliases, "Alpha, Beta");
   assert.equal(multiSku?.units, 25);
+});
+
+test("po arrival tasks: includes upcoming ETA inside lookahead window", () => {
+  const tasks = buildPoArrivalTasks({
+    state: createState(),
+    todayIso: "2026-02-15",
+    lookaheadDays: 28,
+  });
+
+  const upcoming = tasks.find((row) => row.poNumber === "PO-1005");
+  assert.ok(upcoming);
+  assert.equal(upcoming?.withinLookahead, true);
+});
+
+test("po arrival tasks: excludes ETA outside lookahead window", () => {
+  const tasks = buildPoArrivalTasks({
+    state: createState(),
+    todayIso: "2026-02-15",
+    lookaheadDays: 28,
+  });
+
+  assert.equal(tasks.some((row) => row.poNumber === "PO-1006"), false);
 });

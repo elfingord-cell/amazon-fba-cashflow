@@ -8,13 +8,15 @@ export interface PoArrivalTask {
   arrivalDate: string | null;
   monthRelevant: boolean;
   isOverdue: boolean;
+  withinLookahead: boolean;
   pending: boolean;
 }
 
 interface BuildPoArrivalTasksInput {
   state: Record<string, unknown>;
-  month: string;
+  month?: string;
   todayIso?: string | null;
+  lookaheadDays?: number | null;
 }
 
 function normalizeKey(value: unknown): string {
@@ -48,6 +50,16 @@ function todayIsoLocal(): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDaysIso(value: string, days: number): string | null {
+  const date = toDate(value);
+  if (!date) return null;
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
@@ -101,6 +113,8 @@ export function buildPoArrivalTasks(input: BuildPoArrivalTasksInput): PoArrivalT
   const sourceState = input.state && typeof input.state === "object" ? input.state : {};
   const month = String(input.month || "");
   const todayIso = toIsoDate(input.todayIso) || todayIsoLocal();
+  const lookaheadDays = Math.max(0, Math.round(Number(input.lookaheadDays || 0)));
+  const lookaheadIso = lookaheadDays > 0 ? addDaysIso(todayIso, lookaheadDays) : null;
 
   const supplierNameByKey = new Map<string, string>();
   const suppliers = Array.isArray(sourceState.suppliers) ? sourceState.suppliers : [];
@@ -141,7 +155,8 @@ export function buildPoArrivalTasks(input: BuildPoArrivalTasksInput): PoArrivalT
     const monthRelevant = etaMonth === month;
     const pending = !arrivalDate;
     const isOverdue = pending && etaDate < todayIso;
-    if (!monthRelevant && !isOverdue) return;
+    const withinLookahead = pending && Boolean(lookaheadIso) && etaDate >= todayIso && etaDate <= String(lookaheadIso);
+    if (!monthRelevant && !isOverdue && !withinLookahead) return;
 
     tasks.push({
       id,
@@ -153,12 +168,15 @@ export function buildPoArrivalTasks(input: BuildPoArrivalTasksInput): PoArrivalT
       arrivalDate,
       monthRelevant,
       isOverdue,
+      withinLookahead,
       pending,
     });
   });
 
   return tasks.sort((left, right) => {
     if (left.pending !== right.pending) return left.pending ? -1 : 1;
+    if (left.isOverdue !== right.isOverdue) return left.isOverdue ? -1 : 1;
+    if (left.withinLookahead !== right.withinLookahead) return left.withinLookahead ? -1 : 1;
     if (left.monthRelevant !== right.monthRelevant) return left.monthRelevant ? -1 : 1;
     const leftDate = left.etaDate || "9999-12-31";
     const rightDate = right.etaDate || "9999-12-31";

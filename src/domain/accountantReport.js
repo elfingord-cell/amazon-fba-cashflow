@@ -322,16 +322,16 @@ function buildBewertungsgrundlageText(settings) {
     ? formatLocaleNumber(settings.fxRate, 4)
     : "-";
   return [
-    "Betrag Ist EUR bei Zahlungen ist der in der Plattform erfasste tatsaechliche EUR-Zahlbetrag.",
-    "Betrag USD bei Anzahlungen und Restzahlungen ist ein aus Warenwert und Zahlungsmeilenstein abgeleiteter Referenzwert.",
-    "Warenwert EUR bei Wareneingaengen ist entweder direkt im Datensatz hinterlegt oder aus Warenwert USD und dem hinterlegten FX-Kurs berechnet.",
-    "Bestandswert EUR zum Monatsende ergibt sich aus Gesamtbestand x Einstandspreis EUR je SKU.",
-    `Verwendeter FX-Kurs im Workspace: ${fxText}.`,
+    "Bei Zahlungen ist der Betrag in EUR der tatsaechlich bezahlte Betrag.",
+    "Bei Anzahlungen und Restzahlungen zeigt der Betrag in USD den Warenwert, auf den sich die Zahlung bezieht.",
+    "Beim Wareneingang wird der Warenwert in EUR direkt aus den vorhandenen Daten uebernommen oder aus USD in EUR umgerechnet.",
+    "Der Warenbestand zum Monatsende ergibt sich aus Bestand mal Einstandspreis je Artikel.",
+    `Verwendeter Umrechnungskurs: ${fxText}.`,
   ].join(" ");
 }
 
 function buildVollstaendigkeitText() {
-  return "Enthalten sind alle im Workspace erfassten Lieferantenzahlungen mit Zahlungsdatum im Monat sowie alle im Workspace erfassten Wareneingaenge des Monats. Nicht enthalten sind bewusst externe Unterlagen wie Kontoauszuege, Kreditkartenabrechnungen und Amazon-Dokumente. Voraussetzung dieser Aussage ist, dass Bestellungen, Zahlungen und Wareneingaenge im Workspace vollstaendig gepflegt sind.";
+  return "Diese Auswertung zeigt alle Zahlungen an Lieferanten mit Zahlungsdatum im Monat, alle bestaetigten Wareneingaenge des Monats und den Warenbestand zum Monatsende, soweit diese Daten in unserem System gepflegt sind.";
 }
 
 function parseUnits(value) {

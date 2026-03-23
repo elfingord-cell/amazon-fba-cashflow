@@ -268,6 +268,7 @@ interface ModalTimelineSummaryMonth {
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const PO_ARRIVAL_LOOKAHEAD_DAYS = 28;
 const MODAL_PAYMENT_ROW_STEP = 32;
 const MODAL_PAYMENT_TRACK_BASE_HEIGHT = 214;
 const MODAL_PAYMENT_LANE_TOP = 150;
@@ -910,7 +911,6 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const syncSession = useSyncSession();
   const todayIso = formatLocalIsoDate(new Date());
-  const currentMonth = todayIso.slice(0, 7);
   const [search, setSearch] = useState("");
   const [archiveFilter, setArchiveFilter] = useState<"active" | "archived" | "all">("active");
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "open" | "mixed" | "paid_only">("all");
@@ -1124,10 +1124,10 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const poArrivalTasks = useMemo<PoArrivalTask[]>(() => {
     return buildPoArrivalTasks({
       state: stateObj,
-      month: currentMonth,
       todayIso,
+      lookaheadDays: PO_ARRIVAL_LOOKAHEAD_DAYS,
     }).filter((task) => task.pending);
-  }, [currentMonth, stateObj, todayIso]);
+  }, [stateObj, todayIso]);
 
   const overdueArrivalCount = useMemo(
     () => poArrivalTasks.filter((task) => task.isOverdue).length,
@@ -1159,7 +1159,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
             : "Überfällig";
           return <Tag color="red">{label}</Tag>;
         }
-        return <Tag color="gold">ETA in {formatMonthLabel(currentMonth)}</Tag>;
+        return <Tag color="gold">ETA in den nächsten {PO_ARRIVAL_LOOKAHEAD_DAYS} Tagen</Tag>;
       },
     },
     {
@@ -1215,7 +1215,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         );
       },
     },
-  ], [arrivalDraftByPoId, arrivalSavingId, currentMonth, poRawById, todayIso]);
+  ], [arrivalDraftByPoId, arrivalSavingId, poRawById, todayIso]);
 
   const timelineStartMonth = useMemo(
     () => determineTimelineStartMonth({ state: stateObj, rows: filteredRows }),
@@ -2713,7 +2713,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           <div>
             <Title level={5} style={{ marginBottom: 4 }}>Wareneingang prüfen</Title>
             <Text type="secondary">
-              POs mit ETA in {formatMonthLabel(currentMonth)} oder bereits überfälliger ETA ohne bestätigte Ankunft.
+              POs mit überfälliger ETA oder ETA in den nächsten {PO_ARRIVAL_LOOKAHEAD_DAYS} Tagen ohne bestätigte Ankunft.
             </Text>
           </div>
           <Space wrap>
@@ -2734,7 +2734,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           <Alert
             type="success"
             showIcon
-            message="Keine offenen Wareneingangs-Bestätigungen für den aktuellen Monat oder aus überfälligen ETAs."
+            message={`Keine offenen Wareneingangs-Bestätigungen mit ETA-Rückstand oder ETA in den nächsten ${PO_ARRIVAL_LOOKAHEAD_DAYS} Tagen.`}
           />
         )}
       </Card>

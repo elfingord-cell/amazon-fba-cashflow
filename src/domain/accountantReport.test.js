@@ -323,8 +323,8 @@ test("accountant report: applies paid and arrival month filters", () => {
   assert.equal(report.uebersicht.anzahlBestaetigteWareneingaenge, 0);
   assert.equal(report.uebersicht.anzahlGeplanteAnkuenfte, 2);
   assert.equal(report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO-1001")?.wareneingangLautSystem, null);
-  assert.ok(report.uebersicht.bewertungsgrundlageText.includes("Verwendeter FX-Kurs"));
-  assert.ok(report.uebersicht.vollstaendigkeitInnerhalbPlattformText.includes("Lieferantenzahlungen"));
+  assert.ok(report.uebersicht.bewertungsgrundlageText.includes("Bei Zahlungen"));
+  assert.ok(report.uebersicht.vollstaendigkeitInnerhalbPlattformText.includes("alle Zahlungen an Lieferanten"));
   assert.ok(report.quality.some((issue) => issue.hinweis.includes("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet")));
 });
 
@@ -395,12 +395,12 @@ test("accountant report bundle: standard zip contains only pdf and xlsx, optiona
   assert.ok(paymentsSheetXml?.includes("<autoFilter"));
   assert.ok(paymentsSheetXml?.includes("<hyperlinks>"));
   assert.ok(paymentsSheetRelsXml?.includes("hyperlink"));
-  assert.ok(pdfText.includes("Verbindliche Datei: 02_Buchhaltungslisten_2026-01.xlsx"));
-  assert.ok(pdfText.includes("Deckblatt und Schnellcheck"));
-  assert.ok(pdfText.includes("Bewertungsgrundlage"));
-  assert.ok(pdfText.includes("Vollstaendigkeit innerhalb der Plattform"));
-  assert.ok(pdfText.includes("Bestaetigte Wareneingaenge im Monat"));
-  assert.ok(pdfText.includes("Nur geplante Ankuenfte"));
+  assert.ok(pdfText.includes("Buchhaltung 2026-01"));
+  assert.ok(pdfText.includes("Bitte diese Excel-Datei fuer die Details verwenden"));
+  assert.ok(pdfText.includes("So nutzen Sie dieses Paket"));
+  assert.ok(pdfText.includes("Was diese Zahlen bedeuten"));
+  assert.ok(pdfText.includes("Ware im Monat angekommen"));
+  assert.ok(pdfText.includes("Warenbestand zum Monatsende"));
 
   const csvBundle = await buildAccountantReportBundleFromState(state, {
     month: "2026-01",
