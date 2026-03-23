@@ -1,84 +1,117 @@
-# Buchhalter Export: One-Click Monats-Paket
+# Buchhalterpaket: Empfaengerorientiertes Monats-Paket
 
 ## Ziel
-Dieser Export erzeugt fuer einen gewaehleten Monat ein ZIP-Paket fuer die Buchhaltung mit:
+Der Export erzeugt ein empfaengerreifes Monats-Paket fuer Frau Kalinna. Standardmaessig enthaelt das Paket nur:
 
-1. Warenbestand zum Monatsende.
-2. Zahlungen im Monat (PO, paidDate im Monat, inkl. Deposit/Balance/Balance2/Shipping-Freight/EUSt/Zoll).
-3. Wareneingaenge im Monat (PO, Arrival/ETA im Monat).
-4. E-Mail Entwurf inkl. Anlagenliste.
+1. `01_Monatsuebersicht_YYYY-MM.pdf`
+2. `02_Buchhaltungslisten_YYYY-MM.xlsx`
 
-## Enthaltene Dateien
-Fuer Monat `YYYY-MM` werden erzeugt:
+Die Plattform liefert damit nur die Teile, die sie fachlich sauber bereitstellen kann. Externe Unterlagen wie Kontoauszuege, Kreditkartenabrechnungen und Amazon-Dokumente bleiben bewusst ausserhalb der Plattform.
 
-1. `buchhaltung_YYYY-MM_bericht.pdf`
-2. `buchhaltung_YYYY-MM.xlsx`
-3. `buchhaltung_YYYY-MM_warenbestand.csv`
-4. `buchhaltung_YYYY-MM_anzahlungen_po.csv`
-5. `buchhaltung_YYYY-MM_wareneingang_po.csv`
-6. `buchhaltung_YYYY-MM_email.txt`
-7. optional: `buchhaltung_YYYY-MM_zahlungsjournal.csv`
+## Standard-Inhalt
 
-## Monatslogik
+### PDF `01_Monatsuebersicht_YYYY-MM.pdf`
+Enthaelt nur:
 
-### Zahlungen im Monat (PO)
-Eine Zeile wird aufgenommen, wenn alle Bedingungen erfuellt sind:
+1. Welche Datei verbindlich ist
+2. Summen und Anzahl relevanter Lieferantenzahlungen, Wareneingaenge und Warenbestand
+3. Bewertungsgrundlage
+4. Vollstaendigkeit innerhalb der Plattform
+5. Manuell ausserhalb der Plattform beizulegende Unterlagen
+6. Offene Pruefhinweise in Klartext
 
-1. Status ist `PAID`.
-2. Zahlungsdatum ist im Zielmonat:
-   `paidDate`, bei fehlendem `paidDate` Fallback auf `dueDate` + Hinweis `DATE_UNCERTAIN`.
-3. Zahlungs-Typ ist aus vorhandenen Daten klassifiziert:
-   `Deposit`, `Balance`, `Balance2`, `Shipping/Freight`, `EUSt`, `Zoll`.
+### XLSX `02_Buchhaltungslisten_YYYY-MM.xlsx`
+Enthaelt nur diese Blaetter:
 
-Unklare Typen werden als `Other` mit Hinweis `PAYMENT_TYPE_UNCLEAR` exportiert (keine Betrags-Erfindung).
+1. `Uebersicht`
+2. `Zahlungen Lieferanten`
+3. `Wareneingaenge`
+4. `Warenbestand Monatsende`
+5. optional `Pruefhinweise`
 
-### Wareneingaenge im Monat (PO)
-Arrival-Datum wird in dieser Prioritaet bestimmt:
+## Sichtbare Fachlogik
 
-1. `arrivalDateDe`
-2. `arrivalDate`
-3. `etaManual`
-4. `etaDate`
-5. `eta`
-6. Fallback auf berechnetes ETA
+### Zahlungen Lieferanten
+Nur tatsaechlich im Monat bezahlte Lieferantenvorgaenge.
 
-Die PO-Zeile wird aufgenommen, wenn das resultierende Datum im Zielmonat liegt.
+Pflichtspalten:
 
-### Kombiliste (PO)
-`buchhaltung_YYYY-MM_anzahlung_wareneingang_po.csv` bleibt bestehen und fuehrt eine klare Relevanz aus:
+1. `Fachliche Behandlung`
+2. `Zahlungsdatum`
+3. `Lieferant`
+4. `Bestellnummer (intern)`
+5. `Verknuepfte Bestellung`
+6. `Zahlungsart`
+7. `Betrag Ist EUR`
+8. `Betrag USD`
+9. `Artikel / Mengen`
+10. `Geplante Abfahrt`
+11. `Geplante Ankunft`
+12. `Wareneingang laut System`
+13. `Datengrundlage Wareneingang`
+14. `Status zur Bestellung`
+15. `Beleglink`
+16. `Hinweis`
 
-1. `Zahlung im Monat`
-2. `Wareneingang im Monat`
-3. `Zahlung im Monat + Wareneingang im Monat`
-4. `Nicht relevant im Monat`
+Mapping `Fachliche Behandlung`:
 
-### Item-Darstellung
-In den PO-Tabellen werden zwei Sichten geliefert:
+1. `Deposit` -> `Anzahlung buchen`
+2. `Balance` -> `Restzahlung buchen`
+3. `Balance2` -> `zweite Restzahlung buchen`
+4. `Shipping/Freight` -> `Fracht buchen`
+5. `Zoll` -> `Zoll buchen`
+6. `EUSt` -> `EUSt buchen`
+7. unklare Zahlungsart -> `Pruefen: Zahlungsart unklar`
 
-1. `itemSummary` (gekuerzt, z. B. `Alias1, ...`)
-2. `allItems` (vollstaendige Itemliste)
+### Wareneingaenge
+Nur im Monat relevante Wareneingaenge.
 
-## Datenqualitaet
-Der Export blockiert nicht hart bei Datenluecken. Stattdessen werden `quality issues` erzeugt, z. B.:
+Pflichtspalten:
 
-1. fehlender Snapshot
-2. fehlender EK-Preis
-3. fehlende USD-Werte bei USD-relevanten Zahlungspositionen
-4. fehlende Arrival-Daten
-5. fehlende Invoice-/Folder-Links
-6. unklare Zahlungstypen
+1. `Fachliche Behandlung`
+2. `Wareneingang laut System`
+3. `Datengrundlage Wareneingang`
+4. `Lieferant`
+5. `Bestellnummer (intern)`
+6. `Verknuepfte Bestellung`
+7. `Artikel / Mengen`
+8. `Gesamtmenge`
+9. `Warenwert USD`
+10. `Warenwert EUR`
+11. `Geplante Abfahrt`
+12. `Geplante Ankunft`
+13. `Bisherige Lieferantenzahlungen laut System EUR`
+14. `Davon im aktuellen Monat bezahlt EUR`
+15. `Transportart`
+16. `Hinweis`
 
-## Scope
+Mapping `Fachliche Behandlung`:
 
-1. `core`: nur Kernblaetter/Dateien
-2. `core_plus_journal`: zusaetzlich `zahlungsjournal.csv` (nur PO-Zeilen)
+1. tatsaechlicher Wareneingang -> `Wareneingang erfassen / mit Anzahlungen abstimmen`
+2. ETA-basierter Wareneingang -> `Nur Information: Wareneingang noch nicht bestaetigt`
 
-## Kompatibilitaet
-Dateinamen bleiben unveraendert. Bestehende CSV/XLSX/PDF-Formate bleiben erhalten, Inhalte wurden auf die klare Monatslogik umgestellt.
+### Warenbestand Monatsende
 
-## Legacy + V2
-Beide UIs nutzen dieselbe Domain-Pipeline (`src/domain/accountantReport.js`).
-Damit sind Filter- und Summenlogik zwischen Legacy und V2 identisch.
+1. `Artikelnummer / SKU`
+2. `Artikelbezeichnung`
+3. `Warengruppe`
+4. `Bestand Amazon`
+5. `Bestand externes Lager`
+6. `Bestand im Zulauf`
+7. `Gesamtbestand`
+8. `Einstandspreis EUR`
+9. `Bestandswert EUR`
+10. `Hinweis`
 
-## Hinweis zur Technik
-Im aktuellen Build-Environment ist npm-Netzwerkzugriff blockiert. Deshalb sind XLSX/PDF/ZIP lokal umgesetzt (ohne externe Runtime-Dependencies), mit unveraendertem One-Click-Workflow.
+## Optionaler Rohdaten-Export
+CSV-Dateien werden weiterhin technisch erzeugt, aber nicht mehr standardmaessig im Paket mitgeliefert. Sie sind nur fuer spaetere interne oder erweiterte Exporte vorgesehen.
+
+## Nicht-Ziele
+
+1. Keine Integration von Kontoauszuegen
+2. Keine Integration von Kreditkartenabrechnungen
+3. Keine Integration von Amazon Gebuehren- oder Werbekostenrechnungen
+4. Keine Modellierung neuer Rechnungsnummern, Kontierungen oder Bank-Beleglogik
+
+## Single Source of Truth
+Beide UIs und alle Exportformate lesen dieselbe Domain-Pipeline in `src/domain/accountantReport.js`. Workbook, PDF und V2-Preview duerfen keine eigene Fachlogik fuer Terminologie, Hinweise oder Monatsfilter haben.

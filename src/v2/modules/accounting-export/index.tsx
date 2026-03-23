@@ -1,19 +1,10 @@
 import { useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Input, Space, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Input, Space, Tag, Typography, message } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "../../components/DataTable";
-import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { currentMonthKey } from "../../domain/months";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSyncSession } from "../../sync/session";
-import {
-  type PaymentExportScope,
-  type PaymentJournalRow,
-  buildPaymentJournalCsvRows,
-  buildPaymentJournalRowsFromState,
-  paymentJournalRowsToCsv,
-  sumPaymentRows,
-} from "../../domain/paymentJournal";
 import {
   buildAccountantReportData,
   buildAccountantReportBundleFromState,
@@ -23,73 +14,61 @@ import { triggerBlobDownload } from "../../../domain/accountantBundle.js";
 const { Paragraph, Text, Title } = Typography;
 
 type InventoryRow = {
-  sku: string;
-  alias: string;
-  category: string;
-  amazonUnits: number;
-  threePLUnits: number;
-  inTransitUnits: number;
-  rowValueEur: number | null;
+  artikelnummerSku: string;
+  artikelbezeichnung: string;
+  warengruppe: string;
+  bestandAmazon: number;
+  bestandExternesLager: number;
+  bestandImZulauf: number;
+  gesamtbestand: number;
+  einstandspreisEur: number | null;
+  bestandswertEur: number | null;
+  hinweis: string;
 };
 
-type PaymentInMonthRow = {
-  poNumber: string;
-  supplier: string;
-  itemSummary?: string;
-  skuAliases: string;
-  allItems?: string;
-  paymentType: string;
-  dueDate: string | null;
-  paidDate: string | null;
-  plannedEur: number | null;
-  actualEur: number | null;
-  amountUsd: number | null;
-  etdDate?: string | null;
-  etaDate?: string | null;
-  arrivalDate?: string | null;
-  issues: string[];
+type PaymentRow = {
+  fachlicheBehandlung: string;
+  zahlungsdatum: string | null;
+  lieferant: string;
+  bestellnummerIntern: string;
+  verknuepfteBestellung: string;
+  zahlungsart: string;
+  betragIstEur: number | null;
+  betragUsd: number | null;
+  artikelMengen: string;
+  geplanteAbfahrt: string | null;
+  geplanteAnkunft: string | null;
+  wareneingangLautSystem: string | null;
+  wareneingangGrundlageLabel: string;
+  statusZurBestellung: string;
+  beleglink: string;
+  hinweis: string;
 };
 
 type ArrivalRow = {
-  poNumber: string;
-  supplier: string;
-  itemSummary?: string;
-  skuAliases: string;
-  allItems?: string;
-  arrivalDate: string | null;
-  units: number | null;
-  goodsEur: number | null;
-  issues: string[];
-};
-
-type PoLedgerRow = {
-  monthMarker: boolean;
-  monthMarkerReason?: string;
-  relevanceReasonLabel?: string;
-  poNumber: string;
-  supplier: string;
-  itemSummary?: string;
-  skuAliases: string;
-  allItems?: string;
-  units: number | null;
-  paymentActualEurMonth?: number | null;
-  paymentAmountUsdMonth?: number | null;
-  depositActualEurMonth: number | null;
-  depositAmountUsdMonth: number | null;
-  paymentTypesInMonth?: string;
-  etdDate: string | null;
-  etaDate: string | null;
-  arrivalDate: string | null;
-  arrivalSource: string;
-  issues: string[];
+  fachlicheBehandlung: string;
+  wareneingangLautSystem: string | null;
+  wareneingangGrundlageLabel: string;
+  lieferant: string;
+  bestellnummerIntern: string;
+  verknuepfteBestellung: string;
+  artikelMengen: string;
+  gesamtmenge: number | null;
+  warenwertUsd: number | null;
+  warenwertEur: number | null;
+  geplanteAbfahrt: string | null;
+  geplanteAnkunft: string | null;
+  bisherigeLieferantenzahlungenEur: number | null;
+  davonImMonatBezahltEur: number | null;
+  transportart: string;
+  hinweis: string;
 };
 
 type QualityRow = {
-  code: string;
-  severity: string;
-  message: string;
-  entityType?: string;
-  entityId?: string;
+  bereich: string;
+  bezug: string;
+  hinweis: string;
+  relevanzFuerBuchhaltung: string;
 };
 
 function formatCurrency(value: number | null): string {
@@ -120,246 +99,104 @@ function parseOverride(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeScope(includePaid: boolean, includeOpen: boolean): PaymentExportScope {
-  if (includePaid && includeOpen) return "both";
-  if (includeOpen) return "open";
-  return "paid";
-}
-
-function isActualAmountValid(amount: number | null, planned: number | null): boolean {
-  if (!Number.isFinite(amount as number)) return false;
-  const actual = Number(amount);
-  const plannedValue = Number.isFinite(planned as number) ? Number(planned) : null;
-  if (actual > 0) return true;
-  if (actual === 0 && plannedValue != null && plannedValue === 0) return true;
-  return false;
-}
-
-const ISSUE_LABELS: Record<string, string> = {
-  DATE_UNCERTAIN: "Datum unsicher (Due-Date verwendet).",
-  AUTO_GENERATED: "Auto generiert (bitte pruefen).",
-  IST_FEHLT: "Ist fehlt (Plan als Fallback).",
-  MISSING_ACTUAL_AMOUNT: "Ist-Zahlung fehlt.",
-  PRO_RATA_ALLOCATION: "Ist wurde anteilig verteilt.",
-  GROUPED_PAYMENT: "Mehrere Positionen in einer Zahlung.",
-  PAID_WITHOUT_DATE: "Bezahlt ohne Datum.",
-};
-
-function summarizeIssues(issues: string[] | undefined): string {
-  const unique = Array.from(new Set((Array.isArray(issues) ? issues : [])
-    .map((code) => ISSUE_LABELS[String(code)] || String(code))
-    .filter(Boolean)));
-  return unique.length ? unique.join(" ") : "-";
-}
-
-function paymentDateForRow(row: PaymentJournalRow): string {
-  if (row.status === "PAID") return row.paidDate || row.dueDate || "";
-  return row.dueDate || "";
-}
-
-async function copyToClipboard(value: string): Promise<void> {
-  const text = String(value || "");
-  if (!text) return;
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
-}
-
 export default function AccountingExportModule(): JSX.Element {
   const { state, loading, error } = useWorkspaceState();
   const syncSession = useSyncSession();
   const [month, setMonth] = useState(() => currentMonthKey());
-  const [includeJournal, setIncludeJournal] = useState(false);
   const [inventoryOverrideRaw, setInventoryOverrideRaw] = useState("");
-  const [journalIncludePaid, setJournalIncludePaid] = useState(true);
-  const [journalIncludeOpen, setJournalIncludeOpen] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [exportBusy, setExportBusy] = useState(false);
-  const [lastEmailText, setLastEmailText] = useState("");
 
   const stateObject = state as unknown as Record<string, unknown>;
   const workspaceName = syncSession.workspaceId || "Workspace";
-  const journalScope = normalizeScope(journalIncludePaid, journalIncludeOpen);
 
   const preview = useMemo(() => {
     return buildAccountantReportData(
       stateObject,
-      {
-        month,
-        scope: includeJournal ? "core_plus_journal" : "core",
-      },
+      { month },
       {
         workspaceName,
         inventoryValueOverrideEur: parseOverride(inventoryOverrideRaw),
       },
     );
-  }, [includeJournal, inventoryOverrideRaw, month, stateObject, workspaceName]);
-
-  const poPaymentRows = useMemo(
-    () => buildPaymentJournalRowsFromState(stateObject, { month, scope: journalScope })
-      .filter((row) => row.entityType === "PO"),
-    [journalScope, month, stateObject],
-  );
-
-  const poPaidActualTotal = useMemo(
-    () => sumPaymentRows(poPaymentRows.filter((row) => row.status === "PAID"), "amountActualEur"),
-    [poPaymentRows],
-  );
-
-  const poOpenPlannedTotal = useMemo(
-    () => sumPaymentRows(poPaymentRows.filter((row) => row.status === "OPEN"), "amountPlannedEur"),
-    [poPaymentRows],
-  );
+  }, [inventoryOverrideRaw, month, stateObject, workspaceName]);
 
   const inventoryColumns = useMemo<ColumnDef<InventoryRow>[]>(() => [
-    {
-      header: "Alias",
-      accessorKey: "alias",
-      meta: { width: 260, minWidth: 240 },
-      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
-    },
-    { header: "Kategorie", accessorKey: "category" },
-    { header: "Amazon", cell: ({ row }) => formatInt(row.original.amazonUnits) },
-    { header: "3PL", cell: ({ row }) => formatInt(row.original.threePLUnits) },
-    { header: "In Transit", cell: ({ row }) => formatInt(row.original.inTransitUnits) },
-    { header: "Warenwert EUR", cell: ({ row }) => formatCurrency(row.original.rowValueEur) },
+    { header: "Artikelnummer / SKU", accessorKey: "artikelnummerSku", meta: { width: 170, minWidth: 150 } },
+    { header: "Artikelbezeichnung", accessorKey: "artikelbezeichnung", meta: { width: 240, minWidth: 220 } },
+    { header: "Warengruppe", accessorKey: "warengruppe", meta: { width: 140, minWidth: 120 } },
+    { header: "Amazon", cell: ({ row }) => formatInt(row.original.bestandAmazon), meta: { width: 110, minWidth: 90, align: "right" } },
+    { header: "Externes Lager", cell: ({ row }) => formatInt(row.original.bestandExternesLager), meta: { width: 130, minWidth: 120, align: "right" } },
+    { header: "Im Zulauf", cell: ({ row }) => formatInt(row.original.bestandImZulauf), meta: { width: 110, minWidth: 90, align: "right" } },
+    { header: "Gesamtbestand", cell: ({ row }) => formatInt(row.original.gesamtbestand), meta: { width: 130, minWidth: 110, align: "right" } },
+    { header: "Einstandspreis EUR", cell: ({ row }) => formatCurrency(row.original.einstandspreisEur), meta: { width: 150, minWidth: 130, align: "right" } },
+    { header: "Bestandswert EUR", cell: ({ row }) => formatCurrency(row.original.bestandswertEur), meta: { width: 150, minWidth: 130, align: "right" } },
+    { header: "Hinweis", accessorKey: "hinweis", meta: { width: 220, minWidth: 180 } },
   ], []);
 
-  const paymentInMonthColumns = useMemo<ColumnDef<PaymentInMonthRow>[]>(() => [
-    { header: "PO", accessorKey: "poNumber" },
-    { header: "Supplier", accessorKey: "supplier" },
+  const paymentColumns = useMemo<ColumnDef<PaymentRow>[]>(() => [
+    { header: "Fachliche Behandlung", accessorKey: "fachlicheBehandlung", meta: { width: 200, minWidth: 180 } },
+    { header: "Zahlungsdatum", cell: ({ row }) => formatDate(row.original.zahlungsdatum), meta: { width: 120, minWidth: 110 } },
+    { header: "Lieferant", accessorKey: "lieferant", meta: { width: 180, minWidth: 150 } },
+    { header: "Bestellnummer (intern)", accessorKey: "bestellnummerIntern", meta: { width: 140, minWidth: 120 } },
+    { header: "Zahlungsart", accessorKey: "zahlungsart", meta: { width: 140, minWidth: 120 } },
+    { header: "Betrag Ist EUR", cell: ({ row }) => formatCurrency(row.original.betragIstEur), meta: { width: 130, minWidth: 120, align: "right" } },
+    { header: "Betrag USD", cell: ({ row }) => formatCurrency(row.original.betragUsd), meta: { width: 130, minWidth: 120, align: "right" } },
     {
-      header: "Items",
-      cell: ({ row }) => <span title={row.original.allItems || row.original.skuAliases || "-"}>{row.original.itemSummary || row.original.skuAliases || "-"}</span>,
+      header: "Artikel / Mengen",
+      cell: ({ row }) => <span title={row.original.artikelMengen || "-"}>{row.original.artikelMengen || "-"}</span>,
+      meta: { width: 260, minWidth: 220 },
     },
-    { header: "Zahlungstyp", accessorKey: "paymentType" },
-    { header: "Paid Date", cell: ({ row }) => formatDate(row.original.paidDate) },
-    { header: "Due Date", cell: ({ row }) => formatDate(row.original.dueDate) },
-    { header: "Ist EUR", cell: ({ row }) => formatCurrency(row.original.actualEur) },
-    { header: "Plan EUR", cell: ({ row }) => formatCurrency(row.original.plannedEur) },
-    { header: "USD", cell: ({ row }) => formatCurrency(row.original.amountUsd) },
-    { header: "ETD", cell: ({ row }) => formatDate(row.original.etdDate || null) },
-    { header: "ETA", cell: ({ row }) => formatDate(row.original.etaDate || null) },
-    { header: "Arrival", cell: ({ row }) => formatDate(row.original.arrivalDate || null) },
-    { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
-  ], []);
-
-  const arrivalColumns = useMemo<ColumnDef<ArrivalRow>[]>(() => [
-    { header: "PO", accessorKey: "poNumber" },
-    { header: "Supplier", accessorKey: "supplier" },
+    { header: "Geplante Abfahrt", cell: ({ row }) => formatDate(row.original.geplanteAbfahrt), meta: { width: 120, minWidth: 110 } },
+    { header: "Geplante Ankunft", cell: ({ row }) => formatDate(row.original.geplanteAnkunft), meta: { width: 130, minWidth: 120 } },
+    { header: "Wareneingang laut System", cell: ({ row }) => formatDate(row.original.wareneingangLautSystem), meta: { width: 160, minWidth: 140 } },
+    { header: "Datengrundlage Wareneingang", accessorKey: "wareneingangGrundlageLabel", meta: { width: 210, minWidth: 180 } },
+    { header: "Status zur Bestellung", accessorKey: "statusZurBestellung", meta: { width: 180, minWidth: 160 } },
     {
-      header: "Items",
-      cell: ({ row }) => <span title={row.original.allItems || row.original.skuAliases || "-"}>{row.original.itemSummary || row.original.skuAliases || "-"}</span>,
-    },
-    { header: "Arrival", cell: ({ row }) => formatDate(row.original.arrivalDate) },
-    { header: "Units", cell: ({ row }) => formatInt(row.original.units || 0) },
-    { header: "Goods EUR", cell: ({ row }) => formatCurrency(row.original.goodsEur) },
-    { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
-  ], []);
-
-  const paymentJournalColumns = useMemo<ColumnDef<PaymentJournalRow>[]>(() => [
-    {
-      header: "Zahlungsdatum",
-      cell: ({ row }) => formatDate(paymentDateForRow(row.original)),
-      meta: { width: 120, minWidth: 120 },
-    },
-    {
-      header: "Status",
-      cell: ({ row }) => row.original.status === "PAID"
-        ? <Tag color="green">Bezahlt</Tag>
-        : <Tag color="gold">Offen</Tag>,
-      meta: { width: 98, minWidth: 98 },
-    },
-    { header: "PO", accessorKey: "poNumber", meta: { width: 110, minWidth: 110 } },
-    { header: "Lieferant", accessorKey: "supplierName", meta: { width: 180, minWidth: 160 } },
-    {
-      header: "Item",
-      cell: ({ row }) => {
-        const label = row.original.itemSummary || row.original.skuAliases || "-";
-        const tooltip = row.original.itemTooltip || row.original.skuAliases || label;
-        return <span title={tooltip}>{label}</span>;
-      },
-      meta: { width: 160, minWidth: 140 },
-    },
-    {
-      header: "Positionen",
-      cell: ({ row }) => (
-        <span title={Array.isArray(row.original.includedPositions) ? row.original.includedPositions.join(", ") : row.original.paymentType}>
-          {row.original.paymentType || "-"}
-        </span>
-      ),
-      meta: { width: 180, minWidth: 160 },
-    },
-    {
-      header: "Ist EUR",
-      cell: ({ row }) => row.original.status === "PAID"
-        ? (
-          <span className={isActualAmountValid(row.original.amountActualEur, row.original.amountPlannedEur) ? undefined : "v2-negative"}>
-            {formatCurrency(row.original.amountActualEur)}
-          </span>
-        )
+      header: "Beleglink",
+      cell: ({ row }) => row.original.beleglink
+        ? <a href={row.original.beleglink} target="_blank" rel="noreferrer">oeffnen</a>
         : "-",
-      meta: { width: 120, minWidth: 110, align: "right" },
+      meta: { width: 100, minWidth: 90 },
     },
     {
-      header: "Plan EUR",
-      cell: ({ row }) => formatCurrency(row.original.amountPlannedEur),
-      meta: { width: 120, minWidth: 110, align: "right" },
-    },
-    { header: "Zahler", cell: ({ row }) => row.original.payer || "-", meta: { width: 120, minWidth: 110 } },
-    { header: "Methode", cell: ({ row }) => row.original.paymentMethod || "-", meta: { width: 150, minWidth: 140 } },
-    {
-      header: "Notiz",
-      cell: ({ row }) => <span title={row.original.note || "-"}>{row.original.note || "-"}</span>,
-      meta: { width: 210, minWidth: 180 },
-    },
-    {
-      header: "Hinweise",
-      cell: ({ row }) => (
-        <span title={Array.isArray(row.original.issues) ? row.original.issues.join("\n") : ""}>
-          {summarizeIssues(row.original.issues)}
-        </span>
-      ),
+      header: "Hinweis",
+      cell: ({ row }) => <span title={row.original.hinweis || "-"}>{row.original.hinweis || "-"}</span>,
       meta: { width: 240, minWidth: 200 },
     },
   ], []);
 
-  const poLedgerColumns = useMemo<ColumnDef<PoLedgerRow>[]>(() => [
-    { header: "PO", accessorKey: "poNumber" },
-    { header: "Supplier", accessorKey: "supplier" },
+  const arrivalColumns = useMemo<ColumnDef<ArrivalRow>[]>(() => [
+    { header: "Fachliche Behandlung", accessorKey: "fachlicheBehandlung", meta: { width: 240, minWidth: 210 } },
+    { header: "Wareneingang laut System", cell: ({ row }) => formatDate(row.original.wareneingangLautSystem), meta: { width: 160, minWidth: 140 } },
+    { header: "Datengrundlage Wareneingang", accessorKey: "wareneingangGrundlageLabel", meta: { width: 210, minWidth: 180 } },
+    { header: "Lieferant", accessorKey: "lieferant", meta: { width: 180, minWidth: 150 } },
+    { header: "Bestellnummer (intern)", accessorKey: "bestellnummerIntern", meta: { width: 140, minWidth: 120 } },
     {
-      header: "Items",
-      cell: ({ row }) => <span title={row.original.allItems || row.original.skuAliases || "-"}>{row.original.itemSummary || row.original.skuAliases || "-"}</span>,
+      header: "Artikel / Mengen",
+      cell: ({ row }) => <span title={row.original.artikelMengen || "-"}>{row.original.artikelMengen || "-"}</span>,
+      meta: { width: 260, minWidth: 220 },
     },
-    { header: "Relevanzgrund", cell: ({ row }) => row.original.relevanceReasonLabel || "-" },
-    { header: "Units", cell: ({ row }) => formatInt(row.original.units || 0) },
-    { header: "Zahlung EUR (Monat)", cell: ({ row }) => formatCurrency(row.original.paymentActualEurMonth ?? row.original.depositActualEurMonth) },
-    { header: "Zahlung USD (Monat)", cell: ({ row }) => formatCurrency(row.original.paymentAmountUsdMonth ?? row.original.depositAmountUsdMonth) },
-    { header: "Zahltypen", cell: ({ row }) => row.original.paymentTypesInMonth || "-" },
-    { header: "ETD", cell: ({ row }) => formatDate(row.original.etdDate) },
-    { header: "ETA", cell: ({ row }) => formatDate(row.original.etaDate) },
-    { header: "Ankunft", cell: ({ row }) => formatDate(row.original.arrivalDate || row.original.etaDate) },
-    { header: "Source", accessorKey: "arrivalSource" },
-    { header: "Issues", cell: ({ row }) => row.original.issues?.join(" | ") || "-" },
+    { header: "Gesamtmenge", cell: ({ row }) => formatInt(row.original.gesamtmenge), meta: { width: 110, minWidth: 90, align: "right" } },
+    { header: "Warenwert USD", cell: ({ row }) => formatCurrency(row.original.warenwertUsd), meta: { width: 130, minWidth: 120, align: "right" } },
+    { header: "Warenwert EUR", cell: ({ row }) => formatCurrency(row.original.warenwertEur), meta: { width: 130, minWidth: 120, align: "right" } },
+    { header: "Geplante Abfahrt", cell: ({ row }) => formatDate(row.original.geplanteAbfahrt), meta: { width: 120, minWidth: 110 } },
+    { header: "Geplante Ankunft", cell: ({ row }) => formatDate(row.original.geplanteAnkunft), meta: { width: 130, minWidth: 120 } },
+    { header: "Bisherige Zahlungen EUR", cell: ({ row }) => formatCurrency(row.original.bisherigeLieferantenzahlungenEur), meta: { width: 160, minWidth: 150, align: "right" } },
+    { header: "Davon im Monat EUR", cell: ({ row }) => formatCurrency(row.original.davonImMonatBezahltEur), meta: { width: 150, minWidth: 140, align: "right" } },
+    { header: "Transportart", accessorKey: "transportart", meta: { width: 120, minWidth: 100 } },
+    {
+      header: "Hinweis",
+      cell: ({ row }) => <span title={row.original.hinweis || "-"}>{row.original.hinweis || "-"}</span>,
+      meta: { width: 240, minWidth: 200 },
+    },
   ], []);
 
   const qualityColumns = useMemo<ColumnDef<QualityRow>[]>(() => [
-    { header: "Severity", accessorKey: "severity" },
-    { header: "Code", accessorKey: "code" },
-    { header: "Message", accessorKey: "message" },
-    { header: "Entity", cell: ({ row }) => row.original.entityType || "-" },
-    { header: "ID", cell: ({ row }) => row.original.entityId || "-" },
+    { header: "Bereich", accessorKey: "bereich", meta: { width: 150, minWidth: 130 } },
+    { header: "Bezug", accessorKey: "bezug", meta: { width: 180, minWidth: 160 } },
+    { header: "Hinweis", accessorKey: "hinweis", meta: { width: 420, minWidth: 320 } },
+    { header: "Relevanz fuer Buchhaltung", accessorKey: "relevanzFuerBuchhaltung", meta: { width: 180, minWidth: 160 } },
   ], []);
 
   async function handleExport(): Promise<void> {
@@ -368,16 +205,12 @@ export default function AccountingExportModule(): JSX.Element {
     try {
       const bundle = await buildAccountantReportBundleFromState(
         stateObject,
-        {
-          month,
-          scope: includeJournal ? "core_plus_journal" : "core",
-        },
+        { month },
         {
           workspaceName,
           inventoryValueOverrideEur: parseOverride(inventoryOverrideRaw),
         },
       );
-      setLastEmailText(bundle?.emailDraft?.text || "");
       await triggerBlobDownload(bundle.zipBlob, bundle.zipFileName);
       messageApi.success(`Paket erstellt: ${bundle.zipFileName}`);
     } catch (bundleError) {
@@ -388,49 +221,7 @@ export default function AccountingExportModule(): JSX.Element {
     }
   }
 
-  async function handleCopyEmail(): Promise<void> {
-    try {
-      let payload = lastEmailText;
-      if (!payload) {
-        const bundle = await buildAccountantReportBundleFromState(
-          stateObject,
-          {
-            month,
-            scope: includeJournal ? "core_plus_journal" : "core",
-          },
-          {
-            workspaceName,
-            inventoryValueOverrideEur: parseOverride(inventoryOverrideRaw),
-          },
-        );
-        payload = bundle?.emailDraft?.text || "";
-        setLastEmailText(payload);
-      }
-      await copyToClipboard(payload);
-      messageApi.success("E-Mail Text kopiert.");
-    } catch (copyError) {
-      console.error(copyError);
-      messageApi.error(copyError instanceof Error ? copyError.message : "Kopieren fehlgeschlagen");
-    }
-  }
-
-  async function handlePoPaymentsLedgerExport(): Promise<void> {
-    try {
-      if (!poPaymentRows.length) {
-        messageApi.warning(`Keine PO-Zahlungen fuer ${month} gefunden.`);
-        return;
-      }
-      const csvRows = buildPaymentJournalCsvRows(poPaymentRows);
-      const csv = paymentJournalRowsToCsv(csvRows, ";");
-      const fileName = `po_payment_journal_${month}_${journalScope}.csv`;
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      await triggerBlobDownload(blob, fileName);
-      messageApi.success(`Payment-Journal exportiert: ${fileName} (${poPaymentRows.length} Zeilen)`);
-    } catch (ledgerError) {
-      console.error(ledgerError);
-      messageApi.error(ledgerError instanceof Error ? ledgerError.message : "PO Payments Ledger Export fehlgeschlagen");
-    }
-  }
+  const overview = preview.uebersicht || {};
 
   return (
     <div className="v2-page">
@@ -438,9 +229,9 @@ export default function AccountingExportModule(): JSX.Element {
       <Card className="v2-intro-card">
         <div className="v2-page-head">
           <div>
-            <Title level={3}>Buchhalter Export</Title>
+            <Title level={3}>Buchhalterpaket</Title>
             <Paragraph>
-              One-Click Monats-Paket mit Preview: Warenbestand, Zahlungen im Monat, Wareneingaenge im Monat und E-Mail Text.
+              Standard-Download fuer Frau Kalinna mit genau zwei Dateien: Monatsuebersicht als PDF und Arbeitsdatei als XLSX.
             </Paragraph>
           </div>
         </div>
@@ -456,12 +247,6 @@ export default function AccountingExportModule(): JSX.Element {
               />
             </div>
             <div className="v2-toolbar-field">
-              <Text>Scope</Text>
-              <Checkbox checked={includeJournal} onChange={(event) => setIncludeJournal(event.target.checked)}>
-                Zahlungsjournal zusaetzlich
-              </Checkbox>
-            </div>
-            <div className="v2-toolbar-field">
               <Text>Warenwert Override EUR (optional)</Text>
               <Input
                 placeholder="z.B. 150000"
@@ -470,34 +255,18 @@ export default function AccountingExportModule(): JSX.Element {
                 style={{ width: 220, maxWidth: "100%" }}
               />
             </div>
-            <div className="v2-toolbar-field">
-              <Text>Payments Filter</Text>
-              <Checkbox checked={journalIncludePaid} onChange={(event) => setJournalIncludePaid(event.target.checked)}>
-                Nur bezahlt
-              </Checkbox>
-              <Checkbox checked={journalIncludeOpen} onChange={(event) => setJournalIncludeOpen(event.target.checked)}>
-                Offen/geplant anzeigen
-              </Checkbox>
-            </div>
           </div>
           <div className="v2-toolbar-row v2-toolbar-actions">
             <div className="v2-actions-inline">
               <Button type="primary" onClick={() => { void handleExport(); }} loading={exportBusy}>
                 Paket erstellen
               </Button>
-              <Button onClick={() => { void handlePoPaymentsLedgerExport(); }}>
-                Export Payment-Journal
-              </Button>
-              <Button onClick={() => { void handleCopyEmail(); }}>
-                E-Mail Text kopieren
-              </Button>
             </div>
-            <Tag color="blue">Zahlungen im Monat: {(preview.paymentsInMonth || preview.deposits || []).length}</Tag>
-            <Tag color="blue">Wareneingaenge im Monat: {(preview.arrivalsInMonth || preview.arrivals || []).length}</Tag>
-            <Tag color="blue">PO Payment-Zeilen: {poPaymentRows.length}</Tag>
-            <Tag color="green">Ist (paid): {formatCurrency(poPaidActualTotal)}</Tag>
-            <Tag color="orange">Plan (open): {formatCurrency(poOpenPlannedTotal)}</Tag>
-            <Tag color={preview.quality.length ? "red" : "green"}>Issues: {preview.quality.length}</Tag>
+            <Tag color="blue">Verbindliche Datei: {overview.verbindlicheDatei || "-"}</Tag>
+            <Tag color="blue">Zahlungen: {overview.anzahlZahlungenLieferanten || 0}</Tag>
+            <Tag color="blue">Wareneingaenge: {overview.anzahlWareneingaenge || 0}</Tag>
+            <Tag color="green">Warenwert: {preview.inventory.totalValueEur != null ? `${formatCurrency(preview.inventory.totalValueEur)} EUR` : "-"}</Tag>
+            <Tag color={preview.pruefhinweise.length ? "orange" : "green"}>Pruefhinweise: {preview.pruefhinweise.length}</Tag>
           </div>
         </div>
       </Card>
@@ -506,72 +275,53 @@ export default function AccountingExportModule(): JSX.Element {
         <Alert type="error" showIcon message="Workspace Fehler" description={error} />
       ) : null}
 
-      <Card title="Monatszusammenfassung">
-        <Space wrap>
-          <Tag color="default">Snapshot: {formatDate(preview.inventory.snapshotAsOf)}</Tag>
-          <Tag color="green">Warenwert: {preview.inventory.totalValueEur != null ? `${formatCurrency(preview.inventory.totalValueEur)} EUR` : "-"}</Tag>
-          <Tag color="default">Amazon: {formatInt(preview.inventory.totalAmazonUnits)}</Tag>
-          <Tag color="default">3PL: {formatInt(preview.inventory.total3plUnits)}</Tag>
-          <Tag color="default">Transit: {formatInt(preview.inventory.totalInTransitUnits)}</Tag>
-          <Tag color={preview.inventory.manualOverrideUsed ? "orange" : "default"}>
-            Override: {preview.inventory.manualOverrideUsed ? "ja" : "nein"}
-          </Tag>
+      <Card title="Monatsuebersicht">
+        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <Text><strong>Verbindliche Datei:</strong> {overview.verbindlicheDatei || "-"}</Text>
+          <Text><strong>Bestandsstichtag:</strong> {formatDate(overview.bestandStichtag || null)}</Text>
+          <Text><strong>Bewertungsgrundlage:</strong> {overview.bewertungsgrundlageText || "-"}</Text>
+          <Text><strong>Vollstaendigkeit innerhalb der Plattform:</strong> {overview.vollstaendigkeitInnerhalbPlattformText || "-"}</Text>
+          <Text><strong>Manuell ausserhalb der Plattform beizulegen:</strong></Text>
+          <div>
+            {(overview.manuellAusserhalbPlattformBeizulegen || []).map((entry: string) => (
+              <Tag key={entry} style={{ marginBottom: 8 }}>{entry}</Tag>
+            ))}
+          </div>
         </Space>
       </Card>
 
-      <Card title="Warenbestand Preview" loading={loading}>
+      <Card title={`Zahlungen Lieferanten in ${month}`} loading={loading}>
         <DataTable
-          data={(preview.inventoryRows || []) as InventoryRow[]}
-          columns={inventoryColumns}
-          minTableWidth={980}
+          data={(preview.zahlungenLieferanten || []) as PaymentRow[]}
+          columns={paymentColumns}
+          minTableWidth={2220}
           tableLayout="auto"
         />
       </Card>
 
-      <Card title={`Relevante Zahlungen in ${month}`} loading={loading}>
+      <Card title={`Wareneingaenge in ${month}`} loading={loading}>
         <DataTable
-          data={((preview.paymentsInMonth || preview.deposits || []) as PaymentInMonthRow[])}
-          columns={paymentInMonthColumns}
+          data={(preview.wareneingaenge || []) as ArrivalRow[]}
+          columns={arrivalColumns}
+          minTableWidth={2360}
+          tableLayout="auto"
+        />
+      </Card>
+
+      <Card title="Warenbestand Monatsende" loading={loading}>
+        <DataTable
+          data={(preview.warenbestandRows || []) as InventoryRow[]}
+          columns={inventoryColumns}
           minTableWidth={1540}
           tableLayout="auto"
         />
       </Card>
 
-      <Card title="PO Zahlungsjournal (steuerrelevant)" loading={loading}>
-        <Text type="secondary">
-          Monatsfilter basiert auf Zahlungsdatum. Fehlt das Zahlungsdatum bei bezahlten Events, wird Due-Date verwendet und als Hinweis markiert.
-        </Text>
+      <Card title="Pruefhinweise" loading={loading}>
         <DataTable
-          data={poPaymentRows}
-          columns={paymentJournalColumns}
-          minTableWidth={1680}
-          tableLayout="auto"
-        />
-      </Card>
-
-      <Card title="Vollstaendige Uebersicht (PO)" loading={loading}>
-        <DataTable
-          data={(preview.poLedger || []) as PoLedgerRow[]}
-          columns={poLedgerColumns}
-          minTableWidth={1700}
-          tableLayout="auto"
-        />
-      </Card>
-
-      <Card title={`Relevante Wareneingaenge in ${month}`} loading={loading}>
-        <DataTable
-          data={((preview.arrivalsInMonth || preview.arrivals || []) as ArrivalRow[])}
-          columns={arrivalColumns}
-          minTableWidth={1260}
-          tableLayout="auto"
-        />
-      </Card>
-
-      <Card title="Quality Issues" loading={loading}>
-        <DataTable
-          data={(preview.quality || []) as QualityRow[]}
+          data={(preview.pruefhinweise || []) as QualityRow[]}
           columns={qualityColumns}
-          minTableWidth={960}
+          minTableWidth={980}
           tableLayout="auto"
         />
       </Card>

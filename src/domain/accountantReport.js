@@ -5,6 +5,13 @@ import { buildAccountantPdfBlob } from "./accountantPdf.js";
 import { buildZipBlob, monthFileStamp } from "./accountantBundle.js";
 
 const PO_CONFIG = { slug: "po", entityLabel: "PO", numberField: "poNo" };
+const MANUELL_BEIZULEGEN = [
+  "Kontoauszug als PDF",
+  "Kreditkartenabrechnung als PDF und CSV",
+  "Amazon Gebuehrenrechnungen",
+  "Amazon Werbekostenrechnungen",
+  "Sonstige Besonderheiten wie Darlehen",
+];
 
 function currentMonthKey() {
   const now = new Date();
@@ -218,6 +225,114 @@ function mapRelevanceReasonLabel(reason) {
   return "Nicht relevant im Monat";
 }
 
+function formatLocaleNumber(value, fractionDigits = 2) {
+  if (!Number.isFinite(Number(value))) return "-";
+  return Number(value).toLocaleString("de-DE", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+}
+
+function isActualArrivalSource(source) {
+  return source === "arrivalDate" || source === "arrivalDateDe";
+}
+
+function isEtaBasedArrivalSource(source) {
+  return source === "etaManual" || source === "etaDate" || source === "eta" || source === "etaComputed";
+}
+
+function mapArrivalSourceLabel(source) {
+  if (isActualArrivalSource(source)) return "Tatsaechlicher Wareneingang";
+  if (source === "etaComputed") return "Geplante Ankunft (automatisch berechnet)";
+  if (isEtaBasedArrivalSource(source)) return "Geplante Ankunft";
+  return "Keine Angabe";
+}
+
+function mapPaymentTypeLabel(type) {
+  if (type === "Deposit") return "Anzahlung";
+  if (type === "Balance") return "Restzahlung";
+  if (type === "Balance2") return "zweite Restzahlung";
+  if (type === "Shipping/Freight") return "Fracht";
+  if (type === "EUSt") return "EUSt";
+  if (type === "Zoll") return "Zoll";
+  return "Unklare Zahlungsart";
+}
+
+function mapPaymentTreatment(type) {
+  if (type === "Deposit") return "Anzahlung buchen";
+  if (type === "Balance") return "Restzahlung buchen";
+  if (type === "Balance2") return "zweite Restzahlung buchen";
+  if (type === "Shipping/Freight") return "Fracht buchen";
+  if (type === "EUSt") return "EUSt buchen";
+  if (type === "Zoll") return "Zoll buchen";
+  return "Pruefen: Zahlungsart unklar";
+}
+
+function mapArrivalTreatment(source) {
+  if (isActualArrivalSource(source)) return "Wareneingang erfassen / mit Anzahlungen abstimmen";
+  if (isEtaBasedArrivalSource(source)) return "Nur Information: Wareneingang noch nicht bestaetigt";
+  return "Pruefen: Wareneingangsdatum fehlt";
+}
+
+function mapOrderStatus(arrivalInfo) {
+  if (isActualArrivalSource(arrivalInfo?.source)) return "Ware bereits eingegangen";
+  if (isEtaBasedArrivalSource(arrivalInfo?.source)) return "Wareneingang nur geplant";
+  return "Ware noch nicht eingegangen";
+}
+
+function joinMessages(messages = []) {
+  return Array.from(new Set(messages.filter(Boolean))).join(" | ");
+}
+
+function mapQualityArea(entityType) {
+  if (entityType === "INVENTORY") return "Warenbestand";
+  if (entityType === "PO") return "Bestellungen";
+  return "Allgemein";
+}
+
+function enrichQualityIssue(issue) {
+  const severity = issue?.severity || "info";
+  const message = String(issue?.message || issue?.hinweis || "").trim();
+  return {
+    ...issue,
+    severity,
+    message,
+    bereich: issue?.bereich || mapQualityArea(issue?.entityType),
+    bezug: issue?.bezug || issue?.entityId || "-",
+    hinweis: issue?.hinweis || message,
+    relevanzFuerBuchhaltung: issue?.relevanzFuerBuchhaltung || (severity === "warning" ? "Bitte pruefen" : "Zur Kenntnis"),
+  };
+}
+
+function buildVisibleFileNames(month) {
+  return {
+    pdf: `01_Monatsuebersicht_${month}.pdf`,
+    xlsx: `02_Buchhaltungslisten_${month}.xlsx`,
+    csvPayments: `03_Zahlungen_Lieferanten_${month}.csv`,
+    csvArrivals: `04_Wareneingaenge_${month}.csv`,
+    csvInventory: `05_Warenbestand_Monatsende_${month}.csv`,
+    zip: `buchhaltung_${month}_paket.zip`,
+    emailTxt: `buchhaltung_${month}_email.txt`,
+  };
+}
+
+function buildBewertungsgrundlageText(settings) {
+  const fxText = Number.isFinite(Number(settings?.fxRate))
+    ? formatLocaleNumber(settings.fxRate, 4)
+    : "-";
+  return [
+    "Betrag Ist EUR bei Zahlungen ist der in der Plattform erfasste tatsaechliche EUR-Zahlbetrag.",
+    "Betrag USD bei Anzahlungen und Restzahlungen ist ein aus Warenwert und Zahlungsmeilenstein abgeleiteter Referenzwert.",
+    "Warenwert EUR bei Wareneingaengen ist entweder direkt im Datensatz hinterlegt oder aus Warenwert USD und dem hinterlegten FX-Kurs berechnet.",
+    "Bestandswert EUR zum Monatsende ergibt sich aus Gesamtbestand x Einstandspreis EUR je SKU.",
+    `Verwendeter FX-Kurs im Workspace: ${fxText}.`,
+  ].join(" ");
+}
+
+function buildVollstaendigkeitText() {
+  return "Enthalten sind alle im Workspace erfassten Lieferantenzahlungen mit Zahlungsdatum im Monat sowie alle im Workspace erfassten Wareneingaenge des Monats. Nicht enthalten sind bewusst externe Unterlagen wie Kontoauszuege, Kreditkartenabrechnungen und Amazon-Dokumente. Voraussetzung dieser Aussage ist, dass Bestellungen, Zahlungen und Wareneingaenge im Workspace vollstaendig gepflegt sind.";
+}
+
 function parseUnits(value) {
   const parsed = parseNumber(value);
   if (!Number.isFinite(parsed)) return 0;
@@ -380,10 +495,40 @@ function computeInTransitBySku(state, month) {
 }
 
 function addQualityIssue(target, seen, issue) {
-  const key = `${issue.code || "ISSUE"}|${issue.entityType || ""}|${issue.entityId || ""}|${issue.message || ""}`;
+  const normalized = enrichQualityIssue(issue);
+  const key = `${normalized.code || "ISSUE"}|${normalized.entityType || ""}|${normalized.entityId || ""}|${normalized.message || ""}`;
   if (seen.has(key)) return;
   seen.add(key);
-  target.push(issue);
+  target.push(normalized);
+}
+
+function buildPaymentTotalsForRecord(record, settings, payments, month) {
+  const paymentRows = buildPaymentRows(structuredClone(record), PO_CONFIG, settings, payments || []);
+  let bisherigeLieferantenzahlungenEur = 0;
+  let davonImMonatBezahltEur = 0;
+
+  paymentRows.forEach((payment) => {
+    const status = String(payment?.status || "").toUpperCase();
+    if (status !== "PAID") return;
+
+    const actualEur = Number(payment?.paidEurActual);
+    if (Number.isFinite(actualEur)) {
+      bisherigeLieferantenzahlungenEur += actualEur;
+    }
+
+    const monthIssues = [];
+    const paidMeta = resolvePaidDateInMonth(payment, month, monthIssues);
+    if (!paidMeta) return;
+    if (Number.isFinite(actualEur)) {
+      davonImMonatBezahltEur += actualEur;
+    }
+  });
+
+  return {
+    paymentRows,
+    bisherigeLieferantenzahlungenEur,
+    davonImMonatBezahltEur,
+  };
 }
 
 function buildInventorySection(state, request, options, productMaps, quality, qualitySeen) {
@@ -434,6 +579,16 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
     }
 
     rows.push({
+      artikelnummerSku: sku,
+      artikelbezeichnung: alias,
+      warengruppe: category,
+      bestandAmazon: amazonUnits,
+      bestandExternesLager: threePLUnits,
+      bestandImZulauf: inTransitUnits,
+      gesamtbestand: totalUnits,
+      einstandspreisEur: ekEur,
+      bestandswertEur: rowValueEur,
+      hinweis: String(item?.note || ""),
       sku,
       alias,
       category,
@@ -471,6 +626,7 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
     total3plUnits,
     totalInTransitUnits,
     manualOverrideUsed,
+    blattzweck: "Bestandsbewertung zum Monatsende",
     issues: quality
       .filter((issue) => issue.entityType === "INVENTORY")
       .map((issue) => issue.code),
@@ -488,8 +644,7 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
     if (!record || record.archived) return;
     if (String(record.status || "").toUpperCase() === "CANCELLED") return;
 
-    const workingRecord = structuredClone(record);
-    const paymentRows = buildPaymentRows(workingRecord, PO_CONFIG, settings, state?.payments || []);
+    const { paymentRows } = buildPaymentTotalsForRecord(record, settings, state?.payments || [], month);
     const goodsUsd = computeGoodsUsd(record);
     const arrivalInfo = resolveArrivalDate(record);
     const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
@@ -505,15 +660,16 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
       const rowIssues = [];
       const paidMeta = resolvePaidDateInMonth(payment, month, rowIssues);
       if (!paidMeta) {
-        rowIssues.forEach((code) => {
+        if (rowIssues.includes("PAID_WITHOUT_DATE")) {
           addQualityIssue(quality, qualitySeen, {
-            code,
+            code: "PAID_WITHOUT_DATE",
             severity: "warning",
-            message: `PO ${poNumber || "-"}: ${code}`,
+            message: `Bestellung ${poNumber || "-"} ist als bezahlt markiert, aber ohne Zahlungs- oder Faelligkeitsdatum.`,
             entityType: "PO",
             entityId: String(record.id || poNumber || ""),
+            bezug: `Bestellung ${poNumber || "-"}`,
           });
-        });
+        }
         return;
       }
 
@@ -528,31 +684,90 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
       }
 
       const actualEur = Number.isFinite(Number(payment?.paidEurActual)) ? Number(payment.paidEurActual) : null;
-      const plannedEur = Number.isFinite(Number(payment?.plannedEur)) ? Number(payment.plannedEur) : null;
+      const beleglink = payment?.invoiceDriveUrl || payment?.invoiceFolderDriveUrl || "";
+      const hinweise = [];
 
-      if (paymentType === "Other") rowIssues.push("PAYMENT_TYPE_UNCLEAR");
-      if (isUsdRelevantPaymentType(paymentType) && !Number.isFinite(amountUsd)) rowIssues.push("MISSING_USD");
-      if (!Number.isFinite(actualEur)) rowIssues.push("MISSING_ACTUAL_EUR");
-      if (!payment?.invoiceDriveUrl && !payment?.invoiceFolderDriveUrl) rowIssues.push("MISSING_INVOICE_LINK");
-
-      rowIssues.forEach((code) => {
+      if (rowIssues.includes("DATE_UNCERTAIN")) {
+        hinweise.push("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet");
         addQualityIssue(quality, qualitySeen, {
-          code: code || "PAYMENT_WARNING",
-          severity: code === "MISSING_ACTUAL_EUR" || code === "PAYMENT_TYPE_UNCLEAR" ? "warning" : "info",
-          message: `PO ${poNumber || "-"}: ${code || "PAYMENT_WARNING"}`,
+          code: "DATE_UNCERTAIN",
+          severity: "warning",
+          message: `Bestellung ${poNumber || "-"}: Zahlungsdatum fehlt, Faelligkeitsdatum verwendet.`,
           entityType: "PO",
           entityId: String(record.id || poNumber || ""),
+          bezug: `Bestellung ${poNumber || "-"}`,
         });
-      });
+      }
+      if (paymentType === "Other") {
+        hinweise.push("Zahlungsart unklar");
+        addQualityIssue(quality, qualitySeen, {
+          code: "PAYMENT_TYPE_UNCLEAR",
+          severity: "warning",
+          message: `Bestellung ${poNumber || "-"}: Zahlungsart konnte nicht eindeutig bestimmt werden.`,
+          entityType: "PO",
+          entityId: String(record.id || poNumber || ""),
+          bezug: `Bestellung ${poNumber || "-"}`,
+        });
+      }
+      if (isUsdRelevantPaymentType(paymentType) && !Number.isFinite(amountUsd)) {
+        hinweise.push("USD-Referenzbetrag konnte nicht ermittelt werden");
+        addQualityIssue(quality, qualitySeen, {
+          code: "MISSING_USD",
+          severity: "info",
+          message: `Bestellung ${poNumber || "-"}: USD-Referenzbetrag konnte nicht ermittelt werden.`,
+          entityType: "PO",
+          entityId: String(record.id || poNumber || ""),
+          bezug: `Bestellung ${poNumber || "-"}`,
+        });
+      }
+      if (!Number.isFinite(actualEur)) {
+        hinweise.push("Ist-Betrag EUR fehlt");
+        addQualityIssue(quality, qualitySeen, {
+          code: "MISSING_ACTUAL_EUR",
+          severity: "warning",
+          message: `Bestellung ${poNumber || "-"}: Ist-Betrag EUR fehlt.`,
+          entityType: "PO",
+          entityId: String(record.id || poNumber || ""),
+          bezug: `Bestellung ${poNumber || "-"}`,
+        });
+      }
+      if (!beleglink) {
+        hinweise.push("Beleglink fehlt");
+        addQualityIssue(quality, qualitySeen, {
+          code: "MISSING_INVOICE_LINK",
+          severity: "warning",
+          message: `Bestellung ${poNumber || "-"}: Beleglink fehlt.`,
+          entityType: "PO",
+          entityId: String(record.id || poNumber || ""),
+          bezug: `Bestellung ${poNumber || "-"}`,
+        });
+      }
 
       rows.push({
+        fachlicheBehandlung: mapPaymentTreatment(paymentType),
+        zahlungsdatum: paidMeta.paidDate,
+        lieferant: supplier,
+        bestellnummerIntern: poNumber,
+        verknuepfteBestellung: poNumber,
+        zahlungsart: mapPaymentTypeLabel(paymentType),
+        betragIstEur: actualEur,
+        betragUsd: amountUsd,
+        artikelMengen: itemMeta.allItems,
+        geplanteAbfahrt: resolveEtdDate(record),
+        geplanteAnkunft: resolveEtaDate(record),
+        wareneingangLautSystem: arrivalInfo.date,
+        wareneingangGrundlageLabel: mapArrivalSourceLabel(arrivalInfo.source),
+        statusZurBestellung: mapOrderStatus(arrivalInfo),
+        beleglink,
+        hinweise,
+        hinweis: joinMessages(hinweise),
         poNumber,
         supplier,
         skuAliases: itemMeta.skuAliases,
         itemSummary: itemMeta.itemSummary,
         allItems: itemMeta.allItems,
         paymentType,
-        plannedEur,
+        plannedEur: null,
         actualEur,
         paidDate: paidMeta.paidDate,
         dueDate: paidMeta.dueDate,
@@ -562,7 +777,7 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
         arrivalDate: arrivalInfo.date,
         invoiceUrl: payment?.invoiceDriveUrl || "",
         folderUrl: payment?.invoiceFolderDriveUrl || "",
-        issues: rowIssues,
+        issues: hinweise,
       });
     });
   });
@@ -588,9 +803,10 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
       addQualityIssue(quality, qualitySeen, {
         code: "MISSING_ARRIVAL_DATE",
         severity: "warning",
-        message: `PO ${record.poNo || record.id || "-"}: kein Arrival/ETA Datum vorhanden.`,
+        message: `Bestellung ${record.poNo || record.id || "-"}: kein Wareneingangs- oder ETA-Datum vorhanden.`,
         entityType: "PO",
         entityId: String(record.id || record.poNo || ""),
+        bezug: `Bestellung ${record.poNo || record.id || "-"}`,
       });
       return;
     }
@@ -602,25 +818,65 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     const goodsUsd = computeGoodsUsd(record);
     const goodsEur = computeGoodsEur(record, settings, goodsUsd);
     const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
+    const paymentTotals = buildPaymentTotalsForRecord(record, settings, state?.payments || [], month);
 
     const rowIssues = [];
-    if (!Number.isFinite(goodsUsd)) rowIssues.push("MISSING_GOODS_USD");
-    if (!Number.isFinite(goodsEur)) rowIssues.push("MISSING_GOODS_EUR");
+    if (!Number.isFinite(goodsUsd)) rowIssues.push("Warenwert USD fehlt");
+    if (!Number.isFinite(goodsEur)) rowIssues.push("Warenwert EUR fehlt");
     if (arrivalInfo.source !== "arrivalDate" && arrivalInfo.source !== "arrivalDateDe") {
-      rowIssues.push("ARRIVAL_FROM_ETA");
+      rowIssues.push("Wareneingangsdatum aus geplanter Ankunft abgeleitet");
     }
 
-    rowIssues.forEach((code) => {
+    if (!Number.isFinite(goodsUsd)) {
       addQualityIssue(quality, qualitySeen, {
-        code,
-        severity: code.startsWith("MISSING") ? "warning" : "info",
-        message: `PO ${record.poNo || record.id || "-"}: ${code}`,
+        code: "MISSING_GOODS_USD",
+        severity: "warning",
+        message: `Bestellung ${record.poNo || record.id || "-"}: Warenwert USD fehlt.`,
         entityType: "PO",
         entityId: String(record.id || record.poNo || ""),
+        bezug: `Bestellung ${record.poNo || record.id || "-"}`,
       });
-    });
+    }
+    if (!Number.isFinite(goodsEur)) {
+      addQualityIssue(quality, qualitySeen, {
+        code: "MISSING_GOODS_EUR",
+        severity: "warning",
+        message: `Bestellung ${record.poNo || record.id || "-"}: Warenwert EUR fehlt.`,
+        entityType: "PO",
+        entityId: String(record.id || record.poNo || ""),
+        bezug: `Bestellung ${record.poNo || record.id || "-"}`,
+      });
+    }
+    if (!isActualArrivalSource(arrivalInfo.source)) {
+      addQualityIssue(quality, qualitySeen, {
+        code: "ARRIVAL_FROM_ETA",
+        severity: "info",
+        message: `Bestellung ${record.poNo || record.id || "-"}: Wareneingangsdatum aus geplanter Ankunft abgeleitet.`,
+        entityType: "PO",
+        entityId: String(record.id || record.poNo || ""),
+        bezug: `Bestellung ${record.poNo || record.id || "-"}`,
+        relevanzFuerBuchhaltung: "Bitte nur informativ verwenden",
+      });
+    }
 
     rows.push({
+      fachlicheBehandlung: mapArrivalTreatment(arrivalInfo.source),
+      wareneingangLautSystem: arrivalInfo.date,
+      wareneingangGrundlageLabel: mapArrivalSourceLabel(arrivalInfo.source),
+      lieferant: resolveSupplierName(record, supplierMap),
+      bestellnummerIntern: String(record.poNo || record.id || ""),
+      verknuepfteBestellung: String(record.poNo || record.id || ""),
+      artikelMengen: itemMeta.allItems,
+      gesamtmenge: units,
+      warenwertUsd: goodsUsd,
+      warenwertEur: goodsEur,
+      geplanteAbfahrt: resolveEtdDate(record),
+      geplanteAnkunft: resolveEtaDate(record),
+      bisherigeLieferantenzahlungenEur: paymentTotals.bisherigeLieferantenzahlungenEur,
+      davonImMonatBezahltEur: paymentTotals.davonImMonatBezahltEur,
+      transportart: String(record.transport || ""),
+      hinweise: rowIssues,
+      hinweis: joinMessages(rowIssues),
       poNumber: String(record.poNo || record.id || ""),
       supplier: resolveSupplierName(record, supplierMap),
       skuAliases: itemMeta.skuAliases,
@@ -850,40 +1106,50 @@ function toCsv(rows, headers, delimiter = ";") {
   return [head, ...lines].join("\n");
 }
 
+function buildOverview(report, settings, fileNames) {
+  const paymentsInMonth = Array.isArray(report?.paymentsInMonth) ? report.paymentsInMonth : [];
+  const arrivalsInMonth = Array.isArray(report?.arrivalsInMonth) ? report.arrivalsInMonth : [];
+  return {
+    monat: report?.request?.month || "",
+    verbindlicheDatei: fileNames.xlsx,
+    standardDateien: [fileNames.pdf, fileNames.xlsx],
+    bestandStichtag: report?.inventory?.snapshotAsOf || "",
+    anzahlZahlungenLieferanten: paymentsInMonth.length,
+    summeZahlungenIstEur: paymentsInMonth.reduce((sum, row) => sum + (Number(row?.betragIstEur) || 0), 0),
+    anzahlWareneingaenge: arrivalsInMonth.length,
+    summeWareneingaengeEur: arrivalsInMonth.reduce((sum, row) => sum + (Number(row?.warenwertEur) || 0), 0),
+    anzahlPruefhinweise: Array.isArray(report?.quality) ? report.quality.length : 0,
+    fxKurs: Number.isFinite(Number(settings?.fxRate)) ? Number(settings.fxRate) : null,
+    bewertungsgrundlageText: buildBewertungsgrundlageText(settings),
+    vollstaendigkeitInnerhalbPlattformText: buildVollstaendigkeitText(),
+    manuellAusserhalbPlattformBeizulegen: MANUELL_BEIZULEGEN.slice(),
+  };
+}
+
 function buildEmailDraft(report, options = {}) {
   const month = report.request.month;
   const workspaceName = String(options.workspaceName || report.workspaceName || "Workspace");
-  const attachments = [
-    `buchhaltung_${month}_bericht.pdf`,
-    `buchhaltung_${month}.xlsx`,
-    `buchhaltung_${month}_warenbestand.csv`,
-    `buchhaltung_${month}_anzahlungen_po.csv`,
-    `buchhaltung_${month}_wareneingang_po.csv`,
-    `buchhaltung_${month}_anzahlung_wareneingang_po.csv`,
-  ];
+  const visibleFileNames = buildVisibleFileNames(monthFileStamp(month));
+  const attachments = [visibleFileNames.pdf, visibleFileNames.xlsx];
 
-  if (report.request.scope === "core_plus_journal") {
-    attachments.push(`buchhaltung_${month}_zahlungsjournal.csv`);
+  if (report.request.includeCsv) {
+    attachments.push(visibleFileNames.csvPayments, visibleFileNames.csvArrivals, visibleFileNames.csvInventory);
   }
 
-  attachments.push(`buchhaltung_${month}_email.txt`);
-
-  const subject = `Unterlagen Buchhaltung ${month} - Mandant ${workspaceName}`;
+  const subject = `Buchhaltungspaket ${month} - ${workspaceName}`;
   const lines = [
     `Betreff: ${subject}`,
     "",
     "Hallo,",
     "",
-    `anbei das Buchhalter-Paket fuer ${month}.`,
+    `anbei das Buchhaltungspaket fuer ${month}.`,
     "",
-    "Kurzstatus:",
-    `- Warenbestand zum Monatsende (${report.inventory.snapshotAsOf || "n/a"}): ${Number.isFinite(Number(report.inventory.totalValueEur)) ? `${Number(report.inventory.totalValueEur).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} EUR` : "kein Wert verfuegbar"}`,
-    `- Zahlungen im Monat (PO, paidDate im Monat): ${report.paymentsInMonth.length} Zeilen`,
-    `- Wareneingaenge im Monat (PO, Arrival/ETA im Monat): ${report.arrivalsInMonth.length} Zeilen`,
-    `- Kombiliste Anzahlungen + Wareneingang (PO): ${(report.poLedger || []).length} Zeilen`,
-    `- Datenqualitaetshinweise: ${(report.quality || []).length}`,
+    `Verbindliche Datei: ${report.uebersicht?.verbindlicheDatei || visibleFileNames.xlsx}`,
+    `Zahlungen Lieferanten: ${report.uebersicht?.anzahlZahlungenLieferanten || 0}`,
+    `Wareneingaenge: ${report.uebersicht?.anzahlWareneingaenge || 0}`,
+    `Pruefhinweise: ${report.uebersicht?.anzahlPruefhinweise || 0}`,
     "",
-    "Anlagen:",
+    "Im Paket enthalten:",
     ...attachments.map((file) => `- ${file}`),
     "",
     "Viele Gruesse",
@@ -900,10 +1166,10 @@ function resolveRequest(input = {}) {
   return {
     month: normalizeMonth(input.month),
     scope: input.scope === "core_plus_journal" ? "core_plus_journal" : "core",
-    includeCsv: input.includeCsv !== false,
+    includeCsv: input.includeCsv === true,
     includeXlsx: input.includeXlsx !== false,
     includePdf: input.includePdf !== false,
-    includeEmailDraft: input.includeEmailDraft !== false,
+    includeEmailDraft: input.includeEmailDraft === true,
     poOnly: true,
     mode: "paid_and_arrival",
   };
@@ -914,18 +1180,13 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
   const sourceState = state && typeof state === "object" ? state : {};
   const supplierMap = buildSupplierMap(sourceState);
   const productMaps = buildProductMaps(sourceState);
+  const settings = buildSettings(sourceState);
   const quality = [];
   const qualitySeen = new Set();
 
   const inventory = buildInventorySection(sourceState, request, options, productMaps, quality, qualitySeen);
   const paymentsInMonth = buildPaymentsInMonthSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
   const arrivalsInMonth = buildArrivalsSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
-  const poLedger = buildPoLedgerSection(sourceState, request, productMaps, supplierMap, quality, qualitySeen);
-
-  let journalRows = [];
-  if (request.scope === "core_plus_journal") {
-    journalRows = buildPoJournalRows(sourceState, request, supplierMap, productMaps);
-  }
 
   const canApplyInventoryValue = inventory.summary.totalValueEur != null;
   if (!canApplyInventoryValue && !Number.isFinite(Number(options.inventoryValueOverrideEur))) {
@@ -935,21 +1196,35 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
       message: "Warenwert konnte nicht vollstaendig aus Snapshot/EK ermittelt werden.",
       entityType: "INVENTORY",
       entityId: request.month,
+      bezug: `Monat ${request.month}`,
     });
   }
 
-  return {
+  const fileNames = buildVisibleFileNames(monthFileStamp(request.month));
+  const report = {
     request,
     inventory: inventory.summary,
     inventoryRows: inventory.rows,
+    warenbestandRows: inventory.rows,
     paymentsInMonth,
+    zahlungenLieferanten: paymentsInMonth,
     arrivalsInMonth,
+    wareneingaenge: arrivalsInMonth,
     deposits: paymentsInMonth,
     arrivals: arrivalsInMonth,
-    poLedger,
-    journalRows,
     quality,
+    pruefhinweise: quality,
+    poLedger: [],
+    journalRows: [],
+    fileNames,
+    verbindlicheDatei: fileNames.xlsx,
+    bewertungsgrundlageText: buildBewertungsgrundlageText(settings),
+    vollstaendigkeitInnerhalbPlattformText: buildVollstaendigkeitText(),
+    manuellAusserhalbPlattformBeizulegen: MANUELL_BEIZULEGEN.slice(),
   };
+  report.uebersicht = buildOverview(report, settings, fileNames);
+
+  return report;
 }
 
 function buildCsvPayloads(report) {
@@ -957,98 +1232,60 @@ function buildCsvPayloads(report) {
   const arrivalsInMonth = Array.isArray(report.arrivalsInMonth) ? report.arrivalsInMonth : (report.arrivals || []);
 
   const inventoryCsv = toCsv(report.inventoryRows || [], [
-    { key: "sku", label: "sku" },
-    { key: "alias", label: "alias" },
-    { key: "category", label: "category" },
-    { key: "amazonUnits", label: "amazonUnits" },
-    { key: "threePLUnits", label: "threePLUnits" },
-    { key: "inTransitUnits", label: "inTransitUnits" },
-    { key: "totalUnits", label: "totalUnits" },
-    { key: "ekEur", label: "ekEur", format: formatCsvNumber },
-    { key: "rowValueEur", label: "rowValueEur", format: formatCsvNumber },
-    { key: "note", label: "note" },
+    { key: "artikelnummerSku", label: "Artikelnummer / SKU" },
+    { key: "artikelbezeichnung", label: "Artikelbezeichnung" },
+    { key: "warengruppe", label: "Warengruppe" },
+    { key: "bestandAmazon", label: "Bestand Amazon" },
+    { key: "bestandExternesLager", label: "Bestand externes Lager" },
+    { key: "bestandImZulauf", label: "Bestand im Zulauf" },
+    { key: "gesamtbestand", label: "Gesamtbestand" },
+    { key: "einstandspreisEur", label: "Einstandspreis EUR", format: formatCsvNumber },
+    { key: "bestandswertEur", label: "Bestandswert EUR", format: formatCsvNumber },
+    { key: "hinweis", label: "Hinweis" },
   ]);
 
-  const depositsCsv = toCsv(paymentsInMonth, [
-    { key: "poNumber", label: "poNumber" },
-    { key: "supplier", label: "supplier" },
-    { key: "itemSummary", label: "itemSummary" },
-    { key: "skuAliases", label: "skuAliases" },
-    { key: "allItems", label: "allItems" },
-    { key: "paymentType", label: "paymentType" },
-    { key: "plannedEur", label: "plannedEur", format: formatCsvNumber },
-    { key: "actualEur", label: "actualEur", format: formatCsvNumber },
-    { key: "paidDate", label: "paidDate" },
-    { key: "dueDate", label: "dueDate" },
-    { key: "amountUsd", label: "amountUsd", format: formatCsvNumber },
-    { key: "etdDate", label: "etdDate" },
-    { key: "etaDate", label: "etaDate" },
-    { key: "arrivalDate", label: "arrivalDate" },
-    { key: "invoiceUrl", label: "invoiceUrl" },
-    { key: "folderUrl", label: "folderUrl" },
-    { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
+  const paymentsCsv = toCsv(paymentsInMonth, [
+    { key: "fachlicheBehandlung", label: "Fachliche Behandlung" },
+    { key: "zahlungsdatum", label: "Zahlungsdatum" },
+    { key: "lieferant", label: "Lieferant" },
+    { key: "bestellnummerIntern", label: "Bestellnummer (intern)" },
+    { key: "verknuepfteBestellung", label: "Verknuepfte Bestellung" },
+    { key: "zahlungsart", label: "Zahlungsart" },
+    { key: "betragIstEur", label: "Betrag Ist EUR", format: formatCsvNumber },
+    { key: "betragUsd", label: "Betrag USD", format: formatCsvNumber },
+    { key: "artikelMengen", label: "Artikel / Mengen" },
+    { key: "geplanteAbfahrt", label: "Geplante Abfahrt" },
+    { key: "geplanteAnkunft", label: "Geplante Ankunft" },
+    { key: "wareneingangLautSystem", label: "Wareneingang laut System" },
+    { key: "wareneingangGrundlageLabel", label: "Datengrundlage Wareneingang" },
+    { key: "statusZurBestellung", label: "Status zur Bestellung" },
+    { key: "beleglink", label: "Beleglink" },
+    { key: "hinweis", label: "Hinweis" },
   ]);
 
   const arrivalsCsv = toCsv(arrivalsInMonth, [
-    { key: "poNumber", label: "poNumber" },
-    { key: "supplier", label: "supplier" },
-    { key: "itemSummary", label: "itemSummary" },
-    { key: "skuAliases", label: "skuAliases" },
-    { key: "allItems", label: "allItems" },
-    { key: "units", label: "units" },
-    { key: "goodsUsd", label: "goodsUsd", format: formatCsvNumber },
-    { key: "goodsEur", label: "goodsEur", format: formatCsvNumber },
-    { key: "etdDate", label: "etdDate" },
-    { key: "etaDate", label: "etaDate" },
-    { key: "arrivalDate", label: "arrivalDate" },
-    { key: "transport", label: "transport" },
-    { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
+    { key: "fachlicheBehandlung", label: "Fachliche Behandlung" },
+    { key: "wareneingangLautSystem", label: "Wareneingang laut System" },
+    { key: "wareneingangGrundlageLabel", label: "Datengrundlage Wareneingang" },
+    { key: "lieferant", label: "Lieferant" },
+    { key: "bestellnummerIntern", label: "Bestellnummer (intern)" },
+    { key: "verknuepfteBestellung", label: "Verknuepfte Bestellung" },
+    { key: "artikelMengen", label: "Artikel / Mengen" },
+    { key: "gesamtmenge", label: "Gesamtmenge" },
+    { key: "warenwertUsd", label: "Warenwert USD", format: formatCsvNumber },
+    { key: "warenwertEur", label: "Warenwert EUR", format: formatCsvNumber },
+    { key: "geplanteAbfahrt", label: "Geplante Abfahrt" },
+    { key: "geplanteAnkunft", label: "Geplante Ankunft" },
+    { key: "bisherigeLieferantenzahlungenEur", label: "Bisherige Lieferantenzahlungen laut System EUR", format: formatCsvNumber },
+    { key: "davonImMonatBezahltEur", label: "Davon im aktuellen Monat bezahlt EUR", format: formatCsvNumber },
+    { key: "transportart", label: "Transportart" },
+    { key: "hinweis", label: "Hinweis" },
   ]);
-
-  const poLedgerCsv = toCsv(report.poLedger || [], [
-    { key: "monthMarker", label: "monthMarker", format: (value) => value ? "yes" : "no" },
-    { key: "relevanceReason", label: "relevanceReason" },
-    { key: "relevanceReasonLabel", label: "relevanceReasonLabel" },
-    { key: "poNumber", label: "poNumber" },
-    { key: "supplier", label: "supplier" },
-    { key: "itemSummary", label: "itemSummary" },
-    { key: "skuAliases", label: "skuAliases" },
-    { key: "allItems", label: "allItems" },
-    { key: "units", label: "units" },
-    { key: "paymentActualEurMonth", label: "paymentActualEurMonth", format: formatCsvNumber },
-    { key: "paymentAmountUsdMonth", label: "paymentAmountUsdMonth", format: formatCsvNumber },
-    { key: "etdDate", label: "etdDate" },
-    { key: "etaDate", label: "etaDate" },
-    { key: "arrivalDate", label: "arrivalDate" },
-    { key: "arrivalSource", label: "arrivalSource" },
-    { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
-  ]);
-
-  let journalCsv = null;
-  if (Array.isArray(report.journalRows) && report.journalRows.length) {
-    journalCsv = toCsv(report.journalRows, [
-      { key: "month", label: "month" },
-      { key: "entityType", label: "entityType" },
-      { key: "poNumber", label: "poNumber" },
-      { key: "supplierName", label: "supplierName" },
-      { key: "skuAliases", label: "skuAliases" },
-      { key: "paymentType", label: "paymentType" },
-      { key: "status", label: "status" },
-      { key: "dueDate", label: "dueDate" },
-      { key: "paidDate", label: "paidDate" },
-      { key: "amountPlannedEur", label: "amountPlannedEur", format: formatCsvNumber },
-      { key: "amountActualEur", label: "amountActualEur", format: formatCsvNumber },
-      { key: "issues", label: "issues", format: (value) => Array.isArray(value) ? value.join("|") : "" },
-      { key: "paymentId", label: "paymentId" },
-    ]);
-  }
 
   return {
     inventoryCsv,
-    depositsCsv,
+    paymentsCsv,
     arrivalsCsv,
-    poLedgerCsv,
-    journalCsv,
   };
 }
 
@@ -1057,18 +1294,7 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
   const month = monthFileStamp(report.request.month);
   const emailDraft = buildEmailDraft(report, options);
   const csvPayloads = buildCsvPayloads(report);
-
-  const fileNames = {
-    pdf: `buchhaltung_${month}_bericht.pdf`,
-    xlsx: `buchhaltung_${month}.xlsx`,
-    csvInventory: `buchhaltung_${month}_warenbestand.csv`,
-    csvDeposits: `buchhaltung_${month}_anzahlungen_po.csv`,
-    csvArrivals: `buchhaltung_${month}_wareneingang_po.csv`,
-    csvPoLedger: `buchhaltung_${month}_anzahlung_wareneingang_po.csv`,
-    csvJournal: `buchhaltung_${month}_zahlungsjournal.csv`,
-    emailTxt: `buchhaltung_${month}_email.txt`,
-    zip: `buchhaltung_${month}_paket.zip`,
-  };
+  const fileNames = buildVisibleFileNames(month);
 
   const files = {};
 
@@ -1080,12 +1306,9 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
   }
   if (report.request.includeCsv) {
     files.csvInventory = new Blob([csvPayloads.inventoryCsv], { type: "text/csv;charset=utf-8" });
-    files.csvDeposits = new Blob([csvPayloads.depositsCsv], { type: "text/csv;charset=utf-8" });
+    files.csvPayments = new Blob([csvPayloads.paymentsCsv], { type: "text/csv;charset=utf-8" });
     files.csvArrivals = new Blob([csvPayloads.arrivalsCsv], { type: "text/csv;charset=utf-8" });
-    files.csvPoLedger = new Blob([csvPayloads.poLedgerCsv], { type: "text/csv;charset=utf-8" });
-    if (csvPayloads.journalCsv) {
-      files.csvJournal = new Blob([csvPayloads.journalCsv], { type: "text/csv;charset=utf-8" });
-    }
+    files.csvDeposits = files.csvPayments;
   }
   if (report.request.includeEmailDraft) {
     files.emailDraftTxt = new Blob([emailDraft.text], { type: "text/plain;charset=utf-8" });
@@ -1095,10 +1318,8 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
   if (files.pdfReport) zipEntries.push({ name: fileNames.pdf, data: files.pdfReport });
   if (files.xlsxWorkbook) zipEntries.push({ name: fileNames.xlsx, data: files.xlsxWorkbook });
   if (files.csvInventory) zipEntries.push({ name: fileNames.csvInventory, data: files.csvInventory });
-  if (files.csvDeposits) zipEntries.push({ name: fileNames.csvDeposits, data: files.csvDeposits });
+  if (files.csvPayments) zipEntries.push({ name: fileNames.csvPayments, data: files.csvPayments });
   if (files.csvArrivals) zipEntries.push({ name: fileNames.csvArrivals, data: files.csvArrivals });
-  if (files.csvPoLedger) zipEntries.push({ name: fileNames.csvPoLedger, data: files.csvPoLedger });
-  if (files.csvJournal) zipEntries.push({ name: fileNames.csvJournal, data: files.csvJournal });
   if (files.emailDraftTxt) zipEntries.push({ name: fileNames.emailTxt, data: files.emailDraftTxt });
 
   const zipBlob = await buildZipBlob(zipEntries, "application/zip");

@@ -34,89 +34,55 @@ function wrapLine(line, maxLength = 110) {
   return lines;
 }
 
+function formatCurrency(value) {
+  if (!Number.isFinite(Number(value))) return "n/a";
+  return Number(value).toLocaleString("de-DE", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function buildReportLines(report) {
   const month = report?.request?.month || "";
+  const overview = report?.uebersicht || {};
   const inventory = report?.inventory || {};
-  const paymentsInMonth = Array.isArray(report?.paymentsInMonth)
-    ? report.paymentsInMonth
-    : (Array.isArray(report?.deposits) ? report.deposits : []);
-  const arrivalsInMonth = Array.isArray(report?.arrivalsInMonth)
-    ? report.arrivalsInMonth
-    : (Array.isArray(report?.arrivals) ? report.arrivals : []);
-  const poLedger = Array.isArray(report?.poLedger) ? report.poLedger : [];
-  const quality = Array.isArray(report?.quality) ? report.quality : [];
-  const paymentTypeSet = Array.from(new Set(paymentsInMonth.map((row) => String(row.paymentType || "").trim()).filter(Boolean)));
-  const paymentsActualSum = paymentsInMonth.reduce((sum, row) => sum + (Number(row.actualEur) || 0), 0);
-  const arrivalsUnitsSum = arrivalsInMonth.reduce((sum, row) => sum + (Number(row.units) || 0), 0);
+  const quality = Array.isArray(report?.pruefhinweise) ? report.pruefhinweise : (Array.isArray(report?.quality) ? report.quality : []);
+
   const lines = [
-    `Buchhaltungsbericht ${month}`,
+    `Monatsuebersicht Buchhaltung ${month}`,
     "",
-    "Warenbestand",
-    `- Snapshot As Of: ${inventory.snapshotAsOf || "n/a"}`,
-    `- Warenwert EUR: ${Number.isFinite(Number(inventory.totalValueEur)) ? Number(inventory.totalValueEur).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "n/a"}`,
-    `- Amazon Units: ${Number(inventory.totalAmazonUnits || 0).toLocaleString("de-DE")}`,
-    `- 3PL Units: ${Number(inventory.total3plUnits || 0).toLocaleString("de-DE")}`,
-    `- In Transit Units: ${Number(inventory.totalInTransitUnits || 0).toLocaleString("de-DE")}`,
-    "- Bewertung: Monatsende-Stichtag, Summe ueber EK EUR pro SKU (bestehende Logik unveraendert).",
+    `Verbindliche Datei: ${overview.verbindlicheDatei || "-"}`,
     "",
-    `Relevante Zahlungen in ${month}`,
-    `- Filter: paidDate im Monat (Fallback dueDate mit Hinweis, wenn paidDate fehlt).`,
-    `- Anzahl Zeilen: ${paymentsInMonth.length}`,
-    `- Summe Ist EUR: ${paymentsActualSum.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    `- Zahlungsarten: ${paymentTypeSet.length ? paymentTypeSet.join(", ") : "n/a"}`,
-    "-",
+    "Umfang im Monat",
+    `- Lieferantenzahlungen: ${overview.anzahlZahlungenLieferanten || 0}`,
+    `- Summe Lieferantenzahlungen Ist EUR: ${formatCurrency(overview.summeZahlungenIstEur)} EUR`,
+    `- Wareneingaenge: ${overview.anzahlWareneingaenge || 0}`,
+    `- Summe Wareneingaenge EUR: ${formatCurrency(overview.summeWareneingaengeEur)} EUR`,
+    `- Warenbestand zum Monatsende (${overview.bestandStichtag || inventory.snapshotAsOf || "n/a"}): ${formatCurrency(inventory.totalValueEur)} EUR`,
+    `- Pruefhinweise: ${overview.anzahlPruefhinweise || 0}`,
+    "",
+    "Bewertungsgrundlage",
+    overview.bewertungsgrundlageText || "",
+    "",
+    "Vollstaendigkeit innerhalb der Plattform",
+    overview.vollstaendigkeitInnerhalbPlattformText || "",
+    "",
+    "Manuell ausserhalb der Plattform beizulegen",
   ];
 
-  paymentsInMonth.slice(0, 18).forEach((row) => {
-    lines.push(
-      `  [ZAHLUNG] ${row.poNumber || "PO"} | ${row.supplier || "-"} | ${row.paymentType || "Other"} | paid ${row.paidDate || "n/a"} | Ist EUR ${Number(row.actualEur || 0).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | USD ${Number.isFinite(Number(row.amountUsd)) ? Number(row.amountUsd).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "-"} | ETD ${row.etdDate || "n/a"} | ETA ${row.etaDate || "n/a"} | Arrival ${row.arrivalDate || "n/a"}`,
-    );
+  (overview.manuellAusserhalbPlattformBeizulegen || []).forEach((entry) => {
+    lines.push(`- ${entry}`);
   });
-  if (paymentsInMonth.length > 18) {
-    lines.push(`  ... ${paymentsInMonth.length - 18} weitere Zeilen in XLSX/CSV`);
-  }
 
-  lines.push("");
-  lines.push(`Relevante Wareneingaenge in ${month}`);
-  lines.push("- Filter: arrivalDate im Monat (tatsaechlicher Wareneingang priorisiert, sonst ETA-Fallback).");
-  lines.push(`- Anzahl Zeilen: ${arrivalsInMonth.length}`);
-  lines.push(`- Summe Units: ${arrivalsUnitsSum.toLocaleString("de-DE")}`);
-  lines.push("-");
-  arrivalsInMonth.slice(0, 18).forEach((row) => {
-    lines.push(`  [ARRIVAL] ${row.poNumber || "PO"} | ${row.supplier || "-"} | items ${row.itemSummary || row.skuAliases || "-"} | arrival ${row.arrivalDate || "n/a"} | units ${Number(row.units || 0).toLocaleString("de-DE")}`);
-  });
-  if (arrivalsInMonth.length > 18) {
-    lines.push(`  ... ${arrivalsInMonth.length - 18} weitere Zeilen in XLSX/CSV`);
-  }
-
-  if (poLedger.length) {
+  if (quality.length) {
     lines.push("");
-    lines.push("Vollstaendige Uebersicht (Anhang)");
-    lines.push(`- Anzahl Zeilen gesamt: ${poLedger.length}`);
-    lines.push(`- Relevante Zeilen fuer ${month}: ${poLedger.filter((row) => row.monthMarker).length}`);
-    lines.push("-");
-    poLedger.slice(0, 40).forEach((row) => {
-      const reason = row.relevanceReasonLabel || "Nicht relevant im Monat";
-      const paymentEur = Number((row.paymentActualEurMonth ?? row.depositActualEurMonth) || 0)
-        .toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const paymentUsd = Number((row.paymentAmountUsdMonth ?? row.depositAmountUsdMonth) || 0)
-        .toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      const arrivalText = row.arrivalDate || row.etaDate || "n/a";
-      lines.push(`  [${row.monthMarker ? "RELEVANT" : "ANHANG"}] ${row.poNumber || "PO"} | ${row.supplier || "-"} | ${reason} | EUR ${paymentEur} | USD ${paymentUsd} | ETD ${row.etdDate || "n/a"} | ETA ${row.etaDate || "n/a"} | Arrival ${arrivalText}`);
+    lines.push("Offene Pruefpunkte");
+    quality.slice(0, 8).forEach((issue) => {
+      lines.push(`- ${issue.bereich || "Allgemein"} | ${issue.bezug || "-"} | ${issue.hinweis || issue.message || ""}`);
     });
-    if (poLedger.length > 40) {
-      lines.push(`  ... ${poLedger.length - 40} weitere Zeilen in XLSX/CSV`);
+    if (quality.length > 8) {
+      lines.push(`- ... ${quality.length - 8} weitere Hinweise in der Arbeitsdatei`);
     }
-  }
-
-  lines.push("");
-  lines.push("Datenqualitaet");
-  lines.push(`- Hinweise gesamt: ${quality.length}`);
-  quality.slice(0, 20).forEach((issue) => {
-    lines.push(`  [${issue.severity || "info"}] ${issue.code || "ISSUE"}: ${issue.message || ""}`);
-  });
-  if (quality.length > 20) {
-    lines.push(`  ... ${quality.length - 20} weitere Hinweise`);
   }
 
   return lines.flatMap((line) => wrapLine(line, 110));

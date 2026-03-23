@@ -83,226 +83,170 @@ function buildRootRelsXml() {
   return `${XML_HEADER}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>`;
 }
 
-function mapIssueRows(issues) {
-  const rows = [["code", "severity", "message", "entityType", "entityId"]];
-  (issues || []).forEach((issue) => {
-    rows.push([
-      issue.code || "",
-      issue.severity || "",
-      issue.message || "",
-      issue.entityType || "",
-      issue.entityId || "",
-    ]);
+function buildOverviewRows(report) {
+  const overview = report.uebersicht || {};
+  const inventory = report.inventory || {};
+  const rows = [
+    ["Monat", overview.monat || report.request?.month || ""],
+    ["Verbindliche Datei", overview.verbindlicheDatei || ""],
+    ["Bestandsstichtag", overview.bestandStichtag || inventory.snapshotAsOf || ""],
+    ["Warenwert EUR", inventory.totalValueEur],
+    ["Zahlungen Lieferanten", overview.anzahlZahlungenLieferanten || 0],
+    ["Summe Zahlungen Ist EUR", overview.summeZahlungenIstEur || 0],
+    ["Wareneingaenge", overview.anzahlWareneingaenge || 0],
+    ["Summe Wareneingaenge EUR", overview.summeWareneingaengeEur || 0],
+    ["Pruefhinweise", overview.anzahlPruefhinweise || 0],
+    [""],
+    ["Bewertungsgrundlage", overview.bewertungsgrundlageText || ""],
+    [""],
+    ["Vollstaendigkeit innerhalb der Plattform", overview.vollstaendigkeitInnerhalbPlattformText || ""],
+    [""],
+    ["Manuell ausserhalb der Plattform beizulegen", ""],
+  ];
+
+  (overview.manuellAusserhalbPlattformBeizulegen || []).forEach((entry) => {
+    rows.push(["", entry]);
   });
+
   return rows;
 }
 
 function buildSheets(report) {
-  const inventory = report.inventory || {};
-  const inventoryRows = report.inventoryRows || [];
-  const paymentsInMonth = report.paymentsInMonth || report.deposits || [];
-  const arrivalsInMonth = report.arrivalsInMonth || report.arrivals || [];
-  const poLedger = report.poLedger || [];
+  const inventoryRows = report.warenbestandRows || report.inventoryRows || [];
+  const zahlungenLieferanten = report.zahlungenLieferanten || report.paymentsInMonth || [];
+  const wareneingaenge = report.wareneingaenge || report.arrivalsInMonth || [];
+  const pruefhinweise = report.pruefhinweise || report.quality || [];
 
-  const summaryRows = [
-    ["Monat", report.request?.month || ""],
-    ["Snapshot As Of", inventory.snapshotAsOf || ""],
-    ["Warenwert EUR", inventory.totalValueEur],
-    ["Amazon Units", inventory.totalAmazonUnits],
-    ["3PL Units", inventory.total3plUnits],
-    ["In Transit Units", inventory.totalInTransitUnits],
-    ["Zahlungen im Monat PO", paymentsInMonth.length],
-    ["Wareneingaenge im Monat PO", arrivalsInMonth.length],
-    ["Anzahlungen+Ankunft PO", poLedger.length],
-    ["Manual Override Used", inventory.manualOverrideUsed ? "yes" : "no"],
-    ["Quality Issues", (report.quality || []).length],
-  ];
+  const overviewRows = buildOverviewRows(report);
 
-  const inventorySheetRows = [[
-    "SKU",
-    "Alias",
-    "Kategorie",
-    "Amazon Units",
-    "3PL Units",
-    "In Transit Units",
-    "Total Units",
-    "EK EUR",
-    "Warenwert EUR",
-    "Notiz",
+  const paymentRows = [[
+    "Fachliche Behandlung",
+    "Zahlungsdatum",
+    "Lieferant",
+    "Bestellnummer (intern)",
+    "Verknuepfte Bestellung",
+    "Zahlungsart",
+    "Betrag Ist EUR",
+    "Betrag USD",
+    "Artikel / Mengen",
+    "Geplante Abfahrt",
+    "Geplante Ankunft",
+    "Wareneingang laut System",
+    "Datengrundlage Wareneingang",
+    "Status zur Bestellung",
+    "Beleglink",
+    "Hinweis",
   ]];
-  inventoryRows.forEach((row) => {
-    inventorySheetRows.push([
-      row.sku || "",
-      row.alias || "",
-      row.category || "",
-      row.amazonUnits,
-      row.threePLUnits,
-      row.inTransitUnits,
-      row.totalUnits,
-      row.ekEur,
-      row.rowValueEur,
-      row.note || "",
-    ]);
-  });
-
-  const depositRows = [[
-    "PO Number",
-    "Supplier",
-    "Items (Kurz)",
-    "SKU Aliases",
-    "Alle Items",
-    "Payment Type",
-    "Planned EUR",
-    "Actual EUR",
-    "Paid Date",
-    "Due Date",
-    "Amount USD",
-    "ETD Date",
-    "ETA Date",
-    "Arrival Date",
-    "Invoice URL",
-    "Folder URL",
-    "Issues",
-  ]];
-  paymentsInMonth.forEach((row) => {
-    depositRows.push([
-      row.poNumber || "",
-      row.supplier || "",
-      row.itemSummary || "",
-      row.skuAliases || "",
-      row.allItems || "",
-      row.paymentType || "",
-      row.plannedEur,
-      row.actualEur,
-      row.paidDate || "",
-      row.dueDate || "",
-      row.amountUsd,
-      row.etdDate || "",
-      row.etaDate || "",
-      row.arrivalDate || "",
-      row.invoiceUrl || "",
-      row.folderUrl || "",
-      (row.issues || []).join(" | "),
+  zahlungenLieferanten.forEach((row) => {
+    paymentRows.push([
+      row.fachlicheBehandlung || "",
+      row.zahlungsdatum || "",
+      row.lieferant || "",
+      row.bestellnummerIntern || "",
+      row.verknuepfteBestellung || "",
+      row.zahlungsart || "",
+      row.betragIstEur,
+      row.betragUsd,
+      row.artikelMengen || "",
+      row.geplanteAbfahrt || "",
+      row.geplanteAnkunft || "",
+      row.wareneingangLautSystem || "",
+      row.wareneingangGrundlageLabel || "",
+      row.statusZurBestellung || "",
+      row.beleglink || "",
+      row.hinweis || "",
     ]);
   });
 
   const arrivalRows = [[
-    "PO Number",
-    "Supplier",
-    "Items (Kurz)",
-    "SKU Aliases",
-    "Alle Items",
-    "Units",
-    "Goods USD",
-    "Goods EUR",
-    "ETD Date",
-    "ETA Date",
-    "Arrival Date",
-    "Transport",
-    "Issues",
+    "Fachliche Behandlung",
+    "Wareneingang laut System",
+    "Datengrundlage Wareneingang",
+    "Lieferant",
+    "Bestellnummer (intern)",
+    "Verknuepfte Bestellung",
+    "Artikel / Mengen",
+    "Gesamtmenge",
+    "Warenwert USD",
+    "Warenwert EUR",
+    "Geplante Abfahrt",
+    "Geplante Ankunft",
+    "Bisherige Lieferantenzahlungen laut System EUR",
+    "Davon im aktuellen Monat bezahlt EUR",
+    "Transportart",
+    "Hinweis",
   ]];
-  arrivalsInMonth.forEach((row) => {
+  wareneingaenge.forEach((row) => {
     arrivalRows.push([
-      row.poNumber || "",
-      row.supplier || "",
-      row.itemSummary || "",
-      row.skuAliases || "",
-      row.allItems || "",
-      row.units,
-      row.goodsUsd,
-      row.goodsEur,
-      row.etdDate || "",
-      row.etaDate || "",
-      row.arrivalDate || "",
-      row.transport || "",
-      (row.issues || []).join(" | "),
+      row.fachlicheBehandlung || "",
+      row.wareneingangLautSystem || "",
+      row.wareneingangGrundlageLabel || "",
+      row.lieferant || "",
+      row.bestellnummerIntern || "",
+      row.verknuepfteBestellung || "",
+      row.artikelMengen || "",
+      row.gesamtmenge,
+      row.warenwertUsd,
+      row.warenwertEur,
+      row.geplanteAbfahrt || "",
+      row.geplanteAnkunft || "",
+      row.bisherigeLieferantenzahlungenEur,
+      row.davonImMonatBezahltEur,
+      row.transportart || "",
+      row.hinweis || "",
     ]);
   });
 
-  const poLedgerRows = [[
-    "Month Marker",
-    "Relevanzgrund",
-    "Relevanzgrund Label",
-    "PO Number",
-    "Supplier",
-    "Items (Kurz)",
-    "SKU Aliases",
-    "Alle Items",
-    "Units",
-    "Payment Actual EUR (Month)",
-    "Payment Amount USD (Month)",
-    "Payment Types (Month)",
-    "ETD Date",
-    "ETA Date",
-    "Arrival Date",
-    "Arrival Source",
-    "Issues",
+  const inventorySheetRows = [[
+    "Artikelnummer / SKU",
+    "Artikelbezeichnung",
+    "Warengruppe",
+    "Bestand Amazon",
+    "Bestand externes Lager",
+    "Bestand im Zulauf",
+    "Gesamtbestand",
+    "Einstandspreis EUR",
+    "Bestandswert EUR",
+    "Hinweis",
   ]];
-  poLedger.forEach((row) => {
-    poLedgerRows.push([
-      row.monthMarker ? "yes" : "no",
-      row.relevanceReason || row.monthMarkerReason || "",
-      row.relevanceReasonLabel || "",
-      row.poNumber || "",
-      row.supplier || "",
-      row.itemSummary || "",
-      row.skuAliases || "",
-      row.allItems || "",
-      row.units,
-      row.paymentActualEurMonth ?? row.depositActualEurMonth,
-      row.paymentAmountUsdMonth ?? row.depositAmountUsdMonth,
-      row.paymentTypesInMonth || "",
-      row.etdDate || "",
-      row.etaDate || "",
-      row.arrivalDate || "",
-      row.arrivalSource || "",
-      (row.issues || []).join(" | "),
+  inventoryRows.forEach((row) => {
+    inventorySheetRows.push([
+      row.artikelnummerSku || row.sku || "",
+      row.artikelbezeichnung || row.alias || "",
+      row.warengruppe || row.category || "",
+      row.bestandAmazon ?? row.amazonUnits,
+      row.bestandExternesLager ?? row.threePLUnits,
+      row.bestandImZulauf ?? row.inTransitUnits,
+      row.gesamtbestand ?? row.totalUnits,
+      row.einstandspreisEur ?? row.ekEur,
+      row.bestandswertEur ?? row.rowValueEur,
+      row.hinweis || row.note || "",
     ]);
   });
 
   const sheets = [
-    { name: "Summary", rows: summaryRows },
-    { name: "Warenbestand", rows: inventorySheetRows },
-    { name: "Anzahlungen_PO", rows: depositRows },
-    { name: "Wareneingang_PO", rows: arrivalRows },
-    { name: "Anzahlungen_Ankunft_PO", rows: poLedgerRows },
-    { name: "Quality", rows: mapIssueRows(report.quality || []) },
+    { name: "Uebersicht", rows: overviewRows },
+    { name: "Zahlungen Lieferanten", rows: paymentRows },
+    { name: "Wareneingaenge", rows: arrivalRows },
+    { name: "Warenbestand Monatsende", rows: inventorySheetRows },
   ];
 
-  if (Array.isArray(report.journalRows) && report.journalRows.length) {
-    const journalRows = [[
-      "month",
-      "entityType",
-      "poNumber",
-      "supplierName",
-      "skuAliases",
-      "paymentType",
-      "status",
-      "dueDate",
-      "paidDate",
-      "amountPlannedEur",
-      "amountActualEur",
-      "issues",
-      "paymentId",
+  if (Array.isArray(pruefhinweise) && pruefhinweise.length) {
+    const qualityRows = [[
+      "Bereich",
+      "Bezug",
+      "Hinweis",
+      "Relevanz fuer Buchhaltung",
     ]];
-    report.journalRows.forEach((row) => {
-      journalRows.push([
-        row.month || "",
-        row.entityType || "",
-        row.poNumber || "",
-        row.supplierName || "",
-        row.skuAliases || "",
-        row.paymentType || "",
-        row.status || "",
-        row.dueDate || "",
-        row.paidDate || "",
-        row.amountPlannedEur,
-        row.amountActualEur,
-        Array.isArray(row.issues) ? row.issues.join(" | ") : "",
-        row.paymentId || "",
+    pruefhinweise.forEach((issue) => {
+      qualityRows.push([
+        issue.bereich || "",
+        issue.bezug || "",
+        issue.hinweis || issue.message || "",
+        issue.relevanzFuerBuchhaltung || "",
       ]);
     });
-    sheets.push({ name: "Zahlungsjournal", rows: journalRows });
+    sheets.push({ name: "Pruefhinweise", rows: qualityRows });
   }
 
   return sheets;

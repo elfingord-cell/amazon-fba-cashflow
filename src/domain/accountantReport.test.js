@@ -262,6 +262,41 @@ function parseZipEntryNames(bytes) {
   return names;
 }
 
+async function readZipEntryText(blob, entryName) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let offset = 0;
+  while (offset + 30 <= bytes.length) {
+    const signature = bytes[offset]
+      | (bytes[offset + 1] << 8)
+      | (bytes[offset + 2] << 16)
+      | (bytes[offset + 3] << 24);
+    if (signature !== 0x04034b50) break;
+
+    const fileNameLength = bytes[offset + 26] | (bytes[offset + 27] << 8);
+    const extraLength = bytes[offset + 28] | (bytes[offset + 29] << 8);
+    const compressedSize = (
+      bytes[offset + 18]
+      | (bytes[offset + 19] << 8)
+      | (bytes[offset + 20] << 16)
+      | (bytes[offset + 21] << 24)
+    ) >>> 0;
+
+    const nameStart = offset + 30;
+    const nameEnd = nameStart + fileNameLength;
+    const name = new TextDecoder().decode(bytes.slice(nameStart, nameEnd));
+    const dataStart = nameEnd + extraLength;
+    const dataEnd = dataStart + compressedSize;
+
+    if (name === entryName) {
+      return new TextDecoder().decode(bytes.slice(dataStart, dataEnd));
+    }
+
+    offset = dataEnd;
+  }
+
+  return null;
+}
+
 test("accountant report: applies paid and arrival month filters", () => {
   const report = buildAccountantReportData(createState(), {
     month: "2026-01",
@@ -276,30 +311,20 @@ test("accountant report: applies paid and arrival month filters", () => {
   assert.ok(paymentTypes.has("Shipping/Freight"));
   assert.ok(paymentTypes.has("EUSt"));
   assert.ok(paymentTypes.has("Zoll"));
-  assert.ok(report.paymentsInMonth.every((row) => String(row.itemSummary || "").length > 0));
-  assert.ok(report.paymentsInMonth.every((row) => String(row.allItems || "").length > 0));
+  assert.ok(report.zahlungenLieferanten.every((row) => String(row.fachlicheBehandlung || "").length > 0));
+  assert.ok(report.zahlungenLieferanten.every((row) => String(row.artikelMengen || "").length > 0));
+  assert.ok(report.zahlungenLieferanten.some((row) => row.fachlicheBehandlung === "Anzahlung buchen"));
+  assert.ok(report.zahlungenLieferanten.some((row) => row.hinweis.includes("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet")));
 
   const arrivalPoNumbers = report.arrivalsInMonth.map((row) => row.poNumber).sort();
   assert.deepEqual(arrivalPoNumbers, ["PO-1001", "PO-1003"]);
-  assert.ok(report.arrivalsInMonth.every((row) => String(row.itemSummary || "").length > 0));
-  assert.ok(report.arrivalsInMonth.every((row) => String(row.allItems || "").length > 0));
-
-  assert.equal(report.poLedger.length, 3);
-  const ledgerPo1 = report.poLedger.find((row) => row.poNumber === "PO-1001");
-  const ledgerPo2 = report.poLedger.find((row) => row.poNumber === "PO-1002");
-  const ledgerPo3 = report.poLedger.find((row) => row.poNumber === "PO-1003");
-  assert.ok(ledgerPo1);
-  assert.ok(ledgerPo2);
-  assert.ok(ledgerPo3);
-  assert.equal(ledgerPo1?.monthMarker, true);
-  assert.equal(ledgerPo1?.relevanceReasonLabel, "Zahlung im Monat + Wareneingang im Monat");
-  assert.equal(ledgerPo3?.relevanceReasonLabel, "Wareneingang im Monat");
-  assert.equal(ledgerPo2?.relevanceReasonLabel, "Zahlung im Monat");
-  assert.ok((ledgerPo1?.paymentActualEurMonth || 0) > 0);
-  assert.ok(String(ledgerPo1?.paymentTypesInMonth || "").includes("Deposit"));
-
-  assert.ok(report.quality.some((issue) => issue.code === "DATE_UNCERTAIN"));
-  assert.ok(report.quality.some((issue) => issue.code === "ARRIVAL_FROM_ETA"));
+  assert.ok(report.wareneingaenge.every((row) => String(row.fachlicheBehandlung || "").length > 0));
+  assert.ok(report.wareneingaenge.every((row) => String(row.artikelMengen || "").length > 0));
+  assert.ok(report.wareneingaenge.some((row) => row.fachlicheBehandlung === "Nur Information: Wareneingang noch nicht bestaetigt"));
+  assert.ok(report.uebersicht.bewertungsgrundlageText.includes("Verwendeter FX-Kurs"));
+  assert.ok(report.uebersicht.vollstaendigkeitInnerhalbPlattformText.includes("Lieferantenzahlungen"));
+  assert.ok(report.quality.some((issue) => issue.hinweis.includes("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet")));
+  assert.ok(report.quality.some((issue) => issue.hinweis.includes("Wareneingangsdatum aus geplanter Ankunft abgeleitet")));
 });
 
 test("accountant report: explicit arrivalDate overrides ETA in arrivals and ledger", () => {
@@ -311,12 +336,13 @@ test("accountant report: explicit arrivalDate overrides ETA in arrivals and ledg
   });
 
   const arrivalPo1 = report.arrivalsInMonth.find((row) => row.poNumber === "PO-1001");
-  const ledgerPo1 = report.poLedger.find((row) => row.poNumber === "PO-1001");
+  const paymentPo1 = report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO-1001");
   assert.ok(arrivalPo1);
-  assert.ok(ledgerPo1);
+  assert.ok(paymentPo1);
   assert.equal(arrivalPo1?.arrivalDate, "2026-01-28");
-  assert.equal(ledgerPo1?.arrivalDate, "2026-01-28");
-  assert.equal(ledgerPo1?.arrivalSource, "actual");
+  assert.equal(arrivalPo1?.wareneingangGrundlageLabel, "Tatsaechlicher Wareneingang");
+  assert.equal(paymentPo1?.wareneingangLautSystem, "2026-01-28");
+  assert.equal(paymentPo1?.wareneingangGrundlageLabel, "Tatsaechlicher Wareneingang");
 });
 
 test("accountant report: keeps export possible without snapshot and uses override", () => {
@@ -333,7 +359,7 @@ test("accountant report: keeps export possible without snapshot and uses overrid
   assert.ok(report.quality.some((issue) => issue.code === "MISSING_SNAPSHOT"));
 });
 
-test("accountant report bundle: zip contains required core files and optional journal", async () => {
+test("accountant report bundle: standard zip contains only pdf and xlsx, optional csv remains available", async () => {
   const state = createState();
 
   const coreBundle = await buildAccountantReportBundleFromState(state, {
@@ -344,37 +370,38 @@ test("accountant report bundle: zip contains required core files and optional jo
   });
 
   const coreNames = parseZipEntryNames(new Uint8Array(await coreBundle.zipBlob.arrayBuffer()));
-  assert.ok(coreNames.includes("buchhaltung_2026-01_bericht.pdf"));
-  assert.ok(coreNames.includes("buchhaltung_2026-01.xlsx"));
-  assert.ok(coreNames.includes("buchhaltung_2026-01_warenbestand.csv"));
-  assert.ok(coreNames.includes("buchhaltung_2026-01_anzahlungen_po.csv"));
-  assert.ok(coreNames.includes("buchhaltung_2026-01_wareneingang_po.csv"));
-  assert.ok(coreNames.includes("buchhaltung_2026-01_anzahlung_wareneingang_po.csv"));
-  assert.ok(coreNames.includes("buchhaltung_2026-01_email.txt"));
-  assert.equal(coreNames.includes("buchhaltung_2026-01_zahlungsjournal.csv"), false);
+  assert.deepEqual(coreNames.sort(), [
+    "01_Monatsuebersicht_2026-01.pdf",
+    "02_Buchhaltungslisten_2026-01.xlsx",
+  ]);
+  assert.equal(Boolean(coreBundle.files.csvInventory), false);
+  assert.equal(Boolean(coreBundle.files.csvPayments), false);
 
-  const paymentsCsv = await coreBundle.files.csvDeposits.text();
-  const arrivalsCsv = await coreBundle.files.csvArrivals.text();
-  const ledgerCsv = await coreBundle.files.csvPoLedger.text();
+  const workbookXml = await readZipEntryText(coreBundle.files.xlsxWorkbook, "xl/workbook.xml");
   const pdfText = new TextDecoder().decode(new Uint8Array(await coreBundle.files.pdfReport.arrayBuffer()));
-  assert.ok(paymentsCsv.split("\n")[0].includes("itemSummary"));
-  assert.ok(paymentsCsv.split("\n")[0].includes("allItems"));
-  assert.ok(arrivalsCsv.split("\n")[0].includes("itemSummary"));
-  assert.ok(arrivalsCsv.split("\n")[0].includes("allItems"));
-  assert.ok(ledgerCsv.split("\n")[0].includes("relevanceReasonLabel"));
-  assert.ok(pdfText.includes("Relevante Zahlungen in 2026-01"));
-  assert.ok(pdfText.includes("Relevante Wareneingaenge in 2026-01"));
-  assert.ok(pdfText.includes("Bewertung: Monatsende-Stichtag"));
 
-  const journalBundle = await buildAccountantReportBundleFromState(state, {
+  assert.ok(workbookXml?.includes("Uebersicht"));
+  assert.ok(workbookXml?.includes("Zahlungen Lieferanten"));
+  assert.ok(workbookXml?.includes("Wareneingaenge"));
+  assert.ok(workbookXml?.includes("Warenbestand Monatsende"));
+  assert.ok(workbookXml?.includes("Pruefhinweise"));
+  assert.ok(pdfText.includes("Verbindliche Datei: 02_Buchhaltungslisten_2026-01.xlsx"));
+  assert.ok(pdfText.includes("Bewertungsgrundlage"));
+  assert.ok(pdfText.includes("Vollstaendigkeit innerhalb der Plattform"));
+  assert.ok(pdfText.includes("Manuell ausserhalb der Plattform beizulegen"));
+
+  const csvBundle = await buildAccountantReportBundleFromState(state, {
     month: "2026-01",
-    scope: "core_plus_journal",
+    scope: "core",
+    includeCsv: true,
   }, {
     workspaceName: "WS-1",
   });
-  const journalNames = parseZipEntryNames(new Uint8Array(await journalBundle.zipBlob.arrayBuffer()));
-  assert.ok(journalNames.includes("buchhaltung_2026-01_zahlungsjournal.csv"));
-  assert.match(journalBundle.emailDraft.subject, /Unterlagen Buchhaltung 2026-01 - Mandant WS-1/);
+  const csvNames = parseZipEntryNames(new Uint8Array(await csvBundle.zipBlob.arrayBuffer()));
+  assert.ok(csvNames.includes("03_Zahlungen_Lieferanten_2026-01.csv"));
+  assert.ok(csvNames.includes("04_Wareneingaenge_2026-01.csv"));
+  assert.ok(csvNames.includes("05_Warenbestand_Monatsende_2026-01.csv"));
+  assert.match(csvBundle.emailDraft.subject, /Buchhaltungspaket 2026-01 - WS-1/);
 });
 
 test("accountant report: smoke export for another month has no regression", () => {
@@ -383,7 +410,8 @@ test("accountant report: smoke export for another month has no regression", () =
     scope: "core",
   });
   assert.equal(report.request.month, "2025-12");
-  assert.ok(Array.isArray(report.paymentsInMonth));
-  assert.ok(Array.isArray(report.arrivalsInMonth));
-  assert.ok(Array.isArray(report.poLedger));
+  assert.ok(Array.isArray(report.zahlungenLieferanten));
+  assert.ok(Array.isArray(report.wareneingaenge));
+  assert.ok(Array.isArray(report.warenbestandRows));
+  assert.equal(report.verbindlicheDatei, "02_Buchhaltungslisten_2025-12.xlsx");
 });
