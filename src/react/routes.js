@@ -49,7 +49,6 @@ export const MENU_SECTIONS = [
     children: [
       { key: "#export", label: "Export / Import", icon: "export" },
       { key: "#payments-export", label: "Payments Export", icon: "payments" },
-      { key: "#accounting-export", label: "Buchhalter Export", icon: "accounting" },
       { key: "#debug", label: "Debug", icon: "debug" },
       { key: "#plan", label: "Plan", icon: "plan" },
     ],

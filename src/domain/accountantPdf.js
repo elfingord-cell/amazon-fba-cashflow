@@ -1,3 +1,8 @@
+import {
+  buildAccountantOverviewRows,
+  formatAccountantDisplayValue,
+} from "./accountantPresentation.js";
+
 function escapePdfText(value) {
   return String(value ?? "")
     .replace(/\\/g, "\\\\")
@@ -34,32 +39,22 @@ function wrapLine(line, maxLength = 110) {
   return lines;
 }
 
-function formatCurrency(value) {
-  if (!Number.isFinite(Number(value))) return "n/a";
-  return Number(value).toLocaleString("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
 function buildReportLines(report) {
-  const month = report?.request?.month || "";
   const overview = report?.uebersicht || {};
-  const inventory = report?.inventory || {};
   const quality = Array.isArray(report?.pruefhinweise) ? report.pruefhinweise : (Array.isArray(report?.quality) ? report.quality : []);
+  const overviewRows = buildAccountantOverviewRows(report);
 
   const lines = [
-    `Monatsuebersicht Buchhaltung ${month}`,
+    `Monatsuebersicht Buchhaltung ${report?.request?.month || ""}`,
     "",
     `Verbindliche Datei: ${overview.verbindlicheDatei || "-"}`,
     "",
     "Umfang im Monat",
-    `- Lieferantenzahlungen: ${overview.anzahlZahlungenLieferanten || 0}`,
-    `- Summe Lieferantenzahlungen Ist EUR: ${formatCurrency(overview.summeZahlungenIstEur)} EUR`,
-    `- Wareneingaenge: ${overview.anzahlWareneingaenge || 0}`,
-    `- Summe Wareneingaenge EUR: ${formatCurrency(overview.summeWareneingaengeEur)} EUR`,
-    `- Warenbestand zum Monatsende (${overview.bestandStichtag || inventory.snapshotAsOf || "n/a"}): ${formatCurrency(inventory.totalValueEur)} EUR`,
-    `- Pruefhinweise: ${overview.anzahlPruefhinweise || 0}`,
+    ...overviewRows.map((row) => {
+      const formatted = formatAccountantDisplayValue(row.cellType, row.value, { emptyValue: "n/a" });
+      const suffix = row.cellType === "currency" && formatted !== "n/a" ? " EUR" : "";
+      return `- ${row.label}: ${formatted}${suffix}`;
+    }),
     "",
     "Bewertungsgrundlage",
     overview.bewertungsgrundlageText || "",

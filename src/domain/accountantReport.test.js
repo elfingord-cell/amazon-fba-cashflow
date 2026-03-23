@@ -317,14 +317,15 @@ test("accountant report: applies paid and arrival month filters", () => {
   assert.ok(report.zahlungenLieferanten.some((row) => row.hinweis.includes("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet")));
 
   const arrivalPoNumbers = report.arrivalsInMonth.map((row) => row.poNumber).sort();
-  assert.deepEqual(arrivalPoNumbers, ["PO-1001", "PO-1003"]);
+  assert.deepEqual(arrivalPoNumbers, []);
   assert.ok(report.wareneingaenge.every((row) => String(row.fachlicheBehandlung || "").length > 0));
   assert.ok(report.wareneingaenge.every((row) => String(row.artikelMengen || "").length > 0));
-  assert.ok(report.wareneingaenge.some((row) => row.fachlicheBehandlung === "Nur Information: Wareneingang noch nicht bestaetigt"));
+  assert.equal(report.uebersicht.anzahlBestaetigteWareneingaenge, 0);
+  assert.equal(report.uebersicht.anzahlGeplanteAnkuenfte, 2);
+  assert.equal(report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO-1001")?.wareneingangLautSystem, null);
   assert.ok(report.uebersicht.bewertungsgrundlageText.includes("Verwendeter FX-Kurs"));
   assert.ok(report.uebersicht.vollstaendigkeitInnerhalbPlattformText.includes("Lieferantenzahlungen"));
   assert.ok(report.quality.some((issue) => issue.hinweis.includes("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet")));
-  assert.ok(report.quality.some((issue) => issue.hinweis.includes("Wareneingangsdatum aus geplanter Ankunft abgeleitet")));
 });
 
 test("accountant report: explicit arrivalDate overrides ETA in arrivals and ledger", () => {
@@ -378,6 +379,10 @@ test("accountant report bundle: standard zip contains only pdf and xlsx, optiona
   assert.equal(Boolean(coreBundle.files.csvPayments), false);
 
   const workbookXml = await readZipEntryText(coreBundle.files.xlsxWorkbook, "xl/workbook.xml");
+  const workbookRelsXml = await readZipEntryText(coreBundle.files.xlsxWorkbook, "xl/_rels/workbook.xml.rels");
+  const stylesXml = await readZipEntryText(coreBundle.files.xlsxWorkbook, "xl/styles.xml");
+  const paymentsSheetXml = await readZipEntryText(coreBundle.files.xlsxWorkbook, "xl/worksheets/sheet2.xml");
+  const paymentsSheetRelsXml = await readZipEntryText(coreBundle.files.xlsxWorkbook, "xl/worksheets/_rels/sheet2.xml.rels");
   const pdfText = new TextDecoder().decode(new Uint8Array(await coreBundle.files.pdfReport.arrayBuffer()));
 
   assert.ok(workbookXml?.includes("Uebersicht"));
@@ -385,10 +390,17 @@ test("accountant report bundle: standard zip contains only pdf and xlsx, optiona
   assert.ok(workbookXml?.includes("Wareneingaenge"));
   assert.ok(workbookXml?.includes("Warenbestand Monatsende"));
   assert.ok(workbookXml?.includes("Pruefhinweise"));
+  assert.ok(workbookRelsXml?.includes("styles.xml"));
+  assert.ok(stylesXml?.includes("numFmtId=\"164\""));
+  assert.ok(paymentsSheetXml?.includes("<autoFilter"));
+  assert.ok(paymentsSheetXml?.includes("<hyperlinks>"));
+  assert.ok(paymentsSheetRelsXml?.includes("hyperlink"));
   assert.ok(pdfText.includes("Verbindliche Datei: 02_Buchhaltungslisten_2026-01.xlsx"));
   assert.ok(pdfText.includes("Bewertungsgrundlage"));
   assert.ok(pdfText.includes("Vollstaendigkeit innerhalb der Plattform"));
   assert.ok(pdfText.includes("Manuell ausserhalb der Plattform beizulegen"));
+  assert.ok(pdfText.includes("Bestaetigte Wareneingaenge im Monat"));
+  assert.ok(pdfText.includes("Nur geplante Ankuenfte"));
 
   const csvBundle = await buildAccountantReportBundleFromState(state, {
     month: "2026-01",

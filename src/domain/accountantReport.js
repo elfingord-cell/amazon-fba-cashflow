@@ -3,6 +3,7 @@ import { buildPaymentRows } from "../ui/orderEditorFactory.js";
 import { buildAccountantWorkbookBlob } from "./accountantWorkbook.js";
 import { buildAccountantPdfBlob } from "./accountantPdf.js";
 import { buildZipBlob, monthFileStamp } from "./accountantBundle.js";
+import { ACCOUNTANT_SHEET_SCHEMAS } from "./accountantPresentation.js";
 
 const PO_CONFIG = { slug: "po", entityLabel: "PO", numberField: "poNo" };
 const MANUELL_BEIZULEGEN = [
@@ -437,6 +438,12 @@ function resolveArrivalDate(record) {
   return { date: null, source: "missing" };
 }
 
+function resolveActualArrivalDate(record) {
+  const arrivalInfo = resolveArrivalDate(record);
+  if (!isActualArrivalSource(arrivalInfo.source)) return null;
+  return arrivalInfo.date;
+}
+
 function findSnapshot(state, month) {
   const snapshots = Array.isArray(state?.inventory?.snapshots) ? state.inventory.snapshots : [];
   return snapshots.find((snap) => String(snap?.month || "") === month) || null;
@@ -647,6 +654,7 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
     const { paymentRows } = buildPaymentTotalsForRecord(record, settings, state?.payments || [], month);
     const goodsUsd = computeGoodsUsd(record);
     const arrivalInfo = resolveArrivalDate(record);
+    const actualArrivalDate = resolveActualArrivalDate(record);
     const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
     const poNumber = String(record.poNo || record.id || "");
     const supplier = resolveSupplierName(record, supplierMap);
@@ -755,7 +763,7 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
         artikelMengen: itemMeta.allItems,
         geplanteAbfahrt: resolveEtdDate(record),
         geplanteAnkunft: resolveEtaDate(record),
-        wareneingangLautSystem: arrivalInfo.date,
+        wareneingangLautSystem: actualArrivalDate,
         wareneingangGrundlageLabel: mapArrivalSourceLabel(arrivalInfo.source),
         statusZurBestellung: mapOrderStatus(arrivalInfo),
         beleglink,
@@ -774,7 +782,7 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
         amountUsd,
         etdDate: resolveEtdDate(record),
         etaDate: resolveEtaDate(record),
-        arrivalDate: arrivalInfo.date,
+        arrivalDate: actualArrivalDate,
         invoiceUrl: payment?.invoiceDriveUrl || "",
         folderUrl: payment?.invoiceFolderDriveUrl || "",
         issues: hinweise,
@@ -799,6 +807,8 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     if (String(record.status || "").toUpperCase() === "CANCELLED") return;
 
     const arrivalInfo = resolveArrivalDate(record);
+    const actualArrivalDate = resolveActualArrivalDate(record);
+
     if (!arrivalInfo.date) {
       addQualityIssue(quality, qualitySeen, {
         code: "MISSING_ARRIVAL_DATE",
@@ -811,7 +821,7 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
       return;
     }
 
-    if (monthFromDate(arrivalInfo.date) !== month) return;
+    if (!actualArrivalDate || monthFromDate(actualArrivalDate) !== month) return;
 
     const items = getPoItems(record);
     const units = items.reduce((sum, item) => sum + parseUnits(item?.units), 0);
@@ -823,10 +833,6 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     const rowIssues = [];
     if (!Number.isFinite(goodsUsd)) rowIssues.push("Warenwert USD fehlt");
     if (!Number.isFinite(goodsEur)) rowIssues.push("Warenwert EUR fehlt");
-    if (arrivalInfo.source !== "arrivalDate" && arrivalInfo.source !== "arrivalDateDe") {
-      rowIssues.push("Wareneingangsdatum aus geplanter Ankunft abgeleitet");
-    }
-
     if (!Number.isFinite(goodsUsd)) {
       addQualityIssue(quality, qualitySeen, {
         code: "MISSING_GOODS_USD",
@@ -847,21 +853,9 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
         bezug: `Bestellung ${record.poNo || record.id || "-"}`,
       });
     }
-    if (!isActualArrivalSource(arrivalInfo.source)) {
-      addQualityIssue(quality, qualitySeen, {
-        code: "ARRIVAL_FROM_ETA",
-        severity: "info",
-        message: `Bestellung ${record.poNo || record.id || "-"}: Wareneingangsdatum aus geplanter Ankunft abgeleitet.`,
-        entityType: "PO",
-        entityId: String(record.id || record.poNo || ""),
-        bezug: `Bestellung ${record.poNo || record.id || "-"}`,
-        relevanzFuerBuchhaltung: "Bitte nur informativ verwenden",
-      });
-    }
-
     rows.push({
       fachlicheBehandlung: mapArrivalTreatment(arrivalInfo.source),
-      wareneingangLautSystem: arrivalInfo.date,
+      wareneingangLautSystem: actualArrivalDate,
       wareneingangGrundlageLabel: mapArrivalSourceLabel(arrivalInfo.source),
       lieferant: resolveSupplierName(record, supplierMap),
       bestellnummerIntern: String(record.poNo || record.id || ""),
@@ -887,7 +881,7 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
       goodsEur,
       etdDate: resolveEtdDate(record),
       etaDate: resolveEtaDate(record),
-      arrivalDate: arrivalInfo.date,
+      arrivalDate: actualArrivalDate,
       transport: String(record.transport || ""),
       issues: rowIssues,
     });
@@ -1109,6 +1103,12 @@ function toCsv(rows, headers, delimiter = ";") {
 function buildOverview(report, settings, fileNames) {
   const paymentsInMonth = Array.isArray(report?.paymentsInMonth) ? report.paymentsInMonth : [];
   const arrivalsInMonth = Array.isArray(report?.arrivalsInMonth) ? report.arrivalsInMonth : [];
+  const plannedArrivalOrders = new Set(
+    paymentsInMonth
+      .filter((row) => !row?.wareneingangLautSystem && row?.geplanteAnkunft)
+      .map((row) => String(row?.verknuepfteBestellung || row?.bestellnummerIntern || "").trim())
+      .filter(Boolean),
+  );
   return {
     monat: report?.request?.month || "",
     verbindlicheDatei: fileNames.xlsx,
@@ -1118,6 +1118,9 @@ function buildOverview(report, settings, fileNames) {
     summeZahlungenIstEur: paymentsInMonth.reduce((sum, row) => sum + (Number(row?.betragIstEur) || 0), 0),
     anzahlWareneingaenge: arrivalsInMonth.length,
     summeWareneingaengeEur: arrivalsInMonth.reduce((sum, row) => sum + (Number(row?.warenwertEur) || 0), 0),
+    anzahlBestaetigteWareneingaenge: arrivalsInMonth.length,
+    summeBestaetigteWareneingaengeEur: arrivalsInMonth.reduce((sum, row) => sum + (Number(row?.warenwertEur) || 0), 0),
+    anzahlGeplanteAnkuenfte: plannedArrivalOrders.size,
     anzahlPruefhinweise: Array.isArray(report?.quality) ? report.quality.length : 0,
     fxKurs: Number.isFinite(Number(settings?.fxRate)) ? Number(settings.fxRate) : null,
     bewertungsgrundlageText: buildBewertungsgrundlageText(settings),
@@ -1221,6 +1224,7 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
     bewertungsgrundlageText: buildBewertungsgrundlageText(settings),
     vollstaendigkeitInnerhalbPlattformText: buildVollstaendigkeitText(),
     manuellAusserhalbPlattformBeizulegen: MANUELL_BEIZULEGEN.slice(),
+    sichtbareSchemas: ACCOUNTANT_SHEET_SCHEMAS,
   };
   report.uebersicht = buildOverview(report, settings, fileNames);
 

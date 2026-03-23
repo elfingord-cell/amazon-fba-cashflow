@@ -10,6 +10,14 @@ import {
   buildAccountantReportBundleFromState,
 } from "../../../domain/accountantReport.js";
 import { triggerBlobDownload } from "../../../domain/accountantBundle.js";
+import {
+  ACCOUNTANT_CELL_TYPES,
+  ACCOUNTANT_SHEET_SCHEMAS,
+  accountantToneToAntColor,
+  buildAccountantOverviewRows,
+  formatAccountantDisplayValue,
+  resolveAccountantStatusTone,
+} from "../../../domain/accountantPresentation.js";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -71,32 +79,73 @@ type QualityRow = {
   relevanzFuerBuchhaltung: string;
 };
 
-function formatCurrency(value: number | null): string {
-  if (!Number.isFinite(value as number)) return "-";
-  return Number(value).toLocaleString("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function formatInt(value: number | null): string {
-  if (!Number.isFinite(value as number)) return "-";
-  return Math.round(Number(value)).toLocaleString("de-DE");
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "-";
-  const [year, month, day] = String(value).split("-").map(Number);
-  if (!year || !month || !day) return "-";
-  const date = new Date(year, month - 1, day);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
-
 function parseOverride(value: string): number | null {
   const normalized = String(value || "").trim().replace(/\./g, "").replace(",", ".");
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+type SchemaColumn = {
+  key: string;
+  label: string;
+  cellType: string;
+  columnWidth?: number;
+  wrap?: boolean;
+  alignment?: "left" | "right" | "center";
+  linkLabel?: string;
+};
+
+function renderCellValue<T extends object>(tableKey: string, column: SchemaColumn, row: T): JSX.Element | string {
+  const rawValue = (row as Record<string, unknown>)[column.key];
+  const tone = resolveAccountantStatusTone(tableKey, column.key, row as Record<string, unknown>);
+  const formatted = formatAccountantDisplayValue(column.cellType, rawValue, {
+    linkLabel: column.linkLabel,
+  });
+
+  if (column.cellType === ACCOUNTANT_CELL_TYPES.link) {
+    const href = String(rawValue || "").trim();
+    if (!href) return "-";
+    return (
+      <a href={href} target="_blank" rel="noreferrer">
+        {formatted}
+      </a>
+    );
+  }
+
+  if ((column.key === "statusZurBestellung" || column.key === "wareneingangGrundlageLabel" || tableKey === "quality") && formatted !== "-") {
+    return <Tag color={accountantToneToAntColor(tone)}>{formatted}</Tag>;
+  }
+
+  if (column.key === "hinweis" && formatted !== "-") {
+    return <Tag color={accountantToneToAntColor(tone)}>{formatted}</Tag>;
+  }
+
+  if (column.wrap) {
+    return (
+      <span title={formatted} style={{ display: "block", whiteSpace: "normal", lineHeight: 1.35 }}>
+        {formatted}
+      </span>
+    );
+  }
+
+  return formatted;
+}
+
+function buildColumns<T extends object>(tableKey: string, columns: SchemaColumn[]): ColumnDef<T>[] {
+  return columns.map((column) => ({
+    header: column.label,
+    accessorKey: column.key,
+    cell: ({ row }) => renderCellValue(tableKey, column, row.original),
+    meta: {
+      width: column.columnWidth ? column.columnWidth * 8 : 120,
+      minWidth: column.columnWidth ? Math.max(90, column.columnWidth * 7) : 100,
+      align: column.alignment || "left",
+    },
+  }));
+}
+
+function minTableWidth(columns: SchemaColumn[]): number {
+  return columns.reduce((sum, column) => sum + ((column.columnWidth || 14) * 8), 0);
 }
 
 export default function AccountingExportModule(): JSX.Element {
@@ -121,83 +170,15 @@ export default function AccountingExportModule(): JSX.Element {
     );
   }, [inventoryOverrideRaw, month, stateObject, workspaceName]);
 
-  const inventoryColumns = useMemo<ColumnDef<InventoryRow>[]>(() => [
-    { header: "Artikelnummer / SKU", accessorKey: "artikelnummerSku", meta: { width: 170, minWidth: 150 } },
-    { header: "Artikelbezeichnung", accessorKey: "artikelbezeichnung", meta: { width: 240, minWidth: 220 } },
-    { header: "Warengruppe", accessorKey: "warengruppe", meta: { width: 140, minWidth: 120 } },
-    { header: "Amazon", cell: ({ row }) => formatInt(row.original.bestandAmazon), meta: { width: 110, minWidth: 90, align: "right" } },
-    { header: "Externes Lager", cell: ({ row }) => formatInt(row.original.bestandExternesLager), meta: { width: 130, minWidth: 120, align: "right" } },
-    { header: "Im Zulauf", cell: ({ row }) => formatInt(row.original.bestandImZulauf), meta: { width: 110, minWidth: 90, align: "right" } },
-    { header: "Gesamtbestand", cell: ({ row }) => formatInt(row.original.gesamtbestand), meta: { width: 130, minWidth: 110, align: "right" } },
-    { header: "Einstandspreis EUR", cell: ({ row }) => formatCurrency(row.original.einstandspreisEur), meta: { width: 150, minWidth: 130, align: "right" } },
-    { header: "Bestandswert EUR", cell: ({ row }) => formatCurrency(row.original.bestandswertEur), meta: { width: 150, minWidth: 130, align: "right" } },
-    { header: "Hinweis", accessorKey: "hinweis", meta: { width: 220, minWidth: 180 } },
-  ], []);
+  const paymentSchema = ACCOUNTANT_SHEET_SCHEMAS.payments.columns as SchemaColumn[];
+  const arrivalSchema = ACCOUNTANT_SHEET_SCHEMAS.arrivals.columns as SchemaColumn[];
+  const inventorySchema = ACCOUNTANT_SHEET_SCHEMAS.inventory.columns as SchemaColumn[];
+  const qualitySchema = ACCOUNTANT_SHEET_SCHEMAS.quality.columns as SchemaColumn[];
 
-  const paymentColumns = useMemo<ColumnDef<PaymentRow>[]>(() => [
-    { header: "Fachliche Behandlung", accessorKey: "fachlicheBehandlung", meta: { width: 200, minWidth: 180 } },
-    { header: "Zahlungsdatum", cell: ({ row }) => formatDate(row.original.zahlungsdatum), meta: { width: 120, minWidth: 110 } },
-    { header: "Lieferant", accessorKey: "lieferant", meta: { width: 180, minWidth: 150 } },
-    { header: "Bestellnummer (intern)", accessorKey: "bestellnummerIntern", meta: { width: 140, minWidth: 120 } },
-    { header: "Zahlungsart", accessorKey: "zahlungsart", meta: { width: 140, minWidth: 120 } },
-    { header: "Betrag Ist EUR", cell: ({ row }) => formatCurrency(row.original.betragIstEur), meta: { width: 130, minWidth: 120, align: "right" } },
-    { header: "Betrag USD", cell: ({ row }) => formatCurrency(row.original.betragUsd), meta: { width: 130, minWidth: 120, align: "right" } },
-    {
-      header: "Artikel / Mengen",
-      cell: ({ row }) => <span title={row.original.artikelMengen || "-"}>{row.original.artikelMengen || "-"}</span>,
-      meta: { width: 260, minWidth: 220 },
-    },
-    { header: "Geplante Abfahrt", cell: ({ row }) => formatDate(row.original.geplanteAbfahrt), meta: { width: 120, minWidth: 110 } },
-    { header: "Geplante Ankunft", cell: ({ row }) => formatDate(row.original.geplanteAnkunft), meta: { width: 130, minWidth: 120 } },
-    { header: "Wareneingang laut System", cell: ({ row }) => formatDate(row.original.wareneingangLautSystem), meta: { width: 160, minWidth: 140 } },
-    { header: "Datengrundlage Wareneingang", accessorKey: "wareneingangGrundlageLabel", meta: { width: 210, minWidth: 180 } },
-    { header: "Status zur Bestellung", accessorKey: "statusZurBestellung", meta: { width: 180, minWidth: 160 } },
-    {
-      header: "Beleglink",
-      cell: ({ row }) => row.original.beleglink
-        ? <a href={row.original.beleglink} target="_blank" rel="noreferrer">oeffnen</a>
-        : "-",
-      meta: { width: 100, minWidth: 90 },
-    },
-    {
-      header: "Hinweis",
-      cell: ({ row }) => <span title={row.original.hinweis || "-"}>{row.original.hinweis || "-"}</span>,
-      meta: { width: 240, minWidth: 200 },
-    },
-  ], []);
-
-  const arrivalColumns = useMemo<ColumnDef<ArrivalRow>[]>(() => [
-    { header: "Fachliche Behandlung", accessorKey: "fachlicheBehandlung", meta: { width: 240, minWidth: 210 } },
-    { header: "Wareneingang laut System", cell: ({ row }) => formatDate(row.original.wareneingangLautSystem), meta: { width: 160, minWidth: 140 } },
-    { header: "Datengrundlage Wareneingang", accessorKey: "wareneingangGrundlageLabel", meta: { width: 210, minWidth: 180 } },
-    { header: "Lieferant", accessorKey: "lieferant", meta: { width: 180, minWidth: 150 } },
-    { header: "Bestellnummer (intern)", accessorKey: "bestellnummerIntern", meta: { width: 140, minWidth: 120 } },
-    {
-      header: "Artikel / Mengen",
-      cell: ({ row }) => <span title={row.original.artikelMengen || "-"}>{row.original.artikelMengen || "-"}</span>,
-      meta: { width: 260, minWidth: 220 },
-    },
-    { header: "Gesamtmenge", cell: ({ row }) => formatInt(row.original.gesamtmenge), meta: { width: 110, minWidth: 90, align: "right" } },
-    { header: "Warenwert USD", cell: ({ row }) => formatCurrency(row.original.warenwertUsd), meta: { width: 130, minWidth: 120, align: "right" } },
-    { header: "Warenwert EUR", cell: ({ row }) => formatCurrency(row.original.warenwertEur), meta: { width: 130, minWidth: 120, align: "right" } },
-    { header: "Geplante Abfahrt", cell: ({ row }) => formatDate(row.original.geplanteAbfahrt), meta: { width: 120, minWidth: 110 } },
-    { header: "Geplante Ankunft", cell: ({ row }) => formatDate(row.original.geplanteAnkunft), meta: { width: 130, minWidth: 120 } },
-    { header: "Bisherige Zahlungen EUR", cell: ({ row }) => formatCurrency(row.original.bisherigeLieferantenzahlungenEur), meta: { width: 160, minWidth: 150, align: "right" } },
-    { header: "Davon im Monat EUR", cell: ({ row }) => formatCurrency(row.original.davonImMonatBezahltEur), meta: { width: 150, minWidth: 140, align: "right" } },
-    { header: "Transportart", accessorKey: "transportart", meta: { width: 120, minWidth: 100 } },
-    {
-      header: "Hinweis",
-      cell: ({ row }) => <span title={row.original.hinweis || "-"}>{row.original.hinweis || "-"}</span>,
-      meta: { width: 240, minWidth: 200 },
-    },
-  ], []);
-
-  const qualityColumns = useMemo<ColumnDef<QualityRow>[]>(() => [
-    { header: "Bereich", accessorKey: "bereich", meta: { width: 150, minWidth: 130 } },
-    { header: "Bezug", accessorKey: "bezug", meta: { width: 180, minWidth: 160 } },
-    { header: "Hinweis", accessorKey: "hinweis", meta: { width: 420, minWidth: 320 } },
-    { header: "Relevanz fuer Buchhaltung", accessorKey: "relevanzFuerBuchhaltung", meta: { width: 180, minWidth: 160 } },
-  ], []);
+  const inventoryColumns = useMemo<ColumnDef<InventoryRow>[]>(() => buildColumns<InventoryRow>("inventory", inventorySchema), [inventorySchema]);
+  const paymentColumns = useMemo<ColumnDef<PaymentRow>[]>(() => buildColumns<PaymentRow>("payments", paymentSchema), [paymentSchema]);
+  const arrivalColumns = useMemo<ColumnDef<ArrivalRow>[]>(() => buildColumns<ArrivalRow>("arrivals", arrivalSchema), [arrivalSchema]);
+  const qualityColumns = useMemo<ColumnDef<QualityRow>[]>(() => buildColumns<QualityRow>("quality", qualitySchema), [qualitySchema]);
 
   async function handleExport(): Promise<void> {
     if (exportBusy) return;
@@ -264,8 +245,9 @@ export default function AccountingExportModule(): JSX.Element {
             </div>
             <Tag color="blue">Verbindliche Datei: {overview.verbindlicheDatei || "-"}</Tag>
             <Tag color="blue">Zahlungen: {overview.anzahlZahlungenLieferanten || 0}</Tag>
-            <Tag color="blue">Wareneingaenge: {overview.anzahlWareneingaenge || 0}</Tag>
-            <Tag color="green">Warenwert: {preview.inventory.totalValueEur != null ? `${formatCurrency(preview.inventory.totalValueEur)} EUR` : "-"}</Tag>
+            <Tag color="green">Bestaetigte Wareneingaenge: {overview.anzahlBestaetigteWareneingaenge || 0}</Tag>
+            <Tag color="gold">Nur geplante Ankuenfte: {overview.anzahlGeplanteAnkuenfte || 0}</Tag>
+            <Tag color="green">Warenwert: {preview.inventory.totalValueEur != null ? `${formatAccountantDisplayValue(ACCOUNTANT_CELL_TYPES.currency, preview.inventory.totalValueEur)} EUR` : "-"}</Tag>
             <Tag color={preview.pruefhinweise.length ? "orange" : "green"}>Pruefhinweise: {preview.pruefhinweise.length}</Tag>
           </div>
         </div>
@@ -277,8 +259,12 @@ export default function AccountingExportModule(): JSX.Element {
 
       <Card title="Monatsuebersicht">
         <Space direction="vertical" size="small" style={{ width: "100%" }}>
-          <Text><strong>Verbindliche Datei:</strong> {overview.verbindlicheDatei || "-"}</Text>
-          <Text><strong>Bestandsstichtag:</strong> {formatDate(overview.bestandStichtag || null)}</Text>
+          {buildAccountantOverviewRows(preview).map((entry) => (
+            <Text key={entry.label}>
+              <strong>{entry.label}:</strong> {formatAccountantDisplayValue(entry.cellType, entry.value)}
+              {entry.cellType === ACCOUNTANT_CELL_TYPES.currency && entry.value != null ? " EUR" : ""}
+            </Text>
+          ))}
           <Text><strong>Bewertungsgrundlage:</strong> {overview.bewertungsgrundlageText || "-"}</Text>
           <Text><strong>Vollstaendigkeit innerhalb der Plattform:</strong> {overview.vollstaendigkeitInnerhalbPlattformText || "-"}</Text>
           <Text><strong>Manuell ausserhalb der Plattform beizulegen:</strong></Text>
@@ -294,8 +280,8 @@ export default function AccountingExportModule(): JSX.Element {
         <DataTable
           data={(preview.zahlungenLieferanten || []) as PaymentRow[]}
           columns={paymentColumns}
-          minTableWidth={2220}
-          tableLayout="auto"
+          minTableWidth={minTableWidth(paymentSchema)}
+          tableLayout="fixed"
         />
       </Card>
 
@@ -303,8 +289,8 @@ export default function AccountingExportModule(): JSX.Element {
         <DataTable
           data={(preview.wareneingaenge || []) as ArrivalRow[]}
           columns={arrivalColumns}
-          minTableWidth={2360}
-          tableLayout="auto"
+          minTableWidth={minTableWidth(arrivalSchema)}
+          tableLayout="fixed"
         />
       </Card>
 
@@ -312,8 +298,8 @@ export default function AccountingExportModule(): JSX.Element {
         <DataTable
           data={(preview.warenbestandRows || []) as InventoryRow[]}
           columns={inventoryColumns}
-          minTableWidth={1540}
-          tableLayout="auto"
+          minTableWidth={minTableWidth(inventorySchema)}
+          tableLayout="fixed"
         />
       </Card>
 
@@ -321,8 +307,8 @@ export default function AccountingExportModule(): JSX.Element {
         <DataTable
           data={(preview.pruefhinweise || []) as QualityRow[]}
           columns={qualityColumns}
-          minTableWidth={980}
-          tableLayout="auto"
+          minTableWidth={minTableWidth(qualitySchema)}
+          tableLayout="fixed"
         />
       </Card>
     </div>
