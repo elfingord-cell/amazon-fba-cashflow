@@ -220,11 +220,6 @@ function buildOverviewSheet(report) {
   rows.push([emptyCell(""), emptyCell("")]);
   rows.push([emptyCell("Vollstaendigkeit innerhalb der Plattform", { kind: "sectionLabel" }), emptyCell("")]);
   rows.push([emptyCell(""), emptyCell(report?.uebersicht?.vollstaendigkeitInnerhalbPlattformText || "", { wrap: true })]);
-  rows.push([emptyCell(""), emptyCell("")]);
-  rows.push([emptyCell("Manuell ausserhalb der Plattform beizulegen", { kind: "sectionLabel" }), emptyCell("")]);
-  (report?.uebersicht?.manuellAusserhalbPlattformBeizulegen || []).forEach((entry) => {
-    rows.push([emptyCell(""), emptyCell(entry, { wrap: true })]);
-  });
 
   return {
     name: "Uebersicht",

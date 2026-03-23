@@ -25,6 +25,7 @@ import { DeNumberInput } from "../../components/DeNumberInput";
 import { StatsTableShell } from "../../components/StatsTableShell";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
 import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
+import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
 import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
 import {
   computePoAggregateMetrics,
@@ -396,6 +397,20 @@ function formatCurrency(value: unknown): string {
     style: "currency",
     currency: "EUR",
   });
+}
+
+function formatLocalIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function diffIsoDays(fromIso: string | null, toIso: string | null): number | null {
+  const fromDate = parseIsoDate(fromIso);
+  const toDate = parseIsoDate(toIso);
+  if (!fromDate || !toDate) return null;
+  return Math.round((toDate.getTime() - fromDate.getTime()) / MS_PER_DAY);
 }
 
 function shortId(value: string): string {
@@ -894,10 +909,14 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const navigate = useNavigate();
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const syncSession = useSyncSession();
+  const todayIso = formatLocalIsoDate(new Date());
+  const currentMonth = todayIso.slice(0, 7);
   const [search, setSearch] = useState("");
   const [archiveFilter, setArchiveFilter] = useState<"active" | "archived" | "all">("active");
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "open" | "mixed" | "paid_only">("all");
   const [onlyOpenPayments, setOnlyOpenPayments] = useState(false);
+  const [arrivalDraftByPoId, setArrivalDraftByPoId] = useState<Record<string, string>>({});
+  const [arrivalSavingId, setArrivalSavingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [skuPickerValues, setSkuPickerValues] = useState<string[]>([]);
@@ -1097,6 +1116,106 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       ].join(" ").toLowerCase().includes(needle);
     });
   }, [archiveFilter, canonicalRows, onlyOpenPayments, paymentStatusFilter, search]);
+
+  const poRawById = useMemo(() => {
+    return new Map(canonicalRows.map((row) => [row.id, row.raw]));
+  }, [canonicalRows]);
+
+  const poArrivalTasks = useMemo<PoArrivalTask[]>(() => {
+    return buildPoArrivalTasks({
+      state: stateObj,
+      month: currentMonth,
+      todayIso,
+    }).filter((task) => task.pending);
+  }, [currentMonth, stateObj, todayIso]);
+
+  const overdueArrivalCount = useMemo(
+    () => poArrivalTasks.filter((task) => task.isOverdue).length,
+    [poArrivalTasks],
+  );
+
+  const arrivalTaskColumns = useMemo<ColumnDef<PoArrivalTask>[]>(() => [
+    { header: "PO", accessorKey: "poNumber", meta: { width: 110 } },
+    { header: "Supplier", accessorKey: "supplier", meta: { width: 180 } },
+    { header: "Produkte", accessorKey: "skuAliases", meta: { width: 260 } },
+    {
+      header: "Units",
+      meta: { width: 90, align: "right" },
+      cell: ({ row }) => formatNumber(row.original.units),
+    },
+    {
+      header: "ETA",
+      meta: { width: 120 },
+      cell: ({ row }) => formatDate(row.original.etaDate),
+    },
+    {
+      header: "Status",
+      meta: { width: 170 },
+      cell: ({ row }) => {
+        const overdueDays = diffIsoDays(row.original.etaDate, todayIso);
+        if (row.original.isOverdue) {
+          const label = overdueDays != null && overdueDays > 0
+            ? `${formatNumber(overdueDays)} Tage überfällig`
+            : "Überfällig";
+          return <Tag color="red">{label}</Tag>;
+        }
+        return <Tag color="gold">ETA in {formatMonthLabel(currentMonth)}</Tag>;
+      },
+    },
+    {
+      header: "Wareneingang",
+      meta: { width: 170, minWidth: 170 },
+      cell: ({ row }) => {
+        const value = arrivalDraftByPoId[row.original.id] ?? todayIso;
+        return (
+          <Input
+            type="date"
+            value={value}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setArrivalDraftByPoId((current) => ({
+                ...current,
+                [row.original.id]: nextValue,
+              }));
+            }}
+          />
+        );
+      },
+    },
+    {
+      header: "Aktionen",
+      meta: { width: 220, minWidth: 220 },
+      cell: ({ row }) => {
+        const draftDate = arrivalDraftByPoId[row.original.id] ?? todayIso;
+        const disabled = arrivalSavingId === row.original.id || !normalizeIsoDate(draftDate);
+        return (
+          <div className="v2-actions-nowrap">
+            <Button
+              size="small"
+              type="primary"
+              loading={arrivalSavingId === row.original.id}
+              disabled={disabled}
+              onClick={() => {
+                void confirmArrivalTask(row.original, draftDate);
+              }}
+            >
+              Ankunft speichern
+            </Button>
+            <Button
+              size="small"
+              onClick={() => {
+                const existing = poRawById.get(row.original.id);
+                if (!existing) return;
+                openEditModal(existing, "arrival");
+              }}
+            >
+              PO öffnen
+            </Button>
+          </div>
+        );
+      },
+    },
+  ], [arrivalDraftByPoId, arrivalSavingId, currentMonth, poRawById, todayIso]);
 
   const timelineStartMonth = useMemo(
     () => determineTimelineStartMonth({ state: stateObj, rows: filteredRows }),
@@ -2453,6 +2572,43 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     form.resetFields();
   }
 
+  async function confirmArrivalTask(task: PoArrivalTask, arrivalDateInput: string): Promise<void> {
+    const arrivalDate = normalizeIsoDate(arrivalDateInput);
+    if (!arrivalDate) {
+      message.error("Bitte ein gueltiges Wareneingangsdatum eintragen.");
+      return;
+    }
+    setArrivalSavingId(task.id);
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const list = Array.isArray(next.pos) ? [...next.pos] : [];
+        const index = list.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === task.id);
+        if (index < 0) {
+          throw new Error(`PO ${task.poNumber || task.id} wurde nicht gefunden.`);
+        }
+        const record = list[index] as Record<string, unknown>;
+        list[index] = {
+          ...record,
+          arrivalDate,
+          updatedAt: nowIso(),
+        };
+        next.pos = list;
+        return next;
+      }, "v2:po:update-arrival");
+      setArrivalDraftByPoId((current) => ({
+        ...current,
+        [task.id]: arrivalDate,
+      }));
+      message.success(`Wareneingang für ${task.poNumber || task.id} gespeichert.`);
+    } catch (saveError) {
+      const text = saveError instanceof Error ? saveError.message : "Wareneingang konnte nicht gespeichert werden.";
+      message.error(text);
+    } finally {
+      setArrivalSavingId((current) => (current === task.id ? null : current));
+    }
+  }
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const source = params.get("source");
@@ -2551,6 +2707,37 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
 
       {error ? <Alert type="error" showIcon message={error} /> : null}
       {loading ? <Alert type="info" showIcon message="Workspace wird geladen..." /> : null}
+
+      <Card>
+        <div className="v2-page-head" style={{ marginBottom: 12 }}>
+          <div>
+            <Title level={5} style={{ marginBottom: 4 }}>Wareneingang prüfen</Title>
+            <Text type="secondary">
+              POs mit ETA in {formatMonthLabel(currentMonth)} oder bereits überfälliger ETA ohne bestätigte Ankunft.
+            </Text>
+          </div>
+          <Space wrap>
+            <Tag color={overdueArrivalCount > 0 ? "red" : "green"}>
+              {overdueArrivalCount > 0 ? `${overdueArrivalCount} überfällig` : "Keine überfälligen POs"}
+            </Tag>
+            <Tag color="blue">{poArrivalTasks.length} offen</Tag>
+          </Space>
+        </div>
+        {poArrivalTasks.length ? (
+          <DataTable
+            data={poArrivalTasks}
+            columns={arrivalTaskColumns}
+            minTableWidth={1320}
+            tableLayout="auto"
+          />
+        ) : (
+          <Alert
+            type="success"
+            showIcon
+            message="Keine offenen Wareneingangs-Bestätigungen für den aktuellen Monat oder aus überfälligen ETAs."
+          />
+        )}
+      </Card>
 
       <Card>
         <div className="v2-toolbar-row" style={{ marginBottom: 10 }}>

@@ -267,12 +267,6 @@ export default function AccountingExportModule(): JSX.Element {
           ))}
           <Text><strong>Bewertungsgrundlage:</strong> {overview.bewertungsgrundlageText || "-"}</Text>
           <Text><strong>Vollstaendigkeit innerhalb der Plattform:</strong> {overview.vollstaendigkeitInnerhalbPlattformText || "-"}</Text>
-          <Text><strong>Manuell ausserhalb der Plattform beizulegen:</strong></Text>
-          <div>
-            {(overview.manuellAusserhalbPlattformBeizulegen || []).map((entry: string) => (
-              <Tag key={entry} style={{ marginBottom: 8 }}>{entry}</Tag>
-            ))}
-          </div>
         </Space>
       </Card>
 

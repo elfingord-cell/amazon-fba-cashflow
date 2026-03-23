@@ -1125,7 +1125,7 @@ function buildOverview(report, settings, fileNames) {
     fxKurs: Number.isFinite(Number(settings?.fxRate)) ? Number(settings.fxRate) : null,
     bewertungsgrundlageText: buildBewertungsgrundlageText(settings),
     vollstaendigkeitInnerhalbPlattformText: buildVollstaendigkeitText(),
-    manuellAusserhalbPlattformBeizulegen: MANUELL_BEIZULEGEN.slice(),
+    manuellAusserhalbPlattformBeizulegen: [],
   };
 }
 
@@ -1223,7 +1223,7 @@ export function buildAccountantReportData(state, requestInput = {}, options = {}
     verbindlicheDatei: fileNames.xlsx,
     bewertungsgrundlageText: buildBewertungsgrundlageText(settings),
     vollstaendigkeitInnerhalbPlattformText: buildVollstaendigkeitText(),
-    manuellAusserhalbPlattformBeizulegen: MANUELL_BEIZULEGEN.slice(),
+    manuellAusserhalbPlattformBeizulegen: [],
     sichtbareSchemas: ACCOUNTANT_SHEET_SCHEMAS,
   };
   report.uebersicht = buildOverview(report, settings, fileNames);

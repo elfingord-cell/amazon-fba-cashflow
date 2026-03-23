@@ -396,9 +396,9 @@ test("accountant report bundle: standard zip contains only pdf and xlsx, optiona
   assert.ok(paymentsSheetXml?.includes("<hyperlinks>"));
   assert.ok(paymentsSheetRelsXml?.includes("hyperlink"));
   assert.ok(pdfText.includes("Verbindliche Datei: 02_Buchhaltungslisten_2026-01.xlsx"));
+  assert.ok(pdfText.includes("Deckblatt und Schnellcheck"));
   assert.ok(pdfText.includes("Bewertungsgrundlage"));
   assert.ok(pdfText.includes("Vollstaendigkeit innerhalb der Plattform"));
-  assert.ok(pdfText.includes("Manuell ausserhalb der Plattform beizulegen"));
   assert.ok(pdfText.includes("Bestaetigte Wareneingaenge im Monat"));
   assert.ok(pdfText.includes("Nur geplante Ankuenfte"));
 

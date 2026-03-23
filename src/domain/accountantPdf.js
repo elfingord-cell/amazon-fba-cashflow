@@ -10,13 +10,14 @@ function escapePdfText(value) {
     .replace(/\)/g, "\\)");
 }
 
-function wrapLine(line, maxLength = 110) {
+function wrapLine(line, maxLength = 96) {
   const text = String(line || "").trim();
   if (!text) return [""];
   if (text.length <= maxLength) return [text];
   const words = text.split(/\s+/);
   const lines = [];
   let current = "";
+
   words.forEach((word) => {
     const next = current ? `${current} ${word}` : word;
     if (next.length <= maxLength) {
@@ -24,77 +25,116 @@ function wrapLine(line, maxLength = 110) {
       return;
     }
     if (current) lines.push(current);
-    if (word.length > maxLength) {
-      let offset = 0;
-      while (offset < word.length) {
-        lines.push(word.slice(offset, offset + maxLength));
-        offset += maxLength;
-      }
-      current = "";
-      return;
-    }
     current = word;
   });
+
   if (current) lines.push(current);
   return lines;
 }
 
-function buildReportLines(report) {
+function buildReportBlocks(report) {
   const overview = report?.uebersicht || {};
   const quality = Array.isArray(report?.pruefhinweise) ? report.pruefhinweise : (Array.isArray(report?.quality) ? report.quality : []);
   const overviewRows = buildAccountantOverviewRows(report);
 
-  const lines = [
-    `Monatsuebersicht Buchhaltung ${report?.request?.month || ""}`,
-    "",
-    `Verbindliche Datei: ${overview.verbindlicheDatei || "-"}`,
-    "",
-    "Umfang im Monat",
-    ...overviewRows.map((row) => {
-      const formatted = formatAccountantDisplayValue(row.cellType, row.value, { emptyValue: "n/a" });
-      const suffix = row.cellType === "currency" && formatted !== "n/a" ? " EUR" : "";
-      return `- ${row.label}: ${formatted}${suffix}`;
-    }),
-    "",
-    "Bewertungsgrundlage",
-    overview.bewertungsgrundlageText || "",
-    "",
-    "Vollstaendigkeit innerhalb der Plattform",
-    overview.vollstaendigkeitInnerhalbPlattformText || "",
-    "",
-    "Manuell ausserhalb der Plattform beizulegen",
+  const blocks = [
+    { text: `Buchhalterpaket ${report?.request?.month || ""}`, font: "bold", size: 16, after: 4, maxLength: 70 },
+    { text: "Deckblatt und Schnellcheck. Die XLSX ist die verbindliche Arbeitsdatei; diese PDF fasst den Monatsstatus kurz zusammen.", size: 10, after: 12, maxLength: 92 },
+    { text: "Verbindliche Datei", font: "bold", size: 11, after: 4, maxLength: 80 },
+    { text: overview.verbindlicheDatei || "-", size: 11, after: 12, maxLength: 90 },
+    { text: "Monatsstatus", font: "bold", size: 11, after: 4, maxLength: 80 },
   ];
 
-  (overview.manuellAusserhalbPlattformBeizulegen || []).forEach((entry) => {
-    lines.push(`- ${entry}`);
+  overviewRows.forEach((row) => {
+    const formatted = formatAccountantDisplayValue(row.cellType, row.value, { emptyValue: "n/a" });
+    const suffix = row.cellType === "currency" && formatted !== "n/a" ? " EUR" : "";
+    blocks.push({
+      text: `- ${row.label}: ${formatted}${suffix}`,
+      size: 10,
+      after: 2,
+      maxLength: 96,
+    });
   });
 
+  blocks.push(
+    { text: "", size: 10, after: 6, maxLength: 96 },
+    { text: "Bewertungsgrundlage", font: "bold", size: 11, after: 4, maxLength: 80 },
+    { text: overview.bewertungsgrundlageText || "-", size: 10, after: 10, maxLength: 96 },
+    { text: "Vollstaendigkeit innerhalb der Plattform", font: "bold", size: 11, after: 4, maxLength: 80 },
+    { text: overview.vollstaendigkeitInnerhalbPlattformText || "-", size: 10, after: 10, maxLength: 96 },
+  );
+
   if (quality.length) {
-    lines.push("");
-    lines.push("Offene Pruefpunkte");
-    quality.slice(0, 8).forEach((issue) => {
-      lines.push(`- ${issue.bereich || "Allgemein"} | ${issue.bezug || "-"} | ${issue.hinweis || issue.message || ""}`);
+    blocks.push({ text: "Offene Pruefpunkte", font: "bold", size: 11, after: 4, maxLength: 80 });
+    quality.slice(0, 6).forEach((issue) => {
+      blocks.push({
+        text: `- ${issue.bereich || "Allgemein"} | ${issue.bezug || "-"} | ${issue.hinweis || issue.message || ""}`,
+        size: 10,
+        after: 2,
+        maxLength: 96,
+      });
     });
-    if (quality.length > 8) {
-      lines.push(`- ... ${quality.length - 8} weitere Hinweise in der Arbeitsdatei`);
+    if (quality.length > 6) {
+      blocks.push({
+        text: `- ... ${quality.length - 6} weitere Hinweise in der Arbeitsdatei`,
+        size: 10,
+        after: 2,
+        maxLength: 96,
+      });
     }
   }
 
-  return lines.flatMap((line) => wrapLine(line, 110));
+  return blocks;
 }
 
-function buildPdfBytes(lines) {
+function expandBlocks(blocks) {
+  const items = [];
+
+  blocks.forEach((block) => {
+    const lines = wrapLine(block.text, block.maxLength || 96);
+    lines.forEach((line) => {
+      items.push({
+        text: line,
+        font: block.font === "bold" ? "bold" : "regular",
+        size: Number(block.size || 10),
+      });
+    });
+    items.push({ spacer: Number(block.after || 0) });
+  });
+
+  return items;
+}
+
+function buildPdfBytes(items) {
   const pageWidth = 595;
   const pageHeight = 842;
   const top = 800;
   const bottom = 50;
-  const lineHeight = 14;
-  const maxLinesPerPage = Math.floor((top - bottom) / lineHeight);
+
   const pages = [];
-  for (let index = 0; index < lines.length; index += maxLinesPerPage) {
-    pages.push(lines.slice(index, index + maxLinesPerPage));
-  }
-  if (!pages.length) pages.push([""]);
+  let currentPage = [];
+  let y = top;
+
+  const startNewPage = () => {
+    currentPage = [];
+    pages.push(currentPage);
+    y = top;
+  };
+
+  startNewPage();
+
+  items.forEach((item) => {
+    if (item.spacer) {
+      y -= item.spacer;
+      if (y < bottom) startNewPage();
+      return;
+    }
+
+    const lineHeight = item.size + 4;
+    if (y - lineHeight < bottom) startNewPage();
+    currentPage.push({ ...item, y });
+    y -= lineHeight;
+  });
 
   const objects = [];
 
@@ -105,21 +145,23 @@ function buildPdfBytes(lines) {
 
   const pagesId = addObject("<< /Type /Pages /Kids [] /Count 0 >>");
   const catalogId = addObject(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
-  const fontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-
+  const regularFontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const boldFontId = addObject("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
   const pageIds = [];
 
-  pages.forEach((pageLines) => {
-    const textCommands = ["BT", "/F1 11 Tf", `1 0 0 1 40 ${top} Tm`];
-    pageLines.forEach((line, idx) => {
-      if (idx > 0) textCommands.push(`0 -${lineHeight} Td`);
-      textCommands.push(`(${escapePdfText(line)}) Tj`);
+  pages.forEach((pageItems) => {
+    const textCommands = [];
+    pageItems.forEach((item) => {
+      textCommands.push("BT");
+      textCommands.push(`/${item.font === "bold" ? "F2" : "F1"} ${item.size} Tf`);
+      textCommands.push(`1 0 0 1 40 ${item.y} Tm`);
+      textCommands.push(`(${escapePdfText(item.text)}) Tj`);
+      textCommands.push("ET");
     });
-    textCommands.push("ET");
     const stream = textCommands.join("\n");
     const streamObject = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
     const contentId = addObject(streamObject);
-    const pageObject = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`;
+    const pageObject = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> /Contents ${contentId} 0 R >>`;
     const pageId = addObject(pageObject);
     pageIds.push(pageId);
   });
@@ -155,7 +197,7 @@ function buildPdfBytes(lines) {
 }
 
 export function buildAccountantPdfBlob(report) {
-  const lines = buildReportLines(report);
-  const bytes = buildPdfBytes(lines);
+  const blocks = buildReportBlocks(report);
+  const bytes = buildPdfBytes(expandBlocks(blocks));
   return new Blob([bytes], { type: "application/pdf" });
 }
