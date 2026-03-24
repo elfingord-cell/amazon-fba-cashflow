@@ -11,6 +11,7 @@ let buildPhantomFoSuggestions;
 let buildPhantomFoWorklist;
 let buildStateWithPhantomFos;
 let buildDashboardRobustness;
+let buildSharedPlanProductProjection;
 let currentMonthKey;
 let addMonths;
 let monthRange;
@@ -119,6 +120,9 @@ test.before(async () => {
   ({
     buildDashboardRobustness,
   } = await server.ssrLoadModule("/src/v2/domain/dashboardRobustness.ts"));
+  ({
+    buildSharedPlanProductProjection,
+  } = await server.ssrLoadModule("/src/domain/planProducts.js"));
   ({
     currentMonthKey,
     addMonths,
@@ -442,5 +446,66 @@ test("active procurement-ready plan products generate PFO suggestions through th
   assert.ok(
     robustness.activeSkuCount >= 1,
     "Dashboard-Robustness muss Planprodukte im Shared-Path als aktive SKU sehen.",
+  );
+});
+
+test("shared plan projection reuses an existing virtual SKU instead of minting a second plan SKU", async () => {
+  const now = currentMonthKey();
+  const months = monthRange(now, 6);
+  const state = buildState({
+    settings: {
+      startMonth: now,
+      horizonMonths: 6,
+    },
+    snapshotItems: [],
+    forecastImport: {
+      "REF-PLAN": {
+        [months[0]]: { units: 120 },
+        [months[1]]: { units: 120 },
+        [months[2]]: { units: 120 },
+      },
+    },
+    forecastManual: {},
+    products: [],
+    planProducts: [
+      {
+        id: "plan-alpha",
+        alias: "Plan Alpha",
+        plannedSku: "PLAN-ALPHA",
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-PLAN",
+        baselineReferenceMonth: Number(months[0].slice(5, 7)),
+        baselineUnitsInReferenceMonth: 120,
+        avgSellingPriceGrossEUR: 20,
+        sellerboardMarginPct: 30,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 2,
+        logisticsPerUnitEur: 1,
+        launchDate: `${months[0]}-01`,
+      },
+    ],
+  });
+
+  const firstProjection = buildSharedPlanProductProjection({ state, months });
+  const secondProjection = buildSharedPlanProductProjection({
+    state: firstProjection.planningState,
+    months,
+  });
+
+  assert.equal(firstProjection.virtualProducts.length, 1);
+  assert.equal(secondProjection.virtualProducts.length, 0);
+  assert.equal(
+    secondProjection.entries[0]?.planningSku,
+    firstProjection.entries[0]?.planningSku,
+    "Ein bereits augmentiertes Planprodukt muss seine virtuelle SKU wiederverwenden.",
+  );
+
+  const suggestions = buildPhantomFoSuggestions({ state, months, maxSuggestions: 5 });
+  assert.equal(
+    suggestions.filter((entry) => entry.alias === "Plan Alpha").length,
+    1,
+    "Ein einzelnes Planprodukt darf im Shared-Path nicht als duplizierter PFO-Fall erneut erscheinen.",
   );
 });

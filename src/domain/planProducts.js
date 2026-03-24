@@ -607,6 +607,15 @@ export function buildSharedPlanProductProjection(input) {
       .map((entry) => normalizeSku(entry?.sku).toLowerCase())
       .filter(Boolean),
   );
+  const existingVirtualProductByPlanId = new Map();
+  baseProducts.forEach((entry) => {
+    const product = entry && typeof entry === "object" ? entry : {};
+    if (product.__planVirtual !== true) return;
+    const planProductId = String(product.__planProductId || "").trim();
+    const sku = normalizeSku(product.sku);
+    if (!planProductId || !sku) return;
+    existingVirtualProductByPlanId.set(planProductId, product);
+  });
   const forecast = state.forecast && typeof state.forecast === "object" ? state.forecast : {};
   const manualBase = forecast.forecastManual && typeof forecast.forecastManual === "object"
     ? forecast.forecastManual
@@ -645,9 +654,13 @@ export function buildSharedPlanProductProjection(input) {
       fallbackBucket: PORTFOLIO_BUCKET.PLAN,
     });
 
-    let planningSku = mappedSku || null;
-    let virtualProduct = null;
-    if (procurementReady && !mappedSku) {
+    const existingVirtualProduct = existingVirtualProductByPlanId.get(String(row.id || "").trim()) || null;
+    let planningSku = mappedSku || normalizeSku(existingVirtualProduct?.sku) || null;
+    let virtualProduct = existingVirtualProduct;
+    if (procurementReady && planningSku) {
+      forecastUnitsBySkuMonth[planningSku] = { ...plannedUnitsByMonth };
+    }
+    if (procurementReady && !planningSku) {
       const fallbackSku = `PLAN-${sanitizeVirtualSkuToken(row.id || row.alias || String(index + 1), String(index + 1))}`;
       planningSku = ensureUniqueVirtualSku(requestedSku || fallbackSku, usedSkuKeys);
       usedSkuKeys.add(planningSku.toLowerCase());

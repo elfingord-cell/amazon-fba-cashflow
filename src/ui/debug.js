@@ -3,16 +3,45 @@ import { loadAppState, commitAppState, getLastCommitSummary, countDrafts } from 
 import { orderEditorUtils } from "./orderEditorFactory.js";
 import { computeAbcClassification } from "../domain/abcClassification.js";
 
+function monthKeyFromDate(date){
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function addMonths(monthKey, offset){
+  const [year, month] = String(monthKey || "").split("-").map(Number);
+  const probe = new Date(year, (month || 1) - 1 + Number(offset || 0), 1);
+  return monthKeyFromDate(probe);
+}
+
+function monthStartIso(monthKey){
+  return `${String(monthKey || "")}-01`;
+}
+
+function buildForecastMonthMap(startMonth, values){
+  const map = {};
+  values.forEach((row, index) => {
+    const month = addMonths(startMonth, index);
+    map[month] = {
+      units: row.units,
+      revenueEur: row.revenueEur,
+      profitEur: row.profitEur,
+    };
+  });
+  return map;
+}
+
 function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
 export function buildDemoState(){
   const demo = createEmptyState();
+  const planningStartMonth = addMonths(monthKeyFromDate(new Date()), -1);
+  const planLaunchMonth = addMonths(planningStartMonth, 1);
 
   demo.settings = {
-    startMonth: "2024-10",
-    horizonMonths: 18,
+    startMonth: planningStartMonth,
+    horizonMonths: 8,
     openingBalance: "120.000,00",
     fxRate: 1.08,
     fxFeePct: "0,5",
@@ -22,23 +51,23 @@ export function buildDemoState(){
     vatRefundEnabled: true,
     vatRefundLagMonths: 2,
     freightLagDays: 14,
+    safetyStockDohDefault: 30,
+    foCoverageDohDefault: 90,
+    cashInQuoteMode: "manual",
+    cashInRevenueBasisMode: "forecast_direct",
+    cashInCalibrationEnabled: false,
+    dashboardShowPhantomFoInChart: true,
   };
 
-  demo.incomings = [
-    { month: "2024-10", revenueEur: "98.000,00", payoutPct: "50" },
-    { month: "2024-11", revenueEur: "82.500,00", payoutPct: "49" },
-    { month: "2024-12", revenueEur: "135.000,00", payoutPct: "51" },
-    { month: "2025-01", revenueEur: "92.000,00", payoutPct: "50" },
-    { month: "2025-02", revenueEur: "108.000,00", payoutPct: "48" },
-    { month: "2025-03", revenueEur: "94.500,00", payoutPct: "49" },
-    { month: "2025-04", revenueEur: "102.000,00", payoutPct: "50" },
-    { month: "2025-05", revenueEur: "87.500,00", payoutPct: "51" },
-    { month: "2025-06", revenueEur: "118.000,00", payoutPct: "48" },
-    { month: "2025-07", revenueEur: "126.500,00", payoutPct: "49" },
-    { month: "2025-08", revenueEur: "79.500,00", payoutPct: "50" },
-    { month: "2025-09", revenueEur: "115.500,00", payoutPct: "48" },
-    { month: "2025-10", revenueEur: "73.000,00", payoutPct: "51" },
-  ];
+  demo.incomings = Array.from({ length: Number(demo.settings.horizonMonths || 0) }, (_, index) => {
+    const month = addMonths(planningStartMonth, index);
+    return {
+      id: `inc-${month}`,
+      month,
+      payoutPct: "40",
+      source: "forecast",
+    };
+  });
 
   demo.extras = [
     { date: "2024-12-20", label: "Weihnachtsbonus", amountEur: "5.200,00" },
@@ -526,6 +555,95 @@ export function buildDemoState(){
         { id: "fo-demo-2025-09-ms2", label: "Production", percent: 50, anchor: "PROD_DONE", lagDays: 0 },
         { id: "fo-demo-2025-09-ms3", label: "Balance", percent: 30, anchor: "ETD", lagDays: 0 },
       ],
+    },
+  ];
+
+  demo.forecast = {
+    ...(demo.forecast || {}),
+    settings: {
+      ...((demo.forecast && demo.forecast.settings) || {}),
+      useForecast: true,
+    },
+    forecastManual: {},
+    forecastImport: {
+      "SKU-ALPHA": buildForecastMonthMap(planningStartMonth, [
+        { units: 180, revenueEur: 12582, profitEur: 3522.96 },
+        { units: 210, revenueEur: 14679, profitEur: 4110.12 },
+        { units: 235, revenueEur: 16426.5, profitEur: 4599.42 },
+        { units: 260, revenueEur: 18174, profitEur: 5088.72 },
+        { units: 240, revenueEur: 16776, profitEur: 4697.28 },
+        { units: 215, revenueEur: 15028.5, profitEur: 4208 },
+        { units: 195, revenueEur: 13631, profitEur: 3816.68 },
+        { units: 175, revenueEur: 12233.5, profitEur: 3425.38 },
+      ]),
+      "SKU-BRAVO": buildForecastMonthMap(planningStartMonth, [
+        { units: 120, revenueEur: 9600, profitEur: 2112 },
+        { units: 128, revenueEur: 10240, profitEur: 2252.8 },
+        { units: 135, revenueEur: 10800, profitEur: 2376 },
+        { units: 142, revenueEur: 11360, profitEur: 2499.2 },
+        { units: 138, revenueEur: 11040, profitEur: 2428.8 },
+        { units: 132, revenueEur: 10560, profitEur: 2323.2 },
+        { units: 126, revenueEur: 10080, profitEur: 2217.6 },
+        { units: 118, revenueEur: 9440, profitEur: 2076.8 },
+      ]),
+    },
+  };
+
+  demo.inventory = {
+    ...(demo.inventory || {}),
+    snapshots: [
+      {
+        month: planningStartMonth,
+        items: [
+          { sku: "SKU-ALPHA", amazonUnits: 1800, threePLUnits: 0 },
+          { sku: "SKU-BRAVO", amazonUnits: 1200, threePLUnits: 0 },
+        ],
+      },
+    ],
+    settings: {
+      ...((demo.inventory && demo.inventory.settings) || {}),
+      projectionMonths: Number(demo.settings.horizonMonths || 0),
+      safetyDays: 30,
+    },
+  };
+
+  demo.planProducts = [
+    {
+      id: "plan-demo-shaker",
+      alias: "Planprodukt Demo Shaker",
+      plannedSku: "PLAN-SHAKER-01",
+      relationType: "standalone",
+      status: "active",
+      portfolioBucket: "plan",
+      includeInForecast: true,
+      baselineReferenceMonth: Number(planLaunchMonth.slice(5, 7)),
+      baselineUnitsInReferenceMonth: 160,
+      seasonalityReferenceSku: "SKU-ALPHA",
+      baselineReferenceSku: "SKU-ALPHA",
+      avgSellingPriceGrossEUR: 44.9,
+      sellerboardMarginPct: 29,
+      productionLeadTimeDaysDefault: 42,
+      transportMode: "SEA",
+      transitDays: 34,
+      unitPriceUsd: 9.8,
+      logisticsPerUnitEur: 2.7,
+      freightPerUnitEur: 2.7,
+      template: {
+        scope: "SKU",
+        name: "Planprodukt",
+        fields: {
+          transportMode: "SEA",
+          transitDays: 34,
+          productionDays: 42,
+          unitPriceUsd: 9.8,
+          freightEur: 2.7,
+        },
+      },
+      launchDate: monthStartIso(planLaunchMonth),
+      rampUpWeeks: 4,
+      softLaunchStartSharePct: 35,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     },
   ];
 
