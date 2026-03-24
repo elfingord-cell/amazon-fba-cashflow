@@ -322,7 +322,7 @@ test("accountant report: applies paid and arrival month filters", () => {
   assert.ok(report.wareneingaenge.every((row) => String(row.artikelMengen || "").length > 0));
   assert.equal(report.uebersicht.anzahlBestaetigteWareneingaenge, 0);
   assert.equal(report.uebersicht.anzahlGeplanteAnkuenfte, 2);
-  assert.equal(report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO-1001")?.wareneingangLautSystem, null);
+  assert.equal(report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO1001")?.wareneingangLautSystem, null);
   assert.ok(report.uebersicht.bewertungsgrundlageText.includes("Bei Zahlungen"));
   assert.ok(report.uebersicht.vollstaendigkeitInnerhalbPlattformText.includes("alle Zahlungen an Lieferanten"));
   assert.ok(report.quality.some((issue) => issue.hinweis.includes("Zahlungsdatum fehlt, Faelligkeitsdatum verwendet")));
@@ -337,13 +337,27 @@ test("accountant report: explicit arrivalDate overrides ETA in arrivals and ledg
   });
 
   const arrivalPo1 = report.arrivalsInMonth.find((row) => row.poNumber === "PO-1001");
-  const paymentPo1 = report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO-1001");
+  const paymentPo1 = report.zahlungenLieferanten.find((row) => row.bestellnummerIntern === "PO1001");
   assert.ok(arrivalPo1);
   assert.ok(paymentPo1);
   assert.equal(arrivalPo1?.arrivalDate, "2026-01-28");
   assert.equal(arrivalPo1?.wareneingangGrundlageLabel, "Tatsaechlicher Wareneingang");
   assert.equal(paymentPo1?.wareneingangLautSystem, "2026-01-28");
   assert.equal(paymentPo1?.wareneingangGrundlageLabel, "Tatsaechlicher Wareneingang");
+});
+
+test("accountant report: formats visible order numbers with PO prefix", () => {
+  const state = createState();
+  state.pos[0].poNo = "250029";
+  state.pos[1].poNo = "PO-250026";
+  const report = buildAccountantReportData(state, {
+    month: "2026-01",
+    scope: "core",
+  });
+
+  assert.equal(report.zahlungenLieferanten.find((row) => row.poNumber === "250029")?.bestellnummerIntern, "PO250029");
+  assert.equal(report.zahlungenLieferanten.find((row) => row.poNumber === "250029")?.verknuepfteBestellung, "PO250029");
+  assert.equal(report.zahlungenLieferanten.find((row) => row.poNumber === "PO-250026")?.bestellnummerIntern, "PO250026");
 });
 
 test("accountant report: keeps export possible without snapshot and uses override", () => {

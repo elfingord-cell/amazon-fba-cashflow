@@ -276,9 +276,16 @@ function mapArrivalTreatment(source) {
 }
 
 function mapOrderStatus(arrivalInfo) {
-  if (isActualArrivalSource(arrivalInfo?.source)) return "Ware bereits eingegangen";
-  if (isEtaBasedArrivalSource(arrivalInfo?.source)) return "Wareneingang nur geplant";
-  return "Ware noch nicht eingegangen";
+  if (isActualArrivalSource(arrivalInfo?.source)) return "Ware angekommen";
+  if (isEtaBasedArrivalSource(arrivalInfo?.source)) return "Ankunft geplant";
+  return "Noch nicht angekommen";
+}
+
+function formatDisplayPoNumber(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const withoutPrefix = raw.replace(/^PO[\s\-_]*/i, "").trim();
+  return `PO${withoutPrefix || raw}`;
 }
 
 function joinMessages(messages = []) {
@@ -657,6 +664,7 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
     const actualArrivalDate = resolveActualArrivalDate(record);
     const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
     const poNumber = String(record.poNo || record.id || "");
+    const displayPoNumber = formatDisplayPoNumber(poNumber);
     const supplier = resolveSupplierName(record, supplierMap);
 
     paymentRows.forEach((payment) => {
@@ -755,8 +763,8 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
         fachlicheBehandlung: mapPaymentTreatment(paymentType),
         zahlungsdatum: paidMeta.paidDate,
         lieferant: supplier,
-        bestellnummerIntern: poNumber,
-        verknuepfteBestellung: poNumber,
+        bestellnummerIntern: displayPoNumber,
+        verknuepfteBestellung: displayPoNumber,
         zahlungsart: mapPaymentTypeLabel(paymentType),
         betragIstEur: actualEur,
         betragUsd: amountUsd,
@@ -829,6 +837,8 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     const goodsEur = computeGoodsEur(record, settings, goodsUsd);
     const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
     const paymentTotals = buildPaymentTotalsForRecord(record, settings, state?.payments || [], month);
+    const poNumber = String(record.poNo || record.id || "");
+    const displayPoNumber = formatDisplayPoNumber(poNumber);
 
     const rowIssues = [];
     if (!Number.isFinite(goodsUsd)) rowIssues.push("Warenwert USD fehlt");
@@ -858,8 +868,8 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
       wareneingangLautSystem: actualArrivalDate,
       wareneingangGrundlageLabel: mapArrivalSourceLabel(arrivalInfo.source),
       lieferant: resolveSupplierName(record, supplierMap),
-      bestellnummerIntern: String(record.poNo || record.id || ""),
-      verknuepfteBestellung: String(record.poNo || record.id || ""),
+      bestellnummerIntern: displayPoNumber,
+      verknuepfteBestellung: displayPoNumber,
       artikelMengen: itemMeta.allItems,
       gesamtmenge: units,
       warenwertUsd: goodsUsd,
@@ -871,7 +881,7 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
       transportart: String(record.transport || ""),
       hinweise: rowIssues,
       hinweis: joinMessages(rowIssues),
-      poNumber: String(record.poNo || record.id || ""),
+      poNumber,
       supplier: resolveSupplierName(record, supplierMap),
       skuAliases: itemMeta.skuAliases,
       itemSummary: itemMeta.itemSummary,

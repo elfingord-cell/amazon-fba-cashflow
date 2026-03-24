@@ -30,13 +30,13 @@ const PDF_TABLES = [
     subtitle: (report) => `${report.zahlungenLieferanten.length} im Monat bezahlte Vorgaenge`,
     rows: (report) => report.zahlungenLieferanten || [],
     columns: [
-      { key: "zahlungsdatum", label: "Datum", width: 52, cellType: "date" },
-      { key: "lieferant", label: "Lieferant", width: 80, cellType: "text", maxLines: 2 },
-      { key: "bestellnummerIntern", label: "Bestellnr.", width: 56, cellType: "text" },
-      { key: "fachlicheBehandlung", label: "Bitte buchen als", width: 108, cellType: "text", maxLines: 3 },
+      { key: "zahlungsdatum", label: "Datum", width: 70, cellType: "date" },
+      { key: "lieferant", label: "Lieferant", width: 74, cellType: "text", maxLines: 2 },
+      { key: "bestellnummerIntern", label: "Bestellnr.", width: 54, cellType: "text" },
+      { key: "fachlicheBehandlung", label: "Bitte buchen als", width: 104, cellType: "text", maxLines: 3 },
       { key: "betragIstEur", label: "Betrag EUR", width: 66, cellType: "currency", align: "right" },
       { key: "geplanteAnkunft", label: "Ankunft", width: 66, cellType: "date" },
-      { key: "statusZurBestellung", label: "Stand", width: 80, cellType: "text", maxLines: 2 },
+      { key: "statusZurBestellung", label: "Stand", width: 74, cellType: "text", maxLines: 2 },
     ],
   },
   {
@@ -111,11 +111,21 @@ function text(x, y, value, options = {}) {
 function wrapText(textValue, width, fontSize, maxLines = Infinity) {
   const raw = String(textValue ?? "").trim();
   if (!raw) return [""];
-  const charWidth = Math.max(4, fontSize * 0.5);
+  const charWidth = Math.max(5, fontSize * 0.62);
   const maxChars = Math.max(4, Math.floor(width / charWidth));
   if (raw.length <= maxChars) return [raw];
 
-  const words = raw.split(/\s+/);
+  const words = raw.split(/\s+/).flatMap((word) => {
+    if (word.length <= maxChars) return [word];
+    const chunks = [];
+    let rest = word;
+    while (rest.length > maxChars) {
+      chunks.push(rest.slice(0, maxChars - 1));
+      rest = rest.slice(maxChars - 1);
+    }
+    if (rest) chunks.push(rest);
+    return chunks;
+  });
   const lines = [];
   let current = "";
 
@@ -133,7 +143,7 @@ function wrapText(textValue, width, fontSize, maxLines = Infinity) {
   if (lines.length <= maxLines) return lines;
   const trimmed = lines.slice(0, maxLines);
   const last = trimmed[maxLines - 1] || "";
-  trimmed[maxLines - 1] = last.length > 1 ? `${last.slice(0, Math.max(1, last.length - 1))}…` : "…";
+  trimmed[maxLines - 1] = last.length > 3 ? `${last.slice(0, Math.max(1, last.length - 3))}...` : "...";
   return trimmed;
 }
 
@@ -219,7 +229,7 @@ function drawCoverPage(page, report, pageMetrics) {
     }
   });
 
-  const guideY = 164;
+  const guideY = 184;
   page.push(rect(pageMetrics.marginX, guideY, contentWidth, 138, COLORS.brandSoft, COLORS.line, 0.8));
   page.push(text(pageMetrics.marginX + 16, guideY + 100, "So nutzen Sie dieses Paket", { font: "bold", size: 12, color: COLORS.ink }));
   [
@@ -234,15 +244,17 @@ function drawCoverPage(page, report, pageMetrics) {
     page.push(text(pageMetrics.marginX + 16, guideY + 78 - (index * 14), lineText, { size: 10, color: COLORS.ink }));
   });
 
-  const noteY = 26;
-  page.push(rect(pageMetrics.marginX, noteY, contentWidth, 126, COLORS.panel, COLORS.line, 0.8));
+  const noteY = 48;
+  page.push(rect(pageMetrics.marginX, noteY, contentWidth, 104, COLORS.panel, COLORS.line, 0.8));
   page.push(text(pageMetrics.marginX + 16, noteY + 98, "Was diese Zahlen bedeuten", { font: "bold", size: 12, color: COLORS.ink }));
-  wrapText(report.uebersicht?.bewertungsgrundlageText || "-", contentWidth - 32, 10, 4).forEach((lineText, index) => {
-    page.push(text(pageMetrics.marginX + 16, noteY + 74 - (index * 14), lineText, { size: 10, color: COLORS.ink }));
+  [
+    "Zahlungen: EUR zeigt den tatsaechlich bezahlten Betrag im Monat.",
+    "Wareneingang: EUR zeigt den Warenwert der angekommenen Ware.",
+    "Warenbestand: Wert ergibt sich aus Bestand mal Einstandspreis.",
+  ].forEach((lineText, index) => {
+    page.push(text(pageMetrics.marginX + 16, noteY + 72 - (index * 13), lineText, { size: 9, color: COLORS.ink }));
   });
-  wrapText(report.uebersicht?.vollstaendigkeitInnerhalbPlattformText || "-", contentWidth - 32, 9, 3).forEach((lineText, index) => {
-    page.push(text(pageMetrics.marginX + 16, noteY + 18 - (index * 13), lineText, { size: 9, color: COLORS.muted }));
-  });
+  page.push(text(pageMetrics.marginX + 16, noteY + 18, "Diese PDF zeigt die Monatsuebersicht aus der Plattform. Fuer Details nutzen Sie die Excel-Datei.", { size: 8.5, color: COLORS.muted }));
 }
 
 function formatTableValue(config, column, row) {
@@ -390,11 +402,9 @@ function drawTablePage(page, report, config, rows, pageIndex, pageCount, pageMet
   page.push(text(pageMetrics.marginX, pageMetrics.height - 54, title, { font: "bold", size: 18, color: COLORS.white }));
   page.push(text(pageMetrics.marginX, pageMetrics.height - 78, subtitle, { size: 10, color: [223, 230, 236] }));
   page.push(text(pageMetrics.marginX, pageMetrics.height - 94, helperText, { size: 9, color: [223, 230, 236] }));
-  const fileLabel = report.uebersicht?.verbindlicheDatei || "-";
-  const fileLines = wrapText(fileLabel, Math.min(180, pageMetrics.width * 0.28), 9, 2);
-  fileLines.forEach((lineText, lineIndex) => {
-    page.push(text(pageMetrics.width - pageMetrics.marginX - 160, pageMetrics.height - 54 - (lineIndex * 11), lineText, { size: 9, color: [223, 230, 236] }));
-  });
+  const detailLabel = "Details in Excel-Datei";
+  const detailLabelWidth = detailLabel.length * 4.8;
+  page.push(text(pageMetrics.width - pageMetrics.marginX - detailLabelWidth, pageMetrics.height - 54, detailLabel, { size: 9, color: [223, 230, 236] }));
   drawSectionCards(page, sectionCards[config.key] || sectionCards.quality, pageMetrics);
 
   const tableX = pageMetrics.marginX;
