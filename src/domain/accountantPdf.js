@@ -31,12 +31,12 @@ const PDF_TABLES = [
     rows: (report) => report.zahlungenLieferanten || [],
     columns: [
       { key: "zahlungsdatum", label: "Datum", width: 70, cellType: "date" },
-      { key: "lieferant", label: "Lieferant", width: 74, cellType: "text", maxLines: 2 },
-      { key: "bestellnummerIntern", label: "Bestellnr.", width: 54, cellType: "text" },
-      { key: "fachlicheBehandlung", label: "Bitte buchen als", width: 104, cellType: "text", maxLines: 3 },
-      { key: "betragIstEur", label: "Betrag EUR", width: 66, cellType: "currency", align: "right" },
+      { key: "lieferant", label: "Lieferant", width: 82, cellType: "text", maxLines: 2 },
+      { key: "bestellnummerIntern", label: "Bestellnr.", width: 68, cellType: "text" },
+      { key: "fachlicheBehandlung", label: "Bitte buchen als", width: 100, cellType: "text", maxLines: 3 },
+      { key: "betragIstEur", label: "Betrag EUR", width: 63, cellType: "currency", align: "right" },
       { key: "geplanteAnkunft", label: "Ankunft", width: 66, cellType: "date" },
-      { key: "statusZurBestellung", label: "Stand", width: 74, cellType: "text", maxLines: 2 },
+      { key: "statusZurBestellung", label: "Stand", width: 66, cellType: "text", maxLines: 2 },
     ],
   },
   {
@@ -196,6 +196,24 @@ function chunkRows(rows, firstPageCapacity, nextPageCapacity) {
   return pages;
 }
 
+function resolvePdfTableConfig(config, rows) {
+  if (config.key !== "inventory") return config;
+  if (rows.length > 5) return config;
+  return {
+    ...config,
+    pageLayout: "portrait",
+    pageCapacity: { first: 12, next: 14 },
+    columns: [
+      { key: "artikelnummerSku", label: "Artikelnummer", width: 96, cellType: "text", maxLines: 1 },
+      { key: "artikelbezeichnung", label: "Artikel", width: 160, cellType: "text", maxLines: 1 },
+      { key: "gesamtbestand", label: "Bestand", width: 60, cellType: "integer", align: "right" },
+      { key: "einstandspreisEur", label: "Einstandspreis", width: 70, cellType: "currency", align: "right" },
+      { key: "bestandswertEur", label: "Bestandswert", width: 84, cellType: "currency", align: "right" },
+      { key: "hinweis", label: "Hinweis", width: 45, cellType: "text", maxLines: 1 },
+    ],
+  };
+}
+
 function drawCoverPage(page, report, pageMetrics) {
   const contentWidth = pageMetrics.width - (pageMetrics.marginX * 2);
   const topY = pageMetrics.height - pageMetrics.marginTop;
@@ -326,8 +344,8 @@ function drawSectionGuide(page, report, config, yCursor, pageMetrics) {
   const wrapped = lines.flatMap((lineText) => wrapText(lineText, pageMetrics.width - (pageMetrics.marginX * 2) - 190, 9, 2));
   const lineHeight = 12;
   const boxHeight = Math.max(76, 26 + (wrapped.length * lineHeight));
-  const boxY = Math.max(44, Math.min(132, yCursor - boxHeight - 18));
-  if (boxY < 44) return;
+  const boxY = Math.max(44, yCursor - boxHeight - 18);
+  if (boxY < 44) return null;
 
   const boxWidth = pageMetrics.width - (pageMetrics.marginX * 2);
   const statWidth = 150;
@@ -341,6 +359,7 @@ function drawSectionGuide(page, report, config, yCursor, pageMetrics) {
   });
   page.push(text(statX + 12, boxY + boxHeight - 26, guide.highlightLabel || "", { size: 8.5, color: COLORS.muted }));
   page.push(text(statX + 12, boxY + boxHeight - 50, guide.highlightValue || "-", { font: "bold", size: 16, color: COLORS.ink }));
+  return { boxY, boxHeight };
 }
 
 function drawSectionCards(page, cards, pageMetrics) {
@@ -358,11 +377,13 @@ function drawSectionCards(page, cards, pageMetrics) {
   });
 }
 
-function drawSectionAtmosphere(page, config, yCursor, pageMetrics) {
-  const panelTop = Math.min(286, yCursor - 16);
+function drawSectionAtmosphere(page, config, yCursor, guidePlacement, pageMetrics) {
+  const panelTop = guidePlacement
+    ? guidePlacement.boxY - 14
+    : Math.min(286, yCursor - 16);
   const panelY = 54;
   const panelHeight = panelTop - panelY;
-  if (panelHeight < 120) return;
+  if (panelHeight < 80) return;
 
   const label = config.key === "payments"
     ? "Zahlungen"
@@ -381,8 +402,8 @@ function drawSectionAtmosphere(page, config, yCursor, pageMetrics) {
 
   page.push(rect(pageMetrics.marginX, panelY, pageMetrics.width - (pageMetrics.marginX * 2), panelHeight, COLORS.panel));
   page.push(line(pageMetrics.marginX, panelTop, pageMetrics.width - pageMetrics.marginX, panelTop, COLORS.line, 0.8));
-  page.push(text(pageMetrics.width - pageMetrics.marginX - 82, panelY + panelHeight - 40, number, { font: "bold", size: 34, color: [215, 223, 231] }));
-  page.push(text(pageMetrics.width - pageMetrics.marginX - 182, panelY + 34, label, { font: "bold", size: 18, color: [208, 217, 226] }));
+  page.push(text(pageMetrics.width - pageMetrics.marginX - 70, panelY + panelHeight - 34, number, { font: "bold", size: 26, color: [221, 228, 234] }));
+  page.push(text(pageMetrics.width - pageMetrics.marginX - 140, panelY + 28, label, { font: "bold", size: 14, color: [214, 222, 229] }));
 }
 
 function drawTablePage(page, report, config, rows, pageIndex, pageCount, pageMetrics) {
@@ -460,8 +481,8 @@ function drawTablePage(page, report, config, rows, pageIndex, pageCount, pageMet
     yCursor -= 28;
   }
 
-  drawSectionAtmosphere(page, config, yCursor, pageMetrics);
-  drawSectionGuide(page, report, config, yCursor, pageMetrics);
+  const guidePlacement = drawSectionGuide(page, report, config, yCursor, pageMetrics);
+  drawSectionAtmosphere(page, config, yCursor, guidePlacement, pageMetrics);
 }
 
 function appendFooter(page, report, pageNumber, pageCount, pageMetrics) {
@@ -477,11 +498,12 @@ function buildPages(report) {
   PDF_TABLES.forEach((config) => {
     const rowsSource = config.rows(report);
     const rows = typeof config.rowSort === "function" ? config.rowSort(rowsSource) : rowsSource;
-    const pageChunks = chunkRows(rows, config.pageCapacity?.first || 16, config.pageCapacity?.next || 20);
+    const resolvedConfig = resolvePdfTableConfig(config, rows);
+    const pageChunks = chunkRows(rows, resolvedConfig.pageCapacity?.first || 16, resolvedConfig.pageCapacity?.next || 20);
     pageChunks.forEach((chunk, index) => {
-      const pageSpec = { commands: [], layout: config.pageLayout || "portrait" };
+      const pageSpec = { commands: [], layout: resolvedConfig.pageLayout || "portrait" };
       pages.push(pageSpec);
-      drawTablePage(pageSpec.commands, report, config, chunk, index, pageChunks.length, getPageMetrics(pageSpec.layout));
+      drawTablePage(pageSpec.commands, report, resolvedConfig, chunk, index, pageChunks.length, getPageMetrics(pageSpec.layout));
     });
   });
 
