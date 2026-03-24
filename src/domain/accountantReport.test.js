@@ -401,6 +401,7 @@ test("accountant report bundle: standard zip contains only pdf and xlsx, optiona
   assert.ok(pdfText.includes("Was diese Zahlen bedeuten"));
   assert.ok(pdfText.includes("Ware im Monat angekommen"));
   assert.ok(pdfText.includes("Warenbestand zum Monatsende"));
+  assert.ok(pdfText.includes("/MediaBox [0 0 842 595]"));
 
   const csvBundle = await buildAccountantReportBundleFromState(state, {
     month: "2026-01",

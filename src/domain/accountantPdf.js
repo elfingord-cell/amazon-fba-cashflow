@@ -4,7 +4,8 @@ import {
   hasWarningHint,
 } from "./accountantPresentation.js";
 
-const PAGE = { width: 595, height: 842, marginX: 40, marginTop: 40, marginBottom: 36 };
+const PAGE_PORTRAIT = { width: 595, height: 842, marginX: 40, marginTop: 40, marginBottom: 36 };
+const PAGE_LANDSCAPE = { width: 842, height: 595, marginX: 42, marginTop: 34, marginBottom: 30 };
 const COLORS = {
   ink: [28, 37, 46],
   muted: [96, 108, 124],
@@ -23,6 +24,8 @@ const COLORS = {
 const PDF_TABLES = [
   {
     key: "payments",
+    pageLayout: "portrait",
+    pageCapacity: { first: 16, next: 20 },
     title: "Zahlungen an Lieferanten",
     subtitle: (report) => `${report.zahlungenLieferanten.length} im Monat bezahlte Vorgaenge`,
     rows: (report) => report.zahlungenLieferanten || [],
@@ -38,6 +41,8 @@ const PDF_TABLES = [
   },
   {
     key: "arrivals",
+    pageLayout: "portrait",
+    pageCapacity: { first: 16, next: 20 },
     title: "Ware im Monat angekommen",
     subtitle: (report) => `${report.wareneingaenge.length} bestaetigte Wareneingaenge im Monat`,
     rows: (report) => report.wareneingaenge || [],
@@ -52,20 +57,26 @@ const PDF_TABLES = [
   },
   {
     key: "inventory",
+    pageLayout: "landscape",
+    pageCapacity: { first: 10, next: 12 },
     title: "Warenbestand zum Monatsende",
     subtitle: (report) => `Bestandsstichtag ${formatAccountantDisplayValue("date", report.inventory?.snapshotAsOf)}`,
     rows: (report) => report.warenbestandRows || [],
     rowSort: (rows) => rows.slice().sort((left, right) => (Number(right?.bestandswertEur) || 0) - (Number(left?.bestandswertEur) || 0)),
     columns: [
-      { key: "artikelnummerSku", label: "Artikelnummer", width: 92, cellType: "text", maxLines: 2 },
-      { key: "artikelbezeichnung", label: "Artikel", width: 158, cellType: "text", maxLines: 2 },
-      { key: "gesamtbestand", label: "Bestand", width: 54, cellType: "integer", align: "right" },
-      { key: "einstandspreisEur", label: "Einstandspreis", width: 72, cellType: "currency", align: "right" },
-      { key: "bestandswertEur", label: "Bestandswert", width: 82, cellType: "currency", align: "right" },
-      { key: "hinweis", label: "Hinweis", width: 57, cellType: "text", maxLines: 2 },
+      { key: "artikelnummerSku", label: "Artikelnummer", width: 150, cellType: "text", maxLines: 1 },
+      { key: "artikelbezeichnung", label: "Artikel", width: 260, cellType: "text", maxLines: 1 },
+      { key: "gesamtbestand", label: "Bestand", width: 70, cellType: "integer", align: "right" },
+      { key: "einstandspreisEur", label: "Einstandspreis", width: 90, cellType: "currency", align: "right" },
+      { key: "bestandswertEur", label: "Bestandswert", width: 110, cellType: "currency", align: "right" },
+      { key: "hinweis", label: "Hinweis", width: 80, cellType: "text", maxLines: 1 },
     ],
   },
 ];
+
+function getPageMetrics(layout) {
+  return layout === "landscape" ? PAGE_LANDSCAPE : PAGE_PORTRAIT;
+}
 
 function rgb(values) {
   return values.map((value) => (value / 255).toFixed(3)).join(" ");
@@ -175,25 +186,25 @@ function chunkRows(rows, firstPageCapacity, nextPageCapacity) {
   return pages;
 }
 
-function drawCoverPage(page, report) {
-  const contentWidth = PAGE.width - (PAGE.marginX * 2);
-  const topY = PAGE.height - PAGE.marginTop;
-  page.push(rect(0, PAGE.height - 206, PAGE.width, 206, COLORS.brand));
-  page.push(rect(0, PAGE.height - 214, PAGE.width, 8, COLORS.accent));
-  page.push(rect(PAGE.marginX, PAGE.height - 270, contentWidth, 74, COLORS.accentSoft));
-  page.push(text(PAGE.marginX, topY - 6, `Buchhaltung ${report.request?.month || ""}`, { font: "bold", size: 28, color: COLORS.white }));
-  page.push(text(PAGE.marginX, topY - 36, "Klarer Ueberblick fuer den Monatsabschluss", { size: 12, color: [223, 230, 236] }));
-  page.push(text(PAGE.width - PAGE.marginX - 128, topY - 10, "Bitte zuerst diese Seite lesen", { size: 10, color: [223, 230, 236] }));
-  page.push(text(PAGE.marginX + 16, PAGE.height - 224, "Bitte diese Excel-Datei fuer die Details verwenden", { font: "bold", size: 11, color: COLORS.ink }));
-  page.push(text(PAGE.marginX + 16, PAGE.height - 246, report.uebersicht?.verbindlicheDatei || "-", { font: "bold", size: 12, color: COLORS.ink }));
-  page.push(text(PAGE.marginX + 16, PAGE.height - 262, "Diese PDF ist die Uebersicht. Fuer die Arbeit nutzen Sie die Excel-Datei.", { size: 10, color: COLORS.muted }));
+function drawCoverPage(page, report, pageMetrics) {
+  const contentWidth = pageMetrics.width - (pageMetrics.marginX * 2);
+  const topY = pageMetrics.height - pageMetrics.marginTop;
+  page.push(rect(0, pageMetrics.height - 206, pageMetrics.width, 206, COLORS.brand));
+  page.push(rect(0, pageMetrics.height - 214, pageMetrics.width, 8, COLORS.accent));
+  page.push(rect(pageMetrics.marginX, pageMetrics.height - 270, contentWidth, 74, COLORS.accentSoft));
+  page.push(text(pageMetrics.marginX, topY - 6, `Buchhaltung ${report.request?.month || ""}`, { font: "bold", size: 28, color: COLORS.white }));
+  page.push(text(pageMetrics.marginX, topY - 36, "Klarer Ueberblick fuer den Monatsabschluss", { size: 12, color: [223, 230, 236] }));
+  page.push(text(pageMetrics.width - pageMetrics.marginX - 128, topY - 10, "Bitte zuerst diese Seite lesen", { size: 10, color: [223, 230, 236] }));
+  page.push(text(pageMetrics.marginX + 16, pageMetrics.height - 224, "Bitte diese Excel-Datei fuer die Details verwenden", { font: "bold", size: 11, color: COLORS.ink }));
+  page.push(text(pageMetrics.marginX + 16, pageMetrics.height - 246, report.uebersicht?.verbindlicheDatei || "-", { font: "bold", size: 12, color: COLORS.ink }));
+  page.push(text(pageMetrics.marginX + 16, pageMetrics.height - 262, "Diese PDF ist die Uebersicht. Fuer die Arbeit nutzen Sie die Excel-Datei.", { size: 10, color: COLORS.muted }));
 
   const cards = buildOverviewCards(report);
   const cardGap = 14;
   const cardWidth = (contentWidth - cardGap) / 2;
   const cardHeight = 62;
-  let x = PAGE.marginX;
-  let yTop = PAGE.height - 304;
+  let x = pageMetrics.marginX;
+  let yTop = pageMetrics.height - 304;
 
   cards.forEach((card, index) => {
     const boxY = yTop - cardHeight;
@@ -201,7 +212,7 @@ function drawCoverPage(page, report) {
     page.push(text(x + 14, yTop - 20, card.label, { size: 9, color: COLORS.muted }));
     page.push(text(x + 14, yTop - 44, card.value, { font: "bold", size: 15, color: COLORS.ink }));
     if (index % 2 === 1) {
-      x = PAGE.marginX;
+      x = pageMetrics.marginX;
       yTop -= cardHeight + cardGap;
     } else {
       x += cardWidth + cardGap;
@@ -209,8 +220,8 @@ function drawCoverPage(page, report) {
   });
 
   const guideY = 164;
-  page.push(rect(PAGE.marginX, guideY, contentWidth, 138, COLORS.brandSoft, COLORS.line, 0.8));
-  page.push(text(PAGE.marginX + 16, guideY + 100, "So nutzen Sie dieses Paket", { font: "bold", size: 12, color: COLORS.ink }));
+  page.push(rect(pageMetrics.marginX, guideY, contentWidth, 138, COLORS.brandSoft, COLORS.line, 0.8));
+  page.push(text(pageMetrics.marginX + 16, guideY + 100, "So nutzen Sie dieses Paket", { font: "bold", size: 12, color: COLORS.ink }));
   [
     "1. Seite 1 zeigt den Monat auf einen Blick.",
     `2. Arbeiten Sie fuer Details in der Datei ${report.uebersicht?.verbindlicheDatei || "-"}.`,
@@ -220,17 +231,17 @@ function drawCoverPage(page, report) {
     "6. 'Ankunft' auf der Zahlungsseite meint die geplante Ankunft der Ware.",
     "7. Gelb bedeutet: geplant oder noch offen. Rot bedeutet: bitte kurz pruefen.",
   ].forEach((lineText, index) => {
-    page.push(text(PAGE.marginX + 16, guideY + 78 - (index * 14), lineText, { size: 10, color: COLORS.ink }));
+    page.push(text(pageMetrics.marginX + 16, guideY + 78 - (index * 14), lineText, { size: 10, color: COLORS.ink }));
   });
 
   const noteY = 26;
-  page.push(rect(PAGE.marginX, noteY, contentWidth, 126, COLORS.panel, COLORS.line, 0.8));
-  page.push(text(PAGE.marginX + 16, noteY + 98, "Was diese Zahlen bedeuten", { font: "bold", size: 12, color: COLORS.ink }));
+  page.push(rect(pageMetrics.marginX, noteY, contentWidth, 126, COLORS.panel, COLORS.line, 0.8));
+  page.push(text(pageMetrics.marginX + 16, noteY + 98, "Was diese Zahlen bedeuten", { font: "bold", size: 12, color: COLORS.ink }));
   wrapText(report.uebersicht?.bewertungsgrundlageText || "-", contentWidth - 32, 10, 4).forEach((lineText, index) => {
-    page.push(text(PAGE.marginX + 16, noteY + 74 - (index * 14), lineText, { size: 10, color: COLORS.ink }));
+    page.push(text(pageMetrics.marginX + 16, noteY + 74 - (index * 14), lineText, { size: 10, color: COLORS.ink }));
   });
   wrapText(report.uebersicht?.vollstaendigkeitInnerhalbPlattformText || "-", contentWidth - 32, 9, 3).forEach((lineText, index) => {
-    page.push(text(PAGE.marginX + 16, noteY + 18 - (index * 13), lineText, { size: 9, color: COLORS.muted }));
+    page.push(text(pageMetrics.marginX + 16, noteY + 18 - (index * 13), lineText, { size: 9, color: COLORS.muted }));
   });
 }
 
@@ -297,35 +308,35 @@ function buildSectionGuide(config, report) {
   };
 }
 
-function drawSectionGuide(page, report, config, yCursor) {
+function drawSectionGuide(page, report, config, yCursor, pageMetrics) {
   const guide = buildSectionGuide(config, report);
   const lines = Array.isArray(guide?.lines) ? guide.lines : [];
-  const wrapped = lines.flatMap((lineText) => wrapText(lineText, PAGE.width - (PAGE.marginX * 2) - 190, 9, 2));
+  const wrapped = lines.flatMap((lineText) => wrapText(lineText, pageMetrics.width - (pageMetrics.marginX * 2) - 190, 9, 2));
   const lineHeight = 12;
   const boxHeight = Math.max(76, 26 + (wrapped.length * lineHeight));
   const boxY = Math.max(44, Math.min(132, yCursor - boxHeight - 18));
   if (boxY < 44) return;
 
-  const boxWidth = PAGE.width - (PAGE.marginX * 2);
+  const boxWidth = pageMetrics.width - (pageMetrics.marginX * 2);
   const statWidth = 150;
-  const statX = PAGE.marginX + boxWidth - statWidth - 14;
-  page.push(rect(PAGE.marginX, boxY, boxWidth, boxHeight, COLORS.accentSoft, COLORS.line, 0.8));
-  page.push(rect(PAGE.marginX, boxY, 6, boxHeight, COLORS.accent));
+  const statX = pageMetrics.marginX + boxWidth - statWidth - 14;
+  page.push(rect(pageMetrics.marginX, boxY, boxWidth, boxHeight, COLORS.accentSoft, COLORS.line, 0.8));
+  page.push(rect(pageMetrics.marginX, boxY, 6, boxHeight, COLORS.accent));
   page.push(rect(statX, boxY + 12, statWidth, boxHeight - 24, COLORS.white, COLORS.line, 0.8));
-  page.push(text(PAGE.marginX + 18, boxY + boxHeight - 18, "Kurz erklaert", { font: "bold", size: 10, color: COLORS.ink }));
+  page.push(text(pageMetrics.marginX + 18, boxY + boxHeight - 18, "Kurz erklaert", { font: "bold", size: 10, color: COLORS.ink }));
   wrapped.forEach((lineText, index) => {
-    page.push(text(PAGE.marginX + 18, boxY + boxHeight - 34 - (index * lineHeight), lineText, { size: 9, color: COLORS.ink }));
+    page.push(text(pageMetrics.marginX + 18, boxY + boxHeight - 34 - (index * lineHeight), lineText, { size: 9, color: COLORS.ink }));
   });
   page.push(text(statX + 12, boxY + boxHeight - 26, guide.highlightLabel || "", { size: 8.5, color: COLORS.muted }));
   page.push(text(statX + 12, boxY + boxHeight - 50, guide.highlightValue || "-", { font: "bold", size: 16, color: COLORS.ink }));
 }
 
-function drawSectionCards(page, cards) {
+function drawSectionCards(page, cards, pageMetrics) {
   const cardGap = 10;
-  const cardWidth = Math.floor((PAGE.width - (PAGE.marginX * 2) - (cardGap * 2)) / 3);
-  const topY = PAGE.height - 120;
+  const cardWidth = Math.floor((pageMetrics.width - (pageMetrics.marginX * 2) - (cardGap * 2)) / 3);
+  const topY = pageMetrics.height - 120;
   cards.forEach((card, index) => {
-    const x = PAGE.marginX + (index * (cardWidth + cardGap));
+    const x = pageMetrics.marginX + (index * (cardWidth + cardGap));
     const y = topY - 48;
     page.push(rect(x, y, cardWidth, 48, COLORS.white, [206, 216, 226], 0.8));
     wrapText(card.label, cardWidth - 20, 8, 2).forEach((lineText, lineIndex) => {
@@ -335,7 +346,7 @@ function drawSectionCards(page, cards) {
   });
 }
 
-function drawSectionAtmosphere(page, config, yCursor) {
+function drawSectionAtmosphere(page, config, yCursor, pageMetrics) {
   const panelTop = Math.min(286, yCursor - 16);
   const panelY = 54;
   const panelHeight = panelTop - panelY;
@@ -356,13 +367,13 @@ function drawSectionAtmosphere(page, config, yCursor) {
         ? "03"
         : "04";
 
-  page.push(rect(PAGE.marginX, panelY, PAGE.width - (PAGE.marginX * 2), panelHeight, COLORS.panel));
-  page.push(line(PAGE.marginX, panelTop, PAGE.width - PAGE.marginX, panelTop, COLORS.line, 0.8));
-  page.push(text(PAGE.width - PAGE.marginX - 82, panelY + panelHeight - 40, number, { font: "bold", size: 34, color: [215, 223, 231] }));
-  page.push(text(PAGE.width - PAGE.marginX - 182, panelY + 34, label, { font: "bold", size: 18, color: [208, 217, 226] }));
+  page.push(rect(pageMetrics.marginX, panelY, pageMetrics.width - (pageMetrics.marginX * 2), panelHeight, COLORS.panel));
+  page.push(line(pageMetrics.marginX, panelTop, pageMetrics.width - pageMetrics.marginX, panelTop, COLORS.line, 0.8));
+  page.push(text(pageMetrics.width - pageMetrics.marginX - 82, panelY + panelHeight - 40, number, { font: "bold", size: 34, color: [215, 223, 231] }));
+  page.push(text(pageMetrics.width - pageMetrics.marginX - 182, panelY + 34, label, { font: "bold", size: 18, color: [208, 217, 226] }));
 }
 
-function drawTablePage(page, report, config, rows, pageIndex, pageCount) {
+function drawTablePage(page, report, config, rows, pageIndex, pageCount, pageMetrics) {
   const title = pageIndex === 0 ? config.title : `${config.title} (Fortsetzung ${pageIndex + 1}/${pageCount})`;
   const subtitle = typeof config.subtitle === "function" ? config.subtitle(report) : String(config.subtitle || "");
   const helperText = config.key === "payments"
@@ -374,16 +385,20 @@ function drawTablePage(page, report, config, rows, pageIndex, pageCount) {
         : "Hier sehen Sie Punkte, die bitte geprueft werden sollten.";
   const sectionCards = buildSectionCards(report);
 
-  page.push(rect(0, PAGE.height - 112, PAGE.width, 112, COLORS.brand));
-  page.push(rect(0, PAGE.height - 120, PAGE.width, 8, COLORS.accent));
-  page.push(text(PAGE.marginX, PAGE.height - 54, title, { font: "bold", size: 18, color: COLORS.white }));
-  page.push(text(PAGE.marginX, PAGE.height - 78, subtitle, { size: 10, color: [223, 230, 236] }));
-  page.push(text(PAGE.marginX, PAGE.height - 94, helperText, { size: 9, color: [223, 230, 236] }));
-  page.push(text(PAGE.width - PAGE.marginX - 120, PAGE.height - 54, report.uebersicht?.verbindlicheDatei || "-", { size: 9, color: [223, 230, 236] }));
-  drawSectionCards(page, sectionCards[config.key] || sectionCards.quality);
+  page.push(rect(0, pageMetrics.height - 112, pageMetrics.width, 112, COLORS.brand));
+  page.push(rect(0, pageMetrics.height - 120, pageMetrics.width, 8, COLORS.accent));
+  page.push(text(pageMetrics.marginX, pageMetrics.height - 54, title, { font: "bold", size: 18, color: COLORS.white }));
+  page.push(text(pageMetrics.marginX, pageMetrics.height - 78, subtitle, { size: 10, color: [223, 230, 236] }));
+  page.push(text(pageMetrics.marginX, pageMetrics.height - 94, helperText, { size: 9, color: [223, 230, 236] }));
+  const fileLabel = report.uebersicht?.verbindlicheDatei || "-";
+  const fileLines = wrapText(fileLabel, Math.min(180, pageMetrics.width * 0.28), 9, 2);
+  fileLines.forEach((lineText, lineIndex) => {
+    page.push(text(pageMetrics.width - pageMetrics.marginX - 160, pageMetrics.height - 54 - (lineIndex * 11), lineText, { size: 9, color: [223, 230, 236] }));
+  });
+  drawSectionCards(page, sectionCards[config.key] || sectionCards.quality, pageMetrics);
 
-  const tableX = PAGE.marginX;
-  const tableTop = PAGE.height - 186;
+  const tableX = pageMetrics.marginX;
+  const tableTop = pageMetrics.height - 186;
   const headerHeight = 24;
   const tableWidth = config.columns.reduce((sum, column) => sum + column.width, 0);
 
@@ -435,28 +450,28 @@ function drawTablePage(page, report, config, rows, pageIndex, pageCount) {
     yCursor -= 28;
   }
 
-  drawSectionAtmosphere(page, config, yCursor);
-  drawSectionGuide(page, report, config, yCursor);
+  drawSectionAtmosphere(page, config, yCursor, pageMetrics);
+  drawSectionGuide(page, report, config, yCursor, pageMetrics);
 }
 
-function appendFooter(page, report, pageNumber, pageCount) {
-  page.push(line(PAGE.marginX, 28, PAGE.width - PAGE.marginX, 28, COLORS.line, 0.8));
-  page.push(text(PAGE.marginX, 14, `Buchhaltung ${report.request?.month || ""}`, { size: 9, color: COLORS.muted }));
-  page.push(text(PAGE.width - PAGE.marginX - 86, 14, `Seite ${pageNumber} von ${pageCount}`, { size: 9, color: COLORS.muted }));
+function appendFooter(page, report, pageNumber, pageCount, pageMetrics) {
+  page.push(line(pageMetrics.marginX, 28, pageMetrics.width - pageMetrics.marginX, 28, COLORS.line, 0.8));
+  page.push(text(pageMetrics.marginX, 14, `Buchhaltung ${report.request?.month || ""}`, { size: 9, color: COLORS.muted }));
+  page.push(text(pageMetrics.width - pageMetrics.marginX - 86, 14, `Seite ${pageNumber} von ${pageCount}`, { size: 9, color: COLORS.muted }));
 }
 
 function buildPages(report) {
-  const pages = [[]];
-  drawCoverPage(pages[0], report);
+  const pages = [{ commands: [], layout: "portrait" }];
+  drawCoverPage(pages[0].commands, report, getPageMetrics("portrait"));
 
   PDF_TABLES.forEach((config) => {
     const rowsSource = config.rows(report);
     const rows = typeof config.rowSort === "function" ? config.rowSort(rowsSource) : rowsSource;
-    const pageChunks = chunkRows(rows, 16, 20);
+    const pageChunks = chunkRows(rows, config.pageCapacity?.first || 16, config.pageCapacity?.next || 20);
     pageChunks.forEach((chunk, index) => {
-      const page = [];
-      pages.push(page);
-      drawTablePage(page, report, config, chunk, index, pageChunks.length);
+      const pageSpec = { commands: [], layout: config.pageLayout || "portrait" };
+      pages.push(pageSpec);
+      drawTablePage(pageSpec.commands, report, config, chunk, index, pageChunks.length, getPageMetrics(pageSpec.layout));
     });
   });
 
@@ -473,17 +488,18 @@ function buildPages(report) {
     };
     const chunks = chunkRows(report.pruefhinweise, 14, 18);
     chunks.forEach((chunk, index) => {
-      const page = [];
-      pages.push(page);
-      drawTablePage(page, report, qualityConfig, chunk, index, chunks.length);
+      const pageSpec = { commands: [], layout: "portrait" };
+      pages.push(pageSpec);
+      drawTablePage(pageSpec.commands, report, qualityConfig, chunk, index, chunks.length, getPageMetrics("portrait"));
     });
   }
 
   const totalPages = pages.length;
-  return pages.map((commands, index) => {
-    appendFooter(commands, report, index + 1, totalPages);
+  return pages.map((pageSpec, index) => {
+    appendFooter(pageSpec.commands, report, index + 1, totalPages, getPageMetrics(pageSpec.layout));
     return {
-      commands,
+      commands: pageSpec.commands,
+      layout: pageSpec.layout,
       pageNumber: index + 1,
     };
   });
@@ -507,7 +523,8 @@ function buildPdfBytes(report) {
   pageSpecs.forEach((pageSpec) => {
     const stream = pageSpec.commands.join("\n");
     const contentId = addObject(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
-    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${PAGE.width} ${PAGE.height}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    const pageMetrics = getPageMetrics(pageSpec.layout);
+    const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageMetrics.width} ${pageMetrics.height}] /Resources << /Font << /F1 ${regularFontId} 0 R /F2 ${boldFontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
     pageIds.push(pageId);
   });
 
