@@ -5,6 +5,7 @@ import {
 } from "../../domain/inventoryProjection.js";
 import { parseDeNumber } from "../../lib/dataHealth.js";
 import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
+import { buildSharedPlanProductProjection } from "../../domain/planProducts.js";
 import { resolveMasterDataHierarchy } from "./masterDataHierarchy";
 import { addMonths, currentMonthKey, normalizeMonthKey } from "./months";
 import {
@@ -811,26 +812,28 @@ function buildActions(input: {
 export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): DashboardRobustnessResult {
   const months = Array.from(new Set((Array.isArray(input.months) ? input.months : []).filter(isMonth))).sort();
   const state = input.state || {};
-  const products = (Array.isArray(state.products) ? state.products : [])
+  const sharedPlanProjection = buildSharedPlanProductProjection({ state, months });
+  const planningState = sharedPlanProjection.planningState || state;
+  const products = (Array.isArray(planningState.products) ? planningState.products : [])
     .map((entry) => (entry || {}) as Record<string, unknown>)
     .filter((entry) => normalizeSku(entry.sku));
   const activeProducts = products.filter(isActiveProduct);
   const activeSkuCount = activeProducts.length;
-  const hasFixcostBasis = Array.isArray(state.fixcosts) && state.fixcosts.length > 0;
-  const vatInfo = resolveVatConfig(state);
-  const revenueIssues = buildRevenueInputIssues(state, activeProducts);
+  const hasFixcostBasis = Array.isArray(planningState.fixcosts) && planningState.fixcosts.length > 0;
+  const vatInfo = resolveVatConfig(planningState);
+  const revenueIssues = buildRevenueInputIssues(planningState, activeProducts);
   const missingPriceSkuSet = new Set(revenueIssues.missingPrice.map((entry) => normalizeSkuKey(entry.sku)));
   const nowMonth = currentMonthKey();
-  const projectionMode = resolveProjectionModeForCoverage(state);
-  const settings = (state.settings && typeof state.settings === "object")
-    ? state.settings as Record<string, unknown>
+  const projectionMode = resolveProjectionModeForCoverage(planningState);
+  const settings = (planningState.settings && typeof planningState.settings === "object")
+    ? planningState.settings as Record<string, unknown>
     : {};
   const pastMonths = months.filter((month) => month < nowMonth);
   const futureMonths = months.filter((month) => month >= nowMonth);
   const emptyProjection: ProjectionCoverageLookup = { perSkuMonth: new Map() };
   const pastProjection = pastMonths.length
     ? computeInventoryProjection({
-      state,
+      state: planningState,
       months: pastMonths,
       products: activeProducts,
       snapshot: null,
@@ -840,7 +843,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
     : emptyProjection;
   const futureProjection = futureMonths.length
     ? computeInventoryProjection({
-      state,
+      state: planningState,
       months: futureMonths,
       products: activeProducts,
       snapshot: null,
@@ -848,10 +851,10 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
       projectionMode,
     }) as ProjectionCoverageLookup
     : emptyProjection;
-  const abcBySku = computeAbcClassification(state).bySku;
+  const abcBySku = computeAbcClassification(planningState).bySku;
   const shortageAcceptanceBySku = resolveShortageAcceptancesBySku(settings);
   const orderDutyBySku = buildOrderDutyProfiles({
-    state,
+    state: planningState,
     products: activeProducts,
     months,
     projection: futureProjection,
@@ -897,7 +900,7 @@ export function buildDashboardRobustness(input: BuildDashboardRobustnessInput): 
           issueType: monthIssueType,
         }))
         : false;
-      const lookaheadDays = resolveStockLookaheadDays(state, product);
+      const lookaheadDays = resolveStockLookaheadDays(planningState, product);
       const lookaheadMonths = resolveLookaheadWindowMonths({
         month,
         months,

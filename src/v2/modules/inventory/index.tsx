@@ -62,7 +62,7 @@ import {
 } from "../../state/uiPrefs";
 import { useWorkspaceState } from "../../state/workspace";
 import { useLocation, useNavigate } from "react-router-dom";
-import { buildPlanProductForecastRows } from "../../../domain/planProducts.js";
+import { buildSharedPlanProductProjection } from "../../../domain/planProducts.js";
 import { parseVentory3plPaste } from "./ventory3plPasteParser.js";
 import { parseVentoryFbaPaste } from "./ventoryFbaPasteParser.js";
 
@@ -434,50 +434,6 @@ function parsePositiveNumber(value: unknown): number | null {
   return parsed;
 }
 
-function parseNonNegativeNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return parsed;
-}
-
-function normalizeTransportMode(value: unknown): "SEA" | "RAIL" | "AIR" {
-  const raw = String(value || "").trim().toUpperCase();
-  if (raw === "SEA" || raw === "RAIL" || raw === "AIR") return raw;
-  return "SEA";
-}
-
-function resolveTransitDaysForTransport(
-  settings: Record<string, unknown>,
-  transportMode: "SEA" | "RAIL" | "AIR",
-): number | null {
-  const leadTimes = (settings.transportLeadTimesDays || {}) as Record<string, unknown>;
-  const direct = parsePositiveNumber(leadTimes[transportMode.toLowerCase()]);
-  if (direct != null) return Math.round(direct);
-  const fallbackSea = parsePositiveNumber(leadTimes.sea);
-  if (fallbackSea != null) return Math.round(fallbackSea);
-  return null;
-}
-
-function normalizeSkuToken(value: unknown, fallback = "PLAN"): string {
-  const cleaned = String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return cleaned || fallback;
-}
-
-function ensureUniqueSku(baseSku: string, usedKeys: Set<string>): string {
-  const base = normalizeSkuToken(baseSku, "PLAN");
-  let candidate = base;
-  let cursor = 2;
-  while (usedKeys.has(candidate.toLowerCase())) {
-    candidate = `${base}-${cursor}`;
-    cursor += 1;
-  }
-  return candidate;
-}
-
 function estimateLeadTimeDays(product: Record<string, unknown> | null, settings: Record<string, unknown>): number {
   const production = parsePositiveNumber(product?.productionLeadTimeDaysDefault)
     ?? parsePositiveNumber(settings.defaultProductionLeadTimeDays)
@@ -775,94 +731,45 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     return monthRange(currentMonthKey(), count);
   }, [settings.horizonMonths]);
 
-  const virtualPlanProducts = useMemo<VirtualPlanProductEntry[]>(() => {
-    const baseProducts = (Array.isArray(state.products) ? state.products : []) as Record<string, unknown>[];
-    const usedSkuKeys = new Set(
-      baseProducts
-        .map((entry) => String(entry?.sku || "").trim().toLowerCase())
-        .filter(Boolean),
-    );
-    const rows = buildPlanProductForecastRows({
+  const sharedPlanProjection = useMemo(
+    () => buildSharedPlanProductProjection({
       state: stateObject,
       months: planForecastMonths,
-    }) as Record<string, unknown>[];
-
-    const out: VirtualPlanProductEntry[] = [];
-    rows.forEach((row, index) => {
-      const include = normalizeIncludeInForecast(row.includeInForecast, true);
-      if (!include) return;
-      const status = String(row.status || "").trim().toLowerCase();
-      if (status && status !== "active" && status !== "aktiv") return;
-      const mappedSku = String(row.mappedSku || "").trim();
-      if (mappedSku) return;
-
-      const alias = String(row.alias || "").trim();
-      if (!alias) return;
-      const requestedSku = String(row.plannedSku || "").trim();
-      const fallbackSku = `PLAN-${normalizeSkuToken(row.id || alias, String(index + 1))}`;
-      const sku = ensureUniqueSku(requestedSku || fallbackSku, usedSkuKeys);
-      usedSkuKeys.add(sku.toLowerCase());
-
-      const transportMode = normalizeTransportMode(row.transportMode);
-      const transitDays = parsePositiveNumber(row.transitDays)
-        ?? resolveTransitDaysForTransport(settings, transportMode);
-      const productionLead = parsePositiveNumber(row.productionLeadTimeDaysDefault);
-      const unitPriceUsd = parsePositiveNumber(row.unitPriceUsd);
-      const logisticsPerUnitEur = parseNonNegativeNumber(row.logisticsPerUnitEur ?? row.freightPerUnitEur);
-      const plannedUnitsByMonth: Record<string, number> = {};
-      const unitsByMonth = row.unitsByMonth && typeof row.unitsByMonth === "object"
-        ? row.unitsByMonth as Record<string, unknown>
-        : {};
-      Object.entries(unitsByMonth).forEach(([monthRaw, unitsRaw]) => {
-        const month = normalizeMonthKey(monthRaw);
-        const units = Number(unitsRaw);
-        if (!month || !Number.isFinite(units)) return;
-        plannedUnitsByMonth[month] = Math.max(0, Math.round(units));
-      });
-
-      out.push({
-        sku,
-        raw: {
-          ...row,
-          id: `plan-virtual-${String(row.id || index + 1)}`,
+    }) as {
+      entries?: Array<Record<string, unknown>>;
+      forecastUnitsBySkuMonth?: Record<string, Record<string, number>>;
+    },
+    [planForecastMonths, stateObject],
+  );
+  const virtualPlanProducts = useMemo<VirtualPlanProductEntry[]>(() => {
+    return (Array.isArray(sharedPlanProjection.entries) ? sharedPlanProjection.entries : [])
+      .map((entry) => {
+        const row = entry as Record<string, unknown>;
+        const raw = (row.virtualProduct && typeof row.virtualProduct === "object")
+          ? row.virtualProduct as Record<string, unknown>
+          : null;
+        const sku = String(row.planningSku || raw?.sku || "").trim();
+        if (!raw || !sku) return null;
+        return {
           sku,
-          alias,
-          status: "active",
-          includeInForecast: true,
-          productionLeadTimeDaysDefault: productionLead != null ? Math.round(productionLead) : null,
-          transportMode,
-          transitDays: transitDays != null ? Math.round(transitDays) : null,
-          unitPriceUsd: unitPriceUsd != null ? Number(unitPriceUsd) : null,
-          logisticsPerUnitEur: logisticsPerUnitEur != null ? Number(logisticsPerUnitEur) : null,
-          freightPerUnitEur: logisticsPerUnitEur != null ? Number(logisticsPerUnitEur) : null,
-          template: {
-            scope: "SKU",
-            name: "Planprodukt",
-            fields: {
-              transportMode,
-              transitDays: transitDays != null ? Math.round(transitDays) : null,
-              productionDays: productionLead != null ? Math.round(productionLead) : null,
-              unitPriceUsd: unitPriceUsd != null ? Number(unitPriceUsd) : null,
-              freightEur: logisticsPerUnitEur != null ? Number(logisticsPerUnitEur) : null,
-            },
-          },
-          __planVirtual: true,
-          __planProductId: String(row.id || ""),
-        },
-        plannedUnitsByMonth,
-      });
-    });
-
-    return out;
-  }, [planForecastMonths, settings, state.forecast, state.planProducts, state.products, stateObject]);
+          raw,
+          plannedUnitsByMonth: (
+            row.plannedUnitsByMonth && typeof row.plannedUnitsByMonth === "object"
+              ? row.plannedUnitsByMonth
+              : {}
+          ) as Record<string, number>,
+        } satisfies VirtualPlanProductEntry;
+      })
+      .filter((entry): entry is VirtualPlanProductEntry => Boolean(entry));
+  }, [sharedPlanProjection.entries]);
 
   const virtualPlanForecastBySku = useMemo<Record<string, Record<string, number>>>(() => {
-    const out: Record<string, Record<string, number>> = {};
-    virtualPlanProducts.forEach((entry) => {
-      out[entry.sku] = { ...entry.plannedUnitsByMonth };
-    });
-    return out;
-  }, [virtualPlanProducts]);
+    return {
+      ...((sharedPlanProjection.forecastUnitsBySkuMonth && typeof sharedPlanProjection.forecastUnitsBySkuMonth === "object")
+        ? sharedPlanProjection.forecastUnitsBySkuMonth
+        : {}),
+    };
+  }, [sharedPlanProjection.forecastUnitsBySkuMonth]);
 
   const productRows = useMemo(() => {
     const realRows = (Array.isArray(state.products) ? state.products : [])

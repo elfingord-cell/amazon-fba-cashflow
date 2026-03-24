@@ -1,5 +1,6 @@
 import { computeInventoryProjection } from "../../domain/inventoryProjection.js";
 import { normalizeIncludeInForecast } from "../../domain/portfolioBuckets.js";
+import { buildSharedPlanProductProjection } from "../../domain/planProducts.js";
 import { buildDashboardRobustness } from "./dashboardRobustness";
 import { addMonths, currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 
@@ -117,12 +118,14 @@ export function buildReadinessGate(input: BuildReadinessGateInput): ReadinessGat
     ? Math.max(1, Math.round(Number(input.horizonMonths)))
     : 12;
   const months = monthRange(currentMonthKey(), horizonMonths);
+  const sharedPlanProjection = buildSharedPlanProductProjection({ state, months });
+  const planningState = (sharedPlanProjection.planningState || state) as Record<string, unknown>;
   const robustness = buildDashboardRobustness({ state, months });
   const robustPassed = robustness.robustMonthsCount >= months.length && months.length > 0;
 
-  const projectionProducts = buildProjectionProducts(state);
+  const projectionProducts = buildProjectionProducts(planningState);
   const projection = computeInventoryProjection({
-    state,
+    state: planningState,
     months,
     products: projectionProducts,
     snapshot: null,

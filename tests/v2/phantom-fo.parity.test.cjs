@@ -79,9 +79,11 @@ function buildState(input) {
       ],
     },
     forecast: {
+      forecastImport: input.forecastImport || {},
       forecastManual: input.forecastManual,
     },
     products: input.products,
+    planProducts: input.planProducts || [],
     suppliers: [{ id: "sup-1", name: "Supplier 1" }],
     pos: [],
     fos: [],
@@ -390,5 +392,55 @@ test("accepted shortage risk removes the open PFO and clears the matching robust
     )),
     false,
     "Akzeptiertes Risiko darf keine Bestands-/Bestellpflicht-Blocker für diesen Monat mehr erzeugen.",
+  );
+});
+
+test("active procurement-ready plan products generate PFO suggestions through the shared path", async () => {
+  const now = currentMonthKey();
+  const months = monthRange(now, 6);
+  const state = buildState({
+    settings: {
+      startMonth: now,
+      horizonMonths: 6,
+    },
+    snapshotItems: [],
+    forecastImport: {
+      "REF-PLAN": {
+        [months[0]]: { units: 120 },
+      },
+    },
+    forecastManual: {},
+    products: [],
+    planProducts: [
+      {
+        id: "plan-alpha",
+        alias: "Plan Alpha",
+        plannedSku: "PLAN-ALPHA",
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-PLAN",
+        baselineReferenceMonth: Number(months[0].slice(5, 7)),
+        baselineUnitsInReferenceMonth: 120,
+        avgSellingPriceGrossEUR: 20,
+        sellerboardMarginPct: 30,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 2,
+        logisticsPerUnitEur: 1,
+        launchDate: `${months[0]}-01`,
+      },
+    ],
+  });
+
+  const suggestions = buildPhantomFoSuggestions({ state, months });
+  assert.ok(
+    suggestions.some((entry) => entry.alias === "Plan Alpha"),
+    "Ein aktives, forecast-includiertes und procurement-ready Planprodukt muss einen PFO-Vorschlag erzeugen.",
+  );
+
+  const robustness = buildDashboardRobustness({ state, months });
+  assert.ok(
+    robustness.activeSkuCount >= 1,
+    "Dashboard-Robustness muss Planprodukte im Shared-Path als aktive SKU sehen.",
   );
 });

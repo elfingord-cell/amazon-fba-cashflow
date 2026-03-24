@@ -46,6 +46,7 @@ import {
 import { ensureForecastVersioningContainers } from "../../domain/forecastVersioning";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import { PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
+import { buildSharedPlanProductProjection } from "../../../domain/planProducts.js";
 import { useWorkspaceState } from "../../state/workspace";
 import { useNavigate } from "react-router-dom";
 import { v2ChartPalette, v2DashboardChartColors } from "../../app/chartPalette";
@@ -576,6 +577,10 @@ export default function DashboardModule(): JSX.Element {
     : "hybrid";
   const quoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
   const showPhantomFoInChart = settings.dashboardShowPhantomFoInChart === true;
+  const sharedPlanProjection = useMemo(
+    () => buildSharedPlanProductProjection({ state: stateObject }),
+    [stateObject],
+  );
   const persistDashboardCashInSettings = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
     await saveWith((current) => {
       const next = structuredClone(current);
@@ -602,12 +607,15 @@ export default function DashboardModule(): JSX.Element {
     [phantomFoSuggestions],
   );
   const planningState = useMemo(
-    () => buildStateWithPhantomFos({ state: stateObject, suggestions: phantomFoSuggestions }),
-    [phantomFoSuggestions, stateObject],
+    () => buildStateWithPhantomFos({
+      state: (sharedPlanProjection?.planningState || stateObject) as Record<string, unknown>,
+      suggestions: phantomFoSuggestions,
+    }),
+    [phantomFoSuggestions, sharedPlanProjection, stateObject],
   );
   const dashboardSeriesState = useMemo(
-    () => (showPhantomFoInChart ? planningState : stateObject),
-    [planningState, showPhantomFoInChart, stateObject],
+    () => (showPhantomFoInChart ? planningState : (sharedPlanProjection?.planningState || stateObject)),
+    [planningState, sharedPlanProjection, showPhantomFoInChart, stateObject],
   );
   const calculationState = useMemo(
     () => applyDashboardCalculationOverrides(dashboardSeriesState, {
