@@ -24,6 +24,15 @@ function parseEuro(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseOptionalStoredNumber(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const raw = String(value).replace(/€/g, "").trim();
+  if (!raw) return null;
+  const parsed = parseDeNumber(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function formatEuro(value) {
   const num = Number(parseEuro(value));
   return Number.isFinite(num)
@@ -736,13 +745,15 @@ function ensureMonthlyActuals(state) {
   Object.entries(state.monthlyActuals).forEach(([month, values]) => {
     if (!/^\d{4}-\d{2}$/.test(month)) return;
     const entry = values && typeof values === "object" ? values : {};
-    const revenue = Number(entry.realRevenueEUR);
-    const payoutRate = Number(entry.realPayoutRatePct);
-    const closing = Number(entry.realClosingBalanceEUR);
+    const revenue = parseOptionalStoredNumber(entry.realRevenueEUR);
+    const payoutRate = parseOptionalStoredNumber(entry.realPayoutRatePct);
+    const closing = parseOptionalStoredNumber(entry.realClosingBalanceEUR);
+    const realFixkosten = parseOptionalStoredNumber(entry.realFixkostenEUR);
     const normalized = {};
-    if (Number.isFinite(revenue)) normalized.realRevenueEUR = revenue;
-    if (Number.isFinite(payoutRate)) normalized.realPayoutRatePct = payoutRate;
-    if (Number.isFinite(closing)) normalized.realClosingBalanceEUR = closing;
+    if (revenue != null) normalized.realRevenueEUR = revenue;
+    if (payoutRate != null) normalized.realPayoutRatePct = payoutRate;
+    if (closing != null) normalized.realClosingBalanceEUR = closing;
+    if (realFixkosten != null) normalized.realFixkostenEUR = realFixkosten;
     if (Object.keys(normalized).length) cleaned[month] = normalized;
   });
   state.monthlyActuals = cleaned;

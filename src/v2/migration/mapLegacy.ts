@@ -247,7 +247,7 @@ function mapMonthlyActuals(
   Object.entries(normalized).forEach(([month, value]) => {
     if (!isObject(value)) return;
     const next = { ...value };
-    ["realRevenueEUR", "realPayoutRatePct", "realClosingBalanceEUR"].forEach((field) => {
+    ["realRevenueEUR", "realPayoutRatePct", "realClosingBalanceEUR", "realFixkostenEUR"].forEach((field) => {
       const parsed = parseDeNumberOrNull(next[field]);
       if (parsed == null) return;
       if (next[field] !== parsed) {

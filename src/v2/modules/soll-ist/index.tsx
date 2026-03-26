@@ -7,6 +7,14 @@ import { computeSeries } from "../../../domain/cashflow.js";
 import { DataTable } from "../../components/DataTable";
 import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
+import {
+  buildFixcostComparisonSnapshot,
+  normalizeFixcostActualInputValue,
+  buildPlannedFixcostByMonth,
+  hasFixcostActualValue,
+  readFixcostActualValue,
+  sameFixcostActualValue,
+} from "../../domain/sollIstFixcost";
 import { useWorkspaceState } from "../../state/workspace";
 import { v2SollIstChartColors } from "../../app/chartPalette";
 import { DeNumberInput } from "../../components/DeNumberInput";
@@ -65,6 +73,15 @@ interface SellerboardActualRow {
   payoutQuotePct: number | null;
 }
 
+interface FixcostInputRow {
+  month: string;
+  planned: number;
+  savedActual: number | null;
+  draftActual: number | null;
+  status: "offen" | "erfasst";
+  dirty: boolean;
+}
+
 const RANGE_OPTIONS: Array<{ value: SollIstRange; label: string; count: number | null }> = [
   { value: "last6", label: "Letzte 6 Monate", count: 6 },
   { value: "last12", label: "Letzte 12 Monate", count: 12 },
@@ -117,6 +134,7 @@ function isMonthClosed(entry: Record<string, unknown> | undefined): boolean {
 }
 
 function formatCurrency(value: unknown): string {
+  if (value == null || value === "") return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
   return number.toLocaleString("de-DE", {
@@ -128,6 +146,7 @@ function formatCurrency(value: unknown): string {
 }
 
 function formatSignedCurrency(value: unknown): string {
+  if (value == null || value === "") return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
   if (number < 0) return `−${formatCurrency(Math.abs(number))}`;
@@ -135,6 +154,7 @@ function formatSignedCurrency(value: unknown): string {
 }
 
 function formatPercent(value: unknown): string {
+  if (value == null || value === "") return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
   return `${number.toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
@@ -210,11 +230,14 @@ export default function SollIstModule(): JSX.Element {
   const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const [range, setRange] = useState<SollIstRange>("last12");
   const [selectedMonth, setSelectedMonth] = useState<string>("");
+  const [selectedFixcostMonth, setSelectedFixcostMonth] = useState<string>("");
   const [closeMonthModalMonth, setCloseMonthModalMonth] = useState<string | null>(null);
   const [closeMonthRevenueEur, setCloseMonthRevenueEur] = useState<number | null>(null);
   const [closeMonthPayoutEur, setCloseMonthPayoutEur] = useState<number | null>(null);
   const [closeMonthClosingBalanceEur, setCloseMonthClosingBalanceEur] = useState<number | null>(null);
+  const [fixcostRealDraftByMonth, setFixcostRealDraftByMonth] = useState<Record<string, number | null>>({});
   const [closingMonthSavePending, setClosingMonthSavePending] = useState(false);
+  const [savingFixcostMonth, setSavingFixcostMonth] = useState<string | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
 
   const stateObject = state as unknown as Record<string, unknown>;
@@ -406,6 +429,36 @@ export default function SollIstModule(): JSX.Element {
     }
   }
 
+  async function saveFixcostActualMonth(month: string): Promise<void> {
+    const draftValue = fixcostRealDraftByMonth[month];
+    const nextValue = Number.isFinite(draftValue as number) ? round2(Number(draftValue)) : null;
+    setSavingFixcostMonth(month);
+    try {
+      await saveWith((current) => {
+        const next = ensureAppStateV2(current);
+        const existing = (next.monthlyActuals && typeof next.monthlyActuals === "object")
+          ? next.monthlyActuals as Record<string, Record<string, unknown>>
+          : {};
+        const nextMonthlyActuals = { ...existing };
+        const monthEntry = (nextMonthlyActuals[month] && typeof nextMonthlyActuals[month] === "object")
+          ? { ...nextMonthlyActuals[month] }
+          : {};
+        if (nextValue == null) delete monthEntry.realFixkostenEUR;
+        else monthEntry.realFixkostenEUR = nextValue;
+        if (Object.keys(monthEntry).length) nextMonthlyActuals[month] = monthEntry;
+        else delete nextMonthlyActuals[month];
+        next.monthlyActuals = nextMonthlyActuals;
+        return next;
+      }, "v2:soll-ist:fixcost-real");
+      messageApi.success(nextValue == null ? "Fixkosten real geleert." : "Fixkosten real gespeichert.");
+    } catch (saveError) {
+      console.error(saveError);
+      messageApi.error(saveError instanceof Error ? saveError.message : "Fixkosten real konnten nicht gespeichert werden.");
+    } finally {
+      setSavingFixcostMonth(null);
+    }
+  }
+
   const visibleRows = useMemo(() => {
     const option = RANGE_OPTIONS.find((entry) => entry.value === range);
     if (!option || option.count == null) return rows;
@@ -422,6 +475,28 @@ export default function SollIstModule(): JSX.Element {
       setSelectedMonth(visibleRows[visibleRows.length - 1].month);
     }
   }, [selectedMonth, visibleRows]);
+
+  useEffect(() => {
+    const nextDrafts: Record<string, number | null> = {};
+    closableWindowMonths.forEach((month) => {
+      nextDrafts[month] = readFixcostActualValue(monthlyActualRaw[month]);
+    });
+    setFixcostRealDraftByMonth(nextDrafts);
+  }, [closableWindowMonths, monthlyActualRaw]);
+
+  useEffect(() => {
+    if (selectedMonth && closableWindowMonths.includes(selectedMonth)) {
+      setSelectedFixcostMonth(selectedMonth);
+      return;
+    }
+    if (!closableWindowMonths.length) {
+      setSelectedFixcostMonth("");
+      return;
+    }
+    if (!selectedFixcostMonth || !closableWindowMonths.includes(selectedFixcostMonth)) {
+      setSelectedFixcostMonth(closableWindowMonths[0]);
+    }
+  }, [closableWindowMonths, selectedFixcostMonth, selectedMonth]);
 
   const selectedRow = useMemo(
     () => visibleRows.find((row) => row.month === selectedMonth) || visibleRows[visibleRows.length - 1] || null,
@@ -478,6 +553,73 @@ export default function SollIstModule(): JSX.Element {
       }))
       .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
   }, [pnlRowsByMonth, selectedRow]);
+
+  const plannedFixcostByMonth = useMemo(
+    () => buildPlannedFixcostByMonth(pnlRowsByMonth),
+    [pnlRowsByMonth],
+  );
+
+  const fixcostComparison = useMemo(
+    () => buildFixcostComparisonSnapshot({
+      months: closableWindowMonths,
+      plannedByMonth: plannedFixcostByMonth,
+      monthlyActuals: monthlyActualRaw,
+      selectedMonth: selectedFixcostMonth,
+    }),
+    [closableWindowMonths, monthlyActualRaw, plannedFixcostByMonth, selectedFixcostMonth],
+  );
+
+  const fixcostInputRows = useMemo<FixcostInputRow[]>(() => {
+    return closableWindowMonths.map((month) => {
+      const savedActual = readFixcostActualValue(monthlyActualRaw[month]);
+      const hasDraft = Object.prototype.hasOwnProperty.call(fixcostRealDraftByMonth, month);
+      const draftActual = hasDraft ? fixcostRealDraftByMonth[month] : savedActual;
+      return {
+        month,
+        planned: round2(Number(plannedFixcostByMonth[month] || 0)),
+        savedActual,
+        draftActual,
+        status: hasFixcostActualValue(savedActual) ? "erfasst" : "offen",
+        dirty: !sameFixcostActualValue(savedActual, draftActual ?? null),
+      };
+    });
+  }, [closableWindowMonths, fixcostRealDraftByMonth, monthlyActualRaw, plannedFixcostByMonth]);
+
+  const fixcostYtdChartOption = useMemo(() => {
+    return {
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        valueFormatter: (value: number) => formatCurrency(value),
+      },
+      legend: { top: 0 },
+      grid: { left: 54, right: 20, top: 36, bottom: 24 },
+      xAxis: {
+        type: "value",
+        axisLabel: {
+          formatter: (value: number) => formatCurrency(value),
+        },
+      },
+      yAxis: {
+        type: "category",
+        data: ["YTD"],
+      },
+      series: [
+        {
+          name: "Fixkosten Soll YTD",
+          type: "bar",
+          data: [fixcostComparison.ytd.planned],
+          itemStyle: { color: v2SollIstChartColors.plannedClosing },
+        },
+        {
+          name: "Fixkosten Ist YTD",
+          type: "bar",
+          data: [fixcostComparison.ytd.actual],
+          itemStyle: { color: v2SollIstChartColors.negative },
+        },
+      ],
+    };
+  }, [fixcostComparison.ytd.actual, fixcostComparison.ytd.planned]);
 
   const closingChartOption = useMemo(() => {
     const firstProvisionalIndex = visibleRows.findIndex((row) => row.provisional);
@@ -842,6 +984,177 @@ export default function SollIstModule(): JSX.Element {
             </table>
           </StatsTableShell>
         </div>
+      </Card>
+
+      <Card>
+        <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
+          <div>
+            <Title level={4} style={{ marginBottom: 0 }}>Fixkosten real</Title>
+            <Text type="secondary">
+              Soll kommt unverändert aus dem Fixkosten-Tab. Ist kommt hier ausschliesslich aus dem Monatsfeld <strong>Fixkosten real</strong>.
+              Delta wird als Soll minus Ist berechnet.
+            </Text>
+          </div>
+          <Space wrap>
+            <Tag color="blue">
+              Monat: {fixcostComparison.selectedMonth ? formatMonthLabel(fixcostComparison.selectedMonth) : "—"}
+            </Tag>
+            <Tag color={fixcostComparison.currentMonth?.status === "erfasst" ? "green" : "gold"}>
+              {fixcostComparison.currentMonth?.status || "offen"}
+            </Tag>
+          </Space>
+        </Space>
+        <div style={{ marginTop: 12 }}>
+          <StatsTableShell>
+            <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 160 }}>Monat</th>
+                  <th style={{ width: 170 }}>Fixkosten Soll</th>
+                  <th style={{ width: 220 }}>Fixkosten real</th>
+                  <th style={{ width: 160 }}>Status</th>
+                  <th style={{ width: 170 }}>Aktion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fixcostInputRows.map((row) => (
+                  <tr key={row.month}>
+                    <td>
+                      <Button
+                        size="small"
+                        type={selectedFixcostMonth === row.month ? "primary" : "default"}
+                        onClick={() => setSelectedFixcostMonth(row.month)}
+                      >
+                        {formatMonthLabel(row.month)}
+                      </Button>
+                      <div><Text type="secondary">{row.month}</Text></div>
+                    </td>
+                    <td>
+                      <Text>{formatCurrency(row.planned)}</Text>
+                    </td>
+                    <td>
+                      <div data-field-key={`soll-ist.fixcost-real.${row.month}`}>
+                        <DeNumberInput
+                          value={row.draftActual ?? undefined}
+                          mode="decimal"
+                          min={0}
+                          step={100}
+                          aria-label={`Fixkosten real ${row.month}`}
+                          onChange={(value) => {
+                            setFixcostRealDraftByMonth((current) => ({
+                              ...current,
+                              [row.month]: normalizeFixcostActualInputValue(value),
+                            }));
+                          }}
+                        />
+                      </div>
+                    </td>
+                    <td>
+                      <Tag color={row.status === "erfasst" ? "green" : "gold"}>
+                        {row.status}
+                      </Tag>
+                    </td>
+                    <td>
+                      <Button
+                        size="small"
+                        type={row.dirty ? "primary" : "default"}
+                        disabled={!row.dirty}
+                        loading={savingFixcostMonth === row.month}
+                        onClick={() => { void saveFixcostActualMonth(row.month); }}
+                      >
+                        Speichern
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </StatsTableShell>
+        </div>
+
+        <Row gutter={[12, 12]} style={{ marginTop: 18 }}>
+          <Col xs={24} xl={14}>
+            <Row gutter={[12, 12]}>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Fixkosten Soll"
+                    value={formatCurrency(fixcostComparison.currentMonth?.planned)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Fixkosten Ist"
+                    value={formatCurrency(fixcostComparison.currentMonth?.actual)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Delta"
+                    value={formatSignedCurrency(fixcostComparison.currentMonth?.delta)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Delta %"
+                    value={formatPercent(fixcostComparison.currentMonth?.deltaPct)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Fixkosten Soll YTD"
+                    value={formatCurrency(fixcostComparison.ytd.planned)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Fixkosten Ist YTD"
+                    value={formatCurrency(fixcostComparison.ytd.actual)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Delta YTD"
+                    value={formatSignedCurrency(fixcostComparison.ytd.delta)}
+                  />
+                </Card>
+              </Col>
+              <Col xs={12} md={6}>
+                <Card size="small">
+                  <Statistic
+                    title="Delta YTD %"
+                    value={formatPercent(fixcostComparison.ytd.deltaPct)}
+                  />
+                </Card>
+              </Col>
+            </Row>
+          </Col>
+
+          <Col xs={24} xl={10}>
+            <Card size="small">
+              <Title level={5}>YTD Vergleich Soll vs Ist</Title>
+              <Paragraph type="secondary">
+                Einfache Balkenansicht fuer den kumulierten Vergleich bis {fixcostComparison.selectedMonth ? formatMonthLabel(fixcostComparison.selectedMonth) : "—"}.
+              </Paragraph>
+              <ReactECharts style={{ height: 220 }} option={fixcostYtdChartOption} />
+              <Text type="secondary">
+                Erfasst YTD: {fixcostComparison.ytd.capturedMonthCount} · offen YTD: {fixcostComparison.ytd.openMonthCount}
+              </Text>
+            </Card>
+          </Col>
+        </Row>
       </Card>
 
       <Modal
