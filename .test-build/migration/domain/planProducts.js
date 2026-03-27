@@ -8,6 +8,7 @@ exports.normalizePlanProductMappingRecord = normalizePlanProductMappingRecord;
 exports.computeSeasonalityFromForecastImport = computeSeasonalityFromForecastImport;
 exports.buildPlanProductForecastRow = buildPlanProductForecastRow;
 exports.buildPlanProductForecastRows = buildPlanProductForecastRows;
+exports.buildSharedPlanProductProjection = buildSharedPlanProductProjection;
 exports.buildPlanProductRevenueByMonth = buildPlanProductRevenueByMonth;
 exports.buildPlanProductRevenueByMonthAndBucket = buildPlanProductRevenueByMonthAndBucket;
 exports.buildPlanVsLiveComparisonRows = buildPlanVsLiveComparisonRows;
@@ -460,6 +461,58 @@ function planningMonthsFromState(state) {
     const count = Number.isFinite(horizon) && horizon > 0 ? Math.round(horizon) : 18;
     return monthRange(startMonth, count);
 }
+function resolveTransportTransitDays(settings, transportMode) {
+    const leadTimes = settings?.transportLeadTimesDays && typeof settings.transportLeadTimesDays === "object"
+        ? settings.transportLeadTimesDays
+        : {};
+    return asPositiveInt(leadTimes[String(transportMode || "").toLowerCase()]
+        ?? leadTimes.sea);
+}
+function hasForecastUnits(unitsByMonth) {
+    return Object.values(unitsByMonth || {}).some((value) => {
+        const units = asNumber(value);
+        return Number.isFinite(units) && Number(units) > 0;
+    });
+}
+function sanitizeVirtualSkuToken(value, fallback = "PLAN") {
+    const token = sanitizeKeyPart(value).toUpperCase();
+    return token || fallback;
+}
+function ensureUniqueVirtualSku(baseSku, usedSkuKeys) {
+    const base = sanitizeVirtualSkuToken(baseSku, "PLAN");
+    let candidate = base;
+    let cursor = 2;
+    while (usedSkuKeys.has(normalizeSku(candidate).toLowerCase())) {
+        candidate = `${base}-${cursor}`;
+        cursor += 1;
+    }
+    return candidate;
+}
+function normalizeUnitsByMonthMap(input) {
+    const out = {};
+    Object.entries(input || {}).forEach(([monthRaw, unitsRaw]) => {
+        const month = normalizeMonthKey(monthRaw);
+        const units = asNumber(unitsRaw);
+        if (!month || !Number.isFinite(units))
+            return;
+        out[month] = Math.max(0, Math.round(Number(units)));
+    });
+    return out;
+}
+function buildMissingPlanningInputs(input) {
+    const missing = [];
+    if (!input.hasForecast)
+        missing.push("forecast_units");
+    if (!input.productionLeadTimeDays)
+        missing.push("production_lead_time_days");
+    if (!input.transitDays)
+        missing.push("transit_days");
+    if (!(Number.isFinite(input.unitPriceUsd) && Number(input.unitPriceUsd) > 0))
+        missing.push("unit_price_usd");
+    if (!Number.isFinite(input.logisticsPerUnitEur))
+        missing.push("logistics_per_unit_eur");
+    return missing;
+}
 function buildPlanProductForecastRow(input) {
     const normalized = normalizePlanProductRecord(input?.planProduct, input?.fallbackIndex || 0);
     const forecastImport = (input?.forecastImport && typeof input.forecastImport === "object")
@@ -536,13 +589,163 @@ function buildPlanProductForecastRows(input) {
     }))
         .filter((row) => row.alias);
 }
+function buildSharedPlanProductProjection(input) {
+    const state = input?.state && typeof input.state === "object" ? input.state : {};
+    const settings = state.settings && typeof state.settings === "object" ? state.settings : {};
+    const months = Array.isArray(input?.months) && input.months.length
+        ? input.months.map((month) => normalizeMonthKey(month)).filter(Boolean)
+        : planningMonthsFromState(state);
+    const rows = buildPlanProductForecastRows({ state, months });
+    const poSkuSet = (0, portfolioBuckets_js_1.collectPoSkuSet)(state);
+    const baseProducts = Array.isArray(state.products) ? state.products : [];
+    const usedSkuKeys = new Set(baseProducts
+        .map((entry) => normalizeSku(entry?.sku).toLowerCase())
+        .filter(Boolean));
+    const existingVirtualProductByPlanId = new Map();
+    baseProducts.forEach((entry) => {
+        const product = entry && typeof entry === "object" ? entry : {};
+        if (product.__planVirtual !== true)
+            return;
+        const planProductId = String(product.__planProductId || "").trim();
+        const sku = normalizeSku(product.sku);
+        if (!planProductId || !sku)
+            return;
+        existingVirtualProductByPlanId.set(planProductId, product);
+    });
+    const forecast = state.forecast && typeof state.forecast === "object" ? state.forecast : {};
+    const manualBase = forecast.forecastManual && typeof forecast.forecastManual === "object"
+        ? forecast.forecastManual
+        : {};
+    const entries = [];
+    const forecastUnitsBySkuMonth = {};
+    const virtualProducts = [];
+    rows.forEach((row, index) => {
+        const normalizedStatus = String(row.status || "").trim().toLowerCase();
+        const active = !normalizedStatus || normalizedStatus === "active" || normalizedStatus === "aktiv";
+        const includeInForecast = (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, active);
+        const plannedUnitsByMonth = normalizeUnitsByMonthMap(row.unitsByMonth);
+        const hasForecast = hasForecastUnits(plannedUnitsByMonth);
+        const transportMode = normalizeTransportMode(row.transportMode);
+        const productionLeadTimeDays = asPositiveInt(row.productionLeadTimeDaysDefault);
+        const transitDays = asPositiveInt(row.transitDays) ?? resolveTransportTransitDays(settings, transportMode);
+        const unitPriceUsd = asNumber(row.unitPriceUsd);
+        const logisticsPerUnitEur = asNumber(row.logisticsPerUnitEur ?? row.freightPerUnitEur);
+        const missingPlanningInputs = buildMissingPlanningInputs({
+            hasForecast,
+            productionLeadTimeDays,
+            transitDays,
+            unitPriceUsd,
+            logisticsPerUnitEur,
+        });
+        const sharedPathEligible = active && includeInForecast && hasForecast;
+        const procurementReady = sharedPathEligible && missingPlanningInputs.length === 0;
+        const mappedSku = normalizeSku(row.mappedSku);
+        const requestedSku = normalizeSku(row.plannedSku);
+        const bucketKey = mappedSku || requestedSku || row.seasonalityReferenceSku || row.alias || row.id || `plan-${index + 1}`;
+        const effectivePortfolioBucket = (0, portfolioBuckets_js_1.resolveEffectivePortfolioBucket)({
+            product: row,
+            sku: bucketKey,
+            poSkuSet,
+            fallbackBucket: portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN,
+        });
+        const existingVirtualProduct = existingVirtualProductByPlanId.get(String(row.id || "").trim()) || null;
+        let planningSku = mappedSku || normalizeSku(existingVirtualProduct?.sku) || null;
+        let virtualProduct = existingVirtualProduct;
+        if (procurementReady && planningSku) {
+            forecastUnitsBySkuMonth[planningSku] = { ...plannedUnitsByMonth };
+        }
+        if (procurementReady && !planningSku) {
+            const fallbackSku = `PLAN-${sanitizeVirtualSkuToken(row.id || row.alias || String(index + 1), String(index + 1))}`;
+            planningSku = ensureUniqueVirtualSku(requestedSku || fallbackSku, usedSkuKeys);
+            usedSkuKeys.add(planningSku.toLowerCase());
+            forecastUnitsBySkuMonth[planningSku] = { ...plannedUnitsByMonth };
+            virtualProduct = {
+                ...row,
+                id: `plan-virtual-${String(row.id || index + 1)}`,
+                sku: planningSku,
+                alias: String(row.alias || planningSku || "").trim(),
+                status: "active",
+                includeInForecast: true,
+                portfolioBucket: effectivePortfolioBucket,
+                transportMode,
+                transitDays,
+                productionLeadTimeDaysDefault: productionLeadTimeDays,
+                unitPriceUsd,
+                logisticsPerUnitEur,
+                freightPerUnitEur: logisticsPerUnitEur,
+                template: {
+                    scope: "SKU",
+                    name: "Planprodukt",
+                    fields: {
+                        transportMode,
+                        transitDays,
+                        productionDays: productionLeadTimeDays,
+                        unitPriceUsd,
+                        freightEur: logisticsPerUnitEur,
+                    },
+                },
+                __planVirtual: true,
+                __planProductId: String(row.id || ""),
+            };
+            virtualProducts.push(virtualProduct);
+        }
+        entries.push({
+            ...row,
+            active,
+            includeInForecast,
+            plannedUnitsByMonth,
+            hasForecast,
+            sharedPathEligible,
+            procurementReady,
+            missingPlanningInputs,
+            effectivePortfolioBucket,
+            planningSku,
+            transportMode,
+            transitDays,
+            productionLeadTimeDays,
+            unitPriceUsd,
+            logisticsPerUnitEur,
+            virtualProduct,
+        });
+    });
+    const planningState = (virtualProducts.length || Object.keys(forecastUnitsBySkuMonth).length)
+        ? {
+            ...state,
+            products: [...baseProducts, ...virtualProducts],
+            forecast: {
+                ...forecast,
+                forecastManual: {
+                    ...(manualBase || {}),
+                    ...Object.fromEntries(Object.entries(forecastUnitsBySkuMonth).map(([sku, byMonth]) => ([
+                        sku,
+                        {
+                            ...((manualBase && typeof manualBase === "object" && manualBase[sku] && typeof manualBase[sku] === "object")
+                                ? manualBase[sku]
+                                : {}),
+                            ...byMonth,
+                        },
+                    ]))),
+                },
+            },
+        }
+        : state;
+    return {
+        months,
+        rows,
+        entries,
+        activeEntries: entries.filter((entry) => entry.sharedPathEligible),
+        sharedPathEntries: entries.filter((entry) => entry.procurementReady),
+        virtualProducts,
+        forecastUnitsBySkuMonth,
+        planningState,
+    };
+}
 function buildPlanProductRevenueByMonth(input) {
     return buildPlanProductRevenueByMonthAndBucket(input).totalsByMonth;
 }
 function buildPlanProductRevenueByMonthAndBucket(input) {
     const months = Array.isArray(input?.months) && input.months.length ? input.months : [];
-    const poSkuSet = (0, portfolioBuckets_js_1.collectPoSkuSet)(input?.state || {});
-    const rows = buildPlanProductForecastRows({
+    const projection = buildSharedPlanProductProjection({
         state: input?.state || {},
         months,
     });
@@ -557,17 +760,8 @@ function buildPlanProductRevenueByMonthAndBucket(input) {
             byBucket[bucket][month] = 0;
         });
     });
-    rows.forEach((row) => {
-        if (row.status !== "active")
-            return;
-        if (!(0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, true))
-            return;
-        const bucket = (0, portfolioBuckets_js_1.resolveEffectivePortfolioBucket)({
-            product: row,
-            sku: row.plannedSku || row.mappedSku || row.seasonalityReferenceSku || row.alias,
-            poSkuSet,
-            fallbackBucket: portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN,
-        });
+    projection.sharedPathEntries.forEach((row) => {
+        const bucket = row.effectivePortfolioBucket || portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN;
         months.forEach((month) => {
             const revenue = asNumber(row.revenueByMonth?.[month]);
             if (!Number.isFinite(revenue))

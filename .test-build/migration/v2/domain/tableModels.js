@@ -212,6 +212,8 @@ function buildForecastProducts(state, categoriesById) {
     const liveRows = (Array.isArray(state.products) ? state.products : [])
         .map((entry) => {
         const product = entry;
+        if (product.__planVirtual === true)
+            return null;
         const sku = String(product.sku || "").trim();
         if (!sku)
             return null;
