@@ -32,6 +32,7 @@ import {
   applyDashboardBucketScopeToBreakdown,
   applyTaxInstancesToBreakdown,
   buildDashboardTaxMatrixGroup,
+  DEFAULT_V2_BUCKET_SCOPE,
   DASHBOARD_TAX_LABELS,
   isDashboardEntryInBucketScope,
   isDashboardPhantomFoEntry,
@@ -144,7 +145,6 @@ const DASHBOARD_BUCKET_OPTIONS = [
   { value: PORTFOLIO_BUCKET.PLAN, label: "Planprodukte" },
   { value: PORTFOLIO_BUCKET.IDEAS, label: "Ideenprodukte" },
 ];
-const DEFAULT_BUCKET_SCOPE = [PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN];
 
 const COVERAGE_STATUS_UI_META: Record<CoverageStatusKey, {
   label: string;
@@ -555,7 +555,7 @@ export default function DashboardModule(): JSX.Element {
   const { state, loading, error, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
   const [range, setRange] = useState<DashboardRange>("next6");
-  const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_BUCKET_SCOPE.slice());
+  const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_V2_BUCKET_SCOPE.slice());
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
   const [expandedPnlRowKeys, setExpandedPnlRowKeys] = useState<string[]>(["inflows", "outflows"]);
@@ -570,6 +570,9 @@ export default function DashboardModule(): JSX.Element {
     : {};
   const forecast = (state.forecast && typeof state.forecast === "object")
     ? state.forecast as Record<string, unknown>
+    : {};
+  const forecastSettings = (forecast.settings && typeof forecast.settings === "object")
+    ? forecast.settings as Record<string, unknown>
     : {};
   const calibrationEnabled = settings.cashInCalibrationEnabled !== false;
   const revenueBasisMode: RevenueBasisMode = String(settings.cashInRevenueBasisMode || "").trim().toLowerCase() === "forecast_direct"
@@ -666,6 +669,10 @@ export default function DashboardModule(): JSX.Element {
 
   const visibleMonthSet = useMemo(() => new Set(visibleMonths), [visibleMonths]);
   const bucketScopeSet = useMemo(() => new Set(bucketScopeValues), [bucketScopeValues]);
+  const planScopeEnabled = bucketScopeSet.has(PORTFOLIO_BUCKET.PLAN);
+  const showPlanForecastScopeHint = planScopeEnabled
+    && sharedPlanProjection.activeEntries.length > 0
+    && forecastSettings.useForecast !== true;
 
   const visibleBreakdown = useMemo(() => {
     const filteredByMonth = dashboardBreakdown.filter((row) => visibleMonthSet.has(row.month));
@@ -1742,7 +1749,7 @@ export default function DashboardModule(): JSX.Element {
 
   function resetCalculationCockpit(): void {
     setRange("next6");
-    setBucketScopeValues(DEFAULT_BUCKET_SCOPE.slice());
+    setBucketScopeValues(DEFAULT_V2_BUCKET_SCOPE.slice());
     setRevenueBasisMode(methodikRevenueBasisMode);
     setCalibrationEnabled(methodikCalibrationEnabled);
     setQuoteMode("manual");
@@ -2097,6 +2104,14 @@ export default function DashboardModule(): JSX.Element {
             <Text type="secondary">
               Bestimmt nur die aktuelle Berechnung im Dashboard. Mindestens eine Produktgruppe bleibt aktiv.
             </Text>
+            {showPlanForecastScopeHint ? (
+              <Alert
+                type="info"
+                showIcon
+                message="Forecast im Cashflow ist deaktiviert"
+                description="Planprodukte bleiben im Forecast sichtbar, erzeugen im Dashboard aber erst Plan-Umsatz, wenn Forecast im Cashflow aktiv ist."
+              />
+            ) : null}
           </div>
 
           <div className="v2-calc-cockpit-module">

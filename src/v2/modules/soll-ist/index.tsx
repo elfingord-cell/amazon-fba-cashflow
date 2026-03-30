@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { LockFilled } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Modal, Row, Select, Space, Statistic, Table, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Modal, Row, Segmented, Select, Space, Statistic, Table, Tag, Typography, message } from "antd";
 import type { ColumnDef } from "@tanstack/react-table";
 import ReactECharts from "echarts-for-react";
 import { computeSeries } from "../../../domain/cashflow.js";
+import { PORTFOLIO_BUCKET } from "../../../domain/portfolioBuckets.js";
+import { buildSharedPlanProductProjection } from "../../../domain/planProducts.js";
 import { DataTable } from "../../components/DataTable";
-import { buildDashboardPnlRowsByMonth, type DashboardBreakdownRow, type DashboardPnlRow } from "../../domain/dashboardMaturity";
+import {
+  buildDashboardPnlRowsByMonth,
+  buildScopedActualComparisons,
+  type DashboardActualComparisonRow,
+  type DashboardBreakdownRow,
+  type DashboardPnlRow,
+} from "../../domain/dashboardMaturity";
+import {
+  applyDashboardBucketScopeToBreakdown,
+  DEFAULT_V2_BUCKET_SCOPE,
+} from "../../domain/dashboardCashflow";
 import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
 import {
   buildFixcostComparisonSnapshot,
@@ -86,6 +98,11 @@ const RANGE_OPTIONS: Array<{ value: SollIstRange; label: string; count: number |
   { value: "last6", label: "Letzte 6 Monate", count: 6 },
   { value: "last12", label: "Letzte 12 Monate", count: 12 },
   { value: "all", label: "Alle Monate", count: null },
+];
+const SOLL_IST_BUCKET_OPTIONS = [
+  { value: PORTFOLIO_BUCKET.CORE, label: "Kernportfolio" },
+  { value: PORTFOLIO_BUCKET.PLAN, label: "Planprodukte" },
+  { value: PORTFOLIO_BUCKET.IDEAS, label: "Ideenprodukte" },
 ];
 
 const PLAN_GROUP_LABEL: Record<DashboardPnlRow["group"], string> = {
@@ -229,6 +246,7 @@ function deriveMonthDrivers(current: SollIstRow, previous: SollIstRow | null): D
 export default function SollIstModule(): JSX.Element {
   const { state, loading, error, saving, saveWith } = useWorkspaceState();
   const [range, setRange] = useState<SollIstRange>("last12");
+  const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_V2_BUCKET_SCOPE.slice());
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [selectedFixcostMonth, setSelectedFixcostMonth] = useState<string>("");
   const [closeMonthModalMonth, setCloseMonthModalMonth] = useState<string | null>(null);
@@ -241,14 +259,35 @@ export default function SollIstModule(): JSX.Element {
   const [messageApi, contextHolder] = message.useMessage();
 
   const stateObject = state as unknown as Record<string, unknown>;
-  const report = useMemo(() => computeSeries(stateObject) as SeriesResult, [stateObject]);
+  const sharedPlanProjection = useMemo(
+    () => buildSharedPlanProductProjection({ state: stateObject }),
+    [stateObject],
+  );
+  const planningState = useMemo(
+    () => (sharedPlanProjection?.planningState || stateObject) as Record<string, unknown>,
+    [sharedPlanProjection, stateObject],
+  );
+  const report = useMemo(() => computeSeries(planningState) as SeriesResult, [planningState]);
+  const bucketScopeSet = useMemo(() => new Set(bucketScopeValues), [bucketScopeValues]);
+  const scopedBreakdown = useMemo(
+    () => applyDashboardBucketScopeToBreakdown(Array.isArray(report.breakdown) ? report.breakdown : [], bucketScopeSet),
+    [bucketScopeSet, report.breakdown],
+  );
+  const scopedActualComparisons = useMemo(
+    () => buildScopedActualComparisons({
+      breakdown: scopedBreakdown,
+      actualComparisons: Array.isArray(report.actualComparisons)
+        ? report.actualComparisons as DashboardActualComparisonRow[]
+        : [],
+    }),
+    [report.actualComparisons, scopedBreakdown],
+  );
 
   const currentMonth = currentMonthKey();
   const currentMonthIdx = monthIndex(currentMonth);
 
   const rows = useMemo<SollIstRow[]>(() => {
-    const source = Array.isArray(report.actualComparisons) ? report.actualComparisons : [];
-    return source
+    return scopedActualComparisons
       .map((row) => {
         const month = String(row.month || "").trim();
         const rowMonthIdx = monthIndex(month);
@@ -277,7 +316,7 @@ export default function SollIstModule(): JSX.Element {
       })
       .filter((row) => row.month)
       .sort((a, b) => a.month.localeCompare(b.month));
-  }, [currentMonthIdx, report.actualComparisons]);
+  }, [currentMonthIdx, scopedActualComparisons]);
 
   const monthlyActualRaw = useMemo<Record<string, Record<string, unknown>>>(() => {
     return (stateObject.monthlyActuals && typeof stateObject.monthlyActuals === "object")
@@ -459,6 +498,19 @@ export default function SollIstModule(): JSX.Element {
     }
   }
 
+  function setBucketScopeEnabled(bucket: string, enabled: boolean): void {
+    setBucketScopeValues((current) => {
+      const normalized = Array.from(new Set((current || []).filter((entry) => SOLL_IST_BUCKET_OPTIONS.some((option) => option.value === entry))));
+      const isSelected = normalized.includes(bucket);
+      if (enabled && !isSelected) return [...normalized, bucket];
+      if (!enabled && isSelected) {
+        const filtered = normalized.filter((entry) => entry !== bucket);
+        return filtered.length ? filtered : normalized;
+      }
+      return normalized;
+    });
+  }
+
   const visibleRows = useMemo(() => {
     const option = RANGE_OPTIONS.find((entry) => entry.value === range);
     if (!option || option.count == null) return rows;
@@ -534,8 +586,8 @@ export default function SollIstModule(): JSX.Element {
   );
 
   const pnlRowsByMonth = useMemo(
-    () => buildDashboardPnlRowsByMonth({ breakdown: Array.isArray(report.breakdown) ? report.breakdown : [], state: stateObject }),
-    [report.breakdown, stateObject],
+    () => buildDashboardPnlRowsByMonth({ breakdown: scopedBreakdown, state: stateObject }),
+    [scopedBreakdown, stateObject],
   );
 
   const selectedPlanGroupRows = useMemo(() => {
@@ -892,7 +944,42 @@ export default function SollIstModule(): JSX.Element {
             <Tag color="gold">Laufender Monat wird als "vorlaeufig" markiert</Tag>
           </div>
         </div>
+        <div className="v2-toolbar" style={{ marginTop: 12 }}>
+          <Space direction="vertical" size={10} style={{ width: "100%" }}>
+            <div>
+              <Text strong>Portfolio-Scope</Text>
+              <div><Text type="secondary">Wirkt auf Soll/P&amp;L und Plan-Details. IST bleibt Gesamt-Ist.</Text></div>
+            </div>
+            <div className="v2-calc-cockpit-toggle-list">
+              {SOLL_IST_BUCKET_OPTIONS.map((option) => {
+                const selected = bucketScopeValues.includes(option.value);
+                const disableOff = selected && bucketScopeValues.length <= 1;
+                return (
+                  <div key={option.value} className="v2-calc-cockpit-toggle-row">
+                    <Text>{option.label}</Text>
+                    <Segmented
+                      size="small"
+                      value={selected ? "on" : "off"}
+                      onChange={(value) => setBucketScopeEnabled(option.value, String(value) === "on")}
+                      options={[
+                        { label: "An", value: "on" },
+                        { label: "Aus", value: "off", disabled: disableOff },
+                      ]}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </Space>
+        </div>
       </Card>
+
+      <Alert
+        type="info"
+        showIcon
+        message="Portfolio-Scope filtert in Soll-Ist nur die Plan-Seite"
+        description="Sellerboard-IST-Werte für Umsatz, Auszahlung und Kontostand bleiben Gesamt-Ist und werden nicht nach Produktgruppen aufgeteilt."
+      />
 
       {!rows.length ? (
         <Alert

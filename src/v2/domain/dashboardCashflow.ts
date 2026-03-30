@@ -72,6 +72,7 @@ export const DASHBOARD_TAX_LABELS = DASHBOARD_TAX_TYPE_CONFIG.reduce((acc, entry
   acc[entry.key] = entry.label;
   return acc;
 }, {} as Record<string, string>);
+export const DEFAULT_V2_BUCKET_SCOPE = [PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN] as const;
 
 function roundCurrencyAmount(value: number): number {
   const numeric = Number(value);
@@ -470,6 +471,7 @@ export function applyDashboardBucketScopeToBreakdown(
     return {
       ...row,
       opening: Number(derived?.opening ?? row.opening ?? 0),
+      plannedClosing: Number(derived?.plannedClosing ?? row.plannedClosing ?? row.closing ?? 0),
       closing: Number(derived?.closing ?? row.closing ?? 0),
       hasActualClosing: derived?.lockedActual === true,
     };

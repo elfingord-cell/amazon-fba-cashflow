@@ -67,7 +67,12 @@ let buildFixcostComparisonSnapshot;
 let buildPlannedFixcostByMonth;
 let normalizeFixcostActualInputValue;
 let buildDashboardPnlRowsByMonth;
+let buildScopedActualComparisons;
+let applyDashboardBucketScopeToBreakdown;
 let computeSeries;
+let buildSharedPlanProductProjection;
+let DEFAULT_V2_BUCKET_SCOPE;
+let PORTFOLIO_BUCKET;
 let createEmptyState;
 let loadState;
 let saveState;
@@ -94,8 +99,17 @@ test.before(async () => {
     buildPlannedFixcostByMonth,
     normalizeFixcostActualInputValue,
   } = await server.ssrLoadModule("/src/v2/domain/sollIstFixcost.ts"));
-  ({ buildDashboardPnlRowsByMonth } = await server.ssrLoadModule("/src/v2/domain/dashboardMaturity.ts"));
+  ({
+    buildDashboardPnlRowsByMonth,
+    buildScopedActualComparisons,
+  } = await server.ssrLoadModule("/src/v2/domain/dashboardMaturity.ts"));
+  ({
+    applyDashboardBucketScopeToBreakdown,
+    DEFAULT_V2_BUCKET_SCOPE,
+  } = await server.ssrLoadModule("/src/v2/domain/dashboardCashflow.ts"));
   ({ computeSeries } = await server.ssrLoadModule("/src/domain/cashflow.js"));
+  ({ buildSharedPlanProductProjection } = await server.ssrLoadModule("/src/domain/planProducts.js"));
+  ({ PORTFOLIO_BUCKET } = await server.ssrLoadModule("/src/domain/portfolioBuckets.js"));
   ({ createEmptyState, loadState, saveState } = await server.ssrLoadModule("/src/data/storageLocal.js"));
 });
 
@@ -255,4 +269,130 @@ test("soll-ist fixkosten keeps plan on the fixkosten path and actual only on rea
   assert.equal(withActual.currentMonth?.planned, 130);
   assert.equal(withActual.currentMonth?.actual, 95);
   assert.equal(withActual.currentMonth?.delta, 35);
+});
+
+test("soll-ist uses the shared default portfolio scope for dashboard-aligned filtering", () => {
+  assert.deepEqual(Array.from(DEFAULT_V2_BUCKET_SCOPE), [
+    PORTFOLIO_BUCKET.CORE,
+    PORTFOLIO_BUCKET.PLAN,
+  ]);
+});
+
+test("soll-ist portfolio scope filters only plan-side values while actuals stay total", () => {
+  const state = {
+    settings: {
+      startMonth: "2026-03",
+      horizonMonths: 3,
+      openingBalance: 1000,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-PLAN": {
+          "2026-03": { units: 100 },
+        },
+      },
+    },
+    products: [],
+    planProducts: [
+      {
+        id: "plan-svi",
+        alias: "Plan Soll-Ist",
+        plannedSku: "PLAN-SVI",
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-PLAN",
+        baselineReferenceMonth: 3,
+        baselineUnitsInReferenceMonth: 100,
+        avgSellingPriceGrossEUR: 20,
+        sellerboardMarginPct: 30,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 4,
+        logisticsPerUnitEur: 1.5,
+        launchDate: "2026-03-01",
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+        launchCosts: [
+          { id: "lc-plan", type: "Samples", amountEur: 300, date: "2026-03-15" },
+        ],
+      },
+    ],
+    incomings: [
+      {
+        id: "inc-svi-mar",
+        month: "2026-03",
+        payoutPct: "40",
+        source: "forecast",
+      },
+    ],
+    fixcosts: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    pos: [],
+    monthlyActuals: {
+      "2026-03": {
+        realRevenueEUR: 1200,
+        realPayoutEur: 600,
+        realPayoutRatePct: 50,
+        realClosingBalanceEUR: 1500,
+      },
+    },
+    status: { autoManualCheck: false, events: {} },
+  };
+
+  const projection = buildSharedPlanProductProjection({ state });
+  const report = computeSeries(projection.planningState);
+  const planScope = new Set([PORTFOLIO_BUCKET.PLAN]);
+  const coreScope = new Set([PORTFOLIO_BUCKET.CORE]);
+
+  const planBreakdown = applyDashboardBucketScopeToBreakdown(report.breakdown, planScope);
+  const coreBreakdown = applyDashboardBucketScopeToBreakdown(report.breakdown, coreScope);
+  const planComparisons = buildScopedActualComparisons({
+    breakdown: planBreakdown,
+    actualComparisons: report.actualComparisons,
+  });
+  const coreComparisons = buildScopedActualComparisons({
+    breakdown: coreBreakdown,
+    actualComparisons: report.actualComparisons,
+  });
+
+  const planMarch = planComparisons.find((row) => row.month === "2026-03");
+  const coreMarch = coreComparisons.find((row) => row.month === "2026-03");
+  assert.ok(planMarch);
+  assert.ok(coreMarch);
+  assert.equal(planMarch.actualRevenue, 1200);
+  assert.equal(coreMarch.actualRevenue, 1200);
+  assert.equal(planMarch.actualPayout, 600);
+  assert.equal(coreMarch.actualPayout, 600);
+  assert.equal(planMarch.plannedRevenue, 2000);
+  assert.equal(planMarch.plannedPayout, 800);
+  assert.equal(coreMarch.plannedRevenue, 0);
+  assert.equal(coreMarch.plannedPayout, 0);
+  assert.ok(Number(planMarch.plannedClosing || 0) > Number(coreMarch.plannedClosing || 0));
+
+  const planPnlRows = buildDashboardPnlRowsByMonth({
+    breakdown: planBreakdown,
+    state,
+  }).get("2026-03") || [];
+  const corePnlRows = buildDashboardPnlRowsByMonth({
+    breakdown: coreBreakdown,
+    state,
+  }).get("2026-03") || [];
+
+  assert.equal(
+    planPnlRows.some((row) => row.source === "sales" && row.portfolioBucket === PORTFOLIO_BUCKET.PLAN),
+    true,
+  );
+  assert.equal(
+    planPnlRows.some((row) => row.label.includes("Launch-Kosten") && row.portfolioBucket === PORTFOLIO_BUCKET.PLAN),
+    true,
+  );
+  assert.equal(
+    corePnlRows.some((row) => row.portfolioBucket === PORTFOLIO_BUCKET.PLAN),
+    false,
+  );
 });

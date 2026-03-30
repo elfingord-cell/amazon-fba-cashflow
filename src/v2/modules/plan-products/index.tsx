@@ -24,7 +24,9 @@ import {
   PLAN_RELATION_TYPES,
   buildPlanProductForecastRow,
   buildPlanProductForecastRows,
+  buildSharedPlanProductProjection,
   computeSeasonalityFromForecastImport,
+  formatPlanProductMissingPlanningInputs,
   monthNumberToLabel,
   normalizeIsoDate,
   normalizePlanProductRecord,
@@ -113,6 +115,33 @@ function resolvePlanProductComparableId(row: unknown, fallbackIndex = 0): string
   return String(normalizePlanProductRecord(record, fallbackIndex).id || "").trim();
 }
 
+function resolvePlanningStatus(entry: Record<string, unknown> | null): {
+  label: string;
+  color: "green" | "gold" | "default";
+  details: string[];
+} {
+  const missingPlanningInputs = formatPlanProductMissingPlanningInputs(entry?.missingPlanningInputs);
+  if (entry?.procurementReady === true) {
+    return {
+      label: "Shared Path aktiv",
+      color: "green",
+      details: [],
+    };
+  }
+  if (entry?.active === true && entry?.includeInForecast !== false) {
+    return {
+      label: "Nicht vollständig",
+      color: "gold",
+      details: missingPlanningInputs,
+    };
+  }
+  return {
+    label: "Nicht aktiv",
+    color: "default",
+    details: [],
+  };
+}
+
 function planDraftFromRow(row?: Record<string, unknown>): PlanProductDraft {
   const normalized = normalizePlanProductRecord(row || {}, 0);
   const launchCostsRaw = Array.isArray(normalized.launchCosts) ? normalized.launchCosts : [];
@@ -199,6 +228,15 @@ export default function PlanProductsModule(): JSX.Element {
       months,
     });
   }, [months, stateObject]);
+  const sharedPlanProjection = useMemo(() => buildSharedPlanProductProjection({
+    state: stateObject,
+    months,
+  }), [months, stateObject]);
+  const projectionEntryById = useMemo(() => {
+    return new Map(
+      (sharedPlanProjection.entries || []).map((entry) => [String(entry.id || ""), entry as Record<string, unknown>]),
+    );
+  }, [sharedPlanProjection.entries]);
 
   const editingRow = useMemo(() => {
     if (!editingId) return null;
@@ -502,8 +540,9 @@ export default function PlanProductsModule(): JSX.Element {
     return planRows.map((row) => ({
       ...row,
       monthPreview: months.slice(0, 3).map((month) => `${formatMonthLabel(month)}: ${formatNumber(row.unitsByMonth?.[month], 0)}`).join(" · "),
+      planningStatus: resolvePlanningStatus(projectionEntryById.get(String(row.id || "")) || null),
     }));
-  }, [months, planRows]);
+  }, [months, planRows, projectionEntryById]);
 
   return (
     <div className="v2-page">
@@ -586,6 +625,22 @@ export default function PlanProductsModule(): JSX.Element {
               key: "includeInForecast",
               sorter: (a, b) => Number(Boolean(a.includeInForecast)) - Number(Boolean(b.includeInForecast)),
               render: (value: unknown) => (value === false ? <Tag>Nein</Tag> : <Tag color="green">Ja</Tag>),
+            },
+            {
+              title: "Planungsstatus",
+              key: "planningStatus",
+              render: (_, row: Record<string, unknown>) => {
+                const planningStatus = (row.planningStatus && typeof row.planningStatus === "object")
+                  ? row.planningStatus as { label?: string; color?: "green" | "gold" | "default"; details?: string[] }
+                  : {};
+                const details = Array.isArray(planningStatus.details) ? planningStatus.details : [];
+                return (
+                  <Space direction="vertical" size={2}>
+                    <Tag color={planningStatus.color || "default"}>{planningStatus.label || "Nicht aktiv"}</Tag>
+                    {details.length ? <Text type="secondary">{details.join(" · ")}</Text> : null}
+                  </Space>
+                );
+              },
             },
             {
               title: "Baseline",

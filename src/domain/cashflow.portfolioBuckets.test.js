@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { computeSeries } from "./cashflow.js";
+import { buildSharedPlanProductProjection } from "./planProducts.js";
 import { PORTFOLIO_BUCKET } from "./portfolioBuckets.js";
 
 function currentMonthKey() {
@@ -57,17 +58,18 @@ test("includeInForecast gates forecast payout and PO events", () => {
         poNo: "PO-A",
         sku: "SKU-A",
         units: 100,
+        goodsEur: 200,
         orderDate: `${month}-01`,
-        payments: [
+        milestones: [
           {
-            id: "po-a-pay",
+            id: "po-a-ms",
             label: "Deposit",
-            amount: 200,
-            dueDate: `${month}-10`,
-            triggerEvent: "ORDER_DATE",
-            offsetDays: 0,
+            percent: 100,
+            anchor: "ORDER_DATE",
+            lagDays: 9,
           },
         ],
+        paymentLog: {},
       },
     ],
     fos: [],
@@ -122,17 +124,18 @@ test("PO existence forces effective core bucket in payout and PO events", () => 
         poNo: "PO-A",
         sku: "SKU-A",
         units: 100,
+        goodsEur: 150,
         orderDate: `${month}-01`,
-        payments: [
+        milestones: [
           {
-            id: "po-a-pay",
+            id: "po-a-ms",
             label: "Deposit",
-            amount: 150,
-            dueDate: `${month}-10`,
-            triggerEvent: "ORDER_DATE",
-            offsetDays: 0,
+            percent: 100,
+            anchor: "ORDER_DATE",
+            lagDays: 9,
           },
         ],
+        paymentLog: {},
       },
     ],
     fos: [],
@@ -202,4 +205,123 @@ test("launch costs are emitted as outflows in product bucket and respect include
   assert.equal(launchEntries.length, 1);
   assert.equal(launchEntries[0].amount, 300);
   assert.equal(launchEntries[0].portfolioBucket, PORTFOLIO_BUCKET.IDEAS);
+});
+
+test("plan product without selling price stays out of shared-path revenue", () => {
+  const month = currentMonthKey();
+  const referenceMonth = Number(month.slice(5, 7));
+  const state = {
+    settings: {
+      startMonth: month,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInQuoteMode: "manual",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-PLAN": {
+          [month]: { units: 100 },
+        },
+      },
+    },
+    incomings: [{ id: `inc-${month}`, month, payoutPct: 40, source: "forecast" }],
+    products: [],
+    planProducts: [
+      {
+        id: "plan-no-price",
+        alias: "Plan No Price",
+        plannedSku: "PLAN-NO-PRICE",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+        seasonalityReferenceSku: "REF-PLAN",
+        baselineReferenceMonth: referenceMonth,
+        baselineUnitsInReferenceMonth: 100,
+        avgSellingPriceGrossEUR: null,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 4,
+        logisticsPerUnitEur: 1,
+        launchDate: `${month}-01`,
+      },
+    ],
+    pos: [],
+    fos: [],
+    extras: [],
+    dividends: [],
+  };
+
+  const projection = buildSharedPlanProductProjection({ state, months: [month] });
+  assert.equal(projection.sharedPathEntries.length, 0);
+  assert.deepEqual(projection.entries[0]?.missingPlanningInputs, ["avg_selling_price_gross_eur"]);
+
+  const report = computeSeries(projection.planningState);
+  const row = findMonth(report, month);
+  assert.ok(row, "month row should exist");
+  const salesPlanEntries = row.entries.filter((entry) => entry.source === "sales-plan");
+  assert.equal(salesPlanEntries.length, 0);
+});
+
+test("virtual plan products do not duplicate launch costs", () => {
+  const month = currentMonthKey();
+  const referenceMonth = Number(month.slice(5, 7));
+  const state = {
+    settings: {
+      startMonth: month,
+      horizonMonths: 1,
+      openingBalance: 0,
+      cashInQuoteMode: "manual",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-LAUNCH": {
+          [month]: { units: 100 },
+        },
+      },
+    },
+    incomings: [{ id: `inc-${month}`, month, payoutPct: 40, source: "forecast" }],
+    products: [],
+    planProducts: [
+      {
+        id: "plan-launch",
+        alias: "Plan Launch",
+        plannedSku: "PLAN-LAUNCH",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+        seasonalityReferenceSku: "REF-LAUNCH",
+        baselineReferenceMonth: referenceMonth,
+        baselineUnitsInReferenceMonth: 100,
+        avgSellingPriceGrossEUR: 20,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 4,
+        logisticsPerUnitEur: 1,
+        launchDate: `${month}-01`,
+        launchCosts: [
+          { id: "lc-1", type: "Samples", amountEur: 300, date: `${month}-15` },
+        ],
+      },
+    ],
+    pos: [],
+    fos: [],
+    extras: [],
+    dividends: [],
+  };
+
+  const projection = buildSharedPlanProductProjection({ state, months: [month] });
+  assert.equal(projection.virtualProducts.length, 1);
+
+  const report = computeSeries(projection.planningState);
+  const row = findMonth(report, month);
+  assert.ok(row, "month row should exist");
+  const launchEntries = row.entries.filter((entry) => entry.kind === "launch-cost");
+  assert.equal(launchEntries.length, 1);
+  assert.equal(launchEntries[0].amount, 300);
+  assert.equal(launchEntries[0].sourceTab, "#plan-products");
+  assert.equal(launchEntries[0].portfolioBucket, PORTFOLIO_BUCKET.PLAN);
 });

@@ -1146,3 +1146,162 @@ test("incomplete plan products stay out of dashboard revenue instead of being ha
   });
   assert.equal(aggregation.totals.cashIn, 0);
 });
+
+test("plan products without selling price stay out of dashboard revenue through the shared path", async () => {
+  const [{ computeSeries }, { PORTFOLIO_BUCKET }, { buildSharedPlanProductProjection }] = await Promise.all([
+    import("../../src/domain/cashflow.js"),
+    import("../../src/domain/portfolioBuckets.js"),
+    import("../../src/domain/planProducts.js"),
+  ]);
+
+  const state = {
+    settings: {
+      startMonth: "2026-03",
+      horizonMonths: 3,
+      openingBalance: 0,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-NO-PRICE": {
+          "2026-03": { units: 100 },
+        },
+      },
+    },
+    products: [],
+    planProducts: [
+      {
+        id: "plan-no-price",
+        alias: "Plan No Price",
+        plannedSku: "PLAN-NO-PRICE",
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-NO-PRICE",
+        baselineReferenceMonth: 3,
+        baselineUnitsInReferenceMonth: 100,
+        avgSellingPriceGrossEUR: null,
+        sellerboardMarginPct: 30,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 4,
+        logisticsPerUnitEur: 1,
+        launchDate: "2026-03-01",
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+      },
+    ],
+    incomings: [
+      {
+        id: "inc-no-price-mar",
+        month: "2026-03",
+        payoutPct: "40",
+        source: "forecast",
+      },
+    ],
+    fixcosts: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    pos: [],
+    status: { autoManualCheck: false, events: {} },
+  };
+
+  const projection = buildSharedPlanProductProjection({ state });
+  assert.deepEqual(projection.entries[0].missingPlanningInputs, ["avg_selling_price_gross_eur"]);
+  assert.equal(projection.sharedPathEntries.length, 0);
+
+  const report = withMockedNow(
+    new Date("2026-03-15T12:00:00Z"),
+    () => computeSeries(projection.planningState),
+  );
+  const planScope = new Set([PORTFOLIO_BUCKET.PLAN]);
+  const planScoped = applyDashboardBucketScopeToBreakdown(report.breakdown, planScope, {
+    includePhantomFo: true,
+  });
+  const marchPlan = planScoped.find((row) => row.month === "2026-03");
+  assert.ok(marchPlan);
+
+  const aggregation = aggregateDashboardMonthEntries(marchPlan.entries, {
+    bucketScope: planScope,
+    includePhantomFo: true,
+  });
+  assert.equal(aggregation.inflow.amazonPlanned, 0);
+  assert.equal(aggregation.totals.cashIn, 0);
+});
+
+test("plan product launch costs appear exactly once in dashboard plan scope", async () => {
+  const [{ computeSeries }, { PORTFOLIO_BUCKET }, { buildSharedPlanProductProjection }] = await Promise.all([
+    import("../../src/domain/cashflow.js"),
+    import("../../src/domain/portfolioBuckets.js"),
+    import("../../src/domain/planProducts.js"),
+  ]);
+
+  const state = {
+    settings: {
+      startMonth: "2026-03",
+      horizonMonths: 3,
+      openingBalance: 0,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-LAUNCH": {
+          "2026-03": { units: 100 },
+        },
+      },
+    },
+    products: [],
+    planProducts: [
+      {
+        id: "plan-launch-cost",
+        alias: "Plan Launch Cost",
+        plannedSku: "PLAN-LAUNCH-COST",
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-LAUNCH",
+        baselineReferenceMonth: 3,
+        baselineUnitsInReferenceMonth: 100,
+        avgSellingPriceGrossEUR: 20,
+        sellerboardMarginPct: 30,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 4,
+        logisticsPerUnitEur: 1,
+        launchDate: "2026-03-01",
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+        launchCosts: [
+          { id: "lc-1", type: "Samples", amountEur: 300, date: "2026-03-15" },
+        ],
+      },
+    ],
+    incomings: [],
+    fixcosts: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    pos: [],
+    status: { autoManualCheck: false, events: {} },
+  };
+
+  const projection = buildSharedPlanProductProjection({ state });
+  const report = withMockedNow(
+    new Date("2026-03-15T12:00:00Z"),
+    () => computeSeries(projection.planningState),
+  );
+  const planScope = new Set([PORTFOLIO_BUCKET.PLAN]);
+  const planScoped = applyDashboardBucketScopeToBreakdown(report.breakdown, planScope, {
+    includePhantomFo: true,
+  });
+  const marchPlan = planScoped.find((row) => row.month === "2026-03");
+  assert.ok(marchPlan);
+
+  const launchEntries = marchPlan.entries.filter((entry) => entry.kind === "launch-cost");
+  assert.equal(launchEntries.length, 1);
+  assert.equal(launchEntries[0].amount, 300);
+  assert.equal(launchEntries[0].portfolioBucket, PORTFOLIO_BUCKET.PLAN);
+});

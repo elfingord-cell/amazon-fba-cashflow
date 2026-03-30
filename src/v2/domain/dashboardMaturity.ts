@@ -99,6 +99,21 @@ export interface DashboardPnlRow {
   };
 }
 
+export interface DashboardActualComparisonRow {
+  month: string;
+  plannedRevenue: number | null;
+  actualRevenue: number | null;
+  revenueDelta: number;
+  revenueDeltaPct: number | null;
+  plannedPayout: number | null;
+  actualPayout: number | null;
+  payoutDelta: number;
+  payoutDeltaPct: number | null;
+  plannedClosing: number | null;
+  actualClosing: number | null;
+  closingDelta: number;
+}
+
 interface ProjectionCellData {
   endAvailable?: number | null;
   safetyUnits?: number | null;
@@ -507,4 +522,76 @@ export function buildDashboardPnlRowsByMonth(input: {
   });
 
   return result;
+}
+
+function readScopedPlannedRevenue(entry: DashboardEntry): number | null {
+  const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta as Record<string, unknown> : {};
+  const cashInMeta = (meta.cashIn && typeof meta.cashIn === "object") ? meta.cashIn as Record<string, unknown> : {};
+  const revenue = Number(cashInMeta.revenue);
+  return Number.isFinite(revenue) ? Number(revenue) : null;
+}
+
+export function buildScopedActualComparisons(input: {
+  breakdown: DashboardBreakdownRow[];
+  actualComparisons: DashboardActualComparisonRow[];
+}): DashboardActualComparisonRow[] {
+  const plannedByMonth = new Map<string, {
+    plannedRevenue: number;
+    plannedPayout: number;
+    plannedClosing: number | null;
+  }>();
+
+  (Array.isArray(input.breakdown) ? input.breakdown : []).forEach((row) => {
+    const month = String(row.month || "").trim();
+    if (!month) return;
+    let plannedRevenue = 0;
+    let plannedPayout = 0;
+    (Array.isArray(row.entries) ? row.entries : []).forEach((entry) => {
+      if (String(entry.kind || "").toLowerCase() !== "sales-payout") return;
+      const revenue = readScopedPlannedRevenue(entry);
+      if (Number.isFinite(revenue)) plannedRevenue += Number(revenue);
+      const payoutRaw = asNumber(entry.amount);
+      if (Number.isFinite(payoutRaw as number) && Number(payoutRaw) > 0) {
+        plannedPayout += Math.abs(Number(payoutRaw));
+      }
+    });
+    plannedByMonth.set(month, {
+      plannedRevenue,
+      plannedPayout,
+      plannedClosing: Number.isFinite(Number(row.plannedClosing)) ? Number(row.plannedClosing) : null,
+    });
+  });
+
+  return (Array.isArray(input.actualComparisons) ? input.actualComparisons : [])
+    .map((row) => {
+      const month = String(row.month || "").trim();
+      if (!month) return null;
+      const planned = plannedByMonth.get(month) || {
+        plannedRevenue: 0,
+        plannedPayout: 0,
+        plannedClosing: null,
+      };
+      const actualRevenue = Number.isFinite(Number(row.actualRevenue)) ? Number(row.actualRevenue) : null;
+      const actualPayout = Number.isFinite(Number(row.actualPayout)) ? Number(row.actualPayout) : null;
+      const actualClosing = Number.isFinite(Number(row.actualClosing)) ? Number(row.actualClosing) : null;
+      const plannedRevenue = planned.plannedRevenue;
+      const plannedPayout = planned.plannedPayout;
+      const plannedClosing = planned.plannedClosing;
+      return {
+        month,
+        plannedRevenue,
+        actualRevenue,
+        revenueDelta: (actualRevenue ?? 0) - plannedRevenue,
+        revenueDeltaPct: plannedRevenue ? (((actualRevenue ?? 0) - plannedRevenue) / plannedRevenue) * 100 : null,
+        plannedPayout,
+        actualPayout,
+        payoutDelta: (actualPayout ?? 0) - plannedPayout,
+        payoutDeltaPct: plannedPayout ? (((actualPayout ?? 0) - plannedPayout) / plannedPayout) * 100 : null,
+        plannedClosing,
+        actualClosing,
+        closingDelta: (actualClosing ?? 0) - (plannedClosing ?? 0),
+      };
+    })
+    .filter((row): row is DashboardActualComparisonRow => Boolean(row?.month))
+    .sort((left, right) => left.month.localeCompare(right.month));
 }

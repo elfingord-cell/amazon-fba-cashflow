@@ -10,6 +10,14 @@ import {
 } from "./portfolioBuckets.js";
 
 export const PLAN_RELATION_TYPES = ["standalone", "variant_of_existing", "category_adjacent"];
+export const PLAN_PRODUCT_MISSING_INPUT_LABELS = Object.freeze({
+  forecast_units: "Forecast-Mengen",
+  production_lead_time_days: "Produktionszeit",
+  transit_days: "Transitzeit",
+  unit_price_usd: "Einkaufspreis (USD)",
+  logistics_per_unit_eur: "Logistik/Fracht pro Unit",
+  avg_selling_price_gross_eur: "Verkaufspreis brutto (EUR)",
+});
 
 const CALENDAR_MONTHS = ["Jan", "Feb", "Maerz", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -509,7 +517,16 @@ function buildMissingPlanningInputs(input) {
   if (!input.transitDays) missing.push("transit_days");
   if (!(Number.isFinite(input.unitPriceUsd) && Number(input.unitPriceUsd) > 0)) missing.push("unit_price_usd");
   if (!Number.isFinite(input.logisticsPerUnitEur)) missing.push("logistics_per_unit_eur");
+  if (!(Number.isFinite(input.avgSellingPriceGrossEUR) && Number(input.avgSellingPriceGrossEUR) > 0)) {
+    missing.push("avg_selling_price_gross_eur");
+  }
   return missing;
+}
+
+export function formatPlanProductMissingPlanningInputs(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => PLAN_PRODUCT_MISSING_INPUT_LABELS[String(value || "").trim()] || String(value || "").trim())
+    .filter(Boolean);
 }
 
 export function buildPlanProductForecastRow(input) {
@@ -635,12 +652,14 @@ export function buildSharedPlanProductProjection(input) {
     const transitDays = asPositiveInt(row.transitDays) ?? resolveTransportTransitDays(settings, transportMode);
     const unitPriceUsd = asNumber(row.unitPriceUsd);
     const logisticsPerUnitEur = asNumber(row.logisticsPerUnitEur ?? row.freightPerUnitEur);
+    const avgSellingPriceGrossEUR = asNumber(row.avgSellingPriceGrossEUR);
     const missingPlanningInputs = buildMissingPlanningInputs({
       hasForecast,
       productionLeadTimeDays,
       transitDays,
       unitPriceUsd,
       logisticsPerUnitEur,
+      avgSellingPriceGrossEUR,
     });
     const sharedPathEligible = active && includeInForecast && hasForecast;
     const procurementReady = sharedPathEligible && missingPlanningInputs.length === 0;
@@ -712,6 +731,7 @@ export function buildSharedPlanProductProjection(input) {
       productionLeadTimeDays,
       unitPriceUsd,
       logisticsPerUnitEur,
+      avgSellingPriceGrossEUR,
       virtualProduct,
     });
   });
