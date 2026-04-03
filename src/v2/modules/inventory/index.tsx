@@ -36,6 +36,7 @@ import {
   currentMonthKey,
   formatMonthEndLabel,
   formatMonthLabel,
+  monthIndex,
   monthRange,
   normalizeMonthKey,
 } from "../../domain/months";
@@ -400,6 +401,48 @@ function resolveLatestSnapshotMonth(state: Record<string, unknown>): string | nu
   return snapshots[snapshots.length - 1] || null;
 }
 
+function buildSnapshotMonthOptions(
+  snapshotEntries: unknown[],
+  currentMonth: string,
+  selectedMonth?: string | null,
+): string[] {
+  const normalizedCurrentMonth = normalizeMonthKey(currentMonth) || currentMonthKey();
+  const snapshotMonths = snapshotEntries
+    .map((entry) => normalizeMonthKey((entry as Record<string, unknown>)?.month))
+    .filter(Boolean) as string[];
+  const normalizedSelectedMonth = normalizeMonthKey(selectedMonth);
+  const fallbackStartMonth = addMonths(normalizedCurrentMonth, -1);
+
+  const startCandidates = [fallbackStartMonth, normalizedSelectedMonth, ...snapshotMonths]
+    .filter(Boolean) as string[];
+
+  let startMonth = normalizedCurrentMonth;
+  startCandidates.forEach((month) => {
+    const candidateIndex = monthIndex(month);
+    const currentStartIndex = monthIndex(startMonth);
+    if (candidateIndex == null) return;
+    if (currentStartIndex == null || candidateIndex < currentStartIndex) {
+      startMonth = month;
+    }
+  });
+
+  const startIndex = monthIndex(startMonth);
+  const endIndex = [normalizedCurrentMonth, ...snapshotMonths].reduce<number | null>((max, m) => {
+    const idx = monthIndex(m);
+    return idx != null && (max == null || idx > max) ? idx : max;
+  }, monthIndex(normalizedCurrentMonth));
+  const contiguousMonths = startIndex != null && endIndex != null && endIndex >= startIndex
+    ? monthRange(startMonth, endIndex - startIndex + 1)
+    : [];
+
+  return Array.from(new Set([
+    ...contiguousMonths,
+    ...snapshotMonths,
+    normalizedCurrentMonth,
+    normalizedSelectedMonth,
+  ].filter(Boolean) as string[])).sort((left, right) => left.localeCompare(right));
+}
+
 function toCategoryGroups(
   rows: InventoryProductRow[],
   categoryOrderMap: Map<string, number>,
@@ -661,16 +704,14 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     if (params.get("expand") === "all") setExpandProjectionFromQuery(true);
   }, [location.search]);
 
+  const now = currentMonthKey();
   const monthOptions = useMemo(() => {
-    const months = new Set<string>();
-    months.add(currentMonthKey());
-    (Array.isArray(inventory.snapshots) ? inventory.snapshots : []).forEach((entry) => {
-      const row = entry as Record<string, unknown>;
-      const month = normalizeMonthKey(row.month);
-      if (month) months.add(month);
-    });
-    return Array.from(months).sort();
-  }, [inventory.snapshots]);
+    return buildSnapshotMonthOptions(
+      Array.isArray(inventory.snapshots) ? inventory.snapshots : [],
+      now,
+      selectedMonth,
+    );
+  }, [inventory.snapshots, selectedMonth, now]);
 
   const latestSnapshotMonth = useMemo(
     () => resolveLatestSnapshotMonth(stateObject),
