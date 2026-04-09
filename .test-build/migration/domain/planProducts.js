@@ -1,11 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PLAN_RELATION_TYPES = void 0;
+exports.PLAN_PRODUCT_MISSING_INPUT_LABELS = exports.PLAN_RELATION_TYPES = void 0;
 exports.normalizeIsoDate = normalizeIsoDate;
 exports.buildPlanProductKey = buildPlanProductKey;
 exports.normalizePlanProductRecord = normalizePlanProductRecord;
 exports.normalizePlanProductMappingRecord = normalizePlanProductMappingRecord;
 exports.computeSeasonalityFromForecastImport = computeSeasonalityFromForecastImport;
+exports.formatPlanProductMissingPlanningInputs = formatPlanProductMissingPlanningInputs;
 exports.buildPlanProductForecastRow = buildPlanProductForecastRow;
 exports.buildPlanProductForecastRows = buildPlanProductForecastRows;
 exports.buildSharedPlanProductProjection = buildSharedPlanProductProjection;
@@ -16,6 +17,14 @@ exports.monthNumberToLabel = monthNumberToLabel;
 const dataHealth_js_1 = require("../lib/dataHealth.js");
 const portfolioBuckets_js_1 = require("./portfolioBuckets.js");
 exports.PLAN_RELATION_TYPES = ["standalone", "variant_of_existing", "category_adjacent"];
+exports.PLAN_PRODUCT_MISSING_INPUT_LABELS = Object.freeze({
+    forecast_units: "Forecast-Mengen",
+    production_lead_time_days: "Produktionszeit",
+    transit_days: "Transitzeit",
+    unit_price_usd: "Einkaufspreis (USD)",
+    logistics_per_unit_eur: "Logistik/Fracht pro Unit",
+    avg_selling_price_gross_eur: "Verkaufspreis brutto (EUR)",
+});
 const CALENDAR_MONTHS = ["Jan", "Feb", "Maerz", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 function asNumber(value) {
@@ -511,7 +520,15 @@ function buildMissingPlanningInputs(input) {
         missing.push("unit_price_usd");
     if (!Number.isFinite(input.logisticsPerUnitEur))
         missing.push("logistics_per_unit_eur");
+    if (!(Number.isFinite(input.avgSellingPriceGrossEUR) && Number(input.avgSellingPriceGrossEUR) > 0)) {
+        missing.push("avg_selling_price_gross_eur");
+    }
     return missing;
+}
+function formatPlanProductMissingPlanningInputs(values) {
+    return (Array.isArray(values) ? values : [])
+        .map((value) => exports.PLAN_PRODUCT_MISSING_INPUT_LABELS[String(value || "").trim()] || String(value || "").trim())
+        .filter(Boolean);
 }
 function buildPlanProductForecastRow(input) {
     const normalized = normalizePlanProductRecord(input?.planProduct, input?.fallbackIndex || 0);
@@ -630,21 +647,27 @@ function buildSharedPlanProductProjection(input) {
         const transitDays = asPositiveInt(row.transitDays) ?? resolveTransportTransitDays(settings, transportMode);
         const unitPriceUsd = asNumber(row.unitPriceUsd);
         const logisticsPerUnitEur = asNumber(row.logisticsPerUnitEur ?? row.freightPerUnitEur);
+        const avgSellingPriceGrossEUR = asNumber(row.avgSellingPriceGrossEUR);
         const missingPlanningInputs = buildMissingPlanningInputs({
             hasForecast,
             productionLeadTimeDays,
             transitDays,
             unitPriceUsd,
             logisticsPerUnitEur,
+            avgSellingPriceGrossEUR,
         });
         const sharedPathEligible = active && includeInForecast && hasForecast;
         const procurementReady = sharedPathEligible && missingPlanningInputs.length === 0;
         const mappedSku = normalizeSku(row.mappedSku);
         const requestedSku = normalizeSku(row.plannedSku);
         const bucketKey = mappedSku || requestedSku || row.seasonalityReferenceSku || row.alias || row.id || `plan-${index + 1}`;
+        // For the PO-based bucket override, only use SKUs that belong to THIS plan product
+        // (mapped or requested). Using seasonalityReferenceSku would incorrectly match
+        // POs of the reference product, forcing the plan product into Kernportfolio.
+        const bucketSkuForPoCheck = mappedSku || requestedSku || null;
         const effectivePortfolioBucket = (0, portfolioBuckets_js_1.resolveEffectivePortfolioBucket)({
             product: row,
-            sku: bucketKey,
+            sku: bucketSkuForPoCheck,
             poSkuSet,
             fallbackBucket: portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN,
         });
@@ -705,6 +728,7 @@ function buildSharedPlanProductProjection(input) {
             productionLeadTimeDays,
             unitPriceUsd,
             logisticsPerUnitEur,
+            avgSellingPriceGrossEUR,
             virtualProduct,
         });
     });

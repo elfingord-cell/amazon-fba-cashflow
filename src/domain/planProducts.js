@@ -666,9 +666,13 @@ export function buildSharedPlanProductProjection(input) {
     const mappedSku = normalizeSku(row.mappedSku);
     const requestedSku = normalizeSku(row.plannedSku);
     const bucketKey = mappedSku || requestedSku || row.seasonalityReferenceSku || row.alias || row.id || `plan-${index + 1}`;
+    // For the PO-based bucket override, only use SKUs that belong to THIS plan product
+    // (mapped or requested). Using seasonalityReferenceSku would incorrectly match
+    // POs of the reference product, forcing the plan product into Kernportfolio.
+    const bucketSkuForPoCheck = mappedSku || requestedSku || null;
     const effectivePortfolioBucket = resolveEffectivePortfolioBucket({
       product: row,
-      sku: bucketKey,
+      sku: bucketSkuForPoCheck,
       poSkuSet,
       fallbackBucket: PORTFOLIO_BUCKET.PLAN,
     });

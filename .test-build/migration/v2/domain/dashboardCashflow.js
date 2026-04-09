@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DASHBOARD_TAX_LABELS = void 0;
+exports.DEFAULT_V2_BUCKET_SCOPE = exports.DASHBOARD_TAX_LABELS = void 0;
 exports.alignDashboardCashInToMirror = alignDashboardCashInToMirror;
 exports.resolveDashboardEntryBucket = resolveDashboardEntryBucket;
 exports.isDashboardEntryInBucketScope = isDashboardEntryInBucketScope;
@@ -16,6 +16,7 @@ exports.DASHBOARD_TAX_LABELS = taxPlanner_js_1.DASHBOARD_TAX_TYPE_CONFIG.reduce(
     acc[entry.key] = entry.label;
     return acc;
 }, {});
+exports.DEFAULT_V2_BUCKET_SCOPE = [portfolioBuckets_js_1.PORTFOLIO_BUCKET.CORE, portfolioBuckets_js_1.PORTFOLIO_BUCKET.PLAN];
 function roundCurrencyAmount(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric))
@@ -359,6 +360,7 @@ function applyDashboardBucketScopeToBreakdown(rows, bucketScope, options) {
         return {
             ...row,
             opening: Number(derived?.opening ?? row.opening ?? 0),
+            plannedClosing: Number(derived?.plannedClosing ?? row.plannedClosing ?? row.closing ?? 0),
             closing: Number(derived?.closing ?? row.closing ?? 0),
             hasActualClosing: derived?.lockedActual === true,
         };

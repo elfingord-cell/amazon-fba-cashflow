@@ -1305,3 +1305,181 @@ test("plan product launch costs appear exactly once in dashboard plan scope", as
   assert.equal(launchEntries[0].amount, 300);
   assert.equal(launchEntries[0].portfolioBucket, PORTFOLIO_BUCKET.PLAN);
 });
+
+test("plan product revenue changes P&L when Planprodukte toggle is switched with forecast_direct mode", async () => {
+  const [{ computeSeries }, { PORTFOLIO_BUCKET }, { buildSharedPlanProductProjection }] = await Promise.all([
+    import("../../src/domain/cashflow.js"),
+    import("../../src/domain/portfolioBuckets.js"),
+    import("../../src/domain/planProducts.js"),
+  ]);
+
+  const state = {
+    settings: {
+      startMonth: "2026-03",
+      horizonMonths: 3,
+      openingBalance: 10000,
+      cashInQuoteMode: "recommendation",
+      cashInRevenueBasisMode: "forecast_direct",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-KNIFE": {
+          "2026-03": { units: 200, revenueEur: 18000 },
+          "2026-04": { units: 180, revenueEur: 16200 },
+          "2026-05": { units: 210, revenueEur: 18900 },
+        },
+      },
+    },
+    products: [
+      {
+        sku: "REF-KNIFE",
+        alias: "Messerblock Kern",
+        status: "active",
+        includeInForecast: true,
+        avgSellingPriceGrossEUR: 90,
+        sellerboardMarginPct: 25,
+        portfolioBucket: PORTFOLIO_BUCKET.CORE,
+      },
+    ],
+    planProducts: [
+      {
+        id: "plan-messer-2",
+        alias: "Messerblock Plan",
+        // No plannedSku — matches user's "ohne SKU" scenario
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-KNIFE",
+        baselineReferenceMonth: 3,
+        baselineUnitsInReferenceMonth: 120,
+        avgSellingPriceGrossEUR: 28,
+        sellerboardMarginPct: 25,
+        productionLeadTimeDaysDefault: 20,
+        transitDays: 20,
+        unitPriceUsd: 4,
+        logisticsPerUnitEur: 1.5,
+        launchDate: "2026-03-01",
+        rampUpWeeks: 1,
+        softLaunchStartSharePct: 50,
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+      },
+    ],
+    incomings: [],
+    fixcosts: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    pos: [
+      // The reference SKU has a purchase order — this is the real-world scenario
+      {
+        id: "po-1",
+        sku: "REF-KNIFE",
+        items: [{ sku: "REF-KNIFE", units: 500, unitPriceUsd: 5 }],
+      },
+    ],
+    status: { autoManualCheck: false, events: {} },
+  };
+
+  const projection = buildSharedPlanProductProjection({ state });
+  const planningState = projection.planningState;
+
+  // Diagnostic: check effective bucket assignment
+  const planEntry = projection.entries.find((e) => e.active);
+  const effectiveBucket = planEntry?.effectivePortfolioBucket;
+
+  const report = withMockedNow(
+    new Date("2026-03-15T12:00:00Z"),
+    () => computeSeries(planningState),
+  );
+
+  const months = report.months || [];
+  const breakdown = report.breakdown || [];
+
+  // Verify plan entries exist in the raw breakdown
+  const marchRow = breakdown.find((row) => row.month === "2026-03");
+  assert.ok(marchRow, "March row should exist in breakdown");
+
+  const allEntries = marchRow.entries || [];
+  const planEntries = allEntries.filter((e) =>
+    (e.portfolioBucket === PORTFOLIO_BUCKET.PLAN || (e.meta && e.meta.portfolioBucket === PORTFOLIO_BUCKET.PLAN))
+    && e.kind === "sales-payout"
+  );
+
+  // Diagnostic: print entry details
+  const salesEntries = allEntries.filter((e) => e.kind === "sales-payout");
+  const entryDetails = salesEntries.map((e) => ({
+    id: e.id,
+    amount: e.amount,
+    bucket: e.portfolioBucket || (e.meta && e.meta.portfolioBucket),
+    source: e.source,
+    label: e.label,
+  }));
+
+  assert.ok(
+    planEntries.length > 0,
+    `Plan sales entries should exist in March (effectiveBucket was: ${effectiveBucket}). ` +
+    `Found ${salesEntries.length} sales entries total: ${JSON.stringify(entryDetails, null, 2)}`,
+  );
+
+  // Step 1: Without mirror — verify plan entries exist and toggle works
+  const bothScope = new Set([PORTFOLIO_BUCKET.CORE, PORTFOLIO_BUCKET.PLAN]);
+  const coreOnlyScope = new Set([PORTFOLIO_BUCKET.CORE]);
+
+  const rawWithPlan = applyDashboardBucketScopeToBreakdown(breakdown, bothScope);
+  const rawWithoutPlan = applyDashboardBucketScopeToBreakdown(breakdown, coreOnlyScope);
+  const rawInflowWith = rawWithPlan.reduce((sum, row) => sum + row.inflow, 0);
+  const rawInflowWithout = rawWithoutPlan.reduce((sum, row) => sum + row.inflow, 0);
+
+  assert.ok(
+    rawInflowWith > rawInflowWithout,
+    `Raw (no mirror): Inflow with plan (${rawInflowWith.toFixed(2)}) > without (${rawInflowWithout.toFixed(2)})`,
+  );
+
+  // Step 2: With mirror — reproduce the ACTUAL dashboard flow
+  const { buildCashInPayoutMirrorByMonth } = require("../../.test-build/migration/v2/domain/cashInPayoutMirror.js");
+
+  const cashInMirrorByMonth = withMockedNow(
+    new Date("2026-03-15T12:00:00Z"),
+    () => buildCashInPayoutMirrorByMonth({ months, state: planningState }),
+  );
+  const dashboardBreakdown = alignDashboardCashInToMirror(
+    applyTaxInstancesToBreakdown(breakdown, state),
+    cashInMirrorByMonth,
+  );
+
+  // Check if plan entries survived the mirror
+  const mirroredMarchRow = dashboardBreakdown.find((row) => row.month === "2026-03");
+  const mirroredSalesEntries = (mirroredMarchRow?.entries || []).filter((e) => e.kind === "sales-payout");
+  const mirroredPlanEntries = mirroredSalesEntries.filter((e) =>
+    e.portfolioBucket === PORTFOLIO_BUCKET.PLAN || (e.meta && e.meta.portfolioBucket === PORTFOLIO_BUCKET.PLAN),
+  );
+  const mirroredEntryDetails = mirroredSalesEntries.map((e) => ({
+    id: e.id,
+    amount: e.amount,
+    bucket: e.portfolioBucket || (e.meta && e.meta.portfolioBucket),
+  }));
+
+  assert.ok(
+    mirroredPlanEntries.length > 0,
+    `Plan entries should survive mirror. Found ${mirroredSalesEntries.length} sales entries after mirror: ${JSON.stringify(mirroredEntryDetails, null, 2)}`,
+  );
+
+  const withPlanScoped = applyDashboardBucketScopeToBreakdown(dashboardBreakdown, bothScope);
+  const withoutPlanScoped = applyDashboardBucketScopeToBreakdown(dashboardBreakdown, coreOnlyScope);
+
+  const totalInflowWithPlan = withPlanScoped.reduce((sum, row) => sum + row.inflow, 0);
+  const totalInflowWithoutPlan = withoutPlanScoped.reduce((sum, row) => sum + row.inflow, 0);
+
+  // THE BUG: toggling Planprodukte should significantly change the inflow AFTER mirror
+  assert.ok(
+    totalInflowWithPlan > totalInflowWithoutPlan,
+    `After mirror: Inflow with Planprodukte (${totalInflowWithPlan.toFixed(2)}) should be greater than without (${totalInflowWithoutPlan.toFixed(2)}).`,
+  );
+
+  const diff = totalInflowWithPlan - totalInflowWithoutPlan;
+  assert.ok(
+    diff > 100,
+    `After mirror: Difference should be substantial (got ${diff.toFixed(2)} EUR).`,
+  );
+});

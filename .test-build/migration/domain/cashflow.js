@@ -1870,6 +1870,8 @@ function computeSeries(state) {
     });
     (Array.isArray(s.products) ? s.products : []).forEach((entry, productIndex) => {
         const product = entry && typeof entry === 'object' ? entry : {};
+        if (product.__planVirtual === true)
+            return;
         const sku = String(product.sku || '').trim();
         if (!sku)
             return;
