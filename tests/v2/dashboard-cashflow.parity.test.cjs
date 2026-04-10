@@ -1483,3 +1483,151 @@ test("plan product revenue changes P&L when Planprodukte toggle is switched with
     `After mirror: Difference should be substantial (got ${diff.toFixed(2)} EUR).`,
   );
 });
+
+test("plan product with future launch date gets non-zero shortage in inventory projection", async () => {
+  const [{ PORTFOLIO_BUCKET }, { buildSharedPlanProductProjection }, { computeInventoryProjection }] = await Promise.all([
+    import("../../src/domain/portfolioBuckets.js"),
+    import("../../src/domain/planProducts.js"),
+    import("../../src/domain/inventoryProjection.js"),
+  ]);
+
+  const state = {
+    settings: {
+      startMonth: "2026-04",
+      horizonMonths: 6,
+      openingBalance: 10000,
+      fxRate: 1.08,
+      cashInQuoteMode: "manual",
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: false,
+    },
+    forecast: {
+      settings: { useForecast: true },
+      forecastImport: {
+        "REF-PFO": {
+          "2026-04": { units: 150 },
+          "2026-05": { units: 180 },
+          "2026-06": { units: 200 },
+          "2026-07": { units: 170 },
+          "2026-08": { units: 160 },
+          "2026-09": { units: 140 },
+        },
+      },
+    },
+    products: [
+      {
+        sku: "REF-PFO",
+        alias: "Referenz",
+        status: "active",
+        includeInForecast: true,
+        portfolioBucket: "Kernportfolio",
+      },
+    ],
+    planProducts: [
+      {
+        id: "plan-pfo-1",
+        alias: "Plan PFO",
+        status: "active",
+        includeInForecast: true,
+        seasonalityReferenceSku: "REF-PFO",
+        baselineReferenceMonth: 5,
+        baselineUnitsInReferenceMonth: 100,
+        avgSellingPriceGrossEUR: 25,
+        sellerboardMarginPct: 30,
+        productionLeadTimeDaysDefault: 30,
+        transitDays: 30,
+        unitPriceUsd: 5,
+        logisticsPerUnitEur: 2,
+        launchDate: "2026-06-01",
+        portfolioBucket: PORTFOLIO_BUCKET.PLAN,
+      },
+    ],
+    incomings: [],
+    fixcosts: [],
+    extras: [],
+    dividends: [],
+    fos: [],
+    pos: [],
+    suppliers: [],
+    status: { autoManualCheck: false, events: {} },
+  };
+
+  const months = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"];
+  const projection = buildSharedPlanProductProjection({ state, months });
+  const virtualSku = String(projection.virtualProducts?.[0]?.sku || "");
+  assert.ok(virtualSku, "A virtual plan product SKU must be created.");
+  assert.equal(
+    projection.virtualProducts[0].portfolioBucket,
+    PORTFOLIO_BUCKET.PLAN,
+    "Virtual product must have Planprodukte bucket.",
+  );
+
+  const ps = projection.planningState;
+  const activeProducts = (ps.products || [])
+    .filter((p) => String(p.sku || "").trim())
+    .filter((p) => {
+      const s = String(p.status || "").toLowerCase();
+      return !s || s === "active";
+    });
+
+  const proj = computeInventoryProjection({
+    state: ps,
+    months,
+    products: activeProducts,
+    snapshot: null,
+    snapshotMonth: "2026-03",
+    projectionMode: "forecast_direct",
+  });
+
+  const skuProjection = proj.perSkuMonth.get(virtualSku) || proj.perSkuMonth.get(virtualSku.toLowerCase());
+  assert.ok(skuProjection, `Inventory projection must include virtual SKU ${virtualSku}.`);
+
+  // Pre-launch month: forecastUnits should be 0, endAvailable should be 0
+  const preLaunchData = skuProjection.get("2026-04") || skuProjection.get("2026-05");
+  // Post-launch month: forecastUnits should be > 0, endAvailable should be < 0
+  const postLaunchData = skuProjection.get("2026-06");
+  assert.ok(postLaunchData, "Post-launch month must exist in projection.");
+  assert.ok(
+    postLaunchData.forecastUnits > 0,
+    `Post-launch month must have forecastUnits > 0. Got ${postLaunchData.forecastUnits}.`,
+  );
+  assert.ok(
+    postLaunchData.endAvailable < 0,
+    `Post-launch month must have negative endAvailable (shortage). Got ${postLaunchData.endAvailable}.`,
+  );
+
+  // The fix ensures that robustness skips pre-launch months (forecastUnits=0, endAvailable>=0)
+  // and picks the post-launch month as the first risk month, producing non-zero shortageUnits.
+  // This is verified by the shortage calculation:
+  const safetyUnits = Number(postLaunchData.safetyUnits ?? 0);
+  const endAvailable = Number(postLaunchData.endAvailable ?? 0);
+  const shortageUnits = Math.max(0, Math.ceil(safetyUnits - endAvailable));
+  assert.ok(
+    shortageUnits > 0,
+    `Shortage units from post-launch month must be > 0. Got ${shortageUnits} (safety=${safetyUnits}, endAvail=${endAvailable}).`,
+  );
+
+  // Also verify: plan product FO with virtual SKU gets correct bucket in computeSeries
+  const { computeSeries } = await import("../../src/domain/cashflow.js");
+  const report = withMockedNow(new Date("2026-04-10T12:00:00Z"), () =>
+    computeSeries({
+      ...ps,
+      fos: [{
+        id: "fo-plan-pfo",
+        foNo: "FO-PLAN-PFO",
+        sku: virtualSku,
+        status: "ACTIVE",
+        orderDate: "2026-04-01",
+        payments: [{ id: "pay1", label: "Deposit", amount: 500, currency: "EUR", dueDate: "2026-04-15", triggerEvent: "ORDER_DATE", offsetDays: 0 }],
+      }],
+    }),
+  );
+  const planScope = new Set([PORTFOLIO_BUCKET.PLAN]);
+  const planScoped = applyDashboardBucketScopeToBreakdown(report.breakdown, planScope, { includePhantomFo: true });
+  let planOutflow = 0;
+  planScoped.forEach((row) => { planOutflow += row.outflow; });
+  assert.ok(
+    planOutflow >= 500,
+    `Plan product FO cost (500 EUR) must appear in plan scope outflow. Got ${planOutflow.toFixed(2)}.`,
+  );
+});

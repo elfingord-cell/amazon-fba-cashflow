@@ -663,6 +663,11 @@ function buildOrderDutyProfiles(input: {
       const riskClass = projectionRiskClass(monthData, input.projectionMode);
       const issueType = mapRiskClassToShortageIssueType(riskClass);
       if (!issueType) continue;
+      // Skip months with no forecast demand and non-negative available stock.
+      // Plan products before their launch have endAvailable=0 and forecastUnits=0,
+      // which produces 0 shortageUnits and blocks phantom FO generation.
+      const monthForecast = Number((monthData as Record<string, unknown> | undefined)?.forecastUnits ?? 0);
+      if (monthForecast <= 0 && Number(monthData?.endAvailable ?? 0) >= 0) continue;
       const isAccepted = resolveActiveShortageAcceptance({
         acceptanceBySku: input.acceptanceBySku,
         sku,
