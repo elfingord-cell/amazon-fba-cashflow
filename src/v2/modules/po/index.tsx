@@ -2556,8 +2556,12 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
         throw new Error(`PO Nummer ${record.poNo} existiert bereits.`);
       }
       const index = list.findIndex((entry) => String((entry as Record<string, unknown>).id || "") === String(record.id || ""));
-      if (index >= 0) list[index] = record;
-      else list.push(record);
+      if (index >= 0) {
+        const liveEntry = list[index] as Record<string, unknown>;
+        list[index] = { ...record, paymentLog: liveEntry.paymentLog || record.paymentLog || {} };
+      } else {
+        list.push(record);
+      }
       next.pos = list;
       return next;
     }, editingId ? "v2:po:update" : "v2:po:create");
