@@ -386,6 +386,7 @@ test("accountant report bundle: standard zip contains only pdf and xlsx, optiona
 
   const coreNames = parseZipEntryNames(new Uint8Array(await coreBundle.zipBlob.arrayBuffer()));
   assert.deepEqual(coreNames.sort(), [
+    "01_Monatsuebersicht_2026-01.html",
     "01_Monatsuebersicht_2026-01.pdf",
     "02_Buchhaltungslisten_2026-01.xlsx",
   ]);

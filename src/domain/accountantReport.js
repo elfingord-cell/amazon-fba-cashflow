@@ -2,6 +2,7 @@ import { parseDeNumber } from "../lib/dataHealth.js";
 import { buildPaymentRows } from "../ui/orderEditorFactory.js";
 import { buildAccountantWorkbookBlob } from "./accountantWorkbook.js";
 import { buildAccountantPdfBlob } from "./accountantPdf.js";
+import { buildAccountantHtml } from "./accountantHtml.js";
 import { buildZipBlob, monthFileStamp } from "./accountantBundle.js";
 import { ACCOUNTANT_SHEET_SCHEMAS } from "./accountantPresentation.js";
 
@@ -319,6 +320,7 @@ function buildVisibleFileNames(month) {
     csvPayments: `03_Zahlungen_Lieferanten_${month}.csv`,
     csvArrivals: `04_Wareneingaenge_${month}.csv`,
     csvInventory: `05_Warenbestand_Monatsende_${month}.csv`,
+    html: `01_Monatsuebersicht_${month}.html`,
     zip: `buchhaltung_${month}_paket.zip`,
     emailTxt: `buchhaltung_${month}_email.txt`,
   };
@@ -805,6 +807,37 @@ function buildPaymentsInMonthSection(state, request, productMaps, supplierMap, q
   });
 }
 
+function resolveDepositAndBalance(paymentRows) {
+  let depositEur = null;
+  let depositDate = null;
+  let balanceEur = null;
+  let balanceDate = null;
+
+  (paymentRows || []).forEach((payment) => {
+    const type = normalizeAccountantPaymentType(
+      payment?.typeLabel || payment?.label,
+      payment?.eventType,
+      payment?.id,
+    );
+    const status = String(payment?.status || "").toUpperCase();
+    if (status !== "PAID") return;
+
+    const actualEur = Number(payment?.paidEurActual);
+    const paidDate = toIsoDate(payment?.paidDate);
+
+    if (type === "Deposit" && depositEur == null) {
+      depositEur = Number.isFinite(actualEur) ? actualEur : null;
+      depositDate = paidDate || null;
+    }
+    if (type === "Balance" && balanceEur == null) {
+      balanceEur = Number.isFinite(actualEur) ? actualEur : null;
+      balanceDate = paidDate || null;
+    }
+  });
+
+  return { depositEur, depositDate, balanceEur, balanceDate };
+}
+
 function buildArrivalsSection(state, request, productMaps, supplierMap, quality, qualitySeen) {
   const settings = buildSettings(state);
   const month = request.month;
@@ -837,6 +870,7 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
     const goodsEur = computeGoodsEur(record, settings, goodsUsd);
     const itemMeta = buildPoItemAliasMeta(record, productMaps.aliasBySku);
     const paymentTotals = buildPaymentTotalsForRecord(record, settings, state?.payments || [], month);
+    const depositBalance = resolveDepositAndBalance(paymentTotals.paymentRows);
     const poNumber = String(record.poNo || record.id || "");
     const displayPoNumber = formatDisplayPoNumber(poNumber);
 
@@ -878,6 +912,10 @@ function buildArrivalsSection(state, request, productMaps, supplierMap, quality,
       geplanteAnkunft: resolveEtaDate(record),
       bisherigeLieferantenzahlungenEur: paymentTotals.bisherigeLieferantenzahlungenEur,
       davonImMonatBezahltEur: paymentTotals.davonImMonatBezahltEur,
+      anzahlungBetragEur: depositBalance.depositEur,
+      anzahlungDatum: depositBalance.depositDate,
+      restzahlungBetragEur: depositBalance.balanceEur,
+      restzahlungDatum: depositBalance.balanceDate,
       transportart: String(record.transport || ""),
       hinweise: rowIssues,
       hinweis: joinMessages(rowIssues),
@@ -1292,6 +1330,10 @@ function buildCsvPayloads(report) {
     { key: "geplanteAnkunft", label: "Geplante Ankunft" },
     { key: "bisherigeLieferantenzahlungenEur", label: "Bisherige Lieferantenzahlungen laut System EUR", format: formatCsvNumber },
     { key: "davonImMonatBezahltEur", label: "Davon im aktuellen Monat bezahlt EUR", format: formatCsvNumber },
+    { key: "anzahlungBetragEur", label: "Anzahlung EUR", format: formatCsvNumber },
+    { key: "anzahlungDatum", label: "Anzahlung Datum" },
+    { key: "restzahlungBetragEur", label: "Restzahlung EUR", format: formatCsvNumber },
+    { key: "restzahlungDatum", label: "Restzahlung Datum" },
     { key: "transportart", label: "Transportart" },
     { key: "hinweis", label: "Hinweis" },
   ]);
@@ -1328,8 +1370,12 @@ export async function buildAccountantReportBundleFromState(state, requestInput =
     files.emailDraftTxt = new Blob([emailDraft.text], { type: "text/plain;charset=utf-8" });
   }
 
+  const htmlString = buildAccountantHtml(report);
+  files.htmlReport = new Blob([htmlString], { type: "text/html;charset=utf-8" });
+
   const zipEntries = [];
   if (files.pdfReport) zipEntries.push({ name: fileNames.pdf, data: files.pdfReport });
+  if (files.htmlReport) zipEntries.push({ name: fileNames.html, data: files.htmlReport });
   if (files.xlsxWorkbook) zipEntries.push({ name: fileNames.xlsx, data: files.xlsxWorkbook });
   if (files.csvInventory) zipEntries.push({ name: fileNames.csvInventory, data: files.csvInventory });
   if (files.csvPayments) zipEntries.push({ name: fileNames.csvPayments, data: files.csvPayments });

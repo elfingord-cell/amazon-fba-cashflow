@@ -68,6 +68,10 @@ type ArrivalRow = {
   geplanteAnkunft: string | null;
   bisherigeLieferantenzahlungenEur: number | null;
   davonImMonatBezahltEur: number | null;
+  anzahlungBetragEur: number | null;
+  anzahlungDatum: string | null;
+  restzahlungBetragEur: number | null;
+  restzahlungDatum: string | null;
   transportart: string;
   hinweis: string;
 };
