@@ -222,6 +222,15 @@ export default function PlanProductsModule(): JSX.Element {
       .filter(Boolean) as Array<{ value: string; label: string }>;
   }, [state.products]);
 
+  const existingSkuKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const entry of (Array.isArray(state.products) ? state.products : [])) {
+      const sku = String((entry as Record<string, unknown>).sku || "").trim();
+      if (sku) set.add(sku.toLowerCase());
+    }
+    return set;
+  }, [state.products]);
+
   const planRows = useMemo(() => {
     return buildPlanProductForecastRows({
       state: stateObject,
@@ -463,10 +472,9 @@ export default function PlanProductsModule(): JSX.Element {
     const planId = String(takeoverPlanId || "").trim();
     const sku = String(takeoverSku || "").trim();
     if (!planId) throw new Error("Plan-Produkt nicht gefunden.");
-    if (!sku) throw new Error("Bitte SKU für die Übernahme wählen.");
-    const matchingSkuExists = liveSkuOptions.some((entry) => entry.value === sku);
-    if (!matchingSkuExists) {
-      throw new Error("Die gewählte SKU ist nicht in der Live-Produktdatenbank vorhanden.");
+    if (!sku) throw new Error("Bitte neue SKU vergeben.");
+    if (existingSkuKeys.has(sku.toLowerCase())) {
+      throw new Error(`SKU "${sku}" existiert bereits in der Live-Produktdatenbank.`);
     }
 
     await saveWith((current) => {
@@ -478,6 +486,14 @@ export default function PlanProductsModule(): JSX.Element {
         throw new Error("Plan-Produkt wurde nicht gefunden.");
       }
 
+      const productList = Array.isArray(next.products) ? [...next.products] : [];
+      const lowerSku = sku.toLowerCase();
+      const collision = productList.some((entry) => String((entry as Record<string, unknown>).sku || "").trim().toLowerCase() === lowerSku);
+      if (collision) {
+        throw new Error(`SKU "${sku}" existiert bereits in der Live-Produktdatenbank.`);
+      }
+
+      const planProduct = planList[targetIndex] as Record<string, unknown>;
       const forecast = (nextState.forecast && typeof nextState.forecast === "object")
         ? nextState.forecast as Record<string, unknown>
         : {};
@@ -485,12 +501,62 @@ export default function PlanProductsModule(): JSX.Element {
         ? forecast.forecastImport as Record<string, unknown>
         : {};
       const snapshot = buildPlanProductForecastRow({
-        planProduct: planList[targetIndex] as Record<string, unknown>,
+        planProduct,
         forecastImport,
         months,
         fallbackIndex: targetIndex,
       });
       const mappedAt = nowIso();
+
+      const transportModeRaw = String(planProduct.transportMode || "SEA").toUpperCase();
+      const transportMode = transportModeRaw === "AIR" || transportModeRaw === "RAIL" ? transportModeRaw : "SEA";
+      const transitDays = Number(planProduct.transitDays);
+      const productionDays = Number(planProduct.productionLeadTimeDaysDefault);
+      const unitPriceUsd = Number(planProduct.unitPriceUsd);
+      const logisticsPerUnitEur = Number(planProduct.logisticsPerUnitEur);
+      const avgPriceEur = Number(planProduct.avgSellingPriceGrossEUR);
+      const marginPct = Number(planProduct.sellerboardMarginPct);
+      const newProduct: Record<string, unknown> = {
+        id: randomId("prod"),
+        sku,
+        alias: String(planProduct.alias || sku).trim() || sku,
+        fnsku: "",
+        hsCode: "",
+        goodsDescription: "",
+        supplierId: "",
+        categoryId: planProduct.categoryId || null,
+        status: "active",
+        portfolioBucket: PORTFOLIO_BUCKET.CORE,
+        includeInForecast: true,
+        launchCosts: normalizeLaunchCosts(planProduct.launchCosts as unknown[], `prod-${lowerSku}`),
+        avgSellingPriceGrossEUR: Number.isFinite(avgPriceEur) ? avgPriceEur : null,
+        sellerboardMarginPct: Number.isFinite(marginPct) ? marginPct : null,
+        moqUnits: null,
+        unitsPerCarton: null,
+        safetyStockDohOverride: null,
+        foCoverageDohOverride: null,
+        moqOverrideUnits: null,
+        landedUnitCostEur: null,
+        logisticsPerUnitEur: Number.isFinite(logisticsPerUnitEur) ? logisticsPerUnitEur : null,
+        freightPerUnitEur: Number.isFinite(logisticsPerUnitEur) ? logisticsPerUnitEur : null,
+        productionLeadTimeDaysDefault: Number.isFinite(productionDays) ? productionDays : null,
+        template: {
+          scope: "SKU",
+          name: "Standard (SKU)",
+          fields: {
+            transportMode,
+            transitDays: Number.isFinite(transitDays) ? transitDays : null,
+            productionDays: Number.isFinite(productionDays) ? productionDays : null,
+            unitPriceUsd: Number.isFinite(unitPriceUsd) ? unitPriceUsd : null,
+            freightEur: Number.isFinite(logisticsPerUnitEur) ? logisticsPerUnitEur : null,
+          },
+        },
+        createdAt: mappedAt,
+        updatedAt: mappedAt,
+      };
+      productList.push(newProduct);
+      next.products = productList;
+
       const mapping = {
         id: randomId("plan-map"),
         planProductId: String(snapshot.id || planId),
@@ -517,7 +583,7 @@ export default function PlanProductsModule(): JSX.Element {
       ];
 
       planList[targetIndex] = {
-        ...(planList[targetIndex] as Record<string, unknown>),
+        ...planProduct,
         status: "archived",
         plannedSku: sku,
         mappedSku: sku,
@@ -529,7 +595,7 @@ export default function PlanProductsModule(): JSX.Element {
       return next;
     }, "v2:plan-products:takeover");
 
-    message.success(`Plan-Produkt wurde als Live-SKU ${sku} übernommen und archiviert.`);
+    message.success(`Plan-Produkt wurde als neue Live-SKU ${sku} angelegt und archiviert.`);
     setTakeoverOpen(false);
     setTakeoverPlanId(null);
     setTakeoverSku("");
@@ -1170,7 +1236,7 @@ export default function PlanProductsModule(): JSX.Element {
       </Modal>
 
       <Modal
-        title="Plan-Produkt in Live-SKU übernehmen"
+        title="Plan-Produkt als Live-SKU übernehmen"
         open={takeoverOpen}
         onCancel={() => {
           setTakeoverOpen(false);
@@ -1187,8 +1253,8 @@ export default function PlanProductsModule(): JSX.Element {
           <Alert
             type="info"
             showIcon
-            message="Plan wird archiviert, Mapping bleibt für Plan-vs-Ist erhalten."
-            description="Nach der Übernahme zählt im operativen Forecast/Cashflow nur noch die Live-SKU (CSV)."
+            message="Plan wird archiviert und in eine neue Live-SKU umgewandelt."
+            description="Alle gepflegten Stammdaten (Preis, Marge, Lead Time, Logistik, Launch-Costs) werden in das neue Live-Produkt übernommen. Mapping bleibt für Plan-vs-Ist erhalten."
           />
           <div>
             <Text strong>Plan-Produkt: </Text>
@@ -1198,13 +1264,10 @@ export default function PlanProductsModule(): JSX.Element {
             <Text strong>Aktueller Status: </Text>
             <Text>{takeoverRow?.status || "—"}</Text>
           </div>
-          <Select
-            value={takeoverSku || undefined}
-            showSearch
-            optionFilterProp="label"
-            placeholder="Live-SKU auswählen"
-            options={liveSkuOptions}
-            onChange={(value) => setTakeoverSku(String(value || ""))}
+          <Input
+            value={takeoverSku}
+            placeholder="Neue SKU vergeben"
+            onChange={(event) => setTakeoverSku(event.target.value)}
           />
         </Space>
       </Modal>
