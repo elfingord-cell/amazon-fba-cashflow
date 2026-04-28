@@ -137,6 +137,17 @@
   height: 100%;
 }
 
+/* Detail-Panel sticky beim Scrollen der Review-Liste (Desktop) */
+@media (min-width: 992px) {
+  .v2-month-planning-grid > .ant-col:last-child {
+    position: sticky;
+    top: 16px;
+    align-self: flex-start;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+}
+
 .v2-month-planning-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

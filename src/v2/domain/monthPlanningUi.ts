@@ -3,6 +3,16 @@ import type { MonthReviewItem } from "./monthPlanning";
 import { formatMonthLabel, normalizeMonthKey } from "./months";
 import { buildForecastConflictSummary } from "./forecastConflictActions";
 
+/**
+ * Strippt doppelte "PLAN-"-Praefixe in einer beliebigen Zeichenkette (Titel,
+ * Detail, SKU im Text). Beispiel: "PLAN-PLAN-K23PB4J" -> "PLAN-K23PB4J".
+ * Backwards-Kompatibilitaet fuer Stammdaten mit historisch dupliziertem
+ * Praefix. Root-Cause-Fix erfolgt in planProducts.js.
+ */
+export function displayWithCleanSku(text: string | null | undefined): string {
+  return String(text || "").replace(/PLAN-PLAN-/gi, "PLAN-");
+}
+
 export type MonthPlanningActionId =
   | "open_specialist"
   | "open_sku_planning"

@@ -11,7 +11,9 @@ import {
   Row,
   Select,
   Space,
+  Switch,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
@@ -33,6 +35,7 @@ import {
   buildMonthPlanningActionSurface,
   buildMonthPlanningConflictBadges,
   buildMonthPlanningSupplyVisualModel,
+  displayWithCleanSku,
   type MonthPlanningActionId,
   type MonthPlanningInboundEvent,
   type MonthPlanningSupplyContext,
@@ -171,6 +174,7 @@ export default function MonthPlanningPage(): JSX.Element {
   const [selectedItemId, setSelectedItemId] = useState("");
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [conflictActionLoading, setConflictActionLoading] = useState(false);
+  const [showAcceptedRisks, setShowAcceptedRisks] = useState(false);
 
   const planningMonths = useMemo(() => {
     const baseMonths = resolvePlanningMonthsFromState(stateObject, 18);
@@ -186,7 +190,16 @@ export default function MonthPlanningPage(): JSX.Element {
 
   const selectedMonth = useMemo(() => {
     if (requestedMonth && planningMonths.includes(requestedMonth)) return requestedMonth;
-    return planningMonths[0] || currentMonthKey();
+    const current = currentMonthKey();
+    if (planningMonths.includes(current)) return current;
+    if (!planningMonths.length) return current;
+    // Naechstgelegener verfuegbarer Monat zum heutigen Monat
+    const currentIdx = monthIndex(current) ?? 0;
+    return planningMonths.reduce((best, candidate) => {
+      const bestDiff = Math.abs((monthIndex(best) ?? 0) - currentIdx);
+      const candidateDiff = Math.abs((monthIndex(candidate) ?? 0) - currentIdx);
+      return candidateDiff < bestDiff ? candidate : best;
+    }, planningMonths[0]);
   }, [planningMonths, requestedMonth]);
 
   useEffect(() => {
@@ -507,11 +520,29 @@ export default function MonthPlanningPage(): JSX.Element {
 
           <Row gutter={[16, 16]} className="v2-month-planning-grid">
             <Col xs={24} lg={10}>
-              <Card size="small" title={`Review-Liste · ${formatMonthLabel(selectedMonthData.month)}`} className="v2-month-planning-list-card">
+              <Card
+                size="small"
+                title={`Review-Liste · ${formatMonthLabel(selectedMonthData.month)}`}
+                className="v2-month-planning-list-card"
+                extra={(() => {
+                  const acceptedCount = selectedMonthData.reviewItems.filter((i) => i.status === "accepted").length;
+                  if (!acceptedCount) return null;
+                  return (
+                    <Space size={6}>
+                      <Switch size="small" checked={showAcceptedRisks} onChange={setShowAcceptedRisks} />
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {showAcceptedRisks ? `${acceptedCount} akzeptierte ausblenden` : `${acceptedCount} akzeptierte einblenden`}
+                      </Text>
+                    </Space>
+                  );
+                })()}
+              >
                 {selectedMonthData.reviewItems.length ? (
                   <List
                     className="v2-month-planning-list"
-                    dataSource={selectedMonthData.reviewItems}
+                    dataSource={selectedMonthData.reviewItems.filter(
+                      (i) => showAcceptedRisks || i.status !== "accepted",
+                    )}
                     renderItem={(item) => {
                       const itemActionSurface = buildMonthPlanningActionSurface(item);
                       const conflictBadges = buildMonthPlanningConflictBadges(item);
@@ -522,11 +553,11 @@ export default function MonthPlanningPage(): JSX.Element {
                         >
                           <Space direction="vertical" size={6} style={{ width: "100%" }}>
                             <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
-                              <Text strong>{item.title}</Text>
+                              <Text strong>{displayWithCleanSku(item.title)}</Text>
                               <Tag color={statusTagColor(item)}>{statusTagLabel(item)}</Tag>
                             </Space>
-                            <Text>{itemActionSurface.problemStatement}</Text>
-                            <Text type="secondary">{item.detail}</Text>
+                            <Text>{displayWithCleanSku(itemActionSurface.problemStatement)}</Text>
+                            <Text type="secondary">{displayWithCleanSku(item.detail)}</Text>
                             {conflictBadges.length ? (
                               <Space wrap size={6}>
                                 {conflictBadges.map((badge) => (
@@ -535,7 +566,11 @@ export default function MonthPlanningPage(): JSX.Element {
                               </Space>
                             ) : null}
                             <Space wrap size={6}>
-                              <Text type="secondary">Wirkmonat: {formatMonthLabel(item.impactMonth)}</Text>
+                              <Tooltip title="Wirkmonat in der Zukunft = Bestellpflicht jetzt im Review-Monat, damit der spaetere Monat robust bleibt.">
+                                <Text type="secondary" style={{ cursor: "help", borderBottom: "1px dotted currentColor" }}>
+                                  Wirkmonat: {formatMonthLabel(item.impactMonth)}
+                                </Text>
+                              </Tooltip>
                               <Text type="secondary">
                                 {itemActionSurface.dateMeta.label} {itemActionSurface.dateMeta.value ? formatDate(itemActionSurface.dateMeta.value) : formatMonthLabel(item.month)}
                               </Text>
@@ -559,13 +594,13 @@ export default function MonthPlanningPage(): JSX.Element {
                     <Space wrap>
                       <Tag color={statusTagColor(selectedItem)}>{statusTagLabel(selectedItem)}</Tag>
                       <Tag>{selectedActionSurface.typeLabel}</Tag>
-                      <Text strong>{selectedItem.title}</Text>
+                      <Text strong>{displayWithCleanSku(selectedItem.title)}</Text>
                       {selectedItem.foId ? <Tag>FO {selectedItem.foId}</Tag> : null}
                       {selectedItem.abcClass ? <Tag>{selectedItem.abcClass}</Tag> : null}
                     </Space>
 
-                    <Paragraph style={{ marginBottom: 0 }}>{selectedActionSurface.problemStatement}</Paragraph>
-                    <Text type="secondary">{selectedItem.detail}</Text>
+                    <Paragraph style={{ marginBottom: 0 }}>{displayWithCleanSku(selectedActionSurface.problemStatement)}</Paragraph>
+                    <Text type="secondary">{displayWithCleanSku(selectedItem.detail)}</Text>
 
                     {selectedConflictBadges.length ? (
                       <Space wrap size={6}>
@@ -578,7 +613,12 @@ export default function MonthPlanningPage(): JSX.Element {
                     ) : null}
 
                     <div className="v2-month-planning-kpis">
-                      <div><Text type="secondary">Wirkmonat</Text><div>{formatMonthLabel(selectedItem.impactMonth)}</div></div>
+                      <div>
+                        <Tooltip title="Wirkmonat in der Zukunft = Bestellpflicht jetzt im Review-Monat, damit der spaetere Monat robust bleibt.">
+                          <Text type="secondary" style={{ cursor: "help", borderBottom: "1px dotted currentColor" }}>Wirkmonat</Text>
+                        </Tooltip>
+                        <div>{formatMonthLabel(selectedItem.impactMonth)}</div>
+                      </div>
                       <div>
                         <Text type="secondary">{selectedActionSurface.dateMeta.label}</Text>
                         <div>{selectedActionSurface.dateMeta.value ? formatDate(selectedActionSurface.dateMeta.value) : formatMonthLabel(selectedItem.month)}</div>
@@ -665,7 +705,7 @@ export default function MonthPlanningPage(): JSX.Element {
                     ) : (
                       <Card size="small" title="Nächster Schritt" className="v2-month-planning-visual-card">
                         <Text type="secondary">
-                          {selectedItem.detail}
+                          {displayWithCleanSku(selectedItem.detail)}
                         </Text>
                       </Card>
                     )}

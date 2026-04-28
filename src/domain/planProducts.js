@@ -684,7 +684,11 @@ export function buildSharedPlanProductProjection(input) {
       forecastUnitsBySkuMonth[planningSku] = { ...plannedUnitsByMonth };
     }
     if (procurementReady && !planningSku) {
-      const fallbackSku = `PLAN-${sanitizeVirtualSkuToken(row.id || row.alias || String(index + 1), String(index + 1))}`;
+      // Quelle ggf. von "PLAN-"/"PLAN_"-Praefix befreien, damit kein PLAN-PLAN- entsteht.
+      // Praefix wird nur entfernt wenn ein Trenner folgt — schuetzt Eintraege wie "PLANNED".
+      const rawSource = String(row.id || row.alias || String(index + 1));
+      const sourceWithoutPrefix = rawSource.replace(/^PLAN[-_]/i, "");
+      const fallbackSku = `PLAN-${sanitizeVirtualSkuToken(sourceWithoutPrefix || rawSource, String(index + 1))}`;
       planningSku = ensureUniqueVirtualSku(requestedSku || fallbackSku, usedSkuKeys);
       usedSkuKeys.add(planningSku.toLowerCase());
       forecastUnitsBySkuMonth[planningSku] = { ...plannedUnitsByMonth };

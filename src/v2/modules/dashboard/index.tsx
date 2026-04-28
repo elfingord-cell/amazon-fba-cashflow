@@ -1897,7 +1897,7 @@ export default function DashboardModule(): JSX.Element {
           showIcon
           message={`Forecast-Änderung: ${openForecastFoConflicts} FOs prüfen`}
           description={(
-            <Button size="small" onClick={() => navigate("/v2/forecast?panel=conflicts")}>
+            <Button size="small" onClick={() => navigate(`/v2/monatsplanung?month=${encodeURIComponent(currentMonthKey())}`)}>
               Zur Konfliktliste
             </Button>
           )}
