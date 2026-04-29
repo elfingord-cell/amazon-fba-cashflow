@@ -170,7 +170,9 @@ export function AppShell() {
       const source = event?.detail?.source;
       const hash = normalizeHash(window.location.hash);
       const base = hash.split("?")[0];
-      if (source !== "payment-update" || (base !== "#po" && base !== "#fo")) {
+      const onPoOrFo = base === "#po" || base === "#fo";
+      const skipForPoFo = source === "payment-update" || source === "po-master-update";
+      if (!(skipForPoFo && onPoOrFo)) {
         setRefreshNonce((value) => value + 1);
       }
     };

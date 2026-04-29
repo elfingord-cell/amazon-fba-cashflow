@@ -938,6 +938,22 @@ td.num, th.num{text-align:right; font-variant-numeric:tabular-nums}
 .po-modal-body{padding:16px 20px; overflow:auto;}
 .po-modal-actions{padding:12px 20px 18px; border-top:1px solid rgba(15,27,45,0.08); display:flex; justify-content:flex-end; gap:10px;}
 .po-modal .po-suggested-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px; font-size:11px;}
+.po-apply-master-modal{width:min(640px, 94vw);}
+.po-apply-master-modal .po-modal-body{display:flex; flex-direction:column; gap:14px;}
+.po-apply-master-section{display:flex; flex-direction:column; gap:6px; border:1px solid rgba(15,27,45,0.08); border-radius:10px; padding:10px 12px; background:rgba(15,27,45,0.02);}
+.po-apply-master-section h5{margin:0 0 4px 0; font-size:12px; text-transform:uppercase; letter-spacing:0.04em; color:rgba(15,27,45,0.65);}
+.po-apply-master-row{display:grid; grid-template-columns:auto 1fr auto auto auto; align-items:center; gap:10px; padding:6px 4px; border-radius:6px; cursor:pointer; font-size:13px;}
+.po-apply-master-row:hover{background:rgba(15,27,45,0.04);}
+.po-apply-master-row.is-disabled{opacity:0.45; cursor:not-allowed;}
+.po-apply-master-label{font-weight:500;}
+.po-apply-master-old{color:rgba(15,27,45,0.55); font-variant-numeric:tabular-nums; font-size:12px;}
+.po-apply-master-arrow{color:rgba(15,27,45,0.35); font-size:12px;}
+.po-apply-master-new{color:#0d3d63; font-weight:600; font-variant-numeric:tabular-nums;}
+.po-apply-master-new.is-unchanged{color:rgba(15,27,45,0.45); font-weight:400;}
+.po-apply-master-btn{padding:4px 8px; font-size:11px; line-height:1; white-space:nowrap; min-width:auto;}
+.po-items-actions-cell{display:flex; gap:6px; align-items:center; justify-content:flex-end; flex-wrap:nowrap; min-width:140px;}
+.po-items-table .po-items-actions-cell{min-width:140px;}
+.po-items-table th:last-child, .po-items-table td:last-child{min-width:140px;}
 .products-header{display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:16px;}
 .products-actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center; flex:1;}
 .products-actions input,

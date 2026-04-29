@@ -1,5 +1,6 @@
 import {
   getProductsSnapshot,
+  getProductBySku,
   getRecentProducts,
   recordRecentProduct,
   upsertProduct,
@@ -1879,11 +1880,331 @@ function renderPoList(container, records, config, onEdit, onDelete, options = {}
   container.append(table);
 }
 
-function renderItemsTable(container, record, onChange, dataListId) {
+function buildApplyToMasterCandidates(item, record, line, settings) {
+  const itemUnits = parseDE(item.units);
+  const freightTotal = parseDE(record.freightEur);
+  const freightPerUnitDirect = record.freightPerUnitEur != null && record.freightPerUnitEur !== ""
+    ? parseDE(record.freightPerUnitEur)
+    : NaN;
+  const computedFreightPerUnit = Number.isFinite(freightPerUnitDirect) && freightPerUnitDirect > 0
+    ? freightPerUnitDirect
+    : (Number.isFinite(freightTotal) && Number.isFinite(itemUnits) && itemUnits > 0
+        ? freightTotal / itemUnits
+        : null);
+  const fxRaw = record.fxOverride != null && record.fxOverride !== "" ? parseDE(record.fxOverride) : NaN;
+  const fxRate = Number.isFinite(fxRaw) && fxRaw > 0
+    ? fxRaw
+    : (Number.isFinite(settings?.fxRate) ? settings.fxRate : null);
+  const numericOrNull = (value) => (Number.isFinite(value) ? value : null);
+  return [
+    {
+      key: "unitPriceUsd",
+      label: "Stückkosten (USD)",
+      section: "einkauf",
+      target: "templateField",
+      value: numericOrNull(parseDE(item.unitCostUsd)),
+      defaultChecked: true,
+      formatter: (v) => v != null ? `${formatLocalizedNumber(v, 2, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $` : "—",
+    },
+    {
+      key: "extraPerUnitUsd",
+      label: "Zusatz/Stück (USD)",
+      section: "einkauf",
+      target: "templateField",
+      value: numericOrNull(parseDE(item.unitExtraUsd)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${formatLocalizedNumber(v, 2, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $` : "—",
+    },
+    {
+      key: "extraFlatUsd",
+      label: "Pauschal/Stück (USD)",
+      section: "einkauf",
+      target: "templateField",
+      value: numericOrNull(parseDE(item.extraFlatUsd)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${formatLocalizedNumber(v, 2, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $` : "—",
+    },
+    {
+      key: "landedUnitCostEur",
+      label: "Einstand (EUR/Stk.)",
+      section: "einstand",
+      target: "topLevel",
+      value: line && Number.isFinite(line.landedUnitCostEur) ? line.landedUnitCostEur : null,
+      defaultChecked: false,
+      formatter: (v) => v != null ? fmtEUR(v) : "—",
+    },
+    {
+      key: "logisticsPerUnitEur",
+      label: "Logistik/Stück (EUR)",
+      section: "einstand",
+      target: "topLevelWithFreight",
+      value: line && Number.isFinite(line.derivedLogisticsPerUnitEur) ? line.derivedLogisticsPerUnitEur : null,
+      defaultChecked: false,
+      formatter: (v) => v != null ? fmtEUR(v) : "—",
+    },
+    {
+      key: "freightEur",
+      label: "Logistik (EUR/Stk.) – Template",
+      section: "po",
+      target: "templateField",
+      value: numericOrNull(computedFreightPerUnit),
+      defaultChecked: false,
+      formatter: (v) => v != null ? fmtEUR(v) : "—",
+    },
+    {
+      key: "transportMode",
+      label: "Transport",
+      section: "po",
+      target: "templateField",
+      value: String(record.transport || "SEA").toUpperCase(),
+      defaultChecked: false,
+      formatter: (v) => v ? String(v) : "—",
+    },
+    {
+      key: "productionDays",
+      label: "Produktionstage",
+      section: "po",
+      target: "templateField",
+      value: numericOrNull(parseDE(record.prodDays)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${Math.round(v)} Tage` : "—",
+    },
+    {
+      key: "transitDays",
+      label: "Transit-Tage",
+      section: "po",
+      target: "templateField",
+      value: numericOrNull(parseDE(record.transitDays)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${Math.round(v)} Tage` : "—",
+    },
+    {
+      key: "dutyPct",
+      label: "Zoll (%)",
+      section: "po",
+      target: "templateField",
+      value: numericOrNull(parseDE(record.dutyRatePct)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${formatLocalizedNumber(v, 2, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %` : "—",
+    },
+    {
+      key: "vatImportPct",
+      label: "EUSt (%)",
+      section: "po",
+      target: "templateField",
+      value: numericOrNull(parseDE(record.eustRatePct)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${formatLocalizedNumber(v, 2, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %` : "—",
+    },
+    {
+      key: "fxRate",
+      label: "FX-Kurs (USD/EUR)",
+      section: "po",
+      target: "templateAndTopLevel",
+      value: numericOrNull(fxRate),
+      defaultChecked: false,
+      formatter: (v) => v != null ? formatLocalizedNumber(v, 4, { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : "—",
+    },
+    {
+      key: "fxFeePct",
+      label: "FX-Gebühr (%)",
+      section: "po",
+      target: "templateField",
+      value: numericOrNull(parseDE(record.fxFeePct)),
+      defaultChecked: false,
+      formatter: (v) => v != null ? `${formatLocalizedNumber(v, 2, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} %` : "—",
+    },
+    {
+      key: "ddp",
+      label: "DDP",
+      section: "po",
+      target: "templateField",
+      value: record.ddp === true,
+      defaultChecked: false,
+      formatter: (v) => v === true ? "Ja" : "Nein",
+    },
+  ];
+}
+
+function readCurrentMasterValue(product, key, target) {
+  if (!product) return null;
+  if (target === "topLevel" || target === "topLevelWithFreight" || target === "templateAndTopLevel") {
+    if (target === "topLevelWithFreight") {
+      const direct = product.logisticsPerUnitEur ?? product.freightPerUnitEur;
+      return Number.isFinite(direct) ? direct : null;
+    }
+    if (target === "templateAndTopLevel") {
+      const top = product.fxUsdPerEur;
+      if (Number.isFinite(top) && top > 0) return top;
+      const tplFields = product.template?.fields ?? product.template ?? {};
+      return Number.isFinite(tplFields.fxRate) && tplFields.fxRate > 0 ? tplFields.fxRate : null;
+    }
+    const v = product[key];
+    return Number.isFinite(v) ? v : null;
+  }
+  const fields = product.template?.fields ?? product.template ?? {};
+  const v = fields[key];
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") return v;
+  return Number.isFinite(v) ? v : null;
+}
+
+function applyCandidatesToProduct(product, candidates, selectedKeys) {
+  const baseTemplate = product.template ?? {};
+  const baseFields = baseTemplate.fields ?? (typeof baseTemplate === "object" && !baseTemplate.fields ? baseTemplate : {});
+  const next = {
+    ...product,
+    originalSku: product.sku,
+    template: {
+      ...baseTemplate,
+      fields: { ...baseFields },
+    },
+  };
+  candidates.forEach(cand => {
+    if (!selectedKeys.has(cand.key)) return;
+    if (cand.value == null) return;
+    if (cand.target === "templateField") {
+      next.template.fields[cand.key] = cand.value;
+    } else if (cand.target === "topLevel") {
+      next[cand.key] = cand.value;
+    } else if (cand.target === "topLevelWithFreight") {
+      next.logisticsPerUnitEur = cand.value;
+      next.freightPerUnitEur = cand.value;
+    } else if (cand.target === "templateAndTopLevel") {
+      next.template.fields[cand.key] = cand.value;
+      next.fxUsdPerEur = cand.value;
+    }
+  });
+  return next;
+}
+
+function openApplyToMasterDialog({ item, record, line, settings, onApplied, showToast }) {
+  const sku = String(item?.sku || "").trim();
+  if (!sku) {
+    if (typeof showToast === "function") showToast("Bitte zuerst eine SKU für diese Position eintragen.");
+    return;
+  }
+  const product = getProductBySku(sku);
+  if (!product) {
+    if (typeof showToast === "function") showToast(`SKU "${sku}" nicht in Stammdaten gefunden.`);
+    return;
+  }
+  const candidates = buildApplyToMasterCandidates(item, record, line, settings);
+
+  const overlay = el("div", { class: "po-modal-backdrop", role: "dialog", "aria-modal": "true" });
+  const checkboxes = new Map();
+
+  const sectionDefs = [
+    { key: "einkauf", title: "Einkauf (USD)" },
+    { key: "einstand", title: "Einstand (EUR, abgeleitet aus dieser PO-Zeile)" },
+    { key: "po", title: "PO-Konditionen (Template)" },
+  ];
+
+  const buildRow = (cand) => {
+    const oldValue = readCurrentMasterValue(product, cand.key, cand.target);
+    const oldFmt = cand.formatter(oldValue);
+    const newFmt = cand.formatter(cand.value);
+    const disabled = cand.value == null;
+    const isUnchanged = oldValue != null && cand.value != null && (
+      typeof cand.value === "boolean"
+        ? oldValue === cand.value
+        : (typeof cand.value === "string"
+            ? String(oldValue).toUpperCase() === String(cand.value).toUpperCase()
+            : Math.abs(Number(oldValue) - Number(cand.value)) < 1e-6)
+    );
+    const checkbox = el("input", {
+      type: "checkbox",
+      checked: cand.defaultChecked && !disabled && !isUnchanged,
+    });
+    if (disabled) checkbox.disabled = true;
+    checkboxes.set(cand.key, checkbox);
+    const labelEl = el("label", { class: "po-apply-master-row" + (disabled ? " is-disabled" : "") }, [
+      checkbox,
+      el("span", { class: "po-apply-master-label" }, [cand.label]),
+      el("span", { class: "po-apply-master-old" }, [oldFmt]),
+      el("span", { class: "po-apply-master-arrow" }, ["→"]),
+      el("span", { class: "po-apply-master-new" + (isUnchanged ? " is-unchanged" : "") }, [newFmt]),
+    ]);
+    return labelEl;
+  };
+
+  const sectionsBody = sectionDefs.map(sec => {
+    const inSection = candidates.filter(c => c.section === sec.key);
+    if (!inSection.length) return null;
+    return el("section", { class: "po-apply-master-section" }, [
+      el("h5", {}, [sec.title]),
+      ...inSection.map(buildRow),
+    ]);
+  }).filter(Boolean);
+
+  const close = () => overlay.remove();
+
+  const card = el("div", { class: "po-modal po-apply-master-modal" }, [
+    el("header", { class: "po-modal-header" }, [
+      el("h4", {}, [`Werte als Stammdaten speichern – ${product.alias ? `${product.alias} (${sku})` : sku}`]),
+      el("button", {
+        class: "btn ghost",
+        type: "button",
+        onclick: close,
+        "aria-label": "Schließen",
+      }, ["✕"]),
+    ]),
+    el("div", { class: "po-modal-body" }, [
+      el("p", { class: "muted" }, ["Wähle aus, welche Werte aus dieser PO-Zeile als neuer Standard für die SKU übernommen werden sollen."]),
+      ...sectionsBody,
+    ]),
+    el("footer", { class: "po-modal-actions" }, [
+      el("button", {
+        class: "btn",
+        type: "button",
+        onclick: close,
+      }, ["Abbrechen"]),
+      el("button", {
+        class: "btn primary",
+        type: "button",
+        onclick: () => {
+          const selectedKeys = new Set();
+          candidates.forEach(cand => {
+            const cb = checkboxes.get(cand.key);
+            if (cb && cb.checked && !cb.disabled) selectedKeys.add(cand.key);
+          });
+          if (!selectedKeys.size) {
+            if (typeof showToast === "function") showToast("Bitte mindestens ein Feld auswählen.");
+            return;
+          }
+          try {
+            const nextProduct = applyCandidatesToProduct(product, candidates, selectedKeys);
+            upsertProduct(nextProduct, { source: "po-master-update" });
+            refreshProductCache();
+            close();
+            if (typeof showToast === "function") {
+              showToast(`Stammdaten für ${sku} aktualisiert (${selectedKeys.size} Feld${selectedKeys.size === 1 ? "" : "er"}).`);
+            }
+            if (typeof onApplied === "function") onApplied();
+          } catch (err) {
+            if (typeof showToast === "function") {
+              showToast(`Fehler beim Speichern: ${err?.message || "Unbekannter Fehler"}`);
+            }
+          }
+        },
+      }, ["Übernehmen"]),
+    ]),
+  ]);
+  overlay.append(card);
+  document.body.append(overlay);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) close();
+  });
+  const firstFocusable = card.querySelector("input[type=checkbox]:not([disabled])");
+  if (firstFocusable) firstFocusable.focus();
+}
+
+function renderItemsTable(container, record, onChange, dataListId, helpers = {}) {
   if (!container) return;
   refreshProductCache();
   ensureItems(record);
-  const estimate = updateDerivedFreight(record, getSettings());
+  const settings = getSettings();
+  const estimate = updateDerivedFreight(record, settings);
   const lineMap = new Map();
   estimate?.lines?.forEach(line => {
     if (line.id) lineMap.set(line.id, line);
@@ -1984,11 +2305,35 @@ function renderItemsTable(container, record, onChange, dataListId) {
     const line = lineMap.get(item.id) || lineMap.get(`sku:${String(item.sku || "").toLowerCase()}`) || null;
     const logisticsCell = buildLogisticsCell(line);
 
+    const applyToMasterBtn = el("button", {
+      class: "btn ghost po-apply-master-btn",
+      type: "button",
+      title: "Werte als Stammdaten übernehmen",
+      "aria-label": "Werte als Stammdaten übernehmen",
+    }, ["→ Stamm"]);
+    if (item.type === "misc") {
+      applyToMasterBtn.disabled = true;
+      applyToMasterBtn.title = "Freie Position kann nicht in Stammdaten übernommen werden.";
+    }
+    applyToMasterBtn.addEventListener("click", () => {
+      const currentLine = lineMap.get(item.id) || lineMap.get(`sku:${String(item.sku || "").toLowerCase()}`) || null;
+      openApplyToMasterDialog({
+        item,
+        record,
+        line: currentLine,
+        settings,
+        showToast: helpers.showToast,
+        onApplied: () => {
+          if (typeof helpers.onMasterUpdated === "function") helpers.onMasterUpdated();
+        },
+      });
+    });
+
     const removeBtn = el("button", { class: "btn danger", type: "button" }, ["✕"]);
     removeBtn.addEventListener("click", () => {
       if ((record.items || []).length <= 1) return;
       record.items = record.items.filter(it => it.id !== item.id);
-      renderItemsTable(container, record, onChange, dataListId);
+      renderItemsTable(container, record, onChange, dataListId, helpers);
       onChange();
     });
 
@@ -1999,7 +2344,7 @@ function renderItemsTable(container, record, onChange, dataListId) {
       el("td", {}, [unitExtraInput]),
       el("td", {}, [flatInput]),
       el("td", { dataset: { logisticsCell: "true" } }, [logisticsCell]),
-      el("td", {}, [removeBtn]),
+      el("td", { class: "po-items-actions-cell" }, [applyToMasterBtn, removeBtn]),
     );
     body.append(row);
   });
@@ -4487,7 +4832,7 @@ export function renderOrderModule(root, config) {
       const supplier = editing.supplier || "—";
       poMeta.textContent = `${number} • ${supplier}`;
     }
-    renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
+    renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId, { showToast });
     if (quickfillEnabled) {
       refreshProductCache();
       if (skuInput) {
@@ -4724,7 +5069,7 @@ export function renderOrderModule(root, config) {
         extraFlatUsd: "0,00",
         unitCostManuallyEdited: false,
       });
-      renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
+      renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId, { showToast });
       onAnyChange();
     });
   }
@@ -4741,7 +5086,7 @@ export function renderOrderModule(root, config) {
         unitCostManuallyEdited: false,
         type: "misc",
       });
-      renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId);
+      renderItemsTable(itemsZone, editing, () => onAnyChange(), itemsDataListId, { showToast });
       onAnyChange();
     });
   }

@@ -1465,7 +1465,7 @@ export function getProductBySku(sku){
   return match ? updateProductStatsMeta(state, match) : null;
 }
 
-export function upsertProduct(input){
+export function upsertProduct(input, meta = {}){
   const state = loadState();
   ensureProducts(state);
 
@@ -1564,7 +1564,7 @@ export function upsertProduct(input){
     }
   }
 
-  saveState(state);
+  saveState(state, meta);
   return updateProductStatsMeta(loadState(), target);
 }
 
