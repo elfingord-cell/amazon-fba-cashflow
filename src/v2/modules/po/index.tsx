@@ -24,7 +24,7 @@ import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { StatsTableShell } from "../../components/StatsTableShell";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
-import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass } from "../../domain/masterDataHierarchy";
+import { applyAdoptedFieldToProduct, resolveMasterDataHierarchy, sourceChipClass, type AdoptableProductField } from "../../domain/masterDataHierarchy";
 import { buildPoArrivalTasks, type PoArrivalTask } from "../../domain/poArrivalTasks";
 import { evaluateOrderBlocking } from "../../domain/productCompletenessV2";
 import {
@@ -920,6 +920,8 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [skuPickerValues, setSkuPickerValues] = useState<string[]>([]);
+  const [rowAdoptIndex, setRowAdoptIndex] = useState<number | null>(null);
+  const [rowAdoptSelection, setRowAdoptSelection] = useState<Set<AdoptableProductField>>(() => new Set());
   const [form] = Form.useForm<PoFormValues>();
   const [paymentForm] = Form.useForm<PoPaymentFormValues>();
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -1461,6 +1463,77 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       return;
     }
     form.setFieldValue("ddp", poHierarchyBase.fields.ddp.value === true);
+  }
+
+  function openRowAdoptDialog(rowIndex: number): void {
+    const items = (form.getFieldValue("items") || []) as PoItemDraft[];
+    const item = items[rowIndex];
+    const sku = String(item?.sku || "").trim();
+    if (!sku) {
+      message.error("Bitte zuerst eine SKU für diese Position auswählen.");
+      return;
+    }
+    if (!productBySku.get(sku)) {
+      message.error(`SKU ${sku} nicht in Stammdaten gefunden.`);
+      return;
+    }
+    const product = (productBySku.get(sku)?.raw || {}) as Record<string, unknown>;
+    const tplFields = (product.template && typeof product.template === "object"
+      ? ((product.template as Record<string, unknown>).fields || product.template)
+      : {}) as Record<string, unknown>;
+    const initial = new Set<AdoptableProductField>();
+    const numEq = (a: unknown, b: unknown) => {
+      const an = Number(a ?? NaN);
+      const bn = Number(b ?? NaN);
+      if (!Number.isFinite(an) || !Number.isFinite(bn)) return false;
+      return Math.abs(an - bn) < 1e-6;
+    };
+    if (Number(item?.unitCostUsd ?? 0) > 0 && !numEq(tplFields.unitPriceUsd, item.unitCostUsd)) {
+      initial.add("unitPriceUsd");
+    }
+    setRowAdoptSelection(initial);
+    setRowAdoptIndex(rowIndex);
+  }
+
+  async function commitRowAdopt(): Promise<void> {
+    if (rowAdoptIndex == null) return;
+    const items = (form.getFieldValue("items") || []) as PoItemDraft[];
+    const item = items[rowAdoptIndex];
+    const sku = String(item?.sku || "").trim();
+    if (!sku) {
+      message.error("SKU fehlt.");
+      return;
+    }
+    const selectedFields = Array.from(rowAdoptSelection);
+    if (!selectedFields.length) {
+      message.warning("Bitte mindestens ein Feld auswählen.");
+      return;
+    }
+    const valueByField: Record<AdoptableProductField, unknown> = {
+      unitPriceUsd: Number(item.unitCostUsd ?? 0),
+      productionLeadTimeDays: Number(item.prodDays ?? 0),
+      transitDays: Number(item.transitDays ?? 0),
+      dutyRatePct: Number(form.getFieldValue("dutyRatePct") ?? 0),
+      eustRatePct: Number(form.getFieldValue("eustRatePct") ?? 0),
+      ddp: form.getFieldValue("ddp") === true,
+    };
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const products = Array.isArray(next.products) ? [...next.products] : [];
+      const idx = products.findIndex((entry) => String((entry as Record<string, unknown>).sku || "").trim().toLowerCase() === sku.toLowerCase());
+      if (idx < 0) return next;
+      let prod = products[idx] as Record<string, unknown>;
+      for (const field of selectedFields) {
+        prod = applyAdoptedFieldToProduct({ product: prod, field, value: valueByField[field] });
+      }
+      prod.updatedAt = nowIso();
+      products[idx] = prod;
+      next.products = products;
+      return next;
+    }, "v2:po:adopt-row-masterdata");
+    message.success(`Stammdaten für ${sku} aktualisiert (${selectedFields.length} Feld${selectedFields.length === 1 ? "" : "er"}).`);
+    setRowAdoptIndex(null);
+    setRowAdoptSelection(new Set());
   }
 
   function adoptPoFieldToProduct(field: "unitPriceUsd" | "productionLeadTimeDays" | "transitDays" | "dutyRatePct" | "eustRatePct" | "ddp", value: unknown): void {
@@ -2912,7 +2985,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
       <Modal
         title={editingId ? "PO bearbeiten" : "PO anlegen"}
         open={modalOpen}
-        width={1120}
+        width={1280}
         onCancel={() => {
           modalCollab.clearDraft();
           setModalOpen(false);
@@ -3169,6 +3242,13 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
                         </Form.Item>
                       </div>
                       <div className="v2-po-item-row-actions">
+                        <Button
+                          size="small"
+                          onClick={() => openRowAdoptDialog(field.name as number)}
+                          title="Werte als Stammdaten übernehmen"
+                        >
+                          → Stamm
+                        </Button>
                         <Button
                           danger
                           size="small"
@@ -4055,6 +4135,161 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
           </Card>
         </Form>
       </Modal>
+
+      <RowAdoptModal
+        rowIndex={rowAdoptIndex}
+        selection={rowAdoptSelection}
+        setSelection={setRowAdoptSelection}
+        items={(form.getFieldValue("items") || []) as PoItemDraft[]}
+        poDutyRatePct={Number(form.getFieldValue("dutyRatePct") ?? 0)}
+        poEustRatePct={Number(form.getFieldValue("eustRatePct") ?? 0)}
+        poDdp={form.getFieldValue("ddp") === true}
+        productBySku={productBySku}
+        onCancel={() => { setRowAdoptIndex(null); setRowAdoptSelection(new Set()); }}
+        onConfirm={() => { void commitRowAdopt(); }}
+      />
     </div>
+  );
+}
+
+interface RowAdoptModalProps {
+  rowIndex: number | null;
+  selection: Set<AdoptableProductField>;
+  setSelection: (next: Set<AdoptableProductField>) => void;
+  items: PoItemDraft[];
+  poDutyRatePct: number;
+  poEustRatePct: number;
+  poDdp: boolean;
+  productBySku: Map<string, { sku: string; alias: string; supplierId: string; raw: Record<string, unknown> }>;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function RowAdoptModal(props: RowAdoptModalProps): JSX.Element | null {
+  const { rowIndex, selection, setSelection, items, poDutyRatePct, poEustRatePct, poDdp, productBySku, onCancel, onConfirm } = props;
+  const item = rowIndex != null ? items[rowIndex] : null;
+  const sku = String(item?.sku || "").trim();
+  const product = sku ? (productBySku.get(sku)?.raw as Record<string, unknown> | undefined) : undefined;
+  const alias = sku ? (productBySku.get(sku)?.alias || sku) : "";
+  const tplFields = (product?.template && typeof product.template === "object"
+    ? ((product.template as Record<string, unknown>).fields || product.template)
+    : {}) as Record<string, unknown>;
+
+  const open = rowIndex !== null && !!item;
+  if (!open) return null;
+
+  const fmtNum = (v: unknown, decimals = 2): string => {
+    const n = Number(v ?? NaN);
+    if (!Number.isFinite(n)) return "—";
+    return n.toLocaleString("de-DE", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
+  const fmtInt = (v: unknown): string => {
+    const n = Number(v ?? NaN);
+    if (!Number.isFinite(n)) return "—";
+    return Math.round(n).toLocaleString("de-DE");
+  };
+  const fmtBool = (v: unknown): string => v === true ? "Ja" : "Nein";
+
+  const toggle = (key: AdoptableProductField, checked: boolean) => {
+    const next = new Set(selection);
+    if (checked) next.add(key); else next.delete(key);
+    setSelection(next);
+  };
+
+  type Row = {
+    key: AdoptableProductField;
+    label: string;
+    section: "row" | "po";
+    oldValue: string;
+    newValue: string;
+    disabled?: boolean;
+  };
+
+  const rows: Row[] = [
+    {
+      key: "unitPriceUsd",
+      label: "Stückkosten (USD)",
+      section: "row",
+      oldValue: `${fmtNum(tplFields.unitPriceUsd)} $`,
+      newValue: `${fmtNum(item?.unitCostUsd)} $`,
+      disabled: !(Number(item?.unitCostUsd ?? 0) > 0),
+    },
+    {
+      key: "productionLeadTimeDays",
+      label: "Produktionstage",
+      section: "row",
+      oldValue: `${fmtInt(product?.productionLeadTimeDaysDefault)} Tage`,
+      newValue: `${fmtInt(item?.prodDays)} Tage`,
+      disabled: !(Number(item?.prodDays ?? 0) > 0),
+    },
+    {
+      key: "transitDays",
+      label: "Transit-Tage",
+      section: "row",
+      oldValue: `${fmtInt(tplFields.transitDays)} Tage`,
+      newValue: `${fmtInt(item?.transitDays)} Tage`,
+      disabled: !(Number(item?.transitDays ?? 0) > 0),
+    },
+    {
+      key: "dutyRatePct",
+      label: "Zoll (%)",
+      section: "po",
+      oldValue: `${fmtNum(tplFields.dutyPct ?? product?.dutyRatePct, 2)} %`,
+      newValue: `${fmtNum(poDutyRatePct, 2)} %`,
+    },
+    {
+      key: "eustRatePct",
+      label: "EUSt (%)",
+      section: "po",
+      oldValue: `${fmtNum(tplFields.vatImportPct ?? product?.eustRatePct, 2)} %`,
+      newValue: `${fmtNum(poEustRatePct, 2)} %`,
+    },
+    {
+      key: "ddp",
+      label: "DDP",
+      section: "po",
+      oldValue: fmtBool(tplFields.ddp ?? product?.ddp),
+      newValue: fmtBool(poDdp),
+    },
+  ];
+
+  const renderSection = (title: string, sectionKey: "row" | "po") => {
+    const sectionRows = rows.filter((r) => r.section === sectionKey);
+    return (
+      <div className="v2-row-adopt-section">
+        <div className="v2-row-adopt-section-title">{title}</div>
+        {sectionRows.map((r) => (
+          <label key={r.key} className={`v2-row-adopt-row${r.disabled ? " is-disabled" : ""}`}>
+            <Checkbox
+              checked={selection.has(r.key)}
+              disabled={r.disabled}
+              onChange={(e) => toggle(r.key, e.target.checked)}
+            />
+            <span className="v2-row-adopt-label">{r.label}</span>
+            <span className="v2-row-adopt-old">{r.oldValue}</span>
+            <span className="v2-row-adopt-arrow">→</span>
+            <span className="v2-row-adopt-new">{r.newValue}</span>
+          </label>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={`Werte als Stammdaten speichern – ${alias}${alias !== sku ? ` (${sku})` : ""}`}
+      okText="Übernehmen"
+      cancelText="Abbrechen"
+      onCancel={onCancel}
+      onOk={onConfirm}
+      width={620}
+    >
+      <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+        Wähle aus, welche Werte aus dieser PO-Zeile als neuer Standard für die SKU übernommen werden. PO-Konditionen (Zoll, EUSt, DDP) gelten für die gesamte PO.
+      </Paragraph>
+      {renderSection("Pro SKU (aus dieser Zeile)", "row")}
+      {renderSection("PO-Konditionen", "po")}
+    </Modal>
   );
 }
