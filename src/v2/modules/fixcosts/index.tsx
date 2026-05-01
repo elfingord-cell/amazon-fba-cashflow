@@ -234,13 +234,13 @@ export default function FixcostsModule(): JSX.Element {
   const defaultStartMonth = normalizeMonth(settings.startMonth) || new Date().toISOString().slice(0, 7);
 
   useEffect(() => {
+    if (dirty) return;
     setDraftRows(normalizeFixcosts((Array.isArray(state.fixcosts) ? state.fixcosts : []), defaultStartMonth));
     setDraftOverrides(cloneOverrides(state.fixcostOverrides));
     const status = (state.status && typeof state.status === "object") ? state.status as Record<string, unknown> : {};
     setAutoManualCheck(status.autoManualCheck === true);
     setDraftEvents(cloneEvents(status.events));
-    setDirty(false);
-  }, [defaultStartMonth, state.fixcostOverrides, state.fixcosts, state.status]);
+  }, [dirty, defaultStartMonth, state.fixcostOverrides, state.fixcosts, state.status]);
 
   const expandedInstances = useMemo(() => {
     const virtualState = {

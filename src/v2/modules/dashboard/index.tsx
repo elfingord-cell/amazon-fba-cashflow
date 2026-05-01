@@ -45,7 +45,7 @@ import {
   type PhantomFoSuggestion,
 } from "../../domain/phantomFo";
 import { ensureForecastVersioningContainers } from "../../domain/forecastVersioning";
-import { currentMonthKey, formatMonthLabel, monthIndex } from "../../domain/months";
+import { currentMonthKey, formatMonthLabel, monthIndex, normalizeMonthKey } from "../../domain/months";
 import { PORTFOLIO_BUCKET, PORTFOLIO_BUCKET_VALUES } from "../../../domain/portfolioBuckets.js";
 import { buildSharedPlanProductProjection } from "../../../domain/planProducts.js";
 import { useWorkspaceState } from "../../state/workspace";
@@ -134,9 +134,9 @@ interface PnlMatrixRow {
 }
 
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRange; label: string; count: number | null }> = [
-  { value: "next6", label: "Nächste 6 Monate", count: 6 },
-  { value: "next12", label: "Nächste 12 Monate", count: 12 },
-  { value: "next18", label: "Nächste 18 Monate", count: 18 },
+  { value: "next6", label: "Nächste 6 Monate (rollierend)", count: 6 },
+  { value: "next12", label: "Nächste 12 Monate (rollierend)", count: 12 },
+  { value: "next18", label: "Nächste 18 Monate (rollierend)", count: 18 },
   { value: "all", label: "Alle Monate", count: null },
 ];
 
@@ -554,11 +554,12 @@ function normalizeForecastImpactSummary(value: unknown): {
 export default function DashboardModule(): JSX.Element {
   const { state, loading, error, saveWith } = useWorkspaceState();
   const navigate = useNavigate();
-  const [range, setRange] = useState<DashboardRange>("next6");
+  const [range, setRange] = useState<DashboardRange>("next12");
   const [bucketScopeValues, setBucketScopeValues] = useState<string[]>(() => DEFAULT_V2_BUCKET_SCOPE.slice());
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [monthDetailOpen, setMonthDetailOpen] = useState(false);
   const [expandedPnlRowKeys, setExpandedPnlRowKeys] = useState<string[]>(["inflows", "outflows"]);
+  const [showAllPastMonths, setShowAllPastMonths] = useState(false);
 
   const stateObject = state as unknown as Record<string, unknown>;
   const monthlyActualsMap = useMemo(() => {
@@ -620,13 +621,36 @@ export default function DashboardModule(): JSX.Element {
     () => (showPhantomFoInChart ? planningState : (sharedPlanProjection?.planningState || stateObject)),
     [planningState, sharedPlanProjection, showPhantomFoInChart, stateObject],
   );
+  const currentMonth = useMemo(() => currentMonthKey(), []);
+  const requiredHorizon = useMemo(() => {
+    const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
+    const settingsHorizon = Math.max(1, Number(settings.horizonMonths) || 12);
+    if (!option || option.count == null) return settingsHorizon;
+    const startMonthRaw = normalizeMonthKey(settings.startMonth) || currentMonth;
+    const startIdx = monthIndex(startMonthRaw);
+    const currentIdx = monthIndex(currentMonth);
+    const monthsBeforeNow = startIdx != null && currentIdx != null ? Math.max(0, currentIdx - startIdx) : 0;
+    return Math.max(settingsHorizon, monthsBeforeNow + option.count);
+  }, [range, settings.horizonMonths, settings.startMonth, currentMonth]);
   const calculationState = useMemo(
-    () => applyDashboardCalculationOverrides(dashboardSeriesState, {
-      quoteMode,
-      revenueBasisMode,
-      calibrationEnabled,
-    }),
-    [calibrationEnabled, dashboardSeriesState, quoteMode, revenueBasisMode],
+    () => {
+      const base = applyDashboardCalculationOverrides(dashboardSeriesState, {
+        quoteMode,
+        revenueBasisMode,
+        calibrationEnabled,
+      });
+      const baseSettings = (base.settings && typeof base.settings === "object")
+        ? base.settings as Record<string, unknown>
+        : {};
+      return {
+        ...base,
+        settings: {
+          ...baseSettings,
+          horizonMonths: requiredHorizon,
+        },
+      };
+    },
+    [calibrationEnabled, dashboardSeriesState, quoteMode, revenueBasisMode, requiredHorizon],
   );
   const report = useMemo(() => computeSeries(calculationState) as SeriesResult, [calculationState]);
   const months = report.months || [];
@@ -657,11 +681,35 @@ export default function DashboardModule(): JSX.Element {
     return map;
   }, [monthlyActualsMap, months]);
 
-  const visibleMonths = useMemo(() => {
+  const visibilityWindow = useMemo(() => {
     const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
-    if (!option || option.count == null) return months;
-    return months.slice(0, option.count);
-  }, [months, range]);
+    const past = months.filter((m) => m < currentMonth);
+    const future = months.filter((m) => m >= currentMonth);
+    const futureWindow = option?.count == null ? future : future.slice(0, option.count);
+    const lastClosed = [...past].reverse().find((m) => monthCloseStatusByMonth.get(m)?.closed === true) || null;
+    if (option?.count == null || showAllPastMonths) {
+      return {
+        visibleMonths: [...past, ...futureWindow],
+        hiddenPastMonths: [] as string[],
+        anchorPastMonth: lastClosed,
+      };
+    }
+    const visiblePast = lastClosed ? [lastClosed] : [];
+    const hidden = past.filter((m) => m !== lastClosed);
+    return {
+      visibleMonths: [...visiblePast, ...futureWindow],
+      hiddenPastMonths: hidden,
+      anchorPastMonth: lastClosed,
+    };
+  }, [months, range, currentMonth, monthCloseStatusByMonth, showAllPastMonths]);
+  const visibleMonths = visibilityWindow.visibleMonths;
+  const hiddenPastMonths = visibilityWindow.hiddenPastMonths;
+  const anchorPastMonth = visibilityWindow.anchorPastMonth;
+  const futureMonthsCount = useMemo(
+    () => visibleMonths.filter((m) => m >= currentMonth).length,
+    [visibleMonths, currentMonth],
+  );
+  const pastMonthsVisibleCount = visibleMonths.length - futureMonthsCount;
   const visibleRangeLabel = useMemo(() => {
     const option = DASHBOARD_RANGE_OPTIONS.find((entry) => entry.value === range);
     return option?.label || "Alle Monate";
@@ -1884,7 +1932,7 @@ export default function DashboardModule(): JSX.Element {
         </Row>
         <div className="v2-toolbar">
           <Text type="secondary">
-            Zeitraum: {visibleRangeLabel} ({visibleMonths.length} Monate)
+            Zeitraum: {visibleRangeLabel} ({futureMonthsCount} zukünftig{pastMonthsVisibleCount > 0 ? ` + ${pastMonthsVisibleCount} Referenzmonat${pastMonthsVisibleCount === 1 ? "" : "e"}` : ""})
           </Text>
         </div>
       </Card>
@@ -2239,9 +2287,21 @@ export default function DashboardModule(): JSX.Element {
               Zeilen = Einnahmen/Ausgaben-Struktur, Spalten = gewählter Zeitraum. Bei PO/FO/Phantom siehst du auf Wunsch die einzelnen Zahlungen.
             </Paragraph>
           </div>
-          <Button size="small" onClick={togglePnlExpandAll}>
-            {pnlAllExpanded ? "Alles zuklappen" : "Alles aufklappen"}
-          </Button>
+          <Space size={8} wrap>
+            {hiddenPastMonths.length > 0 ? (
+              <Button size="small" onClick={() => setShowAllPastMonths(true)}>
+                {hiddenPastMonths.length} ältere Monate anzeigen
+              </Button>
+            ) : null}
+            {showAllPastMonths && pastMonthsVisibleCount > (anchorPastMonth ? 1 : 0) ? (
+              <Button size="small" onClick={() => setShowAllPastMonths(false)}>
+                Ältere Monate verbergen
+              </Button>
+            ) : null}
+            <Button size="small" onClick={togglePnlExpandAll}>
+              {pnlAllExpanded ? "Alles zuklappen" : "Alles aufklappen"}
+            </Button>
+          </Space>
         </Space>
         <Table<PnlMatrixRow>
           className="v2-ant-table v2-dashboard-pnl-table"
