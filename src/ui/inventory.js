@@ -417,7 +417,9 @@ function buildInboundMap(state) {
     const items = Array.isArray(po.items) && po.items.length
       ? po.items
       : [{ sku: po.sku, units: po.units }];
-    const etaDate = resolvePoEta(po);
+    // Prefer actual arrivalDate ("Empfangen am") over computed ETA
+    const arrivalActual = parseISODate(po.arrivalDate);
+    const etaDate = arrivalActual || resolvePoEta(po);
     const etaMonth = etaDate ? toMonthKey(etaDate) : null;
     items.forEach(item => {
       const sku = String(item?.sku || "").trim();
@@ -447,7 +449,8 @@ function buildInboundMap(state) {
     const items = Array.isArray(fo.items) && fo.items.length
       ? fo.items
       : [{ sku: fo.sku, units: fo.units }];
-    const arrival = resolveFoArrival(fo);
+    const arrivalActualFo = parseISODate(fo.arrivalDate);
+    const arrival = arrivalActualFo || resolveFoArrival(fo);
     const arrivalMonth = arrival ? toMonthKey(arrival) : null;
     if (!arrivalMonth) return;
     items.forEach(item => {
@@ -784,14 +787,16 @@ function formatEurSigned(value) {
 }
 
 function classifyDiscrepancy(measured, expected) {
-  const measuredAbs = Math.abs(measured);
-  const expectedAbs = Math.abs(expected);
+  // Size-aware tolerance: small absolute deltas are always OK,
+  // larger deltas only flag if both absolute AND ratio are off.
   const diff = measured - expected;
-  const base = Math.max(measuredAbs, expectedAbs, 1);
-  const ratio = Math.abs(diff) / base;
-  if (Math.abs(diff) < 100) return "ok";
-  if (ratio < 0.05) return "ok";
-  if (ratio < 0.20) return "warn";
+  const abs = Math.abs(diff);
+  const base = Math.max(Math.abs(measured), Math.abs(expected), 1);
+  const ratio = abs / base;
+  if (abs < 500) return "ok";
+  if (abs < 2000) return ratio < 0.5 ? "ok" : "warn";
+  if (ratio < 0.3) return "ok";
+  if (ratio < 0.6) return "warn";
   return "bad";
 }
 

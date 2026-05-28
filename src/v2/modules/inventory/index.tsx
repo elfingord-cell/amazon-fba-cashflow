@@ -473,9 +473,10 @@ function buildInboundEurByCategoryForMonth(
     const po = raw as Record<string, unknown>;
     if (!po || po.archived) return;
     if (String((po.status as string) || "").toUpperCase() === "CANCELLED") return;
-    const eta = resolvePoEta(po);
-    const etaMonth = toMonthKeyDate(eta);
-    if (etaMonth !== monthKey) return;
+    // Prefer actual arrivalDate ("Empfangen am") over computed ETA
+    const arrival = parseIsoDate(po.arrivalDate) || resolvePoEta(po);
+    const arrivalMonth = toMonthKeyDate(arrival);
+    if (arrivalMonth !== monthKey) return;
     const items = (Array.isArray(po.items) && (po.items as unknown[]).length
       ? po.items
       : [{ sku: po.sku, units: po.units }]) as Array<Record<string, unknown>>;
@@ -488,9 +489,9 @@ function buildInboundEurByCategoryForMonth(
   ((state.fos as unknown[]) || []).forEach((raw) => {
     const fo = raw as Record<string, unknown>;
     if (!fo || !isFoCountable(fo)) return;
-    const eta = resolveFoArrival(fo);
-    const etaMonth = toMonthKeyDate(eta);
-    if (etaMonth !== monthKey) return;
+    const arrival = parseIsoDate(fo.arrivalDate) || resolveFoArrival(fo);
+    const arrivalMonth = toMonthKeyDate(arrival);
+    if (arrivalMonth !== monthKey) return;
     const items = (Array.isArray(fo.items) && (fo.items as unknown[]).length
       ? fo.items
       : [{ sku: fo.sku, units: fo.units }]) as Array<Record<string, unknown>>;
@@ -2908,13 +2909,21 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
       {showSnapshot && reconciliation ? (
         (() => {
+          // Classify discrepancy with size-aware tolerance.
+          // Small absolute deltas are always OK (no Forecast model is exact).
+          // Larger deltas only flag if both absolute AND ratio are off.
+          const classify = (discrepancy: number, measured: number, expected: number): "ok" | "warn" | "bad" => {
+            const abs = Math.abs(discrepancy);
+            const base = Math.max(Math.abs(measured), Math.abs(expected), 1);
+            const ratio = abs / base;
+            if (abs < 500) return "ok";
+            if (abs < 2000) return ratio < 0.5 ? "ok" : "warn";
+            if (ratio < 0.3) return "ok";
+            if (ratio < 0.6) return "warn";
+            return "bad";
+          };
           const t = reconciliation.totals;
-          const measuredAbs = Math.abs(t.measuredDelta);
-          const expectedAbs = Math.abs(t.expectedDelta);
-          const diff = Math.abs(t.discrepancy);
-          const base = Math.max(measuredAbs, expectedAbs, 1);
-          const ratio = diff / base;
-          const status: "ok" | "warn" | "bad" = diff < 100 || ratio < 0.05 ? "ok" : ratio < 0.2 ? "warn" : "bad";
+          const status = classify(t.discrepancy, t.measuredDelta, t.expectedDelta);
           const tagColor = status === "ok" ? "green" : status === "warn" ? "orange" : "red";
           const statusLabel = status === "ok" ? "Plausibel" : status === "warn" ? "Auffällig" : "Stark abweichend";
           return (
@@ -2968,10 +2977,8 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                       </thead>
                       <tbody>
                         {reconciliation.perCategory.map((c) => {
-                          const cAbs = Math.abs(c.discrepancy);
-                          const cBase = Math.max(Math.abs(c.measuredDelta), Math.abs(c.expectedDelta), 1);
-                          const cRatio = cAbs / cBase;
-                          const cls = cAbs < 100 || cRatio < 0.05 ? "" : cRatio < 0.2 ? "v2-reco-cat-warn" : "v2-reco-cat-bad";
+                          const catStatus = classify(c.discrepancy, c.measuredDelta, c.expectedDelta);
+                          const cls = catStatus === "ok" ? "" : catStatus === "warn" ? "v2-reco-cat-warn" : "v2-reco-cat-bad";
                           return (
                             <tr key={c.label} className={cls}>
                               <td>{c.label}</td>
