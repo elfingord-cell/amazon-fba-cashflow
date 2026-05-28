@@ -135,6 +135,15 @@ interface InventoryProductRow {
   delta: number;
   safetyDays: number | null;
   coverageDays: number | null;
+  inTransitUnits: number;
+  ekEur: number | null;
+  amazonEur: number | null;
+  threePlEur: number | null;
+  totalEur: number | null;
+  inTransitEur: number | null;
+  warenwertEur: number | null;
+  warenwertWarehouseEur: number | null;
+  deltaEur: number | null;
 }
 
 interface CategoryGroup {
@@ -313,6 +322,262 @@ function SnapshotUnitsInput({
 function formatInt(value: number | null): string {
   if (!Number.isFinite(value as number)) return "—";
   return Math.round(Number(value)).toLocaleString("de-DE");
+}
+
+function formatEur(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  return Number(value).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatEurSigned(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  const num = Number(value);
+  const sign = num > 0 ? "+" : num < 0 ? "−" : "";
+  return `${sign}${formatEur(Math.abs(num))}`;
+}
+
+function parseDeNumberLocal(value: unknown): number {
+  if (value == null || value === "") return NaN;
+  if (typeof value === "number") return value;
+  const str = String(value).replace(/\./g, "").replace(",", ".");
+  const num = Number(str);
+  return Number.isFinite(num) ? num : NaN;
+}
+
+function getProductEkEur(product: Record<string, unknown> | null | undefined, settings: Record<string, unknown>): number | null {
+  if (!product) return null;
+  const template = ((product as Record<string, unknown>).template as Record<string, unknown> | undefined);
+  const fields = (template?.fields as Record<string, unknown> | undefined) || template || {};
+  const unitPrice = parseDeNumberLocal((fields.unitPriceUsd ?? (product as Record<string, unknown>).unitPriceUsd) as unknown);
+  if (!Number.isFinite(unitPrice)) return null;
+  const currency = String((fields.currency ?? settings?.defaultCurrency ?? "EUR") as string).toUpperCase();
+  if (currency === "EUR") return unitPrice;
+  if (currency === "USD") {
+    const fxRate = parseDeNumberLocal(settings?.fxRate);
+    if (!Number.isFinite(fxRate) || fxRate <= 0) return null;
+    return unitPrice / fxRate;
+  }
+  return null;
+}
+
+function endOfMonthDate(monthKey: string): Date | null {
+  if (!/^\d{4}-\d{2}$/.test(monthKey || "")) return null;
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(year, month, 0, 23, 59, 59, 999);
+}
+
+function parseIsoDate(value: unknown): Date | null {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function resolvePoEta(po: Record<string, unknown> | null): Date | null {
+  if (!po) return null;
+  const manual = parseIsoDate(po.etaManual || po.etaDate || po.eta);
+  if (manual) return manual;
+  const computed = parseIsoDate(po.etaComputed);
+  if (computed) return computed;
+  const orderDate = parseIsoDate(po.orderDate);
+  if (!orderDate) return null;
+  const prodDays = Number(po.prodDays || 0);
+  const transitDays = Number(po.transitDays || 0);
+  const eta = new Date(orderDate.getTime());
+  eta.setDate(eta.getDate() + Math.max(0, prodDays + transitDays));
+  return eta;
+}
+
+function resolveFoArrival(fo: Record<string, unknown> | null): Date | null {
+  if (!fo) return null;
+  return parseIsoDate(fo.targetDeliveryDate || fo.deliveryDate || fo.etaDate);
+}
+
+function isFoCountable(fo: Record<string, unknown> | null): boolean {
+  const status = String((fo?.status as string) || "").toUpperCase();
+  if (status === "CONVERTED" || status === "CANCELLED") return false;
+  return true;
+}
+
+function toMonthKeyDate(date: Date | null): string | null {
+  if (!date || Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function buildInTransitMapV2(state: Record<string, unknown>, asOfDate: Date): Map<string, { total: number; entries: Array<{ type: string; qty: number }> }> {
+  const map = new Map<string, { total: number; entries: Array<{ type: string; qty: number }> }>();
+  const cutoff = asOfDate;
+  const add = (sku: string, type: string, qty: number) => {
+    if (!sku || !qty) return;
+    if (!map.has(sku)) map.set(sku, { total: 0, entries: [] });
+    const target = map.get(sku)!;
+    target.total += qty;
+    target.entries.push({ type, qty });
+  };
+  ((state.pos as unknown[]) || []).forEach((raw) => {
+    const po = raw as Record<string, unknown>;
+    if (!po || po.archived) return;
+    if (String((po.status as string) || "").toUpperCase() === "CANCELLED") return;
+    const eta = resolvePoEta(po);
+    if (eta && eta <= cutoff) return;
+    const items = (Array.isArray(po.items) && (po.items as unknown[]).length
+      ? po.items
+      : [{ sku: po.sku, units: po.units }]) as Array<Record<string, unknown>>;
+    items.forEach((item) => {
+      const sku = String(item.sku || "").trim();
+      const qty = Math.max(0, Math.round(parseDeNumberLocal(item.units) || 0));
+      add(sku, "PO", qty);
+    });
+  });
+  ((state.fos as unknown[]) || []).forEach((raw) => {
+    const fo = raw as Record<string, unknown>;
+    if (!fo || !isFoCountable(fo)) return;
+    const eta = resolveFoArrival(fo);
+    if (eta && eta <= cutoff) return;
+    const items = (Array.isArray(fo.items) && (fo.items as unknown[]).length
+      ? fo.items
+      : [{ sku: fo.sku, units: fo.units }]) as Array<Record<string, unknown>>;
+    items.forEach((item) => {
+      const sku = String(item.sku || "").trim();
+      const qty = Math.max(0, Math.round(parseDeNumberLocal(item.units) || 0));
+      add(sku, "FO", qty);
+    });
+  });
+  return map;
+}
+
+function buildInboundEurByCategoryForMonth(
+  state: Record<string, unknown>,
+  monthKey: string,
+  productsBySku: Map<string, Record<string, unknown>>,
+  categoryLabelOf: (product: Record<string, unknown>) => string,
+  settings: Record<string, unknown>,
+): { byCategory: Map<string, number>; total: number; hasMissingEk: boolean } {
+  const byCategory = new Map<string, number>();
+  let total = 0;
+  let hasMissingEk = false;
+  const accumulate = (sku: string, units: number) => {
+    if (!sku || !units) return;
+    const product = productsBySku.get(sku);
+    if (!product) return;
+    const ek = getProductEkEur(product, settings);
+    const label = categoryLabelOf(product);
+    if (!Number.isFinite(ek)) {
+      hasMissingEk = true;
+      return;
+    }
+    const value = units * (ek as number);
+    byCategory.set(label, (byCategory.get(label) || 0) + value);
+    total += value;
+  };
+  ((state.pos as unknown[]) || []).forEach((raw) => {
+    const po = raw as Record<string, unknown>;
+    if (!po || po.archived) return;
+    if (String((po.status as string) || "").toUpperCase() === "CANCELLED") return;
+    const eta = resolvePoEta(po);
+    const etaMonth = toMonthKeyDate(eta);
+    if (etaMonth !== monthKey) return;
+    const items = (Array.isArray(po.items) && (po.items as unknown[]).length
+      ? po.items
+      : [{ sku: po.sku, units: po.units }]) as Array<Record<string, unknown>>;
+    items.forEach((item) => {
+      const sku = String(item.sku || "").trim();
+      const qty = Math.max(0, Math.round(parseDeNumberLocal(item.units) || 0));
+      accumulate(sku, qty);
+    });
+  });
+  ((state.fos as unknown[]) || []).forEach((raw) => {
+    const fo = raw as Record<string, unknown>;
+    if (!fo || !isFoCountable(fo)) return;
+    const eta = resolveFoArrival(fo);
+    const etaMonth = toMonthKeyDate(eta);
+    if (etaMonth !== monthKey) return;
+    const items = (Array.isArray(fo.items) && (fo.items as unknown[]).length
+      ? fo.items
+      : [{ sku: fo.sku, units: fo.units }]) as Array<Record<string, unknown>>;
+    items.forEach((item) => {
+      const sku = String(item.sku || "").trim();
+      const qty = Math.max(0, Math.round(parseDeNumberLocal(item.units) || 0));
+      accumulate(sku, qty);
+    });
+  });
+  return { byCategory, total, hasMissingEk };
+}
+
+function getForecastUnitsV2(state: Record<string, unknown>, sku: string, monthKey: string): number | null {
+  const forecast = (state.forecast as Record<string, Record<string, Record<string, unknown>>> | undefined) || {};
+  const manual = forecast?.forecastManual?.[sku]?.[monthKey];
+  const manualParsed = parseDeNumberLocal(manual);
+  if (Number.isFinite(manualParsed)) return manualParsed;
+  const imported = (forecast?.forecastImport?.[sku]?.[monthKey] as Record<string, unknown> | undefined)?.units;
+  const importParsed = parseDeNumberLocal(imported);
+  if (Number.isFinite(importParsed)) return importParsed;
+  return null;
+}
+
+interface StalePoEntry {
+  id: string;
+  label: string;
+  supplier: string;
+  etaLabel: string;
+  ageDays: number;
+  units: number;
+  valueEur: number;
+  hasMissingEk: boolean;
+}
+
+function getSupplierNameLocal(state: Record<string, unknown>, idOrName: unknown): string {
+  if (!idOrName) return "—";
+  const suppliers = (Array.isArray(state.suppliers) ? state.suppliers : []) as Array<Record<string, unknown>>;
+  const match = suppliers.find((s) => String(s?.id || "") === String(idOrName));
+  return String(match?.name || idOrName || "—");
+}
+
+function buildStalePoListV2(
+  state: Record<string, unknown>,
+  asOfDate: Date,
+  productsBySku: Map<string, Record<string, unknown>>,
+  settings: Record<string, unknown>,
+): StalePoEntry[] {
+  const stale: StalePoEntry[] = [];
+  ((state.pos as unknown[]) || []).forEach((raw) => {
+    const po = raw as Record<string, unknown>;
+    if (!po || po.archived) return;
+    const status = String((po.status as string) || "").toUpperCase();
+    if (status === "CANCELLED" || status === "ARRIVED" || status === "RECEIVED") return;
+    const eta = resolvePoEta(po);
+    if (!eta || eta > asOfDate) return;
+    const items = (Array.isArray(po.items) && (po.items as unknown[]).length
+      ? po.items
+      : [{ sku: po.sku, units: po.units }]) as Array<Record<string, unknown>>;
+    let units = 0;
+    let valueEur = 0;
+    let hasMissingEk = false;
+    items.forEach((item) => {
+      const sku = String(item.sku || "").trim();
+      const qty = Math.max(0, Math.round(parseDeNumberLocal(item.units) || 0));
+      units += qty;
+      const product = productsBySku.get(sku);
+      const ek = getProductEkEur(product, settings);
+      if (!Number.isFinite(ek)) {
+        hasMissingEk = true;
+        return;
+      }
+      valueEur += qty * (ek as number);
+    });
+    const id = String(po.id || po.poNo || "");
+    stale.push({
+      id,
+      label: String(po.poNo || po.id || "PO"),
+      supplier: getSupplierNameLocal(state, po.supplierId || po.supplier),
+      etaLabel: eta.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }),
+      ageDays: Math.max(0, Math.round((asOfDate.getTime() - eta.getTime()) / (24 * 60 * 60 * 1000))),
+      units,
+      valueEur,
+      hasMissingEk,
+    });
+  });
+  stale.sort((a, b) => b.ageDays - a.ageDays);
+  return stale;
 }
 
 function formatDate(value: string | null): string {
@@ -629,6 +894,23 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   const [abcFilter, setAbcFilter] = useState<ProjectionAbcFilter>("all");
   const [projectionMonths, setProjectionMonths] = useState(12);
   const [snapshotExpandedCategories, setSnapshotExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("inventory_snapshot"));
+  const [snapshotViewMode, setSnapshotViewMode] = useState<"units" | "eur">(() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem("v2:inventory:snapshotViewMode") : null;
+      return raw === "eur" ? "eur" : "units";
+    } catch {
+      return "units";
+    }
+  });
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("v2:inventory:snapshotViewMode", snapshotViewMode);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [snapshotViewMode]);
   const [projectionExpandedCategories, setProjectionExpandedCategories] = useState<string[]>(() => getModuleExpandedCategoryKeys("inventory_projection"));
   const [selectedUrgencyMonth, setSelectedUrgencyMonth] = useState<string | null>(null);
   const [pendingUrgencyMonthFromQuery, setPendingUrgencyMonthFromQuery] = useState<string | null>(null);
@@ -905,6 +1187,12 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     [previousSnapshot?.items],
   );
 
+  const snapshotAsOfDate = useMemo(() => endOfMonthDate(selectedMonth) || new Date(), [selectedMonth]);
+  const inTransitMap = useMemo(
+    () => buildInTransitMapV2(stateObject, snapshotAsOfDate),
+    [snapshotAsOfDate, state.pos, state.fos],
+  );
+
   const baseRows = useMemo(() => {
     return productRows
       .map((entry) => {
@@ -937,6 +1225,16 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         const abcEntry = abcBySku.get(sku.toLowerCase()) || abcBySku.get(sku) || null;
         const abcClass = abcEntry?.abcClass ?? null;
         const abcBasis = (abcEntry?.abcBasis || "no_data") as InventoryProductRow["abcBasis"];
+        const ekEur = getProductEkEur(product, settings);
+        const inTransitUnits = inTransitMap.get(sku)?.total || 0;
+        const finite = Number.isFinite(ekEur);
+        const amazonEur = finite ? item.amazonUnits * (ekEur as number) : null;
+        const threePlEur = finite ? item.threePLUnits * (ekEur as number) : null;
+        const totalEur = finite ? totalUnits * (ekEur as number) : null;
+        const inTransitEur = finite ? inTransitUnits * (ekEur as number) : null;
+        const warenwertWarehouseEur = finite ? totalUnits * (ekEur as number) : null;
+        const warenwertEur = finite ? (totalUnits + inTransitUnits) * (ekEur as number) : null;
+        const deltaEur = finite ? (totalUnits - prevTotal) * (ekEur as number) : null;
         return {
           sku,
           alias,
@@ -950,10 +1248,19 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           delta: totalUnits - prevTotal,
           safetyDays: Number.isFinite(safetyDays as number) ? Number(safetyDays) : null,
           coverageDays: Number.isFinite(coverageDays as number) ? Number(coverageDays) : null,
+          inTransitUnits,
+          ekEur: finite ? (ekEur as number) : null,
+          amazonEur,
+          threePlEur,
+          totalEur,
+          inTransitEur,
+          warenwertEur,
+          warenwertWarehouseEur,
+          deltaEur,
         } satisfies InventoryProductRow;
       })
       .filter(Boolean) as InventoryProductRow[];
-  }, [abcBySku, categoriesById, previousDraft, productRows, snapshotDraft, stateObject]);
+  }, [abcBySku, categoriesById, inTransitMap, previousDraft, productRows, settings, snapshotDraft, stateObject]);
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -980,6 +1287,157 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     () => toCategoryGroups(filteredRows, categoryOrderMap),
     [categoryOrderMap, filteredRows],
   );
+
+  const snapshotGroupTotals = useMemo(() => {
+    return groupedRows.map((group) => {
+      let amazonUnits = 0;
+      let threePLUnits = 0;
+      let totalUnits = 0;
+      let inTransit = 0;
+      let warenwertWarehouseEur = 0;
+      let warenwertEur = 0;
+      let deltaUnits = 0;
+      let deltaEur = 0;
+      let hasMissingEk = false;
+      group.rows.forEach((row) => {
+        amazonUnits += row.amazonUnits;
+        threePLUnits += row.threePLUnits;
+        totalUnits += row.totalUnits;
+        inTransit += row.inTransitUnits;
+        deltaUnits += row.delta;
+        if (row.ekEur == null) {
+          hasMissingEk = true;
+          return;
+        }
+        warenwertWarehouseEur += row.warenwertWarehouseEur ?? 0;
+        warenwertEur += row.warenwertEur ?? 0;
+        deltaEur += row.deltaEur ?? 0;
+      });
+      return { key: group.key, label: group.label, count: group.rows.length, amazonUnits, threePLUnits, totalUnits, inTransit, warenwertWarehouseEur, warenwertEur, deltaUnits, deltaEur, hasMissingEk };
+    });
+  }, [groupedRows]);
+
+  const productsBySku = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    productRows.forEach((entry) => {
+      const sku = String(entry.sku || "").trim();
+      if (sku) map.set(sku, entry.raw as Record<string, unknown>);
+    });
+    return map;
+  }, [productRows]);
+
+  const reconciliation = useMemo(() => {
+    if (!previousSnapshot) return null;
+    const categoryLabelOf = (product: Record<string, unknown>) => categoriesById.get(String(product.categoryId || "")) || "Ohne Kategorie";
+    // measured prev / curr in EUR (warehouse only — Amazon+3PL, ohne In-Transit)
+    const measuredPrev = new Map<string, number>();
+    const measuredCurr = new Map<string, number>();
+    let hasMissingEk = false;
+    productRows.forEach((entry) => {
+      const sku = String(entry.sku || "").trim();
+      if (!sku) return;
+      const product = entry.raw as Record<string, unknown>;
+      const label = categoryLabelOf(product);
+      const ek = getProductEkEur(product, settings);
+      const prev = previousDraft[sku] || { amazonUnits: 0, threePLUnits: 0 } as SnapshotItemDraft;
+      const curr = snapshotDraft[sku] || { amazonUnits: 0, threePLUnits: 0 } as SnapshotItemDraft;
+      const prevUnits = (prev.amazonUnits || 0) + (prev.threePLUnits || 0);
+      const currUnits = (curr.amazonUnits || 0) + (curr.threePLUnits || 0);
+      if (!Number.isFinite(ek)) {
+        if (prevUnits || currUnits) hasMissingEk = true;
+        return;
+      }
+      measuredPrev.set(label, (measuredPrev.get(label) || 0) + prevUnits * (ek as number));
+      measuredCurr.set(label, (measuredCurr.get(label) || 0) + currUnits * (ek as number));
+    });
+    // inbound (PO + FO with ETA in current month) per category EUR
+    const inbound = buildInboundEurByCategoryForMonth(stateObject, selectedMonth, productsBySku, categoryLabelOf, settings);
+    if (inbound.hasMissingEk) hasMissingEk = true;
+    // forecast sales per category EUR (surrogate)
+    const salesByCategory = new Map<string, number>();
+    productRows.forEach((entry) => {
+      const sku = String(entry.sku || "").trim();
+      if (!sku) return;
+      const product = entry.raw as Record<string, unknown>;
+      const label = categoryLabelOf(product);
+      const ek = getProductEkEur(product, settings);
+      const units = getForecastUnitsV2(stateObject, sku, selectedMonth);
+      if (!Number.isFinite(units) || !units) return;
+      if (!Number.isFinite(ek)) {
+        hasMissingEk = true;
+        return;
+      }
+      salesByCategory.set(label, (salesByCategory.get(label) || 0) + (units as number) * (ek as number));
+    });
+    const labels = new Set<string>([
+      ...measuredPrev.keys(),
+      ...measuredCurr.keys(),
+      ...inbound.byCategory.keys(),
+      ...salesByCategory.keys(),
+    ]);
+    const perCategory = Array.from(labels).map((label) => {
+      const prevEur = measuredPrev.get(label) || 0;
+      const currEur = measuredCurr.get(label) || 0;
+      const inboundEur = inbound.byCategory.get(label) || 0;
+      const salesEur = salesByCategory.get(label) || 0;
+      const measuredDelta = currEur - prevEur;
+      const expectedDelta = inboundEur - salesEur;
+      return { label, prevEur, currEur, inboundEur, salesEur, measuredDelta, expectedDelta, discrepancy: measuredDelta - expectedDelta };
+    });
+    perCategory.sort((a, b) => Math.abs(b.discrepancy) - Math.abs(a.discrepancy));
+    const totals = perCategory.reduce(
+      (acc, c) => {
+        acc.prevEur += c.prevEur;
+        acc.currEur += c.currEur;
+        acc.measuredDelta += c.measuredDelta;
+        acc.inboundEur += c.inboundEur;
+        acc.salesEur += c.salesEur;
+        acc.expectedDelta += c.expectedDelta;
+        acc.discrepancy += c.discrepancy;
+        return acc;
+      },
+      { prevEur: 0, currEur: 0, measuredDelta: 0, inboundEur: 0, salesEur: 0, expectedDelta: 0, discrepancy: 0 },
+    );
+    return { perCategory, totals, hasMissingEk, previousMonth: String(previousSnapshot.month || "") };
+  }, [categoriesById, previousDraft, previousSnapshot, productRows, productsBySku, selectedMonth, settings, snapshotDraft, stateObject]);
+
+  const stalePos = useMemo(() => buildStalePoListV2(stateObject, snapshotAsOfDate, productsBySku, settings), [productsBySku, settings, snapshotAsOfDate, stateObject]);
+
+  const archiveStalePos = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids.map(String));
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const nextState = next as unknown as Record<string, unknown>;
+      const pos = (Array.isArray(nextState.pos) ? nextState.pos : []) as Array<Record<string, unknown>>;
+      pos.forEach((po) => {
+        const id = String(po.id || po.poNo || "");
+        if (id && idSet.has(id) && !po.archived) {
+          po.archived = true;
+        }
+      });
+      nextState.pos = pos;
+      return next;
+    }, "v2:inventory:archive-stale-pos");
+  }, [saveWith]);
+
+  const snapshotGrandTotal = useMemo(() => {
+    return snapshotGroupTotals.reduce(
+      (acc, g) => {
+        acc.amazonUnits += g.amazonUnits;
+        acc.threePLUnits += g.threePLUnits;
+        acc.totalUnits += g.totalUnits;
+        acc.inTransit += g.inTransit;
+        acc.deltaUnits += g.deltaUnits;
+        if (g.hasMissingEk) acc.hasMissingEk = true;
+        acc.warenwertWarehouseEur += g.warenwertWarehouseEur;
+        acc.warenwertEur += g.warenwertEur;
+        acc.deltaEur += g.deltaEur;
+        return acc;
+      },
+      { amazonUnits: 0, threePLUnits: 0, totalUnits: 0, inTransit: 0, warenwertWarehouseEur: 0, warenwertEur: 0, deltaUnits: 0, deltaEur: 0, hasMissingEk: false },
+    );
+  }, [snapshotGroupTotals]);
 
   useEffect(() => {
     if (!showSnapshot) return;
@@ -1844,78 +2302,152 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
     },
   ], []);
 
-  const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => [
-    {
-      header: "Alias",
-      accessorKey: "alias",
-      meta: { width: 270, minWidth: 250 },
-      cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
-    },
-    {
-      header: "ABC",
-      accessorKey: "abcClass",
-      meta: { width: 72, align: "center" },
-      cell: ({ row }) => (
-        <Tooltip title={abcBasisHint(row.original.abcBasis)}>
-          <span>{row.original.abcClass || "—"}</span>
-        </Tooltip>
-      ),
-    },
-    {
-      header: "Amazon",
-      accessorKey: "amazonUnits",
-      meta: { width: 116, align: "right" },
-      cell: ({ row }) => (
-        <SnapshotUnitsInput
-          sku={row.original.sku}
-          field="amazonUnits"
-          value={row.original.amazonUnits}
-          onCommit={commitSnapshotUnits}
-        />
-      ),
-    },
-    {
-      header: "3PL",
-      accessorKey: "threePLUnits",
-      meta: { width: 116, align: "right" },
-      cell: ({ row }) => (
-        <SnapshotUnitsInput
-          sku={row.original.sku}
-          field="threePLUnits"
-          value={row.original.threePLUnits}
-          onCommit={commitSnapshotUnits}
-        />
-      ),
-    },
-    {
-      header: "Total",
-      accessorKey: "totalUnits",
-      meta: { width: 92, align: "right" },
-      cell: ({ row }) => formatInt(row.original.totalUnits),
-    },
-    {
-      header: "Delta",
-      accessorKey: "delta",
-      meta: { width: 92, align: "right" },
-      cell: ({ row }) => (
-        <span className={row.original.delta < 0 ? "v2-negative" : ""}>
-          {formatInt(row.original.delta)}
-        </span>
-      ),
-    },
-    {
-      header: "Safety DOH",
-      accessorKey: "safetyDays",
-      meta: { width: 96, align: "right" },
-      cell: ({ row }) => formatInt(row.original.safetyDays),
-    },
-    {
-      header: "Coverage DOH",
-      accessorKey: "coverageDays",
-      meta: { width: 108, align: "right" },
-      cell: ({ row }) => formatInt(row.original.coverageDays),
-    },
-  ], [commitSnapshotUnits]);
+  const snapshotColumns = useMemo<ColumnDef<InventoryProductRow>[]>(() => {
+    const isEur = snapshotViewMode === "eur";
+    const baseCols: ColumnDef<InventoryProductRow>[] = [
+      {
+        header: "Alias",
+        accessorKey: "alias",
+        meta: { width: 240, minWidth: 220 },
+        cell: ({ row }) => <SkuAliasCell alias={row.original.alias} sku={row.original.sku} />,
+      },
+      {
+        header: "ABC",
+        accessorKey: "abcClass",
+        meta: { width: 68, align: "center" },
+        cell: ({ row }) => (
+          <Tooltip title={abcBasisHint(row.original.abcBasis)}>
+            <span>{row.original.abcClass || "—"}</span>
+          </Tooltip>
+        ),
+      },
+    ];
+    const unitsCols: ColumnDef<InventoryProductRow>[] = [
+      {
+        header: "Amazon",
+        accessorKey: "amazonUnits",
+        meta: { width: 116, align: "right" },
+        cell: ({ row }) => (
+          <SnapshotUnitsInput
+            sku={row.original.sku}
+            field="amazonUnits"
+            value={row.original.amazonUnits}
+            onCommit={commitSnapshotUnits}
+          />
+        ),
+      },
+      {
+        header: "3PL",
+        accessorKey: "threePLUnits",
+        meta: { width: 116, align: "right" },
+        cell: ({ row }) => (
+          <SnapshotUnitsInput
+            sku={row.original.sku}
+            field="threePLUnits"
+            value={row.original.threePLUnits}
+            onCommit={commitSnapshotUnits}
+          />
+        ),
+      },
+      {
+        header: "Total",
+        accessorKey: "totalUnits",
+        meta: { width: 80, align: "right" },
+        cell: ({ row }) => formatInt(row.original.totalUnits),
+      },
+      {
+        header: "In Transit",
+        accessorKey: "inTransitUnits",
+        meta: { width: 90, align: "right" },
+        cell: ({ row }) => formatInt(row.original.inTransitUnits),
+      },
+      {
+        header: "EK €",
+        accessorKey: "ekEur",
+        meta: { width: 80, align: "right" },
+        cell: ({ row }) => row.original.ekEur == null
+          ? <Tooltip title="EK fehlt im Produkt"><span>⚠︎ —</span></Tooltip>
+          : formatEur(row.original.ekEur),
+      },
+      {
+        header: "Warenwert €",
+        accessorKey: "warenwertWarehouseEur",
+        meta: { width: 110, align: "right" },
+        cell: ({ row }) => formatEur(row.original.warenwertWarehouseEur),
+      },
+      {
+        header: "Delta",
+        accessorKey: "delta",
+        meta: { width: 80, align: "right" },
+        cell: ({ row }) => (
+          <span className={row.original.delta < 0 ? "v2-negative" : ""}>{formatInt(row.original.delta)}</span>
+        ),
+      },
+    ];
+    const eurCols: ColumnDef<InventoryProductRow>[] = [
+      {
+        header: "Amazon €",
+        accessorKey: "amazonEur",
+        meta: { width: 110, align: "right" },
+        cell: ({ row }) => formatEur(row.original.amazonEur),
+      },
+      {
+        header: "3PL €",
+        accessorKey: "threePlEur",
+        meta: { width: 110, align: "right" },
+        cell: ({ row }) => formatEur(row.original.threePlEur),
+      },
+      {
+        header: "Total €",
+        accessorKey: "totalEur",
+        meta: { width: 110, align: "right" },
+        cell: ({ row }) => formatEur(row.original.totalEur),
+      },
+      {
+        header: "In Transit €",
+        accessorKey: "inTransitEur",
+        meta: { width: 110, align: "right" },
+        cell: ({ row }) => formatEur(row.original.inTransitEur),
+      },
+      {
+        header: "EK €",
+        accessorKey: "ekEur",
+        meta: { width: 80, align: "right" },
+        cell: ({ row }) => row.original.ekEur == null
+          ? <Tooltip title="EK fehlt im Produkt"><span>⚠︎ —</span></Tooltip>
+          : formatEur(row.original.ekEur),
+      },
+      {
+        header: "Warenwert €",
+        accessorKey: "warenwertWarehouseEur",
+        meta: { width: 110, align: "right" },
+        cell: ({ row }) => formatEur(row.original.warenwertWarehouseEur),
+      },
+      {
+        header: "Delta €",
+        accessorKey: "deltaEur",
+        meta: { width: 100, align: "right" },
+        cell: ({ row }) => (
+          <span className={(row.original.deltaEur ?? 0) < 0 ? "v2-negative" : ""}>{formatEurSigned(row.original.deltaEur)}</span>
+        ),
+      },
+    ];
+    const tailCols: ColumnDef<InventoryProductRow>[] = [
+      {
+        header: "Safety DOH",
+        accessorKey: "safetyDays",
+        meta: { width: 88, align: "right" },
+        cell: ({ row }) => formatInt(row.original.safetyDays),
+      },
+      {
+        header: "Coverage DOH",
+        accessorKey: "coverageDays",
+        meta: { width: 104, align: "right" },
+        cell: ({ row }) => formatInt(row.original.coverageDays),
+      },
+    ];
+    return [...baseCols, ...(isEur ? eurCols : unitsCols), ...tailCols];
+  }, [commitSnapshotUnits, snapshotViewMode]);
 
   const anchorForecastGapSkus = Array.isArray(projection.anchorForecastGapSkus)
     ? projection.anchorForecastGapSkus as string[]
@@ -2185,17 +2717,54 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
   }
 
   function exportSnapshotCsv(): void {
-    const rows = [
-      ["SKU", "Alias", "Kategorie", "AmazonUnits", "ThreePLUnits", "TotalUnits"],
-      ...filteredRows.map((entry) => [
+    const fmtEur = (v: number | null | undefined) =>
+      v == null || !Number.isFinite(Number(v)) ? "" : Number(v).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtInt = (v: number | null | undefined) =>
+      v == null || !Number.isFinite(Number(v)) ? "" : String(Math.round(Number(v)));
+    const headers = [
+      "SKU",
+      "Alias",
+      "Kategorie",
+      "Bestand Amazon (Stk)",
+      "Bestand majamo/3PL (Stk)",
+      "In Transit (Stk)",
+      "EK-Preis (EUR / Stk)",
+      "Warenwert ohne In-Transit (EUR)",
+      "Warenwert inkl. In-Transit (EUR)",
+    ];
+    let totAmazon = 0, tot3pl = 0, totTransit = 0, totWh = 0, totAll = 0;
+    const rows: string[][] = [headers];
+    filteredRows.forEach((entry) => {
+      totAmazon += entry.amazonUnits;
+      tot3pl += entry.threePLUnits;
+      totTransit += entry.inTransitUnits;
+      if (entry.warenwertWarehouseEur != null) totWh += entry.warenwertWarehouseEur;
+      if (entry.warenwertEur != null) totAll += entry.warenwertEur;
+      rows.push([
         entry.sku,
         entry.alias,
         entry.categoryLabel,
-        String(entry.amazonUnits),
-        String(entry.threePLUnits),
-        String(entry.totalUnits),
-      ]),
-    ];
+        fmtInt(entry.amazonUnits),
+        fmtInt(entry.threePLUnits),
+        fmtInt(entry.inTransitUnits),
+        fmtEur(entry.ekEur),
+        fmtEur(entry.warenwertWarehouseEur),
+        fmtEur(entry.warenwertEur),
+      ]);
+    });
+    rows.push([
+      "Gesamtsumme",
+      "",
+      "",
+      fmtInt(totAmazon),
+      fmtInt(tot3pl),
+      fmtInt(totTransit),
+      "",
+      fmtEur(totWh),
+      fmtEur(totAll),
+    ]);
+    rows.push([]);
+    rows.push(["Hinweis: 'Warenwert ohne In-Transit' = nur physisch im Lager (Amazon + majamo/3PL). Für BWA-Bestandsbewertung typischerweise diese Spalte verwenden, sofern In-Transit-Eigentum erst beim Eintreffen übergeht."]);
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, "\"\"")}"`).join(";")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -2306,6 +2875,14 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
               <Button onClick={exportSnapshotCsv}>
                 Snapshot CSV
               </Button>
+              <Radio.Group
+                value={snapshotViewMode}
+                onChange={(event) => setSnapshotViewMode(event.target.value as "units" | "eur")}
+                size="small"
+              >
+                <Radio.Button value="units">Einheiten</Radio.Button>
+                <Radio.Button value="eur">EUR</Radio.Button>
+              </Radio.Group>
               {snapshotDirty ? <Tag color="orange">Ungespeicherte Änderungen</Tag> : <Tag color="green">Gespeichert</Tag>}
               <Tag color="blue">{formatMonthEndLabel(selectedMonth, "long")}</Tag>
               {lastSavedAt ? <Tag color="green">Gespeichert: {new Date(lastSavedAt).toLocaleTimeString("de-DE")}</Tag> : null}
@@ -2327,6 +2904,170 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             </Button>
           )}
         />
+      ) : null}
+
+      {showSnapshot && reconciliation ? (
+        (() => {
+          const t = reconciliation.totals;
+          const measuredAbs = Math.abs(t.measuredDelta);
+          const expectedAbs = Math.abs(t.expectedDelta);
+          const diff = Math.abs(t.discrepancy);
+          const base = Math.max(measuredAbs, expectedAbs, 1);
+          const ratio = diff / base;
+          const status: "ok" | "warn" | "bad" = diff < 100 || ratio < 0.05 ? "ok" : ratio < 0.2 ? "warn" : "bad";
+          const tagColor = status === "ok" ? "green" : status === "warn" ? "orange" : "red";
+          const statusLabel = status === "ok" ? "Plausibel" : status === "warn" ? "Auffällig" : "Stark abweichend";
+          return (
+            <Card className={`v2-reco-card v2-reco-status-${status}`}>
+              <div className="v2-reco-head">
+                <div>
+                  <Title level={4}>Plausi-Check {reconciliation.previousMonth} → {selectedMonth}</Title>
+                  <Text type="secondary">
+                    Vergleicht gemessene Bestandsveränderung (Snapshot Δ in EUR, ohne In-Transit) gegen erwartete (PO/FO-Eingänge − Verkaufs-Forecast). Verkäufe sind Forecast-Schätzung.
+                    {reconciliation.hasMissingEk ? " EK fehlt teilweise." : ""}
+                  </Text>
+                </div>
+                <Tag color={tagColor}>{statusLabel}</Tag>
+              </div>
+              <div className="v2-reco-kpis">
+                <div className="v2-reco-kpi">
+                  <Text type="secondary">Bestandsveränderung gemessen</Text>
+                  <div className="v2-reco-kpi-value">{formatEurSigned(t.measuredDelta)}</div>
+                  <Text type="secondary">{formatEur(t.prevEur)} → {formatEur(t.currEur)}</Text>
+                </div>
+                <div className="v2-reco-kpi">
+                  <Text type="secondary">Erwartete Veränderung</Text>
+                  <div className="v2-reco-kpi-value">{formatEurSigned(t.expectedDelta)}</div>
+                  <Text type="secondary">Wareneingänge {formatEur(t.inboundEur)} − Verkäufe {formatEur(t.salesEur)}</Text>
+                </div>
+                <div className="v2-reco-kpi v2-reco-kpi-diff">
+                  <Text type="secondary">Diskrepanz (Phantom-Bestand)</Text>
+                  <div className="v2-reco-kpi-value">{formatEurSigned(t.discrepancy)}</div>
+                  <Text type="secondary">Δ gemessen − Δ erwartet</Text>
+                </div>
+              </div>
+              <Collapse
+                className="v2-reco-breakdown"
+                defaultActiveKey={status === "ok" ? [] : ["cat"]}
+                items={[{
+                  key: "cat",
+                  label: "Aufschlüsselung pro Kategorie (sortiert nach Diskrepanz)",
+                  children: (
+                    <table className="v2-reco-cat-table">
+                      <thead>
+                        <tr>
+                          <th>Kategorie</th>
+                          <th className="num">Bestand prev €</th>
+                          <th className="num">Bestand curr €</th>
+                          <th className="num">Δ gemessen €</th>
+                          <th className="num">Wareneingänge €</th>
+                          <th className="num">Verkäufe (FC) €</th>
+                          <th className="num">Δ erwartet €</th>
+                          <th className="num">Diskrepanz €</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reconciliation.perCategory.map((c) => {
+                          const cAbs = Math.abs(c.discrepancy);
+                          const cBase = Math.max(Math.abs(c.measuredDelta), Math.abs(c.expectedDelta), 1);
+                          const cRatio = cAbs / cBase;
+                          const cls = cAbs < 100 || cRatio < 0.05 ? "" : cRatio < 0.2 ? "v2-reco-cat-warn" : "v2-reco-cat-bad";
+                          return (
+                            <tr key={c.label} className={cls}>
+                              <td>{c.label}</td>
+                              <td className="num">{formatEur(c.prevEur)}</td>
+                              <td className="num">{formatEur(c.currEur)}</td>
+                              <td className="num"><strong>{formatEurSigned(c.measuredDelta)}</strong></td>
+                              <td className="num">{formatEur(c.inboundEur)}</td>
+                              <td className="num">{formatEur(c.salesEur)}</td>
+                              <td className="num"><strong>{formatEurSigned(c.expectedDelta)}</strong></td>
+                              <td className="num"><strong>{formatEurSigned(c.discrepancy)}</strong></td>
+                            </tr>
+                          );
+                        })}
+                        <tr className="v2-reco-cat-total">
+                          <td><strong>Gesamt</strong></td>
+                          <td className="num"><strong>{formatEur(t.prevEur)}</strong></td>
+                          <td className="num"><strong>{formatEur(t.currEur)}</strong></td>
+                          <td className="num"><strong>{formatEurSigned(t.measuredDelta)}</strong></td>
+                          <td className="num"><strong>{formatEur(t.inboundEur)}</strong></td>
+                          <td className="num"><strong>{formatEur(t.salesEur)}</strong></td>
+                          <td className="num"><strong>{formatEurSigned(t.expectedDelta)}</strong></td>
+                          <td className="num"><strong>{formatEurSigned(t.discrepancy)}</strong></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  ),
+                }]}
+              />
+              {stalePos.length ? (
+                <div className="v2-reco-stale">
+                  <div className="v2-reco-stale-head">
+                    <div>
+                      <Title level={5} style={{ margin: 0, color: "#92400e" }}>
+                        {stalePos.length} PO{stalePos.length === 1 ? "" : "s"} mit überfälliger ETA — Verbleib klären
+                      </Title>
+                      <Text type="secondary">
+                        ETA liegt vor dem Snapshot-Stichtag, aber Status ist noch OPEN. Mögliche Ursachen: Ware bereits im Bestand verbucht & PO offen → Doppelzählung; verspätet → ETA korrigieren; vergessen → archivieren.
+                      </Text>
+                    </div>
+                    <Button
+                      onClick={() => {
+                        Modal.confirm({
+                          title: `${stalePos.length} alte PO${stalePos.length === 1 ? "" : "s"} archivieren?`,
+                          content: "Sie zählen danach nicht mehr als In-Transit.",
+                          okText: "Archivieren",
+                          cancelText: "Abbrechen",
+                          onOk: () => archiveStalePos(stalePos.map((po) => po.id).filter(Boolean)),
+                        });
+                      }}
+                    >
+                      Alle archivieren ({stalePos.length})
+                    </Button>
+                  </div>
+                  <table className="v2-reco-stale-table">
+                    <thead>
+                      <tr>
+                        <th>PO</th>
+                        <th>Lieferant</th>
+                        <th className="num">ETA</th>
+                        <th className="num">Alter (Tage)</th>
+                        <th className="num">Units</th>
+                        <th className="num">Warenwert €</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stalePos.map((po) => (
+                        <tr key={po.id || po.label}>
+                          <td>{po.label}</td>
+                          <td>{po.supplier}</td>
+                          <td className="num">{po.etaLabel}</td>
+                          <td className="num">{formatInt(po.ageDays)}</td>
+                          <td className="num">{formatInt(po.units)}</td>
+                          <td className="num">{po.hasMissingEk ? "⚠︎ " : ""}{formatEur(po.valueEur)}</td>
+                          <td>
+                            <Button size="small" onClick={() => archiveStalePos([po.id].filter(Boolean))}>
+                              Archivieren
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="v2-reco-stale-total">
+                        <td colSpan={4}><strong>Summe offener Volumen</strong></td>
+                        <td className="num"><strong>{formatInt(stalePos.reduce((s, p) => s + p.units, 0))}</strong></td>
+                        <td className="num"><strong>{formatEur(stalePos.reduce((s, p) => s + (Number.isFinite(p.valueEur) ? p.valueEur : 0), 0))}</strong></td>
+                        <td />
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <Text type="success" style={{ display: "block", marginTop: 12 }}>✓ Keine alten POs mit überfälliger ETA.</Text>
+              )}
+            </Card>
+          );
+        })()
       ) : null}
 
       {showSnapshot ? (
@@ -2356,28 +3097,61 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           {!groupedRows.length ? (
             <Text type="secondary">Keine Snapshot-Zeilen für den aktuellen Filter.</Text>
           ) : (
-            <Collapse
-              className="v2-category-collapse"
-              activeKey={snapshotExpandedCategories}
-              onChange={(nextKeys) => setSnapshotExpandedCategories((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).map(String))}
-              items={groupedRows.map((group) => ({
-                key: group.key,
-                label: (
-                  <Space>
-                    <Text strong>{group.label}</Text>
-                    <span className="v2-category-count">{group.rows.length} Produkte</span>
-                  </Space>
-                ),
-                children: (
-                  <DataTable
-                    data={group.rows}
-                    columns={snapshotColumns}
-                    minTableWidth={1000}
-                    tableLayout="fixed"
-                  />
-                ),
-              }))}
-            />
+            <>
+              <Collapse
+                className="v2-category-collapse"
+                activeKey={snapshotExpandedCategories}
+                onChange={(nextKeys) => setSnapshotExpandedCategories((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).map(String))}
+                items={groupedRows.map((group) => {
+                  const totals = snapshotGroupTotals.find((g) => g.key === group.key);
+                  return ({
+                    key: group.key,
+                    label: (
+                      <Space size="middle">
+                        <Text strong>{group.label}</Text>
+                        <span className="v2-category-count">{group.rows.length} Produkte</span>
+                        {totals ? (
+                          <span className="v2-category-subtotal">
+                            <Text type="secondary">Zwischensumme: </Text>
+                            <Text strong>
+                              {snapshotViewMode === "eur"
+                                ? `${formatEur(totals.warenwertWarehouseEur)} €`
+                                : `${formatInt(totals.totalUnits)} Stk · ${formatEur(totals.warenwertWarehouseEur)} €`}
+                              {totals.hasMissingEk ? " ⚠︎" : ""}
+                            </Text>
+                          </span>
+                        ) : null}
+                      </Space>
+                    ),
+                    children: (
+                      <DataTable
+                        data={group.rows}
+                        columns={snapshotColumns}
+                        minTableWidth={1100}
+                        tableLayout="fixed"
+                      />
+                    ),
+                  });
+                })}
+              />
+              <div className="v2-snapshot-grandtotal">
+                <table className="v2-snapshot-grandtotal-table">
+                  <tbody>
+                    <tr>
+                      <td><Text strong>Gesamtsumme über alle Kategorien</Text></td>
+                      <td className="num">{formatInt(snapshotGrandTotal.amazonUnits)} Amazon</td>
+                      <td className="num">{formatInt(snapshotGrandTotal.threePLUnits)} 3PL</td>
+                      <td className="num">{formatInt(snapshotGrandTotal.totalUnits)} Total</td>
+                      <td className="num">{formatInt(snapshotGrandTotal.inTransit)} In-Transit</td>
+                      <td className="num"><Text strong>{formatEur(snapshotGrandTotal.warenwertWarehouseEur)} €</Text> <Text type="secondary">(ohne In-Transit)</Text></td>
+                      <td className="num"><Text type="secondary">{formatEur(snapshotGrandTotal.warenwertEur)} € (inkl. In-Transit)</Text></td>
+                      <td className="num"><Text type={snapshotGrandTotal.deltaUnits < 0 ? "danger" : undefined}>Δ {formatInt(snapshotGrandTotal.deltaUnits)} Stk · {formatEurSigned(snapshotGrandTotal.deltaEur)} €</Text></td>
+                      {snapshotGrandTotal.hasMissingEk ? <td><Tag color="warning">EK teilweise fehlt</Tag></td> : <td />}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </Card>
       ) : null}

@@ -4180,3 +4180,35 @@
 .v2-shell[data-v2-skin="clean"] .ant-table-content::-webkit-scrollbar-thumb {
   background: #9ca3af;
 }
+
+/* Inventory snapshot — reconciliation panel + grand total + subtotal chips */
+.v2-reco-card { border-left: 4px solid rgba(15, 27, 45, 0.15); }
+.v2-reco-card.v2-reco-status-ok { border-left-color: #10b981; }
+.v2-reco-card.v2-reco-status-warn { border-left-color: #f59e0b; }
+.v2-reco-card.v2-reco-status-bad { border-left-color: #dc2626; }
+.v2-reco-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+.v2-reco-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+.v2-reco-kpi { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 8px; background: rgba(15, 27, 45, 0.04); }
+.v2-reco-kpi-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.v2-reco-kpi-diff { background: rgba(245, 158, 11, 0.10); }
+.v2-reco-status-ok .v2-reco-kpi-diff { background: rgba(16, 185, 129, 0.10); }
+.v2-reco-status-bad .v2-reco-kpi-diff { background: rgba(220, 38, 38, 0.12); }
+.v2-reco-cat-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.v2-reco-cat-table th, .v2-reco-cat-table td { padding: 6px 8px; border-bottom: 1px solid rgba(15, 27, 45, 0.06); }
+.v2-reco-cat-table th { background: #f8fafc; text-align: left; font-weight: 600; color: #475569; }
+.v2-reco-cat-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.v2-reco-cat-warn td { background: rgba(245, 158, 11, 0.08); }
+.v2-reco-cat-bad td { background: rgba(220, 38, 38, 0.08); }
+.v2-reco-cat-total td { font-weight: 700; border-top: 2px solid rgba(15, 27, 45, 0.20); }
+.v2-reco-stale { margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(15, 27, 45, 0.12); }
+.v2-reco-stale-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.v2-reco-stale-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.v2-reco-stale-table th, .v2-reco-stale-table td { padding: 6px 8px; border-bottom: 1px solid rgba(15, 27, 45, 0.06); }
+.v2-reco-stale-table th { background: #f8fafc; text-align: left; font-weight: 600; color: #475569; }
+.v2-reco-stale-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.v2-reco-stale-total td { font-weight: 700; background: rgba(15, 27, 45, 0.04); }
+.v2-category-subtotal { font-size: 12px; }
+.v2-snapshot-grandtotal { margin-top: 12px; padding: 10px 14px; border-radius: 8px; background: rgba(20, 124, 108, 0.08); border-left: 4px solid rgba(20, 124, 108, 0.6); }
+.v2-snapshot-grandtotal-table { width: 100%; border-collapse: collapse; }
+.v2-snapshot-grandtotal-table td { padding: 4px 10px; font-size: 12px; vertical-align: middle; }
+.v2-snapshot-grandtotal-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
