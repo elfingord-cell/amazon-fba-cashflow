@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import FoModule from "../fo";
 import PoModule from "../po";
 import PfoListView from "./PfoListView";
+import GhostFoListView from "./GhostFoListView";
 import SkuTimelineView from "./SkuTimelineView";
 import SupplierOutlookView from "./SupplierOutlookView";
 import { StatsTableShell } from "../../components/StatsTableShell";
@@ -111,9 +112,11 @@ export default function OrdersModule(): JSX.Element {
               ? <FoModule embedded />
               : tab.key === "pfo"
                 ? <PfoListView />
-                : tab.key === "sku"
-                  ? <SkuTimelineView />
-                  : <SupplierOutlookView />,
+                : tab.key === "ghost-fo"
+                  ? <GhostFoListView />
+                  : tab.key === "sku"
+                    ? <SkuTimelineView />
+                    : <SupplierOutlookView />,
         }))}
       />
     </div>
