@@ -413,7 +413,9 @@ function buildInboundMap(state) {
   }
 
   (state.pos || []).forEach(po => {
-    if (!po || po.archived) return;
+    if (!po) return;
+    if (String(po.status || "").toUpperCase() === "CANCELLED") return;
+    // archived = completed delivery — still counts as Wareneingang in its arrival month.
     const items = Array.isArray(po.items) && po.items.length
       ? po.items
       : [{ sku: po.sku, units: po.units }];

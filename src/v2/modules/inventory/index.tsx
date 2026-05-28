@@ -471,9 +471,10 @@ function buildInboundEurByCategoryForMonth(
   };
   ((state.pos as unknown[]) || []).forEach((raw) => {
     const po = raw as Record<string, unknown>;
-    if (!po || po.archived) return;
+    if (!po) return;
     if (String((po.status as string) || "").toUpperCase() === "CANCELLED") return;
-    // Prefer actual arrivalDate ("Empfangen am") over computed ETA
+    // archived = completed delivery — still counts as Wareneingang in its arrival month.
+    // Prefer actual arrivalDate ("Empfangen am") over computed ETA.
     const arrival = parseIsoDate(po.arrivalDate) || resolvePoEta(po);
     const arrivalMonth = toMonthKeyDate(arrival);
     if (arrivalMonth !== monthKey) return;
