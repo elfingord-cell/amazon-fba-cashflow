@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bestandsbewertung März → April 2026 · mahona GmbH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --ink: #0f172a;
+    --ink-2: #1e293b;
+    --muted: #64748b;
+    --muted-2: #94a3b8;
+    --border: rgba(15,23,42,0.10);
+    --accent: #1e40af;
+    --positive: #047857;
+    --negative: #b91c1c;
+    --zulauf: #f59e0b;
+    --physisch: #059669;
+    --warn-bg: #fffbeb;
+    --warn-border: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: 14px; line-height: 1.55; color: var(--ink);
+    background: var(--bg-soft);
+    -webkit-font-smoothing: antialiased;
+  }
+  .container {
+    max-width: 880px; margin: 0 auto; padding: 32px 28px 56px;
+    background: var(--bg);
+  }
+
+  /* Header */
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 16px; margin-bottom: 24px; }
+  header h1 {
+    font-size: 22px; font-weight: 700; margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  header .meta { font-size: 12px; color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap; }
+  header .meta strong { color: var(--ink-2); font-weight: 600; }
+
+  /* Sections */
+  section { margin-bottom: 28px; }
+  h2 {
+    font-size: 15px; font-weight: 700; margin: 0 0 12px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--ink-2);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Antwort-Kasten */
+  .answer-box {
+    background: linear-gradient(180deg, #eff6ff, var(--bg));
+    border: 1px solid #bfdbfe;
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+    padding: 18px 22px;
+  }
+  .answer-box .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    font-weight: 700; color: var(--accent); margin-bottom: 8px;
+  }
+  .answer-box p { margin: 0; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+  .answer-box p + p { margin-top: 8px; }
+
+  /* KPI row */
+  .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .kpi {
+    border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px;
+    background: var(--bg);
+  }
+  .kpi .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    font-weight: 600; color: var(--muted); margin-bottom: 6px;
+  }
+  .kpi .value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi .delta { font-size: 13px; margin-top: 4px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kpi .delta.positive { color: var(--positive); }
+  .kpi .delta.negative { color: var(--negative); }
+  .kpi .delta.warning { color: #b45309; }
+  .kpi .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Composition table */
+  table.composition, table.movement {
+    width: 100%; border-collapse: collapse; font-size: 14px;
+  }
+  table.composition th, table.composition td,
+  table.movement th, table.movement td {
+    padding: 10px 12px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  table.composition th, table.movement th {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); font-weight: 600; background: var(--bg-soft);
+  }
+  table.composition td.num, table.movement td.num {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  table.composition tr.total td, table.movement tr.total td {
+    font-weight: 700; border-top: 2px solid var(--ink); border-bottom: none;
+    background: var(--bg-soft);
+  }
+  table.composition td.label-cell { font-weight: 500; }
+  td.positive { color: var(--positive); font-weight: 600; }
+  td.negative { color: var(--negative); font-weight: 600; }
+
+  /* Charts */
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .chart-host {
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px 16px 6px; background: var(--bg);
+  }
+  .chart-host .chart-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+    font-weight: 600; color: var(--muted); margin-bottom: 6px;
+  }
+
+  /* Booking box */
+  .booking {
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px 18px;
+  }
+  .booking-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; margin-bottom: 8px; }
+  .booking pre {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.65; margin: 0;
+    color: var(--ink); white-space: pre-wrap;
+  }
+
+  /* Klärungsfrage */
+  .clarification {
+    background: var(--warn-bg); border: 1px solid var(--warn-border);
+    border-left: 4px solid var(--warn-border); border-radius: 6px;
+    padding: 16px 20px;
+  }
+  .clarification .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    font-weight: 700; color: #92400e; margin-bottom: 8px;
+  }
+  .clarification p { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.6; }
+
+  /* Footnote */
+  .footnote { font-size: 12px; color: var(--muted); padding-left: 14px; border-left: 2px solid var(--border); margin-top: 8px; }
+
+  footer {
+    margin-top: 36px; padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--muted); text-align: center;
+  }
+
+  @media (max-width: 700px) {
+    .kpi-row, .charts-row { grid-template-columns: 1fr; }
+    header h1 { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Bestandsbewertung März → April 2026</h1>
+    <div class="meta">
+      <span><strong>mahona GmbH</strong></span>
+      <span>Stichtage 31.03. / 30.04.2026</span>
+      <span>Erstellt 28.05.2026</span>
+    </div>
+  </header>
+
+  <!-- Antwort in Kürze -->
+  <section>
+    <div class="answer-box">
+      <div class="label">Antwort in Kürze</div>
+      <p>
+        Der Bestandszuwachs von <strong>+58.380 €</strong> März → April entsteht
+        nicht aus physischen Wareneingängen, sondern aus <strong>+70.078 €
+        neu beauftragten POs</strong> (Bikepack-Saisonbestellung +62.352 €,
+        Messerblock-Nachorder +10.840 €), abzüglich <strong>−11.696 €</strong>
+        physischer Bestandsabbau durch Verkäufe.
+      </p>
+      <p>
+        Diese neu beauftragten Bestellungen sind in unserer Bewertung als
+        „Ware im Zulauf" mit aktiviert, weil wir <strong>EXW (Ex Works)</strong>
+        beim Lieferanten beziehen und unseren Spediteur <strong>Forto</strong>
+        mit dem Transport beauftragen. Das wirtschaftliche Eigentum
+        (HGB §246 Abs. 1 Satz 2) liegt damit ab Werksübergabe bei uns.
+      </p>
+    </div>
+  </section>
+
+  <!-- KPIs -->
+  <section>
+    <h2>Eckwerte</h2>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="label">Bestandswert März</div>
+        <div class="value">129.058 €</div>
+        <div class="sub">Stichtag 31.03.2026</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Bestandswert April</div>
+        <div class="value">187.438 €</div>
+        <div class="delta warning">+58.380 € vs. März</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Physische Wareneingangsrechnung</div>
+        <div class="value">4.226 €</div>
+        <div class="sub">PO 250029 Tonieregal (Vivian Chang, 13.04.)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bestandszusammensetzung -->
+  <section>
+    <h2>Bestandszusammensetzung</h2>
+    <table class="composition">
+      <thead>
+        <tr>
+          <th>Komponente</th>
+          <th class="num">März 2026</th>
+          <th class="num">April 2026</th>
+          <th class="num">Δ</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="label-cell">Physisches Lager (Amazon FBA + 3PL Deutschland)</td>
+          <td class="num">85.314 €</td>
+          <td class="num">73.617 €</td>
+          <td class="num negative">−11.696 €</td>
+        </tr>
+        <tr>
+          <td class="label-cell">Ware im Zulauf (EXW übernommen, Transport durch Forto)</td>
+          <td class="num">43.743 €</td>
+          <td class="num">113.821 €</td>
+          <td class="num positive">+70.078 €</td>
+        </tr>
+        <tr class="total">
+          <td>Summe Buchhalterpaket</td>
+          <td class="num">129.058 €</td>
+          <td class="num">187.438 €</td>
+          <td class="num positive">+58.380 €</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Charts -->
+  <section>
+    <h2>Visualisierung</h2>
+    <div class="charts-row">
+      <div class="chart-host">
+        <div class="chart-title">Komponenten März vs. April</div>
+        <div id="chart-stacked" style="height: 280px;"></div>
+      </div>
+      <div class="chart-host">
+        <div class="chart-title">Bewegungen vom März- zum April-Bestand</div>
+        <div id="chart-waterfall" style="height: 280px;"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bewegungen -->
+  <section>
+    <h2>Bewegungen April 2026 im Detail</h2>
+    <table class="movement">
+      <thead>
+        <tr>
+          <th>Bewegung</th>
+          <th class="num">Effekt auf Gesamt-Bestand</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Neue PO-Bestellungen Bikepack-Saison (5 POs, EXW China, Versand via Forto)</td>
+          <td class="num positive">+62.352 €</td>
+        </tr>
+        <tr>
+          <td>Neue PO-Bestellung Messerblock 360° Nachorder (1.000 Stk × 10,84 €)</td>
+          <td class="num positive">+10.840 €</td>
+        </tr>
+        <tr>
+          <td>Tonieregal-Lieferung PO 250029 angekommen am 13.04. <sup>*</sup></td>
+          <td class="num positive">+1.112 €</td>
+        </tr>
+        <tr>
+          <td>Physischer Bestandsabbau durch Amazon-Verkäufe (zu Einstandspreisen)</td>
+          <td class="num negative">−15.922 €</td>
+        </tr>
+        <tr class="total">
+          <td>Summe Bestandsveränderung</td>
+          <td class="num positive">+58.382 €</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="footnote">
+      <sup>*</sup> Wareneingangsrechnung 4.226 €. Davon 3.114 € bereits im
+      März-Snapshot als Zulauf erfasst (Spaltenwechsel von „Zulauf" zu
+      „Physisches Lager", netto neutral). Die verbleibenden 1.112 € entfallen
+      auf 200 Stk Tonieregal Pink, die im März-Snapshot nicht als Zulauf
+      gepflegt waren und erst im April direkt im physischen Lager auftauchen.
+    </p>
+  </section>
+
+  <!-- Hintergrund Bewertungsmethode -->
+  <section>
+    <h2>Hintergrund zur Bewertungsmethode</h2>
+    <p style="margin: 0; color: var(--ink-2);">
+      Die im Buchhalterpaket ausgewiesenen Bestandswerte aktivieren neben
+      dem physisch in Deutschland liegenden Bestand auch die Ware, die zum
+      Stichtag bereits beim Lieferanten übernommen, aber noch in Transit ist.
+      Hintergrund: Wir beziehen unsere Ware in der Regel <strong>EXW (Ex Works)</strong>
+      vom Lieferanten und beauftragen unseren eigenen Spediteur <strong>Forto</strong>
+      mit dem Transport nach Deutschland. Gefahr und wirtschaftliche Verfügungsmacht
+      gehen damit beim Verlassen des Lieferanten-Werks auf uns über. Diese Methodik
+      haben wir auch in den Vormonaten konsistent angewendet (siehe März:
+      43.743 € „Ware im Zulauf" im ausgewiesenen Bestand enthalten).
+    </p>
+  </section>
+
+  <!-- Klärungsfrage -->
+  <section>
+    <div class="clarification">
+      <div class="label">Rückfrage an Sie</div>
+      <p>
+        Vor diesem Hintergrund würden wir Sie bitten einzuschätzen, ob diese
+        Bewertungslogik aus Ihrer Sicht weiterhin sachgerecht ist, oder ob wir
+        an der Methodik oder an der Darstellung im monatlichen Buchhalterpaket
+        etwas anpassen sollten. Insbesondere würde uns interessieren, ob die
+        derzeitige Vermischung von physisch verfügbarem Bestand und Ware in
+        Transit in einer Summe für Sie praktikabel ist, oder ob Sie die beiden
+        Komponenten separat ausgewiesen bevorzugen würden.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    Bei Rückfragen oder gewünschten Detailauszügen (z.&nbsp;B. PO-Liste, SKU-Aufschlüsselung)
+    melden wir uns gerne — auch eine Live-Sicht des Tools können wir bereitstellen.
+  </footer>
+
+</div>
+
+<script>
+const EUR = v => Math.round(v).toLocaleString('de-DE') + ' €';
+
+/* Stacked Bar */
+echarts.init(document.getElementById('chart-stacked')).setOption({
+  tooltip: {
+    trigger: 'axis', axisPointer: { type: 'shadow' },
+    formatter: p => {
+      const total = p.reduce((s, x) => s + x.value, 0);
+      let h = `<strong>${p[0].axisValue}</strong><br/>`;
+      p.forEach(x => { h += `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${x.color};margin-right:6px"></span>${x.seriesName}: <strong>${EUR(x.value)}</strong><br/>`; });
+      h += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid #ccc">Summe: <strong>${EUR(total)}</strong></div>`;
+      return h;
+    }
+  },
+  legend: { bottom: 0, icon: 'circle', textStyle: { fontFamily: 'Inter', fontSize: 11 } },
+  grid: { left: 50, right: 16, top: 12, bottom: 40, containLabel: true },
+  xAxis: {
+    type: 'category', data: ['März', 'April'],
+    axisTick: { show: false }, axisLine: { lineStyle: { color: '#cbd5e1' } },
+    axisLabel: { fontFamily: 'Inter', fontSize: 12, color: '#0f172a', fontWeight: 600 }
+  },
+  yAxis: {
+    type: 'value',
+    axisLabel: { formatter: v => (v/1000) + 'k', fontFamily: 'Inter', color: '#64748b', fontSize: 11 },
+    splitLine: { lineStyle: { color: '#e2e8f0', type: 'dashed' } }
+  },
+  series: [
+    { name: 'Physisches Lager', type: 'bar', stack: 't', data: [85314, 73617],
+      itemStyle: { color: '#059669' },
+      label: { show: true, position: 'inside', formatter: p => EUR(p.value), color: '#fff', fontWeight: 600, fontSize: 11 },
+      barWidth: 64 },
+    { name: 'Ware im Zulauf', type: 'bar', stack: 't', data: [43743, 113821],
+      itemStyle: { color: '#f59e0b', borderRadius: [6,6,0,0] },
+      label: { show: true, position: 'inside', formatter: p => EUR(p.value), color: '#fff', fontWeight: 600, fontSize: 11 } }
+  ]
+});
+
+/* Waterfall */
+const wSteps = [
+  { name: 'Start März', value: 129058, type: 'a' },
+  { name: 'Bikepack-Saison', value: 62352, type: 'p' },
+  { name: 'Messerblock 360°', value: 10840, type: 'p' },
+  { name: 'Tonieregal netto', value: 1112, type: 'p' },
+  { name: 'Verkäufe April', value: -15922, type: 'n' },
+  { name: 'Ende April', value: 187438, type: 'a' }
+];
+const placeholders = [], pos = [], neg = [], tot = [];
+let r = 0;
+wSteps.forEach(s => {
+  if (s.type === 'a') { placeholders.push(0); pos.push(0); neg.push(0); tot.push(s.value); r = s.value; }
+  else if (s.type === 'p') { placeholders.push(r); pos.push(s.value); neg.push(0); tot.push(0); r += s.value; }
+  else { const v = Math.abs(s.value); r -= v; placeholders.push(r); pos.push(0); neg.push(v); tot.push(0); }
+});
+echarts.init(document.getElementById('chart-waterfall')).setOption({
+  tooltip: {
+    trigger: 'axis', axisPointer: { type: 'shadow' },
+    formatter: p => {
+      const step = wSteps[p[0].dataIndex];
+      const cls = step.type === 'p' ? '#047857' : step.type === 'n' ? '#b91c1c' : '#1e40af';
+      const prefix = step.type === 'p' ? '+' : step.type === 'n' ? '−' : '';
+      const val = step.type === 'a' ? EUR(step.value) : prefix + EUR(Math.abs(step.value));
+      return `<strong>${step.name}</strong><br/><span style="color:${cls};font-weight:700">${val}</span>`;
+    }
+  },
+  grid: { left: 50, right: 16, top: 20, bottom: 84, containLabel: true },
+  xAxis: {
+    type: 'category', data: wSteps.map(s => s.name),
+    axisTick: { show: false }, axisLine: { lineStyle: { color: '#cbd5e1' } },
+    axisLabel: { fontFamily: 'Inter', fontSize: 10, color: '#475569', interval: 0, rotate: 35, align: 'right' }
+  },
+  yAxis: {
+    type: 'value',
+    axisLabel: { formatter: v => (v/1000) + 'k', fontFamily: 'Inter', color: '#64748b', fontSize: 11 },
+    splitLine: { lineStyle: { color: '#e2e8f0', type: 'dashed' } }
+  },
+  series: [
+    { name: 'p', type: 'bar', stack: 'w', data: placeholders, itemStyle: { color: 'rgba(0,0,0,0)' }, silent: true, tooltip: { show: false } },
+    { name: 'Erhöhend', type: 'bar', stack: 'w', data: pos, itemStyle: { color: '#047857', borderRadius: [3,3,0,0] },
+      label: { show: true, position: 'top', formatter: p => p.value > 0 ? '+' + EUR(p.value) : '', color: '#047857', fontWeight: 700, fontSize: 10 }, barWidth: 36 },
+    { name: 'Mindernd', type: 'bar', stack: 'w', data: neg, itemStyle: { color: '#b91c1c', borderRadius: [3,3,0,0] },
+      label: { show: true, position: 'top', formatter: p => p.value > 0 ? '−' + EUR(p.value) : '', color: '#b91c1c', fontWeight: 700, fontSize: 10 } },
+    { name: 'Anker', type: 'bar', stack: 'w', data: tot, itemStyle: { color: '#1e40af', borderRadius: [3,3,0,0] },
+      label: { show: true, position: 'top', formatter: p => p.value > 0 ? EUR(p.value) : '', color: '#1e40af', fontWeight: 700, fontSize: 11 } }
+  ]
+});
+
+window.addEventListener('resize', () => {
+  echarts.getInstanceByDom(document.getElementById('chart-stacked')).resize();
+  echarts.getInstanceByDom(document.getElementById('chart-waterfall')).resize();
+});
+</script>
+</body>
+</html>
