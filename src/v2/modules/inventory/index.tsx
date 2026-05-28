@@ -432,22 +432,8 @@ function buildInTransitMapV2(state: Record<string, unknown>, asOfDate: Date): Ma
       add(sku, "PO", qty);
     });
   });
-  ((state.fos as unknown[]) || []).forEach((raw) => {
-    const fo = raw as Record<string, unknown>;
-    if (!fo || !isFoCountable(fo)) return;
-    const orderDate = parseIsoDate(fo.orderDate);
-    if (orderDate && orderDate > cutoff) return;
-    const arrival = parseIsoDate(fo.arrivalDate) || resolveFoArrival(fo);
-    if (arrival && arrival <= cutoff) return;
-    const items = (Array.isArray(fo.items) && (fo.items as unknown[]).length
-      ? fo.items
-      : [{ sku: fo.sku, units: fo.units }]) as Array<Record<string, unknown>>;
-    items.forEach((item) => {
-      const sku = String(item.sku || "").trim();
-      const qty = Math.max(0, Math.round(parseDeNumberLocal(item.units) || 0));
-      add(sku, "FO", qty);
-    });
-  });
+  // FOs (Forecast Orders) zählen bilanziell nicht als In-Transit:
+  // sie sind unverbindliche Bestellabsichten. Buchhalterpaket schließt sie aus.
   return map;
 }
 

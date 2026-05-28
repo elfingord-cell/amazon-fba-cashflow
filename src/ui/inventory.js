@@ -686,36 +686,8 @@ function buildInTransitMap(state, asOfDate) {
     });
   });
 
-  (state.fos || []).forEach(fo => {
-    if (!fo) return;
-    if (!isFoCountable(fo)) return;
-    const orderDate = parseISODate(fo.orderDate);
-    if (orderDate && orderDate > cutoff) return;
-    const eta = parseISODate(fo.arrivalDate) || resolveFoArrival(fo);
-    if (eta && eta <= cutoff) return;
-    const items = Array.isArray(fo.items) && fo.items.length
-      ? fo.items
-      : [{ sku: fo.sku, units: fo.units }];
-    items.forEach(item => {
-      const sku = String(item?.sku || "").trim();
-      if (!sku) return;
-      const units = parseDeNumber(item?.units ?? 0);
-      const qty = Number.isFinite(units) ? Math.round(units) : 0;
-      if (!qty) return;
-      addEntry(sku, {
-        type: "FO",
-        id: String(fo.id || fo.foNo || sku),
-        label: fo.foNo || fo.id || "FO",
-        supplier: getSupplierName(state, fo.supplierId || fo.supplier),
-        qty,
-        etd: "—",
-        eta: eta ? formatShortDate(eta) : "—",
-        route: "#fo",
-        open: fo.id || fo.foNo || "",
-      });
-    });
-  });
-
+  // FOs (Forecast Orders) zählen bilanziell nicht als In-Transit:
+  // sie sind unverbindliche Bestellabsichten. Buchhalterpaket schließt sie aus.
   return map;
 }
 
