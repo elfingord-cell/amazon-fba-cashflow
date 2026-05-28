@@ -174,6 +174,7 @@ function loadViewState() {
   const projectionMode = raw.projectionMode === "doh" || raw.projectionMode === "plan"
     ? raw.projectionMode
     : "units";
+  const snapshotViewMode = raw.snapshotViewMode === "eur" ? "eur" : "units";
   return {
     selectedMonth: raw.selectedMonth || null,
     collapsed: raw.collapsed && typeof raw.collapsed === "object" ? raw.collapsed : {},
@@ -181,6 +182,7 @@ function loadViewState() {
     showSafety: raw.showSafety !== false,
     projectionMode,
     snapshotAsOfDate: raw.snapshotAsOfDate || "",
+    snapshotViewMode,
   };
 }
 
@@ -469,6 +471,172 @@ function buildInboundMap(state) {
   return { inboundMap, missingEtaSkus };
 }
 
+function computeSnapshotReconciliation({ state, currentSnapshot, previousSnapshot, products, categories, currentMonth, asOfDate }) {
+  const settings = state.settings || {};
+  const productMap = new Map();
+  products.forEach(product => {
+    const sku = String(product?.sku || "").trim();
+    if (sku) productMap.set(sku, product);
+  });
+  const categoryMap = new Map();
+  (categories || []).forEach(cat => {
+    if (cat?.id != null) categoryMap.set(String(cat.id), cat.name || "Ohne Kategorie");
+  });
+  const resolveCategory = (product) => {
+    const id = product?.categoryId != null ? String(product.categoryId) : "";
+    return id ? { id, name: categoryMap.get(id) || "Ohne Kategorie" } : { id: "uncategorized", name: "Ohne Kategorie" };
+  };
+  const ekFor = (sku) => {
+    const product = productMap.get(sku);
+    return getProductEkEur(product, settings);
+  };
+
+  const blankBucket = () => ({ measuredPrev: 0, measuredCurr: 0, inboundEur: 0, salesEur: 0, hasMissingEk: false });
+  const buckets = new Map();
+  const ensureBucket = (id, name) => {
+    if (!buckets.has(id)) buckets.set(id, { id, name, ...blankBucket() });
+    return buckets.get(id);
+  };
+
+  const accumulateSnapshot = (snapshot, field) => {
+    if (!snapshot) return;
+    (snapshot.items || []).forEach(item => {
+      const sku = String(item.sku || "").trim();
+      if (!sku) return;
+      const product = productMap.get(sku);
+      if (!product) return;
+      const units = Number(item.amazonUnits || 0) + Number(item.threePLUnits || 0);
+      const ek = ekFor(sku);
+      const cat = resolveCategory(product);
+      const bucket = ensureBucket(cat.id, cat.name);
+      if (!Number.isFinite(ek)) {
+        bucket.hasMissingEk = true;
+        return;
+      }
+      bucket[field] += units * ek;
+    });
+  };
+  accumulateSnapshot(previousSnapshot, "measuredPrev");
+  accumulateSnapshot(currentSnapshot, "measuredCurr");
+
+  const normalizedCurrentMonth = normalizeMonthKey(currentMonth);
+  const { inboundMap } = buildInboundMap(state);
+  inboundMap.forEach((monthMap, sku) => {
+    const entry = monthMap.get(normalizedCurrentMonth);
+    if (!entry) return;
+    const units = (entry.poUnits || 0) + (entry.foUnits || 0);
+    if (!units) return;
+    const product = productMap.get(sku);
+    if (!product) return;
+    const ek = ekFor(sku);
+    const cat = resolveCategory(product);
+    const bucket = ensureBucket(cat.id, cat.name);
+    if (!Number.isFinite(ek)) {
+      bucket.hasMissingEk = true;
+      return;
+    }
+    bucket.inboundEur += units * ek;
+  });
+
+  products.forEach(product => {
+    const sku = String(product?.sku || "").trim();
+    if (!sku) return;
+    const units = getForecastUnits(state, sku, normalizedCurrentMonth);
+    if (!Number.isFinite(units) || !units) return;
+    const ek = ekFor(sku);
+    const cat = resolveCategory(product);
+    const bucket = ensureBucket(cat.id, cat.name);
+    if (!Number.isFinite(ek)) {
+      bucket.hasMissingEk = true;
+      return;
+    }
+    bucket.salesEur += units * ek;
+  });
+
+  const perCategory = Array.from(buckets.values())
+    .map(bucket => {
+      const measuredDelta = bucket.measuredCurr - bucket.measuredPrev;
+      const expectedDelta = bucket.inboundEur - bucket.salesEur;
+      return {
+        ...bucket,
+        measuredDelta,
+        expectedDelta,
+        discrepancy: measuredDelta - expectedDelta,
+      };
+    })
+    .sort((a, b) => Math.abs(b.discrepancy) - Math.abs(a.discrepancy));
+
+  const totals = perCategory.reduce((acc, b) => {
+    acc.measuredPrev += b.measuredPrev;
+    acc.measuredCurr += b.measuredCurr;
+    acc.measuredDelta += b.measuredDelta;
+    acc.inboundEur += b.inboundEur;
+    acc.salesEur += b.salesEur;
+    acc.expectedDelta += b.expectedDelta;
+    acc.discrepancy += b.discrepancy;
+    if (b.hasMissingEk) acc.hasMissingEk = true;
+    return acc;
+  }, { measuredPrev: 0, measuredCurr: 0, measuredDelta: 0, inboundEur: 0, salesEur: 0, expectedDelta: 0, discrepancy: 0, hasMissingEk: false });
+
+  return {
+    currentMonth: normalizedCurrentMonth,
+    previousMonth: previousSnapshot?.month || null,
+    perCategory,
+    totals,
+    forecastIsSurrogate: true,
+  };
+}
+
+function buildStalePoList(state, asOfDate) {
+  const cutoff = normalizeAsOfDate(asOfDate) || new Date();
+  const settings = state.settings || {};
+  const productMap = new Map();
+  (state.products || []).forEach(product => {
+    const sku = String(product?.sku || "").trim();
+    if (sku) productMap.set(sku, product);
+  });
+  const stale = [];
+  (state.pos || []).forEach(po => {
+    if (!po || po.archived) return;
+    const status = String(po.status || "").toUpperCase();
+    if (status === "CANCELLED" || status === "ARRIVED" || status === "RECEIVED") return;
+    const eta = resolvePoEta(po);
+    if (!eta || eta > cutoff) return;
+    const items = Array.isArray(po.items) && po.items.length
+      ? po.items
+      : [{ sku: po.sku, units: po.units }];
+    let units = 0;
+    let valueEur = 0;
+    let hasMissingEk = false;
+    items.forEach(item => {
+      const sku = String(item?.sku || "").trim();
+      if (!sku) return;
+      const qty = Math.round(parseDeNumber(item?.units ?? 0) || 0);
+      units += qty;
+      const product = productMap.get(sku);
+      const ek = getProductEkEur(product, settings);
+      if (!Number.isFinite(ek)) {
+        hasMissingEk = true;
+        return;
+      }
+      valueEur += qty * ek;
+    });
+    stale.push({
+      id: po.id || po.poNo || "",
+      label: po.poNo || po.id || "PO",
+      supplier: getSupplierName(state, po.supplierId || po.supplier),
+      etaDate: eta,
+      etaLabel: formatShortDate(eta),
+      ageDays: Math.max(0, Math.round((cutoff - eta) / (24 * 60 * 60 * 1000))),
+      units,
+      valueEur,
+      hasMissingEk,
+    });
+  });
+  stale.sort((a, b) => b.ageDays - a.ageDays);
+  return stale;
+}
+
 function buildInTransitMap(state, asOfDate) {
   const map = new Map();
   const today = new Date();
@@ -608,8 +776,166 @@ function getInventoryDraftKey(month, sku, field) {
   return `${month || "unknown"}:${sku}:${field}`;
 }
 
+function formatEurSigned(value) {
+  if (value == null || !Number.isFinite(Number(value))) return "—";
+  const num = Number(value);
+  const sign = num > 0 ? "+" : num < 0 ? "−" : "";
+  return `${sign}${formatEur(Math.abs(num))}`;
+}
+
+function classifyDiscrepancy(measured, expected) {
+  const measuredAbs = Math.abs(measured);
+  const expectedAbs = Math.abs(expected);
+  const diff = measured - expected;
+  const base = Math.max(measuredAbs, expectedAbs, 1);
+  const ratio = Math.abs(diff) / base;
+  if (Math.abs(diff) < 100) return "ok";
+  if (ratio < 0.05) return "ok";
+  if (ratio < 0.20) return "warn";
+  return "bad";
+}
+
+function buildReconciliationPanel({ reconciliation, stalePos, currentMonth, previousMonth }) {
+  const totals = reconciliation.totals;
+  const status = classifyDiscrepancy(totals.measuredDelta, totals.expectedDelta);
+  const statusLabel = status === "ok" ? "Plausibel" : status === "warn" ? "Auffällig" : "Stark abweichend";
+  const statusClass = `reco-status-${status}`;
+  const currLabel = currentMonth ? formatMonthSlash(currentMonth) : "—";
+  const prevLabel = previousMonth ? formatMonthSlash(previousMonth) : "—";
+  const missingEkNote = totals.hasMissingEk ? `<span class="cell-warning" title="Mindestens ein Produkt ohne EK">⚠︎ EK fehlt teils</span>` : "";
+
+  const categoryRows = reconciliation.perCategory.length
+    ? reconciliation.perCategory.map(bucket => {
+        const cls = classifyDiscrepancy(bucket.measuredDelta, bucket.expectedDelta);
+        return `
+          <tr class="reco-cat-row reco-cat-${cls}">
+            <td>${escapeHtml(bucket.name)}${bucket.hasMissingEk ? " <span class=\"cell-warning\" title=\"EK fehlt\">⚠︎</span>" : ""}</td>
+            <td class="num">${formatEur(bucket.measuredPrev)}</td>
+            <td class="num">${formatEur(bucket.measuredCurr)}</td>
+            <td class="num"><strong>${formatEurSigned(bucket.measuredDelta)}</strong></td>
+            <td class="num">${formatEur(bucket.inboundEur)}</td>
+            <td class="num">${formatEur(bucket.salesEur)}</td>
+            <td class="num"><strong>${formatEurSigned(bucket.expectedDelta)}</strong></td>
+            <td class="num"><strong>${formatEurSigned(bucket.discrepancy)}</strong></td>
+          </tr>
+        `;
+      }).join("")
+    : `<tr><td class="muted" colspan="8">Keine Kategorie-Daten verfügbar.</td></tr>`;
+
+  const staleSection = stalePos.length
+    ? `
+      <div class="reco-stale">
+        <div class="reco-stale-head">
+          <div>
+            <h4>${stalePos.length} PO${stalePos.length === 1 ? "" : "s"} mit überfälliger ETA — Verbleib klären</h4>
+            <p class="muted small">ETA liegt vor dem Snapshot-Stichtag, aber Status ist noch OPEN. Mögliche Ursachen: (a) Ware bereits im Bestand verbucht, PO nicht abgeschlossen → Doppelzählung im Warenwert; (b) Ware verspätet → ETA korrigieren; (c) PO storniert / vergessen → archivieren.</p>
+          </div>
+          <button class="btn secondary" id="reco-archive-all">Alle archivieren (${stalePos.length})</button>
+        </div>
+        <table class="table-compact ui-table-standard reco-stale-table">
+          <thead>
+            <tr>
+              <th>PO</th>
+              <th>Lieferant</th>
+              <th class="num">ETA</th>
+              <th class="num">Alter (Tage)</th>
+              <th class="num">Units</th>
+              <th class="num">Warenwert €</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${stalePos.map(po => `
+              <tr data-stale-po="${escapeHtml(po.id)}">
+                <td>${escapeHtml(po.label)}</td>
+                <td>${escapeHtml(po.supplier || "—")}</td>
+                <td class="num">${escapeHtml(po.etaLabel)}</td>
+                <td class="num">${formatInt(po.ageDays)}</td>
+                <td class="num">${formatInt(po.units)}</td>
+                <td class="num">${po.hasMissingEk ? "⚠︎ " : ""}${formatEur(po.valueEur)}</td>
+                <td><button class="btn sm secondary reco-archive-one" data-po-id="${escapeHtml(po.id)}">Archivieren</button></td>
+              </tr>
+            `).join("")}
+            <tr class="reco-stale-total">
+              <td colspan="4"><strong>Summe offener Volumen</strong></td>
+              <td class="num"><strong>${formatInt(stalePos.reduce((s, p) => s + p.units, 0))}</strong></td>
+              <td class="num"><strong>${formatEur(stalePos.reduce((s, p) => s + (Number.isFinite(p.valueEur) ? p.valueEur : 0), 0))}</strong></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `
+    : `<div class="reco-stale-empty muted small">✓ Keine alten POs mit überfälliger ETA. In-Transit-Wert sollte sauber sein.</div>`;
+
+  return `
+    <div class="reco-panel ${statusClass}">
+      <div class="reco-head">
+        <div>
+          <h3>Plausi-Check ${escapeHtml(prevLabel)} → ${escapeHtml(currLabel)}</h3>
+          <p class="muted small">
+            Vergleicht die gemessene Bestandsveränderung (Snapshot-Δ in EUR, ohne In-Transit) gegen die erwartete (PO/FO-Eingänge − Verkaufs-Forecast).
+            ${reconciliation.forecastIsSurrogate ? "Verkäufe geschätzt aus Forecast — echte Sales-Daten fehlen." : ""}
+          </p>
+        </div>
+        <div class="reco-status-pill">${escapeHtml(statusLabel)} ${missingEkNote}</div>
+      </div>
+      <div class="reco-headline-grid">
+        <div class="reco-kpi">
+          <span class="muted small">Bestandsveränderung gemessen</span>
+          <strong class="reco-kpi-value">${formatEurSigned(totals.measuredDelta)}</strong>
+          <span class="muted small">${formatEur(totals.measuredPrev)} → ${formatEur(totals.measuredCurr)}</span>
+        </div>
+        <div class="reco-kpi">
+          <span class="muted small">Erwartete Veränderung</span>
+          <strong class="reco-kpi-value">${formatEurSigned(totals.expectedDelta)}</strong>
+          <span class="muted small">Wareneingänge ${formatEur(totals.inboundEur)} − Verkäufe ${formatEur(totals.salesEur)}</span>
+        </div>
+        <div class="reco-kpi reco-kpi-diff">
+          <span class="muted small">Diskrepanz (Phantom-Bestand)</span>
+          <strong class="reco-kpi-value">${formatEurSigned(totals.discrepancy)}</strong>
+          <span class="muted small">Δ gemessen − Δ erwartet</span>
+        </div>
+      </div>
+      <details class="reco-breakdown" ${status === "ok" ? "" : "open"}>
+        <summary>Aufschlüsselung pro Kategorie (sortiert nach Diskrepanz)</summary>
+        <table class="table-compact ui-table-standard reco-category-table">
+          <thead>
+            <tr>
+              <th>Kategorie</th>
+              <th class="num">Bestand ${escapeHtml(prevLabel)} €</th>
+              <th class="num">Bestand ${escapeHtml(currLabel)} €</th>
+              <th class="num">Δ gemessen €</th>
+              <th class="num">Wareneingänge €</th>
+              <th class="num">Verkäufe (FC) €</th>
+              <th class="num">Δ erwartet €</th>
+              <th class="num">Diskrepanz €</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${categoryRows}
+            <tr class="reco-cat-total">
+              <td><strong>Gesamt</strong></td>
+              <td class="num"><strong>${formatEur(totals.measuredPrev)}</strong></td>
+              <td class="num"><strong>${formatEur(totals.measuredCurr)}</strong></td>
+              <td class="num"><strong>${formatEurSigned(totals.measuredDelta)}</strong></td>
+              <td class="num"><strong>${formatEur(totals.inboundEur)}</strong></td>
+              <td class="num"><strong>${formatEur(totals.salesEur)}</strong></td>
+              <td class="num"><strong>${formatEurSigned(totals.expectedDelta)}</strong></td>
+              <td class="num"><strong>${formatEurSigned(totals.discrepancy)}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </details>
+      ${staleSection}
+    </div>
+  `;
+}
+
 function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products, categories, asOfDate, snapshotMonth }) {
   const filtered = filterProductsBySearch(products, view.search);
+  const viewMode = view.snapshotViewMode === "eur" ? "eur" : "units";
+  const isEur = viewMode === "eur";
 
   const groups = buildCategoryGroups(filtered, categories);
   const prevMap = new Map();
@@ -619,8 +945,25 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
   });
   const inTransitMap = buildInTransitMap(state, asOfDate);
 
+  const grandTotals = {
+    amazonUnits: 0, threePLUnits: 0, totalUnits: 0, inTransit: 0, totalValue: 0,
+    amazonEur: 0, threePlEur: 0, totalEur: 0, inTransitEur: 0,
+    deltaUnits: 0, deltaEur: 0,
+    valueComplete: true,
+  };
+
+  const formatNum = (value) => formatInt(value);
+  const formatVal = (value) => Number.isFinite(value) ? formatEur(value) : "—";
+
   const rows = groups.map(group => {
     const collapsed = view.collapsed[group.id];
+    const groupTotals = {
+      amazonUnits: 0, threePLUnits: 0, totalUnits: 0, inTransit: 0, totalValue: 0,
+      amazonEur: 0, threePlEur: 0, totalEur: 0, inTransitEur: 0,
+      deltaUnits: 0, deltaEur: 0,
+      valueComplete: true,
+    };
+
     const items = group.items.map(product => {
       const sku = String(product.sku || "").trim();
       const item = getSnapshotItem(snapshot, sku);
@@ -635,36 +978,121 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
       const delta = totalUnits - prevTotal;
       const ekEur = getProductEkEur(product, state.settings || {});
       const totalValue = Number.isFinite(ekEur) ? totalUnitsWithTransit * ekEur : null;
+      const amazonEur = Number.isFinite(ekEur) ? amazonUnits * ekEur : null;
+      const threePlEur = Number.isFinite(ekEur) ? threePLUnits * ekEur : null;
+      const totalEur = Number.isFinite(ekEur) ? totalUnits * ekEur : null;
+      const inTransitEur = Number.isFinite(ekEur) ? inTransitTotal * ekEur : null;
+      const deltaEur = Number.isFinite(ekEur) ? delta * ekEur : null;
       const warning = !Number.isFinite(ekEur);
       const transitTooltip = inTransit && inTransit.entries.length
         ? renderInTransitTooltip({ alias: product.alias || sku, entries: inTransit.entries })
         : "";
+
+      // accumulate group totals
+      groupTotals.amazonUnits += amazonUnits;
+      groupTotals.threePLUnits += threePLUnits;
+      groupTotals.totalUnits += totalUnits;
+      groupTotals.inTransit += inTransitTotal;
+      groupTotals.deltaUnits += delta;
+      if (warning) {
+        groupTotals.valueComplete = false;
+      } else {
+        groupTotals.totalValue += totalValue;
+        groupTotals.amazonEur += amazonEur;
+        groupTotals.threePlEur += threePlEur;
+        groupTotals.totalEur += totalEur;
+        groupTotals.inTransitEur += inTransitEur;
+        groupTotals.deltaEur += deltaEur;
+      }
+
       const amazonDraft = inventoryDrafts.get(getInventoryDraftKey(snapshotMonth, sku, "amazonUnits"));
       const threePlDraft = inventoryDrafts.get(getInventoryDraftKey(snapshotMonth, sku, "threePLUnits"));
+
+      const amazonCell = isEur
+        ? `<td class="num inventory-value" data-field="amazonEur">${formatVal(amazonEur)}</td>`
+        : `<td class="num">
+            <input class="inventory-input" inputmode="decimal" data-field="amazonUnits" value="${escapeHtml(amazonDraft ?? String(item?.amazonUnits ?? 0))}" />
+            <span class="inventory-input-hint">Nur ganze Einheiten</span>
+          </td>`;
+
+      const threePlCell = isEur
+        ? `<td class="num inventory-value" data-field="threePlEur">${formatVal(threePlEur)}</td>`
+        : `<td class="num">
+            <input class="inventory-input" inputmode="decimal" data-field="threePLUnits" value="${escapeHtml(threePlDraft ?? String(item?.threePLUnits ?? 0))}" />
+            <span class="inventory-input-hint">Nur ganze Einheiten</span>
+          </td>`;
+
+      const totalCell = isEur
+        ? `<td class="num inventory-value" data-field="totalEur">${formatVal(totalEur)}</td>`
+        : `<td class="num inventory-value" data-field="totalUnits">${formatNum(totalUnits)}</td>`;
+
+      const inTransitCell = isEur
+        ? `<td class="num inventory-value inventory-in-transit" data-field="inTransitEur" data-tooltip-html="${encodeTooltip(transitTooltip)}">${formatVal(inTransitEur)}</td>`
+        : `<td class="num inventory-value inventory-in-transit" data-tooltip-html="${encodeTooltip(transitTooltip)}">${formatNum(inTransitTotal)}</td>`;
+
+      const deltaCell = isEur
+        ? `<td class="num inventory-value" data-field="deltaEur">${formatVal(deltaEur)}</td>`
+        : `<td class="num inventory-value" data-field="delta">${formatNum(delta)}</td>`;
+
       return `
         <tr class="inventory-row ${collapsed ? "is-collapsed" : ""}" data-sku="${escapeHtml(sku)}" data-category="${escapeHtml(group.id)}">
           <td class="inventory-col-sku sticky-cell">${escapeHtml(sku)}</td>
           <td class="inventory-col-alias sticky-cell">${escapeHtml(product.alias || "—")}</td>
-          <td class="num">
-            <input class="inventory-input" inputmode="decimal" data-field="amazonUnits" value="${escapeHtml(amazonDraft ?? String(item?.amazonUnits ?? 0))}" />
-            <span class="inventory-input-hint">Nur ganze Einheiten</span>
-          </td>
-          <td class="num">
-            <input class="inventory-input" inputmode="decimal" data-field="threePLUnits" value="${escapeHtml(threePlDraft ?? String(item?.threePLUnits ?? 0))}" />
-            <span class="inventory-input-hint">Nur ganze Einheiten</span>
-          </td>
-          <td class="num inventory-value" data-field="totalUnits">${formatInt(totalUnits)}</td>
-          <td class="num inventory-value inventory-in-transit" data-tooltip-html="${encodeTooltip(transitTooltip)}">${formatInt(inTransitTotal)}</td>
+          ${amazonCell}
+          ${threePlCell}
+          ${totalCell}
+          ${inTransitCell}
           <td class="num">
             ${warning ? `<span class="cell-warning" title="EK fehlt im Produkt">${"⚠︎"}</span>` : ""}
             <span data-field="ekEur">${Number.isFinite(ekEur) ? formatEur(ekEur) : "—"}</span>
           </td>
           <td class="num inventory-value" data-field="totalValue">${Number.isFinite(totalValue) ? formatEur(totalValue) : "—"}</td>
-          <td class="num inventory-value" data-field="delta">${formatInt(delta)}</td>
+          ${deltaCell}
           <td><input class="inventory-input note" data-field="note" value="${escapeHtml(item?.note || "")}" /></td>
         </tr>
       `;
     }).join("");
+
+    // accumulate grand totals
+    grandTotals.amazonUnits += groupTotals.amazonUnits;
+    grandTotals.threePLUnits += groupTotals.threePLUnits;
+    grandTotals.totalUnits += groupTotals.totalUnits;
+    grandTotals.inTransit += groupTotals.inTransit;
+    grandTotals.deltaUnits += groupTotals.deltaUnits;
+    if (!groupTotals.valueComplete) {
+      grandTotals.valueComplete = false;
+    } else {
+      grandTotals.totalValue += groupTotals.totalValue;
+      grandTotals.amazonEur += groupTotals.amazonEur;
+      grandTotals.threePlEur += groupTotals.threePlEur;
+      grandTotals.totalEur += groupTotals.totalEur;
+      grandTotals.inTransitEur += groupTotals.inTransitEur;
+      grandTotals.deltaEur += groupTotals.deltaEur;
+    }
+
+    const subtotalLabel = `Zwischensumme ${group.name}`;
+    const subtotalIncomplete = !groupTotals.valueComplete ? ` <span class="cell-warning" title="Mindestens ein Produkt ohne EK">⚠︎</span>` : "";
+    const subtotalCells = isEur
+      ? `
+        <td class="num">${formatVal(groupTotals.amazonEur)}</td>
+        <td class="num">${formatVal(groupTotals.threePlEur)}</td>
+        <td class="num">${formatVal(groupTotals.totalEur)}</td>
+        <td class="num">${formatVal(groupTotals.inTransitEur)}</td>
+        <td class="num"></td>
+        <td class="num">${formatVal(groupTotals.totalValue)}${subtotalIncomplete}</td>
+        <td class="num">${formatVal(groupTotals.deltaEur)}</td>
+        <td></td>
+      `
+      : `
+        <td class="num">${formatNum(groupTotals.amazonUnits)}</td>
+        <td class="num">${formatNum(groupTotals.threePLUnits)}</td>
+        <td class="num">${formatNum(groupTotals.totalUnits)}</td>
+        <td class="num">${formatNum(groupTotals.inTransit)}</td>
+        <td class="num"></td>
+        <td class="num">${formatVal(groupTotals.totalValue)}${subtotalIncomplete}</td>
+        <td class="num">${formatNum(groupTotals.deltaUnits)}</td>
+        <td></td>
+      `;
 
     return `
         <tr class="inventory-category-row" data-category-row="${escapeHtml(group.id)}">
@@ -676,27 +1104,61 @@ function buildSnapshotTable({ state, view, snapshot, previousSnapshot, products,
           <th colspan="8"></th>
         </tr>
         ${items}
+        <tr class="inventory-subtotal-row ${collapsed ? "is-collapsed" : ""}" data-category-subtotal="${escapeHtml(group.id)}">
+          <td class="inventory-col-sku sticky-cell" colspan="2"><strong>${escapeHtml(subtotalLabel)}</strong></td>
+          ${subtotalCells}
+        </tr>
       `;
     }).join("");
 
+  const grandIncomplete = !grandTotals.valueComplete ? ` <span class="cell-warning" title="Mindestens ein Produkt ohne EK">⚠︎</span>` : "";
+  const grandCells = isEur
+    ? `
+      <td class="num">${formatVal(grandTotals.amazonEur)}</td>
+      <td class="num">${formatVal(grandTotals.threePlEur)}</td>
+      <td class="num">${formatVal(grandTotals.totalEur)}</td>
+      <td class="num">${formatVal(grandTotals.inTransitEur)}</td>
+      <td class="num"></td>
+      <td class="num">${formatVal(grandTotals.totalValue)}${grandIncomplete}</td>
+      <td class="num">${formatVal(grandTotals.deltaEur)}</td>
+      <td></td>
+    `
+    : `
+      <td class="num">${formatNum(grandTotals.amazonUnits)}</td>
+      <td class="num">${formatNum(grandTotals.threePLUnits)}</td>
+      <td class="num">${formatNum(grandTotals.totalUnits)}</td>
+      <td class="num">${formatNum(grandTotals.inTransit)}</td>
+      <td class="num"></td>
+      <td class="num">${formatVal(grandTotals.totalValue)}${grandIncomplete}</td>
+      <td class="num">${formatNum(grandTotals.deltaUnits)}</td>
+      <td></td>
+    `;
+  const grandRow = groups.length ? `
+    <tr class="inventory-grandtotal-row">
+      <td class="inventory-col-sku sticky-cell" colspan="2"><strong>Gesamtsumme</strong></td>
+      ${grandCells}
+    </tr>
+  ` : "";
+
   return `
-    <table class="table-compact ui-table-standard inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="2" data-sticky-owner="manual">
+    <table class="table-compact ui-table-standard inventory-table inventory-snapshot-table" data-ui-table="true" data-sticky-cols="2" data-sticky-owner="manual" data-view-mode="${escapeHtml(viewMode)}">
       <thead>
         <tr>
           <th class="inventory-col-sku sticky-header">SKU</th>
           <th class="inventory-col-alias sticky-header">Alias</th>
-          <th class="num">Amazon Units</th>
-          <th class="num">3PL Units</th>
-          <th class="num">Total Units</th>
-          <th class="num">In Transit</th>
+          <th class="num">${isEur ? "Amazon €" : "Amazon Units"}</th>
+          <th class="num">${isEur ? "3PL €" : "3PL Units"}</th>
+          <th class="num">${isEur ? "Total €" : "Total Units"}</th>
+          <th class="num">${isEur ? "In Transit €" : "In Transit"}</th>
           <th class="num">EK (EUR)</th>
           <th class="num">Warenwert €</th>
-          <th class="num">Delta vs prev</th>
+          <th class="num">${isEur ? "Delta € vs prev" : "Delta vs prev"}</th>
           <th>Note</th>
         </tr>
       </thead>
       <tbody>
         ${rows || `<tr><td class="muted" colspan="10">Keine Produkte gefunden.</td></tr>`}
+        ${grandRow}
       </tbody>
     </table>
   `;
@@ -736,6 +1198,7 @@ function buildSnapshotExportData({ state, view, snapshot, products, categories, 
   let totalMajamo = 0;
   let totalTransit = 0;
   let totalValue = 0;
+  let totalValueWarehouse = 0;
 
   groups.forEach(group => {
     group.items.forEach(product => {
@@ -749,7 +1212,9 @@ function buildSnapshotExportData({ state, view, snapshot, products, categories, 
       const inTransitUnits = inTransit ? inTransit.total : 0;
       const ekEur = getProductEkEur(product, state.settings || {});
       const totalUnits = amazonUnits + threePlUnits + inTransitUnits;
+      const warehouseUnits = amazonUnits + threePlUnits;
       const rowValue = Number.isFinite(ekEur) ? totalUnits * ekEur : null;
+      const rowValueWarehouse = Number.isFinite(ekEur) ? warehouseUnits * ekEur : null;
       if (!Number.isFinite(ekEur)) {
         missingEk.push(alias ? `${sku} (${alias})` : sku);
       }
@@ -757,6 +1222,7 @@ function buildSnapshotExportData({ state, view, snapshot, products, categories, 
       if (Number.isFinite(threePlUnits)) totalMajamo += threePlUnits;
       if (Number.isFinite(inTransitUnits)) totalTransit += inTransitUnits;
       if (Number.isFinite(rowValue)) totalValue += rowValue;
+      if (Number.isFinite(rowValueWarehouse)) totalValueWarehouse += rowValueWarehouse;
       rows.push({
         sku,
         alias,
@@ -765,6 +1231,7 @@ function buildSnapshotExportData({ state, view, snapshot, products, categories, 
         inTransitUnits,
         ekEur,
         rowValue,
+        rowValueWarehouse,
       });
     });
   });
@@ -777,6 +1244,7 @@ function buildSnapshotExportData({ state, view, snapshot, products, categories, 
       inTransitUnits: totalTransit,
       totalUnits: totalAmazon + totalMajamo + totalTransit,
       totalValue,
+      totalValueWarehouse,
     },
     missingEk,
   };
@@ -796,7 +1264,8 @@ function buildSnapshotCsv({ title, rows, totals, missingEk }) {
     "Bestand majamo (Stk)",
     "In Transit (Stk)",
     "EK-Preis (EUR / Stk)",
-    "Warenwert (EUR)",
+    "Warenwert ohne In-Transit (EUR)",
+    "Warenwert inkl. In-Transit (EUR)",
   ];
   lines.push(headers.map(header => escapeCsv(header, delimiter)).join(delimiter));
   rows.forEach(row => {
@@ -807,20 +1276,24 @@ function buildSnapshotCsv({ title, rows, totals, missingEk }) {
       formatUnitsExport(row.threePlUnits),
       formatUnitsExport(row.inTransitUnits),
       formatEurExport(row.ekEur),
+      formatEurExport(row.rowValueWarehouse),
       formatEurExport(row.rowValue),
     ];
     lines.push(line.map(value => escapeCsv(value, delimiter)).join(delimiter));
   });
   const totalsRow = [
-    "Gesamtsumme Warenwert (EUR)",
+    "Gesamtsumme",
     "",
     formatUnitsExport(totals.amazonUnits),
     formatUnitsExport(totals.majamoUnits),
     formatUnitsExport(totals.inTransitUnits),
     "",
+    formatEurExport(totals.totalValueWarehouse),
     formatEurExport(totals.totalValue),
   ];
   lines.push(totalsRow.map(value => escapeCsv(value, delimiter)).join(delimiter));
+  lines.push("");
+  lines.push(escapeCsv("Hinweis: 'Warenwert ohne In-Transit' = nur physisch im Lager (Amazon + majamo). Für BWA-Bestandsbewertung typischerweise diese Spalte verwenden, sofern In-Transit-Eigentum erst beim Eintreffen übergeht.", delimiter));
   if (missingEk.length) {
     lines.push("");
     lines.push(escapeCsv(`Fehlender EK-Preis für: ${missingEk.join(", ")}`, delimiter));
@@ -837,17 +1310,19 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
         <td class="num">${formatUnitsExport(row.threePlUnits)}</td>
         <td class="num">${formatUnitsExport(row.inTransitUnits)}</td>
         <td class="num">${formatEurExport(row.ekEur)}</td>
+        <td class="num">${formatEurExport(row.rowValueWarehouse)}</td>
         <td class="num">${formatEurExport(row.rowValue)}</td>
       </tr>
   `).join("");
   const totalRow = `
       <tr class="totals">
-        <td>Gesamtsumme Warenwert (EUR)</td>
+        <td>Gesamtsumme</td>
         <td></td>
         <td class="num">${formatUnitsExport(totals.amazonUnits)}</td>
         <td class="num">${formatUnitsExport(totals.majamoUnits)}</td>
         <td class="num">${formatUnitsExport(totals.inTransitUnits)}</td>
         <td class="num"></td>
+        <td class="num">${formatEurExport(totals.totalValueWarehouse)}</td>
         <td class="num">${formatEurExport(totals.totalValue)}</td>
       </tr>
   `;
@@ -869,6 +1344,7 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
           th { background: #f8fafc; font-weight: 600; color: #475569; }
           .num { text-align: right; font-variant-numeric: tabular-nums; }
           .totals td { font-weight: 700; background: #f1f5f9; }
+          .hint { margin-top: 12px; font-size: 11px; color: #475569; }
           .warning { margin-top: 12px; font-size: 12px; color: #b45309; }
           @media print {
             body { margin: 16px; }
@@ -891,7 +1367,8 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
               <th class="num">Bestand majamo (Stk)</th>
               <th class="num">In Transit (Stk)</th>
               <th class="num">EK-Preis (EUR / Stk)</th>
-              <th class="num">Warenwert (EUR)</th>
+              <th class="num">Warenwert ohne In-Transit (EUR)</th>
+              <th class="num">Warenwert inkl. In-Transit (EUR)</th>
             </tr>
           </thead>
           <tbody>
@@ -899,6 +1376,7 @@ function buildSnapshotPrintHtml({ title, fileName, rows, totals, missingEk, gene
             ${totalRow}
           </tbody>
         </table>
+        <p class="hint">Hinweis: "Warenwert ohne In-Transit" = nur physisch im Lager (Amazon + majamo). Für BWA-Bestandsbewertung typischerweise diese Spalte verwenden.</p>
         ${warning}
         <script>
           window.addEventListener("load", () => {
@@ -1195,6 +1673,25 @@ export function render(root) {
   });
   const missingEkCount = exportData.missingEk.length;
 
+  const reconciliation = computeSnapshotReconciliation({
+    state,
+    currentSnapshot: snapshot,
+    previousSnapshot,
+    products,
+    categories,
+    currentMonth: selectedMonth,
+    asOfDate: normalizedAsOfDate,
+  });
+  const stalePos = buildStalePoList(state, normalizedAsOfDate);
+  const reconciliationHtml = previousSnapshot
+    ? buildReconciliationPanel({
+        reconciliation,
+        stalePos,
+        currentMonth: selectedMonth,
+        previousMonth: previousSnapshot.month,
+      })
+    : `<div class="reco-panel reco-status-empty"><div class="muted small">Plausi-Check verfügbar sobald ein Vormonats-Snapshot existiert.</div></div>`;
+
   root.innerHTML = `
     <section class="card inventory-card">
       <div class="inventory-header ui-page-head">
@@ -1214,6 +1711,15 @@ export function render(root) {
         <button class="btn secondary" id="inventory-copy">Copy from previous month</button>
         <button class="btn secondary" id="inventory-expand-all">Alles auf</button>
         <button class="btn secondary" id="inventory-collapse-all">Alles zu</button>
+        <div class="inventory-toggle-group">
+          <span class="muted">Anzeige</span>
+          <div class="segment-control">
+            <input type="radio" id="snapshot-mode-units" name="snapshot-view-mode" value="units" ${view.snapshotViewMode === "units" ? "checked" : ""} />
+            <label for="snapshot-mode-units">Einheiten</label>
+            <input type="radio" id="snapshot-mode-eur" name="snapshot-view-mode" value="eur" ${view.snapshotViewMode === "eur" ? "checked" : ""} />
+            <label for="snapshot-mode-eur">EUR</label>
+          </div>
+        </div>
         <span class="muted small">${previousSnapshot ? `Vorheriger Snapshot: ${formatMonthLabel(previousSnapshot.month)}` : "Kein vorheriger Snapshot vorhanden."}</span>
       </div>
       <div class="inventory-export">
@@ -1226,10 +1732,11 @@ export function render(root) {
           <button class="btn secondary" id="inventory-export-pdf">Export PDF</button>
         </div>
         <div class="inventory-export-meta">
-          <span class="muted small">Export für Buchführung: SKU, Bestände, In-Transit, EK-Preis, Warenwert</span>
+          <span class="muted small">Export für Buchführung: SKU, Bestände, In-Transit, EK-Preis, Warenwert (mit + ohne In-Transit)</span>
           ${missingEkCount ? `<span class="inventory-export-warning">⚠︎ EK fehlt (${missingEkCount})</span>` : ""}
         </div>
       </div>
+      ${reconciliationHtml}
       <div class="inventory-table-wrap ui-table-shell">
         <div class="inventory-table-scroll ui-scroll-host">
           ${buildSnapshotTable({
@@ -1423,6 +1930,51 @@ export function render(root) {
       render(root);
     });
   }
+
+  root.querySelectorAll("input[name='snapshot-view-mode']").forEach(input => {
+    input.addEventListener("change", (event) => {
+      const next = event.target.value === "eur" ? "eur" : "units";
+      if (view.snapshotViewMode === next) return;
+      view.snapshotViewMode = next;
+      saveViewState(view);
+      render(root);
+    });
+  });
+
+  const archivePoIds = (ids) => {
+    if (!ids.length) return;
+    const idSet = new Set(ids.map(String));
+    let touched = 0;
+    (state.pos || []).forEach(po => {
+      const id = String(po?.id || po?.poNo || "");
+      if (id && idSet.has(id) && !po.archived) {
+        po.archived = true;
+        touched += 1;
+      }
+    });
+    if (touched) {
+      commitAppState(state);
+      render(root);
+    }
+  };
+
+  const archiveAllBtn = root.querySelector("#reco-archive-all");
+  if (archiveAllBtn) {
+    archiveAllBtn.addEventListener("click", () => {
+      const ids = stalePos.map(po => po.id).filter(Boolean);
+      if (!ids.length) return;
+      if (!window.confirm(`${ids.length} alte PO${ids.length === 1 ? "" : "s"} archivieren? Sie zählen danach nicht mehr als In-Transit.`)) return;
+      archivePoIds(ids);
+    });
+  }
+
+  root.querySelectorAll(".reco-archive-one").forEach(btn => {
+    btn.addEventListener("click", (event) => {
+      const id = event.currentTarget.getAttribute("data-po-id");
+      if (!id) return;
+      archivePoIds([id]);
+    });
+  });
 
   const snapshotTable = root.querySelector(".inventory-snapshot-table");
   let saveTimer = null;
