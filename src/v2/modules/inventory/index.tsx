@@ -417,8 +417,12 @@ function buildInTransitMapV2(state: Record<string, unknown>, asOfDate: Date): Ma
     const po = raw as Record<string, unknown>;
     if (!po || po.archived) return;
     if (String((po.status as string) || "").toUpperCase() === "CANCELLED") return;
-    const eta = resolvePoEta(po);
-    if (eta && eta <= cutoff) return;
+    // PO muss vor dem Stichtag bestellt worden sein (Buchhalterpaket-Logik)
+    const orderDate = parseIsoDate(po.orderDate);
+    if (orderDate && orderDate > cutoff) return;
+    // Prefer actual arrivalDate / etaManual over computed ETA
+    const arrival = parseIsoDate(po.arrivalDate) || parseIsoDate(po.etaManual) || resolvePoEta(po);
+    if (arrival && arrival <= cutoff) return;
     const items = (Array.isArray(po.items) && (po.items as unknown[]).length
       ? po.items
       : [{ sku: po.sku, units: po.units }]) as Array<Record<string, unknown>>;
@@ -431,8 +435,10 @@ function buildInTransitMapV2(state: Record<string, unknown>, asOfDate: Date): Ma
   ((state.fos as unknown[]) || []).forEach((raw) => {
     const fo = raw as Record<string, unknown>;
     if (!fo || !isFoCountable(fo)) return;
-    const eta = resolveFoArrival(fo);
-    if (eta && eta <= cutoff) return;
+    const orderDate = parseIsoDate(fo.orderDate);
+    if (orderDate && orderDate > cutoff) return;
+    const arrival = parseIsoDate(fo.arrivalDate) || resolveFoArrival(fo);
+    if (arrival && arrival <= cutoff) return;
     const items = (Array.isArray(fo.items) && (fo.items as unknown[]).length
       ? fo.items
       : [{ sku: fo.sku, units: fo.units }]) as Array<Record<string, unknown>>;

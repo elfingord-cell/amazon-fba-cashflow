@@ -656,7 +656,11 @@ function buildInTransitMap(state, asOfDate) {
   (state.pos || []).forEach(po => {
     if (!po || po.archived) return;
     if (String(po.status || "").toUpperCase() === "CANCELLED") return;
-    const eta = resolvePoEta(po);
+    // PO muss vor dem Stichtag bestellt worden sein (Buchhalterpaket-Logik)
+    const orderDate = parseISODate(po.orderDate);
+    if (orderDate && orderDate > cutoff) return;
+    // Prefer actual arrivalDate / etaManual over computed ETA
+    const eta = parseISODate(po.arrivalDate) || parseISODate(po.etaManual) || resolvePoEta(po);
     if (eta && eta <= cutoff) return;
     const etd = resolvePoEtd(po);
     const items = Array.isArray(po.items) && po.items.length
@@ -685,7 +689,9 @@ function buildInTransitMap(state, asOfDate) {
   (state.fos || []).forEach(fo => {
     if (!fo) return;
     if (!isFoCountable(fo)) return;
-    const eta = resolveFoArrival(fo);
+    const orderDate = parseISODate(fo.orderDate);
+    if (orderDate && orderDate > cutoff) return;
+    const eta = parseISODate(fo.arrivalDate) || resolveFoArrival(fo);
     if (eta && eta <= cutoff) return;
     const items = Array.isArray(fo.items) && fo.items.length
       ? fo.items
