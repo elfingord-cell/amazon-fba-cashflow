@@ -562,16 +562,12 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
   let totalValueEur = 0;
   let hasValuableRows = false;
 
-  snapshotItems.forEach((item) => {
-    const sku = String(item?.sku || "").trim();
-    if (!sku) return;
-    const key = normalizeKey(sku);
+  const processedKeys = new Set();
+
+  const buildRow = ({ sku, key, item, amazonUnits, threePLUnits, inTransitUnits, note }) => {
     const product = productMaps.productBySku.get(key) || {};
     const alias = String(product.alias || sku);
     const category = productMaps.categoryMap.get(String(product.categoryId || "")) || "Ohne Kategorie";
-    const amazonUnits = parseUnits(item?.amazonUnits);
-    const threePLUnits = parseUnits(item?.threePLUnits);
-    const inTransitUnits = parseUnits(item?.inTransitUnits) || (inTransitBySku.get(key) || 0);
     const totalUnits = amazonUnits + threePLUnits + inTransitUnits;
     const ekEur = resolveProductEkEur(product, settings);
     const rowValueEur = Number.isFinite(ekEur) ? totalUnits * ekEur : null;
@@ -604,7 +600,7 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
       gesamtbestand: totalUnits,
       einstandspreisEur: ekEur,
       bestandswertEur: rowValueEur,
-      hinweis: String(item?.note || ""),
+      hinweis: note,
       sku,
       alias,
       category,
@@ -614,7 +610,43 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
       totalUnits,
       ekEur,
       rowValueEur,
+      note,
+    });
+  };
+
+  snapshotItems.forEach((item) => {
+    const sku = String(item?.sku || "").trim();
+    if (!sku) return;
+    const key = normalizeKey(sku);
+    processedKeys.add(key);
+    buildRow({
+      sku,
+      key,
+      item,
+      amazonUnits: parseUnits(item?.amazonUnits),
+      threePLUnits: parseUnits(item?.threePLUnits),
+      inTransitUnits: parseUnits(item?.inTransitUnits) || (inTransitBySku.get(key) || 0),
       note: String(item?.note || ""),
+    });
+  });
+
+  // Ergänze SKUs die NICHT im Snapshot gepflegt sind, aber Ware im Zulauf haben.
+  // Sonst fehlt bilanziell aktivierbare unterwegs-Ware komplett im Buchhalter-Export.
+  inTransitBySku.forEach((units, key) => {
+    if (processedKeys.has(key)) return;
+    if (!units) return;
+    const product = productMaps.productBySku.get(key);
+    if (!product) return;
+    const sku = String(product.sku || key);
+    processedKeys.add(key);
+    buildRow({
+      sku,
+      key,
+      item: null,
+      amazonUnits: 0,
+      threePLUnits: 0,
+      inTransitUnits: units,
+      note: "",
     });
   });
 
