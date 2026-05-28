@@ -22,7 +22,6 @@ import {
   MenuFoldOutlined,
   MenuOutlined,
   MenuUnfoldOutlined,
-  RollbackOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "react-router-dom";
@@ -587,14 +586,6 @@ function V2Layout(): JSX.Element {
                   Navigation
                 </Button>
               ) : null}
-              <Button
-                icon={<RollbackOutlined />}
-                onClick={() => {
-                  window.location.hash = "#dashboard";
-                }}
-              >
-                Legacy App
-              </Button>
               <Button
                 icon={<UserOutlined />}
                 type={syncSession.isAuthenticated ? "default" : "primary"}

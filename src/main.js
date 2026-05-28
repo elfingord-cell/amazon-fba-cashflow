@@ -1,10 +1,8 @@
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 import "../styles.css";
-import "./react/app-shell.css";
 import "react-calendar-timeline/dist/style.css";
-import { AppShell } from "./react/AppShell.jsx";
 import { StandaloneV2App } from "./v2/app/StandaloneV2App";
 import { loadRuntimeConfig, getRuntimeLoadError } from "./storage/runtimeConfig.js";
 
@@ -28,14 +26,8 @@ function isV2Hash(hash) {
 }
 
 function AppEntry() {
-  const [mode, setMode] = useState(() => {
-    const currentHash = window.location.hash || "";
-    if (!currentHash) return "v2";
-    return isV2Hash(normalizeV2Hash(currentHash)) ? "v2" : "legacy";
-  });
-
   useEffect(() => {
-    const syncMode = () => {
+    const syncHash = () => {
       const currentHash = window.location.hash || "";
       if (!currentHash) {
         window.location.hash = "#/v2/dashboard";
@@ -46,19 +38,20 @@ function AppEntry() {
         window.location.hash = normalized;
         return;
       }
-      setMode(isV2Hash(normalized) ? "v2" : "legacy");
+      // Any non-v2 hash (legacy routes like #inventory) → redirect to V2 dashboard
+      if (!isV2Hash(normalized)) {
+        window.location.hash = "#/v2/dashboard";
+      }
     };
 
-    syncMode();
-    window.addEventListener("hashchange", syncMode);
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
     return () => {
-      window.removeEventListener("hashchange", syncMode);
+      window.removeEventListener("hashchange", syncHash);
     };
   }, []);
 
-  return mode === "v2"
-    ? createElement(StandaloneV2App)
-    : createElement(AppShell);
+  return createElement(StandaloneV2App);
 }
 
 async function bootstrap() {
