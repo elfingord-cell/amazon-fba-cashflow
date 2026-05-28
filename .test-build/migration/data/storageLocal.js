@@ -1512,7 +1512,7 @@ function getProductBySku(sku) {
     const match = state.products.find(prod => productKey(prod.sku) === key);
     return match ? updateProductStatsMeta(state, match) : null;
 }
-function upsertProduct(input) {
+function upsertProduct(input, meta = {}) {
     const state = loadState();
     ensureProducts(state);
     const originalKey = input?.originalSku ? productKey(input.originalSku) : null;
@@ -1605,7 +1605,7 @@ function upsertProduct(input) {
             });
         }
     }
-    saveState(state);
+    saveState(state, meta);
     return updateProductStatsMeta(loadState(), target);
 }
 function clampPercent(value) {
