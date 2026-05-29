@@ -140,3 +140,32 @@ test("bridged plan product yields to live forecast per month (no double count)",
   assert.ok(!(Number(feed["2026-08"]) > 0), "August hat Live-Forecast → Plan darf August nicht zusätzlich überbrücken (sonst Doppelzählung).");
   assert.ok(Number(feed["2026-09"]) > 0, "September ohne Live-Forecast muss weiter überbrückt werden.");
 });
+
+// --- Phase 1: Reifegrad-Bucket-Logik (Plan bleibt Planprodukt bis Launch) ---
+function bridgeStateWithPo(opts) {
+  const s = buildBridgeState(opts && opts.extraImport);
+  s.pos = [{
+    id: "po-bridge-1", poNo: "BR-001", supplierId: "sup-x", orderDate: "2026-06-01",
+    items: [{ id: "it1", sku: "REAL-BRIDGE-002", units: 500 }],
+  }];
+  return s;
+}
+function bucketOfMapped(proj) {
+  const e = (proj.entries || proj.sharedPathEntries || []).find((x) => String(x.planningSku) === "REAL-BRIDGE-002");
+  return e ? e.effectivePortfolioBucket : null;
+}
+
+test("plan-mapped SKU with PO but no live forecast stays Planprodukt (not Core)", () => {
+  const months = ["2026-08", "2026-09", "2026-10"];
+  const proj = buildSharedPlanProductProjection({ state: bridgeStateWithPo(), months });
+  assert.equal(bucketOfMapped(proj), PORTFOLIO_BUCKET.PLAN, "Vor Launch (kein Live-Forecast) darf eine PO NICHT auf Kernportfolio hochstufen.");
+});
+
+test("plan-mapped SKU promotes to Kernportfolio once it has live forecast (launched)", () => {
+  const months = ["2026-08", "2026-09", "2026-10"];
+  const proj = buildSharedPlanProductProjection({
+    state: bridgeStateWithPo({ extraImport: { "REAL-BRIDGE-002": { "2026-08": { units: 120 }, "2026-09": { units: 120 }, "2026-10": { units: 120 } } } }),
+    months,
+  });
+  assert.equal(bucketOfMapped(proj), PORTFOLIO_BUCKET.CORE, "Nach Launch (Live-Forecast vorhanden) stuft die PO auf Kernportfolio hoch.");
+});

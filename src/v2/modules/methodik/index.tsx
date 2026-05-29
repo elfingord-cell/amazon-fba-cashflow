@@ -291,6 +291,57 @@ export default function MethodikModule(): JSX.Element {
           </Card>
         </Col>
       </Row>
+
+      <Card>
+        <Space direction="vertical" size={4} style={{ width: "100%" }}>
+          <Title level={5} style={{ margin: 0 }}>Produkt-Reifegrade &amp; Forecast-Quellen</Title>
+          <Text type="secondary">
+            Zwei getrennte Achsen: <strong>Reifegrad/Lebenszyklus</strong> (= die Dashboard-Buckets Kern/Plan/Ideen) und die
+            daraus abgeleitete <strong>Forecast-Quelle</strong>. So ist klar, warum ein Plan-Produkt im Forecast erscheint, aber
+            nicht „aktiv“ ist.
+          </Text>
+          <table className="v2-reifegrad-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 4 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--v2-border, #e5e7eb)" }}>
+                <th style={{ padding: "6px 8px" }}>Reifegrad (Dashboard-Bucket)</th>
+                <th style={{ padding: "6px 8px" }}>Lebenszyklus</th>
+                <th style={{ padding: "6px 8px" }}>SKU/ASIN?</th>
+                <th style={{ padding: "6px 8px" }}>verkauft?</th>
+                <th style={{ padding: "6px 8px" }}>Forecast-Quelle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["Ideenprodukt", "Geplant", "nein", "nein", "Plan (grob) / keine"],
+                ["Planprodukt", "Prelaunch", "ja", "nein", "Plan-Brücke (Baseline × Saisonalität)"],
+                ["Kernprodukt", "Aktiv", "ja", "ja", "VentoryOne-Live (Verkaufshistorie)"],
+                ["(Auslaufend / Inaktiv)", "Inaktiv", "ja", "—", "— / manuell"],
+              ].map((cells) => (
+                <tr key={cells[0]} style={{ borderBottom: "1px solid var(--v2-border, #f0f0f0)" }}>
+                  {cells.map((c, idx) => (
+                    <td key={idx} style={{ padding: "6px 8px", fontWeight: idx === 0 ? 600 : 400 }}>{c}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 8 }}
+            message="Launch-Trigger (eine Quelle der Wahrheit)"
+            description={(
+              <span>
+                Der Übergang <strong>Planprodukt → Kernprodukt</strong> passiert beim <strong>Launch</strong> (erste
+                VentoryOne-Verkäufe / Live-Forecast), nicht schon bei PO-Anlage. Derselbe Trigger schaltet zugleich:
+                Lebenszyklus Prelaunch → Aktiv und Quelle Plan → VO-Live; die Plan-Brücke phast sich pro Monat aus.
+                Solange ein Produkt noch nicht gelauncht ist, steht es im VentoryOne-Import auf 0 (keine Historie) — die
+                Plan-Brücke füllt die Lücke.
+              </span>
+            )}
+          />
+        </Space>
+      </Card>
     </div>
   );
 }

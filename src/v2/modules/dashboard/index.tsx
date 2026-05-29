@@ -2124,7 +2124,19 @@ export default function DashboardModule(): JSX.Element {
           <div className="v2-calc-cockpit-module">
             <Space size={6}>
               <Text strong>Portfolio-Scope</Text>
-              <Tooltip title="Bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen. Stammdaten werden nicht verändert.">
+              <Tooltip
+                title={(
+                  <div style={{ maxWidth: 340 }}>
+                    <div><strong>Reifegrade</strong> — bestimmt, welche Produktgruppen in Umsatz, Cash-In, PnL und Kontostand einfließen (Stammdaten unverändert):</div>
+                    <ul style={{ margin: "6px 0", paddingInlineStart: 16 }}>
+                      <li><strong>Ideenprodukte</strong> — Idee, noch keine echte SKU. Forecast-Quelle: Plan (grob).</li>
+                      <li><strong>Planprodukte</strong> — echte SKU/ASIN da, noch nicht gelauncht (Prelaunch). Quelle: Plan-Brücke.</li>
+                      <li><strong>Kernportfolio</strong> — gelauncht &amp; verkauft. Quelle: VentoryOne-Live.</li>
+                    </ul>
+                    <div>Übergang Plan → Kern passiert automatisch beim Launch (erste VentoryOne-Verkäufe). Details: Methodik &amp; Regeln.</div>
+                  </div>
+                )}
+              >
                 <InfoCircleOutlined />
               </Tooltip>
             </Space>

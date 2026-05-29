@@ -49,6 +49,9 @@ export interface ForecastProductRow {
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
   isPlan?: boolean;
+  // True wenn diese ECHTE SKU das Ziel eines (i.d.R. archivierten) Plan-Produkts ist.
+  // Forecast kommt dann aus der Plan-Brücke, solange VentoryOne keine Live-Zahlen liefert.
+  isPlanMapped?: boolean;
   plannedSku?: string | null;
   sourceLabel?: "csv" | "plan";
   relationType?: string | null;
@@ -308,7 +311,52 @@ export function buildForecastProducts(
     }) satisfies ForecastProductRow)
     .filter((row) => row.sku && row.alias);
 
-  return [...liveRows, ...planRows]
+  // Dedupe: Ist eine Plan-Zeile auf eine bereits existierende echte SKU gemappt, wird sie NICHT
+  // als zweite Zeile gezeigt, sondern in die Live-Zeile gemergt (isPlanMapped + Plan-Metadaten).
+  // So gibt es genau EINE Zeile je SKU; die Plan-Quelle wird pro Monat im Grid dargestellt.
+  const forecastImportMap = (state.forecast && typeof state.forecast === "object"
+    && (state.forecast as Record<string, unknown>).forecastImport
+    && typeof (state.forecast as Record<string, unknown>).forecastImport === "object")
+    ? (state.forecast as Record<string, unknown>).forecastImport as Record<string, unknown>
+    : {};
+  // Plan-Mengen pro Monat ausmaskieren, sobald die echte SKU einen Live-Forecast hat
+  // (forecastImport.units>0). So gewinnt Live pro Monat: Plan-Monate behalten ihren Plan-Wert
+  // (read-only/grau), Live-Monate fallen auf den Import zurück und werden editierbar.
+  const maskPlanByLive = (sku: string, planned: Record<string, number | null>): Record<string, number | null> => {
+    const out: Record<string, number | null> = {};
+    Object.entries(planned || {}).forEach(([month, units]) => {
+      const liveUnits = getImportValue(forecastImportMap, sku, month)?.units;
+      if (Number.isFinite(liveUnits as number) && Number(liveUnits) > 0) return; // Live übernimmt diesen Monat
+      out[month] = units;
+    });
+    return out;
+  };
+
+  const liveBySku = new Map<string, ForecastProductRow>();
+  liveRows.forEach((row) => liveBySku.set(String(row.sku).toLowerCase(), row));
+
+  const standalonePlanRows: ForecastProductRow[] = [];
+  planRows.forEach((planRow) => {
+    const target = liveBySku.get(String(planRow.sku).toLowerCase());
+    const isGenuineMapping = Boolean(planRow.plannedSku); // echtes Mapping-Ziel, keine Saison-Referenz
+    if (target && isGenuineMapping) {
+      target.isPlanMapped = true;
+      target.planProductId = planRow.planProductId ?? null;
+      target.plannedSku = planRow.plannedSku ?? null;
+      target.plannedUnitsByMonth = maskPlanByLive(target.sku, planRow.plannedUnitsByMonth ?? {});
+      target.launchDate = planRow.launchDate ?? null;
+      target.relationType = planRow.relationType ?? null;
+      target.seasonalityReferenceSku = planRow.seasonalityReferenceSku ?? null;
+      target.baselineReferenceMonth = planRow.baselineReferenceMonth ?? null;
+      target.baselineUnitsInReferenceMonth = planRow.baselineUnitsInReferenceMonth ?? null;
+      target.rampUpWeeks = planRow.rampUpWeeks ?? null;
+      target.softLaunchStartSharePct = planRow.softLaunchStartSharePct ?? null;
+    } else {
+      standalonePlanRows.push(planRow);
+    }
+  });
+
+  return [...liveRows, ...standalonePlanRows]
     .sort((a, b) => {
       const category = String(a.categoryLabel || "").localeCompare(String(b.categoryLabel || ""));
       if (category !== 0) return category;

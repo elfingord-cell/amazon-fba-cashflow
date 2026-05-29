@@ -711,11 +711,17 @@ export function buildSharedPlanProductProjection(input) {
     // (mapped or requested). Using seasonalityReferenceSku would incorrectly match
     // POs of the reference product, forcing the plan product into Kernportfolio.
     const bucketSkuForPoCheck = mappedSku || requestedSku || null;
+    // Reifegrad-Regel: ein gemapptes Plan-Produkt bleibt "Planprodukt", bis es gelauncht ist
+    // (= VentoryOne liefert echten Live-Forecast). Erst dann darf die PO auf Kernportfolio
+    // hochstufen. Vorher (kein Live-Forecast) bleibt der Plan-Umsatz im "geplante Produkte"-Bucket.
+    const hasLiveForecast = isMappedBridge
+      && Object.values(liveUnitsByMonth).some((units) => Number(units) > 0);
     const effectivePortfolioBucket = resolveEffectivePortfolioBucket({
       product: row,
       sku: bucketSkuForPoCheck,
       poSkuSet,
       fallbackBucket: PORTFOLIO_BUCKET.PLAN,
+      isLaunched: isMappedBridge ? hasLiveForecast : undefined,
     });
 
     const existingVirtualProduct = existingVirtualProductByPlanId.get(String(row.id || "").trim()) || null;

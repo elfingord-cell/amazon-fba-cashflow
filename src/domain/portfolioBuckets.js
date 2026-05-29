@@ -126,7 +126,13 @@ export function collectPoSkuSet(state) {
 export function resolveEffectivePortfolioBucket(input) {
   const skuKey = normalizeSkuKey(input?.sku ?? input?.product?.sku);
   const poSkuSet = input?.poSkuSet instanceof Set ? input.poSkuSet : new Set();
-  if (skuKey && poSkuSet.has(skuKey)) return PORTFOLIO_BUCKET.CORE;
+  const hasPo = Boolean(skuKey) && poSkuSet.has(skuKey);
+  // Eine PO stuft die SKU normalerweise auf Kernportfolio hoch. Reifegrad-Regel: ein gemapptes
+  // Plan-Produkt bleibt aber "Planprodukt" bis zum LAUNCH (erste VO-Verkäufe / Live-Forecast),
+  // auch wenn schon eine PO existiert. Caller signalisiert das mit isLaunched === false.
+  // Default (isLaunched undefined) = bisheriges Verhalten (PO → Core), rückwärtskompatibel.
+  const deferUntilLaunch = input?.isLaunched === false;
+  if (hasPo && !deferUntilLaunch) return PORTFOLIO_BUCKET.CORE;
   return normalizePortfolioBucket(
     input?.product?.portfolioBucket ?? input?.portfolioBucket,
     input?.fallbackBucket || PORTFOLIO_BUCKET.CORE,

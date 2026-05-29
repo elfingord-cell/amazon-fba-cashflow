@@ -527,12 +527,19 @@ export default function ForecastModule(): JSX.Element {
       },
       {
         header: "Status",
-        meta: { width: 86, minWidth: 86 },
-        cell: ({ row }) => (
-          row.original.isPlan
-            ? <Tag color="blue">Plan</Tag>
-            : (row.original.isActive ? <Tag color="green">Aktiv</Tag> : <Tag>Inaktiv</Tag>)
-        ),
+        meta: { width: 104, minWidth: 104 },
+        cell: ({ row }) => {
+          const r = row.original;
+          if (r.isPlan) return <Tag color="blue">Plan</Tag>;
+          if (r.isPlanMapped) {
+            // Lebenszyklus: solange noch Plan-Brücken-Monate offen sind = Prelaunch (echte SKU,
+            // noch nicht gelauncht). Sobald alle Monate Live sind = ganz normal Aktiv.
+            const stillPrelaunch = Object.values(r.plannedUnitsByMonth || {})
+              .some((value) => Number.isFinite(value as number));
+            return stillPrelaunch ? <Tag color="gold">Prelaunch</Tag> : <Tag color="green">Aktiv</Tag>;
+          }
+          return r.isActive ? <Tag color="green">Aktiv</Tag> : <Tag>Inaktiv</Tag>;
+        },
       },
     ];
 
@@ -551,14 +558,21 @@ export default function ForecastModule(): JSX.Element {
           month,
           row.original.plannedUnitsByMonth,
         );
+        // Quelle pro Monat: reine Plan-Zeile ODER gemappte SKU in einem Monat ohne Live-Forecast
+        // (plannedUnitsByMonth ist bereits live-maskiert). Solche Zellen sind read-only/ausgegraut.
+        const planUnitsForMonth = row.original.plannedUnitsByMonth?.[month];
+        const isPlanCell = Boolean(row.original.isPlan)
+          || (Boolean(row.original.isPlanMapped) && Number.isFinite(planUnitsForMonth as number));
 
         if (view === "units") {
-          if (row.original.isPlan) {
+          if (isPlanCell) {
             return (
-              <div className="v2-forecast-cell">
+              <div className="v2-forecast-cell" style={{ opacity: 0.6 }}>
                 <div>{formatDisplay(effectiveUnits, 0)}</div>
                 <Text type="secondary" style={{ fontSize: 11 }}>
-                  Quelle: Plan (Baseline + Saisonalitaet)
+                  {row.original.isPlanMapped
+                    ? "Plan-Brücke · in „Neue Produkte“ ändern"
+                    : "Quelle: Plan (Baseline + Saisonalitaet)"}
                 </Text>
               </div>
             );
