@@ -337,9 +337,11 @@ export function buildForecastProducts(
 
   const standalonePlanRows: ForecastProductRow[] = [];
   planRows.forEach((planRow) => {
-    const target = liveBySku.get(String(planRow.sku).toLowerCase());
-    const isGenuineMapping = Boolean(planRow.plannedSku); // echtes Mapping-Ziel, keine Saison-Referenz
-    if (target && isGenuineMapping) {
+    // Match über das echte Ziel-SKU (plannedSku), NICHT über planRow.sku (das ist der Plan-Key
+    // "plan:<id>"). Nur dann eine Live-Zeile vorhanden → mergen, sonst eigenständige Plan-Zeile.
+    const targetSku = planRow.plannedSku ? String(planRow.plannedSku) : "";
+    const target = targetSku ? liveBySku.get(targetSku.toLowerCase()) : undefined;
+    if (target) {
       target.isPlanMapped = true;
       target.planProductId = planRow.planProductId ?? null;
       target.plannedSku = planRow.plannedSku ?? null;
