@@ -483,6 +483,24 @@ function hasForecastUnits(unitsByMonth) {
         return Number.isFinite(units) && Number(units) > 0;
     });
 }
+// Live-Forecast-Einheiten (forecastImport.units) je Monat für eine Ziel-SKU.
+// Dient als Per-Monat-Cutoff: sobald die echte SKU einen Live-Forecast hat, gewinnt dieser,
+// und das gemappte Plan-Produkt überbrückt diesen Monat NICHT mehr (kein Doppelzählen).
+function liveImportUnitsByMonth(forecastImport, sku) {
+    const out = {};
+    const map = forecastImport && typeof forecastImport === "object" ? forecastImport[sku] : null;
+    if (!map || typeof map !== "object")
+        return out;
+    Object.entries(map).forEach(([monthRaw, value]) => {
+        const month = normalizeMonthKey(monthRaw);
+        if (!month)
+            return;
+        const units = asNumber(value && typeof value === "object" ? value.units : value);
+        if (Number.isFinite(units))
+            out[month] = Number(units);
+    });
+    return out;
+}
 function sanitizeVirtualSkuToken(value, fallback = "PLAN") {
     const token = sanitizeKeyPart(value).toUpperCase();
     return token || fallback;
@@ -613,6 +631,10 @@ function buildSharedPlanProductProjection(input) {
         ? input.months.map((month) => normalizeMonthKey(month)).filter(Boolean)
         : planningMonthsFromState(state);
     const rows = buildPlanProductForecastRows({ state, months });
+    const forecastImport = (state.forecast && typeof state.forecast === "object"
+        && state.forecast.forecastImport && typeof state.forecast.forecastImport === "object")
+        ? state.forecast.forecastImport
+        : {};
     const poSkuSet = (0, portfolioBuckets_js_1.collectPoSkuSet)(state);
     const baseProducts = Array.isArray(state.products) ? state.products : [];
     const usedSkuKeys = new Set(baseProducts
@@ -639,9 +661,27 @@ function buildSharedPlanProductProjection(input) {
     rows.forEach((row, index) => {
         const normalizedStatus = String(row.status || "").trim().toLowerCase();
         const active = !normalizedStatus || normalizedStatus === "active" || normalizedStatus === "aktiv";
-        const includeInForecast = (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, active);
-        const plannedUnitsByMonth = normalizeUnitsByMonthMap(row.unitsByMonth);
+        // Mapping-Ziel der "Brücke": explizites mappedSku, sonst plannedSku WENN es eine bereits
+        // existierende echte SKU ist. Gemappte Plan-Produkte speisen ihre geplanten Mengen weiter
+        // auf diese Ziel-SKU — auch im Status "archived" (Konvention: nach dem Mapping wird das
+        // Plan-Produkt archiviert). Ohne diese Brücke "verdampfen" die geplanten Absätze/Umsätze.
+        const mappedSkuExplicit = normalizeSku(row.mappedSku);
+        const requestedSku = normalizeSku(row.plannedSku);
+        const plannedSkuIsReal = Boolean(requestedSku) && usedSkuKeys.has(requestedSku.toLowerCase());
+        const mappedSku = mappedSkuExplicit || (plannedSkuIsReal ? requestedSku : "");
+        const isMappedBridge = Boolean(mappedSku);
+        // Live gewinnt pro Monat: in Monaten, in denen die Ziel-SKU bereits einen Live-Forecast
+        // (forecastImport.units > 0, z.B. nach Launch aus VentoryOne) hat, wird NICHT überbrückt
+        // → verhindert Doppelzählung (aktive SKU + Plan-Produkt) und übergibt automatisch an Live.
+        const liveUnitsByMonth = isMappedBridge ? liveImportUnitsByMonth(forecastImport, mappedSku) : {};
+        const rawPlannedUnitsByMonth = normalizeUnitsByMonthMap(row.unitsByMonth);
+        const plannedUnitsByMonth = isMappedBridge
+            ? Object.fromEntries(Object.entries(rawPlannedUnitsByMonth).filter(([month]) => !(Number(liveUnitsByMonth[month]) > 0)))
+            : rawPlannedUnitsByMonth;
         const hasForecast = hasForecastUnits(plannedUnitsByMonth);
+        // Feed-fähig: aktive Plan-Produkte ODER gemappte (Brücke bis Live übernimmt).
+        const feedActive = active || isMappedBridge;
+        const includeInForecast = (0, portfolioBuckets_js_1.normalizeIncludeInForecast)(row.includeInForecast, feedActive);
         const transportMode = normalizeTransportMode(row.transportMode);
         const productionLeadTimeDays = asPositiveInt(row.productionLeadTimeDaysDefault);
         const transitDays = asPositiveInt(row.transitDays) ?? resolveTransportTransitDays(settings, transportMode);
@@ -656,10 +696,8 @@ function buildSharedPlanProductProjection(input) {
             logisticsPerUnitEur,
             avgSellingPriceGrossEUR,
         });
-        const sharedPathEligible = active && includeInForecast && hasForecast;
+        const sharedPathEligible = feedActive && includeInForecast && hasForecast;
         const procurementReady = sharedPathEligible && missingPlanningInputs.length === 0;
-        const mappedSku = normalizeSku(row.mappedSku);
-        const requestedSku = normalizeSku(row.plannedSku);
         const bucketKey = mappedSku || requestedSku || row.seasonalityReferenceSku || row.alias || row.id || `plan-${index + 1}`;
         // For the PO-based bucket override, only use SKUs that belong to THIS plan product
         // (mapped or requested). Using seasonalityReferenceSku would incorrectly match
@@ -716,8 +754,16 @@ function buildSharedPlanProductProjection(input) {
             };
             virtualProducts.push(virtualProduct);
         }
+        // Umsatz analog zu den Mengen pro Monat maskieren: nur Brücken-Monate (ohne Live-Forecast)
+        // tragen Plan-Umsatz in den Cashflow ("geplante Produkte"-Bucket). So bleibt Live pro Monat
+        // alleinige Quelle, sobald vorhanden — kein Doppelzählen im Umsatz.
+        const bridgeMonths = new Set(Object.keys(plannedUnitsByMonth));
+        const effectiveRevenueByMonth = isMappedBridge
+            ? Object.fromEntries(Object.entries(row.revenueByMonth || {}).filter(([month]) => bridgeMonths.has(month)))
+            : (row.revenueByMonth || {});
         entries.push({
             ...row,
+            revenueByMonth: effectiveRevenueByMonth,
             active,
             includeInForecast,
             plannedUnitsByMonth,

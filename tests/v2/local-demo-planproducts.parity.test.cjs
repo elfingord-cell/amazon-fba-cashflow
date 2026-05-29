@@ -91,3 +91,52 @@ test("local V2 demo seed includes a visible shared-path plan product case", asyn
   assert.ok(planSalesEntries.length > 0, "Der Demo-Seed muss sichtbaren Planprodukte-Umsatz im Dashboard erzeugen.");
   assert.ok(planFoEntries.length > 0, "Der Demo-Seed muss sichtbare Planprodukte-FO-Outflows im Dashboard erzeugen.");
 });
+
+// --- Regression: gemappte (archivierte) Plan-Produkte überbrücken weiter (Bug-Fix 2026-05-29) ---
+function buildBridgeState(extraImport) {
+  const ref = "REF-SEASON-001";
+  return {
+    settings: { startMonth: "2026-08", horizonMonths: 3 },
+    products: [
+      { sku: ref, status: "active", includeInForecast: true },
+      { sku: "REAL-BRIDGE-002", status: "active", includeInForecast: true },
+    ],
+    forecast: {
+      forecastImport: Object.assign({
+        [ref]: { "2026-08": { units: 100 }, "2026-09": { units: 100 }, "2026-10": { units: 100 } },
+      }, extraImport || {}),
+    },
+    planProducts: [
+      {
+        id: "pp-bridge", alias: "Bridge Plan", status: "archived", plannedSku: "REAL-BRIDGE-002",
+        baselineUnitsInReferenceMonth: 100, baselineReferenceMonth: 8,
+        seasonalityReferenceSku: ref, rampUpWeeks: 1, softLaunchStartSharePct: 100,
+        launchDate: "2026-08-01", includeInForecast: true,
+        unitPriceUsd: 5, transitDays: 45, productionLeadTimeDaysDefault: 60,
+        logisticsPerUnitEur: 2, avgSellingPriceGrossEUR: 20,
+      },
+    ],
+  };
+}
+
+test("archived plan product mapped (via plannedSku) to an existing SKU still bridges its forecast", () => {
+  const months = ["2026-08", "2026-09", "2026-10"];
+  const proj = buildSharedPlanProductProjection({ state: buildBridgeState(), months });
+  const feed = proj.forecastUnitsBySkuMonth["REAL-BRIDGE-002"];
+  assert.ok(feed, "Die gemappte echte SKU muss Plan-Mengen erhalten (Brücke), obwohl das Plan-Produkt archiviert ist.");
+  const total = months.reduce((sum, m) => sum + Number(feed[m] || 0), 0);
+  assert.ok(total > 0, "Die überbrückten Plan-Mengen müssen > 0 sein.");
+  assert.ok(proj.sharedPathEntries.length > 0, "Das archiviert-gemappte Plan-Produkt muss im sharedPath (Cashflow) erscheinen.");
+});
+
+test("bridged plan product yields to live forecast per month (no double count)", () => {
+  const months = ["2026-08", "2026-09", "2026-10"];
+  // Live-Forecast für die echte SKU im August → August darf NICHT mehr überbrückt werden.
+  const proj = buildSharedPlanProductProjection({
+    state: buildBridgeState({ "REAL-BRIDGE-002": { "2026-08": { units: 77 } } }),
+    months,
+  });
+  const feed = proj.forecastUnitsBySkuMonth["REAL-BRIDGE-002"] || {};
+  assert.ok(!(Number(feed["2026-08"]) > 0), "August hat Live-Forecast → Plan darf August nicht zusätzlich überbrücken (sonst Doppelzählung).");
+  assert.ok(Number(feed["2026-09"]) > 0, "September ohne Live-Forecast muss weiter überbrückt werden.");
+});

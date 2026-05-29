@@ -700,7 +700,7 @@ test("orders tabs include dedicated sku timeline view", () => {
   const moduleSource = readOrdersModuleSource();
   const tabsSource = readOrdersTabsSource();
 
-  assert.match(tabsSource, /export type OrdersTabKey = "po" \| "fo" \| "pfo" \| "sku" \| "lieferantenausblick"/);
+  assert.match(tabsSource, /export type OrdersTabKey = "po" \| "fo" \| "pfo" \| "ghost-fo" \| "sku" \| "lieferantenausblick"/);
   assert.match(tabsSource, /if \(pathname\.includes\("\/orders\/sku"\)\) return "sku"/);
   assert.match(tabsSource, /label: "SKU Sicht"/);
   assert.match(moduleSource, /tab\.key === "sku"\s*\n\s*\?\s*<SkuTimelineView \/>/);
