@@ -28,6 +28,7 @@ import {
   sameFixcostActualValue,
 } from "../../domain/sollIstFixcost";
 import { useWorkspaceState } from "../../state/workspace";
+import { buildBwaNaht } from "../../domain/bwaNahtAdapter";
 import { v2SollIstChartColors } from "../../app/chartPalette";
 import { DeNumberInput } from "../../components/DeNumberInput";
 import { StatsTableShell } from "../../components/StatsTableShell";
@@ -323,6 +324,13 @@ export default function SollIstModule(): JSX.Element {
       ? stateObject.monthlyActuals as Record<string, Record<string, unknown>>
       : {};
   }, [stateObject]);
+
+  const bwaNaht = useMemo(() => buildBwaNaht(state as never), [state]);
+  const bwaCalibration = bwaNaht.forecastCalibration;
+  const bwaBridgeRows = useMemo(
+    () => bwaNaht.bridgeRows.slice().sort((a, b) => a.month.localeCompare(b.month)),
+    [bwaNaht.bridgeRows],
+  );
 
   const closableWindowMonths = useMemo(() => {
     if (currentMonthIdx == null) return [currentMonth];
@@ -1415,6 +1423,131 @@ export default function SollIstModule(): JSX.Element {
           ]}
           locale={{ emptyText: "Keine geplanten Positionen im ausgewählten Monat." }}
         />
+      </Card>
+
+      <Card>
+        <Title level={4}>GuV-Naht: reale BWA periodengerecht + Jahres-Ausblick</Title>
+        <Paragraph type="secondary">
+          Verbindet den aus dem BWA-Import committeten Jahres-Ausblick mit der
+          periodengerechten Brücke je Monat. Plan-GuV bleibt unberührt.
+        </Paragraph>
+
+        {bwaCalibration ? (
+          <Row gutter={[12, 12]}>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic
+                  title="Jahres-Umsatz-Prognose"
+                  value={formatCurrency(bwaCalibration.jahrUmsatzPrognose)}
+                />
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic
+                  title="Ergebnis vor Steuern (Prognose)"
+                  value={formatCurrency(bwaCalibration.jahrErgebnisVorSteuernPrognose)}
+                />
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic
+                  title="Vorläufiges Ergebnis (Prognose)"
+                  value={formatCurrency(bwaCalibration.jahrVorlaeufigesErgebnisPrognose)}
+                />
+              </Card>
+            </Col>
+            <Col xs={12} md={6}>
+              <Card size="small">
+                <Statistic
+                  title="Niveau-Faktor"
+                  value={
+                    bwaCalibration.niveauFaktor != null
+                      ? bwaCalibration.niveauFaktor.toLocaleString("de-DE", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 4,
+                      })
+                      : "—"
+                  }
+                />
+              </Card>
+            </Col>
+            <Col xs={24}>
+              <Text type="secondary">
+                Stichtag: {bwaCalibration.stichtag || "—"}
+                {bwaCalibration.forecastYear ? ` · Prognosejahr: ${bwaCalibration.forecastYear}` : ""}
+                {" · Stand: "}{bwaCalibration.stand || "—"}
+              </Text>
+            </Col>
+          </Row>
+        ) : (
+          <Alert
+            type="info"
+            showIcon
+            message="Noch kein BWA-Import"
+            description="Führe `fba-cli import-bwa --commit` aus, um den Jahres-Ausblick zu committen."
+          />
+        )}
+
+        <div style={{ marginTop: 18 }}>
+          <Title level={5} style={{ marginBottom: 4 }}>Periodengerechte BWA-Brücke je Monat</Title>
+          <Paragraph type="secondary">
+            Die rohe BWA ist im Gesamtkostenverfahren gebucht — Lageraufbau drückt das
+            Ergebnis künstlich, Lagerabbau hebt es. Bereinigt = rohe BWA + Bestandsveränderung
+            ist periodengerecht und mit dem Jahresabschluss vergleichbar. Die Plan-GuV
+            (Umsatzkostenverfahren) bleibt davon unberührt.
+            {bwaNaht.hasInventoryInputs ? "" : " Hinweis: ohne Lager-Snapshots/Landed-Cost wird ohne Bestandskorrektur gerechnet (bereinigt == roh)."}
+          </Paragraph>
+          <StatsTableShell>
+            <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 880 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: 160 }}>Monat</th>
+                  <th style={{ width: 190 }}>Rohe BWA (v.St.)</th>
+                  <th style={{ width: 190 }}>Bestandsveränderung</th>
+                  <th style={{ width: 190 }}>Bereinigt (v.St.)</th>
+                  <th style={{ width: 150 }}>Quelle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bwaBridgeRows.map((row) => (
+                  <tr key={row.month}>
+                    <td>
+                      <Text strong>{formatMonthLabel(row.month)}</Text>
+                      <div><Text type="secondary">{row.month}</Text></div>
+                    </td>
+                    <td>
+                      <Text>{row.roheBwaErgebnisEur == null ? "—" : formatSignedCurrency(row.roheBwaErgebnisEur)}</Text>
+                    </td>
+                    <td>
+                      <Text>{formatSignedCurrency(row.bestandsveraenderungEur)}</Text>
+                    </td>
+                    <td>
+                      <Text strong>{row.bereinigtesErgebnisEur == null ? "—" : formatSignedCurrency(row.bereinigtesErgebnisEur)}</Text>
+                    </td>
+                    <td>
+                      {row.source ? (
+                        <Tag color={row.source === "datev" ? "blue" : row.source === "calibrated" ? "gold" : "default"}>
+                          {row.source}
+                        </Tag>
+                      ) : (
+                        <Text type="secondary">—</Text>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!bwaBridgeRows.length ? (
+                  <tr>
+                    <td colSpan={5}>
+                      <Text type="secondary">Keine BWA-Monate vorhanden.</Text>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </StatsTableShell>
+        </div>
       </Card>
     </div>
   );

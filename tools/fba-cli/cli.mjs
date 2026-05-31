@@ -23,6 +23,7 @@ import { loadState, commitState, writeBackup } from "./client.mjs";
 import { validateState } from "./validate.mjs";
 import * as entities from "./entities.mjs";
 import { setSetting, removeById } from "./entities.mjs";
+import { runImportBwa } from "./import-bwa.mjs";
 
 function parseArgs(argv) {
   const positional = [];
@@ -77,6 +78,7 @@ async function main() {
       "  apply <patch.mjs> [--commit]   Mutation anwenden (default dry-run)",
       "  set-setting <pfad> <json> [--commit]",
       "  rm <collection> <id> [--commit] [--id-field=<feld>]",
+      "  import-bwa <csv> [--commit] [--base-year=2025] [--forecast-year=2026]",
       "Optionen: --commit (echtes Schreiben), --force (trotz Validierungsfehler), --workspace=<uuid>",
     ].join("\n"));
     return;
@@ -122,6 +124,22 @@ async function main() {
   // --- Schreib-Kommandos -------------------------------------------------
   const dryRun = !flags.commit;
   const force = Boolean(flags.force);
+
+  if (cmd === "import-bwa") {
+    // BWA-GuV-Zeitreihe importieren (Teil A: monthlyActuals additiv; Teil B: forecastCalibration).
+    // Logik + Report leben in import-bwa.mjs; default Dry-Run, echtes Schreiben nur mit --commit.
+    const csvPath = positional[1];
+    if (!csvPath) { out("import-bwa benötigt <csv> (Pfad zur GuV-Zeitreihe-CSV)"); process.exit(2); }
+    await runImportBwa({
+      csvPath,
+      commit: Boolean(flags.commit),
+      force,
+      baseYear: flags["base-year"] || 2025,
+      forecastYear: flags["forecast-year"] || 2026,
+      workspaceId: flags.workspace,
+    });
+    return;
+  }
 
   if (cmd === "apply") {
     const patchPath = positional[1];
