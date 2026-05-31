@@ -327,9 +327,9 @@ export default function SollIstModule(): JSX.Element {
 
   const bwaNaht = useMemo(() => buildBwaNaht(state as never), [state]);
   const bwaCalibration = bwaNaht.forecastCalibration;
-  const bwaBridgeRows = useMemo(
-    () => bwaNaht.bridgeRows.slice().sort((a, b) => a.month.localeCompare(b.month)),
-    [bwaNaht.bridgeRows],
+  const bwaResultRows = useMemo(
+    () => bwaNaht.resultRows.slice().sort((a, b) => a.month.localeCompare(b.month)),
+    [bwaNaht.resultRows],
   );
 
   const closableWindowMonths = useMemo(() => {
@@ -1426,10 +1426,10 @@ export default function SollIstModule(): JSX.Element {
       </Card>
 
       <Card>
-        <Title level={4}>GuV-Naht: reale BWA periodengerecht + Jahres-Ausblick</Title>
+        <Title level={4}>GuV-Naht: DATEV-BWA-Ist (periodengerecht) + Jahres-Ausblick</Title>
         <Paragraph type="secondary">
-          Verbindet den aus dem BWA-Import committeten Jahres-Ausblick mit der
-          periodengerechten Brücke je Monat. Plan-GuV bleibt unberührt.
+          Verbindet den aus dem BWA-Import committeten Jahres-Ausblick mit dem
+          monatlichen DATEV-BWA-Ist. Plan-GuV bleibt unberührt.
         </Paragraph>
 
         {bwaCalibration ? (
@@ -1491,55 +1491,48 @@ export default function SollIstModule(): JSX.Element {
         )}
 
         <div style={{ marginTop: 18 }}>
-          <Title level={5} style={{ marginBottom: 4 }}>Periodengerechte BWA-Brücke je Monat</Title>
+          <Title level={5} style={{ marginBottom: 4 }}>DATEV-BWA-Ist je Monat</Title>
           <Paragraph type="secondary">
-            Die rohe BWA ist im Gesamtkostenverfahren gebucht — Lageraufbau drückt das
-            Ergebnis künstlich, Lagerabbau hebt es. Bereinigt = rohe BWA + Bestandsveränderung
-            ist periodengerecht und mit dem Jahresabschluss vergleichbar. Die Plan-GuV
-            (Umsatzkostenverfahren) bleibt davon unberührt.
-            {bwaNaht.hasInventoryInputs ? "" : " Hinweis: ohne Lager-Snapshots/Landed-Cost wird ohne Bestandskorrektur gerechnet (bereinigt == roh)."}
+            Die monatliche DATEV-BWA ist bereits periodengerecht — MBD/DATEV bucht die
+            Bestandsveränderung selbst (Konto 3950/3980), das Monatsergebnis vor Steuern
+            ist damit schon der echte Ist-Gewinn und wird direkt übernommen. Der
+            Jahres-Ausblick ergänzt die Zukunft. Greift nicht in die Plan-GuV ein.
           </Paragraph>
           <StatsTableShell>
             <table className="v2-stats-table" data-layout="fixed" style={{ minWidth: 880 }}>
               <thead>
                 <tr>
                   <th style={{ width: 160 }}>Monat</th>
-                  <th style={{ width: 190 }}>Rohe BWA (v.St.)</th>
-                  <th style={{ width: 190 }}>Bestandsveränderung</th>
-                  <th style={{ width: 190 }}>Bereinigt (v.St.)</th>
+                  <th style={{ width: 220 }}>DATEV-Umsatz (netto)</th>
+                  <th style={{ width: 230 }}>DATEV-Ergebnis vor Steuern</th>
                   <th style={{ width: 150 }}>Quelle</th>
                 </tr>
               </thead>
               <tbody>
-                {bwaBridgeRows.map((row) => (
+                {bwaResultRows.map((row) => (
                   <tr key={row.month}>
                     <td>
                       <Text strong>{formatMonthLabel(row.month)}</Text>
                       <div><Text type="secondary">{row.month}</Text></div>
                     </td>
                     <td>
-                      <Text>{row.roheBwaErgebnisEur == null ? "—" : formatSignedCurrency(row.roheBwaErgebnisEur)}</Text>
+                      <Text>{row.bwaUmsatzNettoEur == null ? "—" : formatCurrency(row.bwaUmsatzNettoEur)}</Text>
                     </td>
                     <td>
-                      <Text>{formatSignedCurrency(row.bestandsveraenderungEur)}</Text>
+                      <Text strong>{row.bwaErgebnisVorSteuernEur == null ? "—" : formatSignedCurrency(row.bwaErgebnisVorSteuernEur)}</Text>
                     </td>
                     <td>
-                      <Text strong>{row.bereinigtesErgebnisEur == null ? "—" : formatSignedCurrency(row.bereinigtesErgebnisEur)}</Text>
-                    </td>
-                    <td>
-                      {row.source ? (
-                        <Tag color={row.source === "datev" ? "blue" : row.source === "calibrated" ? "gold" : "default"}>
-                          {row.source}
-                        </Tag>
+                      {row.quelle ? (
+                        <Tag color="blue">{row.quelle}</Tag>
                       ) : (
                         <Text type="secondary">—</Text>
                       )}
                     </td>
                   </tr>
                 ))}
-                {!bwaBridgeRows.length ? (
+                {!bwaResultRows.length ? (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={4}>
                       <Text type="secondary">Keine BWA-Monate vorhanden.</Text>
                     </td>
                   </tr>
