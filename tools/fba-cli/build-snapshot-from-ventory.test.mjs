@@ -54,15 +54,25 @@ test("amazonUnits = inStock + reserved + transit", () => {
   assert.equal(it.amazonUnits, 163);   // 120 + 35 + 8
 });
 
-test("Geschriebenes Item hat sku/note/amazonUnits/threePLUnits + components (persistiert)", () => {
+test("Geschriebenes Item hat sku/note/amazonUnits/threePLUnits/velocityPerDay + components", () => {
   const it = mapVentoryRowToItem(
-    { wh_pcs_left: 10, fba_pcs_on_the_way: 5, InStockSupplyQuantity: 1, afn_reserved_quantity: 1 },
+    { wh_pcs_left: 10, fba_pcs_on_the_way: 5, InStockSupplyQuantity: 1, afn_reserved_quantity: 1,
+      sales_last_7_days: 24.9, sales_last_30_days: 24.6, forecasted_sales_velocity: 24.3 },
     "TEST-SKU",
   );
-  assert.deepEqual(Object.keys(it).sort(), ["amazonUnits", "components", "note", "sku", "threePLUnits"]);
+  assert.deepEqual(Object.keys(it).sort(), ["amazonUnits", "components", "note", "sku", "threePLUnits", "velocityPerDay"]);
+  assert.equal(it.velocityPerDay, 24.9);   // Headline = 7-Tage-Schnitt
   assert.deepEqual(it.components, {
     inStock: 1, reserved: 1, wh: 10, onTheWay: 5, whStockUnits: 10, inTransitUnits: 5,
+    sales7: 24.9, sales30: 24.6, forecastVel: 24.3,
   });
+});
+
+test("velocityPerDay Fallback: kein 7-Tage -> Forecast -> 30-Tage", () => {
+  const onlyForecast = mapVentoryRowToItem({ forecasted_sales_velocity: 12.5 }, "S1");
+  assert.equal(onlyForecast.velocityPerDay, 12.5);
+  const only30 = mapVentoryRowToItem({ sales_last_30_days: 7.2 }, "S2");
+  assert.equal(only30.velocityPerDay, 7.2);
 });
 
 test("Nicht-numerische / fehlende Werte -> 0", () => {

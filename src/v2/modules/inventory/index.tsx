@@ -31,6 +31,7 @@ import { normalizeIncludeInForecast } from "../../../domain/portfolioBuckets.js"
 import { DataTable } from "../../components/DataTable";
 import { StatsTableShell } from "../../components/StatsTableShell";
 import { SkuAliasCell } from "../../components/SkuAliasCell";
+import { StockReconciliationPanel } from "./StockReconciliationPanel";
 import {
   addMonths,
   currentMonthKey,
@@ -3169,6 +3170,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
             </>
           )}
         </Card>
+      ) : null}
+
+      {showSnapshot ? (
+        <StockReconciliationPanel
+          snapshot={findSnapshot(stateObject, selectedMonth)}
+          productBySku={productBySku}
+        />
       ) : null}
 
       {showProjection ? (

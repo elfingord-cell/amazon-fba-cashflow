@@ -55,6 +55,7 @@ async function fetchVentoryStock() {
 }
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function round1(v) { return Math.round(num(v) * 10) / 10; }
 
 // Reine Mapping-Funktion: eine VentoryOne-Stock-Zeile -> Snapshot-Item.
 // amazonUnits  = InStock + reserviert + Transit-zu-FBA (alles bei/unterwegs zu Amazon).
@@ -72,12 +73,20 @@ export function mapVentoryRowToItem(voRow, canonicalSku) {
   // Nur das externe 3PL-Lager (Majamo). wh und onway sind disjunkt -> keine Doppelzaehlung.
   const threePLUnits = Math.max(0, Math.round(wh));
 
+  // Verkaufs-Velocity (Stk/Tag) fuer die Reconciliation-Projektion. Headline = 7-Tage-Schnitt
+  // (aktueller Trend), Fallback Forecast bzw. 30-Tage. Rohwerte in components fuer Transparenz.
+  const sales7 = round1(r.sales_last_7_days);
+  const sales30 = round1(r.sales_last_30_days);
+  const forecastVel = round1(r.forecasted_sales_velocity);
+  const velocityPerDay = sales7 || forecastVel || sales30;
+
   return {
-    sku: canonicalSku, note: "", amazonUnits, threePLUnits,
+    sku: canonicalSku, note: "", amazonUnits, threePLUnits, velocityPerDay,
     components: {
       inStock, reserved, wh, onTheWay,
       whStockUnits: Math.max(0, Math.round(wh)),
       inTransitUnits: Math.max(0, Math.round(onTheWay)),
+      sales7, sales30, forecastVel,
     },
   };
 }
@@ -123,12 +132,14 @@ async function main() {
 
   // components bleiben erhalten (Audit/Reconciliation) -> direkt schreiben.
   const cleanItems = items;
+  const capturedAt = new Date().toISOString();
+  console.log(`\n  capturedAt: ${capturedAt} (Zeitstempel fuer die Reconciliation-Projektion)`);
 
   const mutate = (s) => {
     if (!s.inventory || typeof s.inventory !== "object") s.inventory = {};
     if (!Array.isArray(s.inventory.snapshots)) s.inventory.snapshots = [];
     s.inventory.snapshots = s.inventory.snapshots.filter((snap) => String(snap?.month) !== month);
-    s.inventory.snapshots.push({ month, items: cleanItems });
+    s.inventory.snapshots.push({ month, capturedAt, items: cleanItems });
     s.inventory.snapshots.sort((a, b) => String(a.month).localeCompare(String(b.month)));
   };
 
