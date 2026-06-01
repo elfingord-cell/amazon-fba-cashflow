@@ -3074,6 +3074,21 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
         <Card>
           <Title level={4}>Snapshot zum Stichtag {formatMonthEndLabel(selectedMonth, "long")}</Title>
           <Text type="secondary">Monatsschlüssel: {selectedMonth}</Text>
+          <Alert
+            type="info"
+            showIcon
+            style={{ margin: "8px 0" }}
+            message="Warum die Zahl von VentoryOne abweicht"
+            description={(
+              <span>
+                <strong>Amazon</strong> = verfügbar + reserviert + Transit zu FBA, <strong>3PL</strong> = nur Majamo-Lager.
+                Reservierte zählen mit (dein Eigentum im FC) — VentoryOne lässt sie weg, daher gilt
+                {" "}<strong>CFP ≈ VentoryOne + reservierte</strong>. Der Snapshot ist ein eingefrorenes Stichtags-Foto;
+                beim Vergleich mit VentoryOne-Live die Verkäufe der Zwischentage abziehen (≈ Sales-Velocity × Tage).
+                Details: <Text strong>Methodik &amp; Regeln</Text>.
+              </span>
+            )}
+          />
           <div className="v2-category-tools">
             <Text type="secondary">{filteredRows.length} Produkte in {groupedRows.length} Kategorien</Text>
             <div className="v2-actions-inline">
