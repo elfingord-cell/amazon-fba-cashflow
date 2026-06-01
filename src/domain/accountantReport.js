@@ -91,6 +91,14 @@ function buildSettings(state) {
     vatRefundLagMonths: Number(settings.vatRefundLagMonths || 0) || 0,
     freightLagDays: Number(settings.freightLagDays || 0) || 0,
     defaultCurrency: String(settings.defaultCurrency || "EUR").toUpperCase(),
+    // Bewertung des Warenendbestands (DATEV 3980). MBD-Vorgabe (Frau Kalinna,
+    // 01.06.2026): nur physisch im Lager eingegangene Ware. Ware im Zulauf
+    // (bestellt / in Produktion / unterwegs) bleibt aussen vor. "include_in_transit"
+    // bildet die alte Sicht ab und ist bewusst optional gehalten (EXW-Fall:
+    // schwimmende Ware ggf. nach HGB aktivierbar) — Default ist "warehouse_only".
+    inventoryValuation: settings.inventoryValuation === "include_in_transit"
+      ? "include_in_transit"
+      : "warehouse_only",
     cny: settings.cny && typeof settings.cny === "object"
       ? {
         start: String(settings.cny.start || ""),
@@ -330,11 +338,14 @@ function buildBewertungsgrundlageText(settings) {
   const fxText = Number.isFinite(Number(settings?.fxRate))
     ? formatLocaleNumber(settings.fxRate, 4)
     : "-";
+  const inventoryText = settings?.inventoryValuation === "include_in_transit"
+    ? "Der Warenbestand zum Monatsende ergibt sich aus Bestand mal Einstandspreis je Artikel und umfasst sowohl Ware im Lager (Amazon FBA und externes Lager) als auch Ware im Zulauf."
+    : "Der Warenbestand zum Monatsende umfasst nur Ware, die bis zum Stichtag physisch im Lager (Amazon FBA und externes Lager) eingegangen ist, bewertet mit Bestand mal Einstandspreis je Artikel. Ware im Zulauf (bestellt, in Produktion oder unterwegs) wird separat ausgewiesen und ist nicht im Bestandswert enthalten.";
   return [
     "Bei Zahlungen ist der Betrag in EUR der tatsaechlich bezahlte Betrag.",
     "Bei Anzahlungen und Restzahlungen zeigt der Betrag in USD den Warenwert, auf den sich die Zahlung bezieht.",
     "Beim Wareneingang wird der Warenwert in EUR direkt aus den vorhandenen Daten uebernommen oder aus USD in EUR umgerechnet.",
-    "Der Warenbestand zum Monatsende ergibt sich aus Bestand mal Einstandspreis je Artikel.",
+    inventoryText,
     `Verwendeter Umrechnungskurs: ${fxText}.`,
   ].join(" ");
 }
@@ -556,10 +567,15 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
   const inTransitBySku = computeInTransitBySku(state, month);
   const rows = [];
 
+  // MBD-Vorgabe (Frau Kalinna, 01.06.2026): Warenendbestand (DATEV 3980) nur mit
+  // physisch im Lager eingegangener Ware. Ware im Zulauf bleibt aussen vor.
+  const includeInTransit = settings.inventoryValuation === "include_in_transit";
+
   let totalAmazonUnits = 0;
   let total3plUnits = 0;
   let totalInTransitUnits = 0;
   let totalValueEur = 0;
+  let totalInTransitValueEur = 0;
   let hasValuableRows = false;
 
   const processedKeys = new Set();
@@ -568,9 +584,16 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
     const product = productMaps.productBySku.get(key) || {};
     const alias = String(product.alias || sku);
     const category = productMaps.categoryMap.get(String(product.categoryId || "")) || "Ohne Kategorie";
-    const totalUnits = amazonUnits + threePLUnits + inTransitUnits;
+    // Physischer Lagerbestand = Amazon + externes Lager. Zulauf separat gefuehrt.
+    const warehouseUnits = amazonUnits + threePLUnits;
+    const totalUnits = warehouseUnits + inTransitUnits;
     const ekEur = resolveProductEkEur(product, settings);
-    const rowValueEur = Number.isFinite(ekEur) ? totalUnits * ekEur : null;
+    // Bestandswert je nach Bewertungsmodus: Default nur Lager, optional inkl. Zulauf.
+    const valuedUnits = includeInTransit ? totalUnits : warehouseUnits;
+    const rowValueEur = Number.isFinite(ekEur) ? valuedUnits * ekEur : null;
+    // Wert der Ware im Zulauf — als Transparenz-Kennzahl ausgewiesen, im
+    // "warehouse_only"-Modus NICHT Teil des bilanziellen Bestandswerts.
+    const inTransitValueEur = Number.isFinite(ekEur) ? inTransitUnits * ekEur : null;
 
     if (!Number.isFinite(ekEur)) {
       addQualityIssue(quality, qualitySeen, {
@@ -589,6 +612,9 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
       totalValueEur += rowValueEur;
       hasValuableRows = true;
     }
+    if (Number.isFinite(inTransitValueEur)) {
+      totalInTransitValueEur += inTransitValueEur;
+    }
 
     rows.push({
       artikelnummerSku: sku,
@@ -600,6 +626,7 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
       gesamtbestand: totalUnits,
       einstandspreisEur: ekEur,
       bestandswertEur: rowValueEur,
+      bestandswertImZulaufEur: inTransitValueEur,
       hinweis: note,
       sku,
       alias,
@@ -607,9 +634,11 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
       amazonUnits,
       threePLUnits,
       inTransitUnits,
+      warehouseUnits,
       totalUnits,
       ekEur,
       rowValueEur,
+      inTransitValueEur,
       note,
     });
   };
@@ -670,9 +699,11 @@ function buildInventorySection(state, request, options, productMaps, quality, qu
     month,
     snapshotAsOf: monthAsOf,
     totalValueEur: hasValuableRows || manualOverrideUsed ? totalValueEur : null,
+    totalInTransitValueEur,
     totalAmazonUnits,
     total3plUnits,
     totalInTransitUnits,
+    inventoryValuation: includeInTransit ? "include_in_transit" : "warehouse_only",
     manualOverrideUsed,
     blattzweck: "Bestandsbewertung zum Monatsende",
     issues: quality
@@ -1322,9 +1353,10 @@ function buildCsvPayloads(report) {
     { key: "bestandAmazon", label: "Bestand Amazon" },
     { key: "bestandExternesLager", label: "Bestand externes Lager" },
     { key: "bestandImZulauf", label: "Bestand im Zulauf" },
-    { key: "gesamtbestand", label: "Gesamtbestand" },
+    { key: "gesamtbestand", label: "Gesamtbestand (inkl. Zulauf)" },
     { key: "einstandspreisEur", label: "Einstandspreis EUR", format: formatCsvNumber },
-    { key: "bestandswertEur", label: "Bestandswert EUR", format: formatCsvNumber },
+    { key: "bestandswertEur", label: "Bestandswert EUR (nur Lager)", format: formatCsvNumber },
+    { key: "bestandswertImZulaufEur", label: "davon im Zulauf EUR (nicht im Bestandswert)", format: formatCsvNumber },
     { key: "hinweis", label: "Hinweis" },
   ]);
 

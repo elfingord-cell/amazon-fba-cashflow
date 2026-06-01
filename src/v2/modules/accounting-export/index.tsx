@@ -31,6 +31,7 @@ type InventoryRow = {
   gesamtbestand: number;
   einstandspreisEur: number | null;
   bestandswertEur: number | null;
+  bestandswertImZulaufEur: number | null;
   hinweis: string;
 };
 
@@ -251,7 +252,10 @@ export default function AccountingExportModule(): JSX.Element {
             <Tag color="blue">Zahlungen: {overview.anzahlZahlungenLieferanten || 0}</Tag>
             <Tag color="green">Bestaetigte Wareneingaenge: {overview.anzahlBestaetigteWareneingaenge || 0}</Tag>
             <Tag color="gold">Nur geplante Ankuenfte: {overview.anzahlGeplanteAnkuenfte || 0}</Tag>
-            <Tag color="green">Warenwert: {preview.inventory.totalValueEur != null ? `${formatAccountantDisplayValue(ACCOUNTANT_CELL_TYPES.currency, preview.inventory.totalValueEur)} EUR` : "-"}</Tag>
+            <Tag color="green">Warenbestand (nur Lager): {preview.inventory.totalValueEur != null ? `${formatAccountantDisplayValue(ACCOUNTANT_CELL_TYPES.currency, preview.inventory.totalValueEur)} EUR` : "-"}</Tag>
+            {preview.inventory.totalInTransitValueEur ? (
+              <Tag color="default">davon im Zulauf (nicht im Bestandswert): {formatAccountantDisplayValue(ACCOUNTANT_CELL_TYPES.currency, preview.inventory.totalInTransitValueEur)} EUR</Tag>
+            ) : null}
             <Tag color={preview.pruefhinweise.length ? "orange" : "green"}>Pruefhinweise: {preview.pruefhinweise.length}</Tag>
           </div>
         </div>

@@ -443,3 +443,95 @@ test("accountant report: smoke export for another month has no regression", () =
   assert.ok(Array.isArray(report.warenbestandRows));
   assert.equal(report.verbindlicheDatei, "02_Buchhaltungslisten_2025-12.xlsx");
 });
+
+test("accountant report inventory: Bestandswert enthaelt nur physischen Lagerbestand, Zulauf separat", () => {
+  // MBD-Vorgabe (Frau Kalinna, 01.06.2026): Ware im Zulauf darf NICHT in den
+  // Warenendbestand (DATEV 3980). SKU-B hat im Snapshot 20 Amazon + 10 3PL und
+  // 50 Stk im Zulauf (aus PO-1002). Default ist "warehouse_only".
+  const report = buildAccountantReportData(createState(), {
+    month: "2026-01",
+    scope: "core",
+  });
+
+  const rowB = report.inventoryRows.find((row) => row.artikelnummerSku === "SKU-B");
+  assert.ok(rowB, "SKU-B Zeile muss existieren");
+  assert.ok(Number.isFinite(rowB.einstandspreisEur) && rowB.einstandspreisEur > 0);
+  const ek = rowB.einstandspreisEur;
+
+  // Lager (Amazon + externes Lager) = 30 Stk, Zulauf = 50 Stk separat.
+  assert.equal(rowB.bestandAmazon, 20);
+  assert.equal(rowB.bestandExternesLager, 10);
+  assert.equal(rowB.bestandImZulauf, 50);
+  // Bestandswert NUR Lager: 30 * EK, NICHT 80 * EK.
+  assert.equal(rowB.bestandswertEur, ek * 30);
+  // Zulauf wird als eigene Info-Kennzahl ausgewiesen, fliesst aber nicht in den Wert.
+  assert.equal(rowB.bestandswertImZulaufEur, ek * 50);
+
+  // Summen-Konsistenz: Gesamt-Bestandswert = Summe der Lager-Werte, kein Zulauf drin.
+  const sumWarehouse = report.inventoryRows.reduce(
+    (acc, row) => acc + (Number.isFinite(row.bestandswertEur) ? row.bestandswertEur : 0),
+    0,
+  );
+  const sumInTransit = report.inventoryRows.reduce(
+    (acc, row) => acc + (Number.isFinite(row.bestandswertImZulaufEur) ? row.bestandswertImZulaufEur : 0),
+    0,
+  );
+  assert.equal(report.inventory.totalValueEur, sumWarehouse);
+  assert.equal(report.inventory.totalInTransitValueEur, sumInTransit);
+  assert.ok(sumInTransit > 0, "es gibt Ware im Zulauf");
+
+  // Bewertungsgrundlage stellt die physische Lager-Einschraenkung transparent dar.
+  assert.match(report.uebersicht.bewertungsgrundlageText, /physisch|im Lager/i);
+  assert.match(report.uebersicht.bewertungsgrundlageText, /Zulauf/i);
+});
+
+test("accountant report inventory: reine Zulauf-SKU traegt 0 EUR zum Bestandswert bei", () => {
+  const state = createState();
+  // Neues Produkt nur im Zulauf, NICHT im Snapshot gepflegt.
+  state.products.push({
+    sku: "SKU-C",
+    alias: "Gamma",
+    categoryId: "cat-1",
+    template: { fields: { unitPriceUsd: "10,00", currency: "USD" } },
+  });
+  state.pos.push({
+    id: "po-4",
+    poNo: "PO-1004",
+    supplierId: "sup-1",
+    orderDate: "2026-01-05",
+    prodDays: 10,
+    transitDays: 20,
+    etaDate: "2026-02-15",
+    milestones: [],
+    paymentLog: {},
+    autoEvents: [],
+    items: [
+      { id: "po4-item-c", sku: "SKU-C", units: "7", unitCostUsd: "9,00", unitExtraUsd: "0,00", extraFlatUsd: "0,00" },
+    ],
+  });
+
+  const report = buildAccountantReportData(state, { month: "2026-01", scope: "core" });
+  const rowC = report.inventoryRows.find((row) => row.artikelnummerSku === "SKU-C");
+  assert.ok(rowC, "reine Zulauf-SKU muss im Export erscheinen (transparent)");
+  assert.equal(rowC.bestandAmazon, 0);
+  assert.equal(rowC.bestandExternesLager, 0);
+  assert.equal(rowC.bestandImZulauf, 7);
+  // Kein physischer Lagerbestand -> 0 EUR im Warenendbestand.
+  assert.equal(rowC.bestandswertEur, 0);
+  assert.ok(Number.isFinite(rowC.einstandspreisEur) && rowC.einstandspreisEur > 0);
+  assert.equal(rowC.bestandswertImZulaufEur, rowC.einstandspreisEur * 7);
+});
+
+test("accountant report inventory: settings.inventoryValuation=include_in_transit aktiviert die alte Sicht", () => {
+  const state = createState();
+  state.settings.inventoryValuation = "include_in_transit";
+  const report = buildAccountantReportData(state, { month: "2026-01", scope: "core" });
+
+  const rowB = report.inventoryRows.find((row) => row.artikelnummerSku === "SKU-B");
+  assert.ok(rowB);
+  const ek = rowB.einstandspreisEur;
+  // Mit Zulauf: 30 Lager + 50 Zulauf = 80 Stk.
+  assert.equal(rowB.bestandswertEur, ek * 80);
+  // Info-Kennzahl bleibt erhalten.
+  assert.equal(rowB.bestandswertImZulaufEur, ek * 50);
+});
