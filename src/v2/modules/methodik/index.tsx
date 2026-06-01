@@ -342,6 +342,60 @@ export default function MethodikModule(): JSX.Element {
           />
         </Space>
       </Card>
+
+      <Card>
+        <Space direction="vertical" size={4} style={{ width: "100%" }}>
+          <Title level={5} style={{ margin: 0 }}>Bestands-Snapshot (VentoryOne → CFP)</Title>
+          <Text type="secondary">
+            Wie der Monats-Snapshot in der <strong>Bestandsaufnahme</strong> aus VentoryOne-Live-Daten gebildet wird —
+            und warum die Zahl bewusst <strong>nicht</strong> exakt der VentoryOne-Anzeige entspricht.
+          </Text>
+          <table className="v2-reifegrad-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 4 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--v2-border, #e5e7eb)" }}>
+                <th style={{ padding: "6px 8px" }}>Spalte im Snapshot</th>
+                <th style={{ padding: "6px 8px" }}>zählt</th>
+                <th style={{ padding: "6px 8px" }}>VentoryOne-Feld</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["Amazon", "verfügbar + reserviert + Transit zu FBA", "InStockSupplyQuantity + afn_reserved_quantity + fba_pcs_on_the_way"],
+                ["3PL", "nur externes Lager (Majamo)", "wh_pcs_left"],
+              ].map((cells) => (
+                <tr key={cells[0]} style={{ borderBottom: "1px solid var(--v2-border, #f0f0f0)" }}>
+                  {cells.map((c, idx) => (
+                    <td key={idx} style={{ padding: "6px 8px", fontWeight: idx === 0 ? 600 : 400 }}>{c}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 8 }}
+            message="Warum CFP ≠ VentoryOne — und das ist Absicht"
+            description={(
+              <span>
+                <strong>Reservierte zählen im CFP mit</strong> (sie liegen physisch im Amazon-FC und sind mahonas
+                Eigentum bis zur Auslieferung) — der CFP-Snapshot ist also ein vollständiger <strong>Eigentums-/Bestandswert</strong>.
+                VentoryOnes Anzeige (<Text code>TotalSupplyQuantity</Text>) lässt die reservierten weg. Daraus folgt die
+                Faustregel: <strong>CFP ≈ VentoryOne + reservierte</strong>.
+                <br /><br />
+                Der Snapshot ist außerdem ein <strong>eingefrorenes Stichtags-Foto</strong>. Wenn du ihn mit dem
+                VentoryOne-Live-Stand vergleichst, liegen die täglichen Verkäufe dazwischen — pro vergangenem Tag rund die
+                Sales-Velocity abziehen (<Text code>Snapshot − Velocity × Tage ≈ Live</Text>). Gleich sind beide nur am selben Tag.
+                <br /><br />
+                <Text type="secondary">
+                  Beispiel Satteltasche: CFP 884 = VentoryOne 842 + 42 reservierte. Die Rohkomponenten
+                  (InStock/reserviert/wh/Transit) werden je SKU im Snapshot gespeichert. Gültig ab Juni 2026 (GF-Entscheidung 2026-06-01).
+                </Text>
+              </span>
+            )}
+          />
+        </Space>
+      </Card>
     </div>
   );
 }
