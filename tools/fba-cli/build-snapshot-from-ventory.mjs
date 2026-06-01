@@ -3,16 +3,18 @@
 //
 // Mapping:
 //   amazonUnits  = InStockSupplyQuantity + afn_reserved_quantity   (FBA on-hand: verfuegbar + reserviert)
-//   threePLUnits = max(wh_pcs_left, fba_pcs_on_the_way)            (Majamo-Lager ODER FBA-Transit)
+//   threePLUnits = wh_pcs_left + fba_pcs_on_the_way                (Majamo-Lager + FBA-Transit, ADDITIV)
 //
 // Setzung (GF-Entscheidung Pierre): mahona bezieht EXW, Forto als Spediteur, 3PL ist Majamo.
 // Ware, die von Majamo zu Amazon-FBA unterwegs ist (fba_pcs_on_the_way), gehoert wirtschaftlich
 // zum Bestand ("im Kreislauf") und wird mitgezaehlt.
-// max() gegen DOPPELZAEHLUNG: Manche Chargen stehen GLEICHZEITIG im Majamo-Lager (wh_pcs_left)
-// UND als FBA-Transit (fba_pcs_on_the_way) -- dieselbe Charge. max() zaehlt sie EINMAL:
-//   - noch im Lager gebucht (wh=504, onway=504) -> 504, nicht 1008.
-//   - schon ausgebucht       (wh=0,   onway=63)  -> 63  (Transit zaehlt).
-//   - Lager dominiert         (wh=1300, onway=19) -> 1300.
+// KEINE Doppelzaehlung trotz Addition: VentoryOne bucht bei einer FBA-Einsendung die Ware SOFORT
+// aus dem Majamo-Bestand aus (wh_pcs_left) und fuehrt sie als Transit (fba_pcs_on_the_way). Die
+// beiden Felder sind also DISJUNKT -- verifiziert an VOs eigenem Bestandsfeld
+// `pcs_total_wh_and_fba_excl_on_the_way` = InStock + wh + onway (z.B. FRAMEBAG-EDGE: wh 504 +
+// onway 504 = 1008; das sind zwei verschiedene Chargen, nicht dieselbe). Daher: wh + onway addieren.
+// (reservierte Ware zaehlt mit -- physisch noch im FC bis zur Auslieferung; das ist mahona-Setzung,
+//  VOs Anzeige laesst reserved weg.)
 //
 // Aufruf:
 //   node tools/fba-cli/build-snapshot-from-ventory.mjs --month=2026-05            # Dry-Run
@@ -49,7 +51,7 @@ async function fetchVentoryStock() {
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
 // Reine Mapping-Funktion: eine VentoryOne-Stock-Zeile -> Snapshot-Item.
-// Doppelzaehlungsfrei: threePLUnits = max(Majamo-Lager, FBA-Transit).
+// threePLUnits = Majamo-Lager + FBA-Transit (additiv; Felder sind disjunkt, s. Kopf-Kommentar).
 // Rueckgabe enthaelt _components (Audit/Anzeige) -- wird vor dem Schreiben entfernt.
 export function mapVentoryRowToItem(voRow, canonicalSku) {
   const r = voRow || {};
@@ -59,8 +61,8 @@ export function mapVentoryRowToItem(voRow, canonicalSku) {
   const onTheWay = num(r.fba_pcs_on_the_way);
 
   const amazonUnits = Math.max(0, Math.round(inStock + reserved));
-  // max() statt Summe -> Transit-Charge, die noch im Lager gebucht ist, zaehlt nur einmal.
-  const threePLUnits = Math.max(0, Math.round(Math.max(wh, onTheWay)));
+  // Additiv: VO bucht Transit-Ware aus dem Lager aus -> wh und onway sind disjunkt, kein Doppel.
+  const threePLUnits = Math.max(0, Math.round(wh + onTheWay));
 
   return {
     sku: canonicalSku, note: "", amazonUnits, threePLUnits,
@@ -97,12 +99,12 @@ async function main() {
   // Vorschau-Tabelle
   console.log(`\nVentoryOne -> Snapshot ${month}: ${items.length} SKUs gemappt, ${unmatched.length} unmatched.`);
   if (unmatched.length) console.log("  unmatched (in VO, nicht in Produkten):", unmatched.join(", "));
-  console.log("\n  SKU                                amazon(=inStk+resv)    wh  transit  3PL(=max)  [inStk/resv/wh/onWay]");
+  console.log("\n  SKU                                amazon(=inStk+resv)    wh  transit  3PL(=wh+transit)  [inStk/resv/wh/onWay]");
   let sumAmazon = 0, sumThreePL = 0;
   for (const it of items.slice().sort((a, b) => b.amazonUnits - a.amazonUnits)) {
     const c = it._components;
     sumAmazon += it.amazonUnits; sumThreePL += it.threePLUnits;
-    const flag = c.whStockUnits > 0 && c.inTransitUnits > 0 ? " <-max" : "";
+    const flag = c.inTransitUnits > 0 ? " <-Transit" : "";
     console.log(
       `  ${it.sku.padEnd(34)} ${String(it.amazonUnits).padStart(6)}` +
       `        ${String(c.whStockUnits).padStart(5)}  ${String(c.inTransitUnits).padStart(5)}    ${String(it.threePLUnits).padStart(6)}` +
