@@ -2903,104 +2903,10 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
 
       {showSnapshot && reconciliation ? (
         (() => {
-          // Classify discrepancy with size-aware tolerance.
-          // Small absolute deltas are always OK (no Forecast model is exact).
-          // Larger deltas only flag if both absolute AND ratio are off.
-          const classify = (discrepancy: number, measured: number, expected: number): "ok" | "warn" | "bad" => {
-            const abs = Math.abs(discrepancy);
-            const base = Math.max(Math.abs(measured), Math.abs(expected), 1);
-            const ratio = abs / base;
-            if (abs < 500) return "ok";
-            if (abs < 2000) return ratio < 0.5 ? "ok" : "warn";
-            if (ratio < 0.3) return "ok";
-            if (ratio < 0.6) return "warn";
-            return "bad";
-          };
-          const t = reconciliation.totals;
-          const status = classify(t.discrepancy, t.measuredDelta, t.expectedDelta);
-          const tagColor = status === "ok" ? "green" : status === "warn" ? "orange" : "red";
-          const statusLabel = status === "ok" ? "Plausibel" : status === "warn" ? "Auffällig" : "Stark abweichend";
+          // Plausi-Check (EUR-Diskrepanz/Phantom-Bestand) entfernt (GF-Wunsch 2026-06-01) —
+          // wirkte verwirrend. Es bleibt NUR die "PO mit überfälliger ETA"-Liste.
           return (
-            <Card className={`v2-reco-card v2-reco-status-${status}`}>
-              <div className="v2-reco-head">
-                <div>
-                  <Title level={4}>Plausi-Check {reconciliation.previousMonth} → {selectedMonth}</Title>
-                  <Text type="secondary">
-                    Vergleicht gemessene Bestandsveränderung (Snapshot Δ in EUR, ohne In-Transit) gegen erwartete (PO/FO-Eingänge − Verkaufs-Forecast). Verkäufe sind Forecast-Schätzung.
-                    {reconciliation.hasMissingEk ? " EK fehlt teilweise." : ""}
-                  </Text>
-                </div>
-                <Tag color={tagColor}>{statusLabel}</Tag>
-              </div>
-              <div className="v2-reco-kpis">
-                <div className="v2-reco-kpi">
-                  <Text type="secondary">Bestandsveränderung gemessen</Text>
-                  <div className="v2-reco-kpi-value">{formatEurSigned(t.measuredDelta)}</div>
-                  <Text type="secondary">{formatEur(t.prevEur)} → {formatEur(t.currEur)}</Text>
-                </div>
-                <div className="v2-reco-kpi">
-                  <Text type="secondary">Erwartete Veränderung</Text>
-                  <div className="v2-reco-kpi-value">{formatEurSigned(t.expectedDelta)}</div>
-                  <Text type="secondary">Wareneingänge {formatEur(t.inboundEur)} − Verkäufe {formatEur(t.salesEur)}</Text>
-                </div>
-                <div className="v2-reco-kpi v2-reco-kpi-diff">
-                  <Text type="secondary">Diskrepanz (Phantom-Bestand)</Text>
-                  <div className="v2-reco-kpi-value">{formatEurSigned(t.discrepancy)}</div>
-                  <Text type="secondary">Δ gemessen − Δ erwartet</Text>
-                </div>
-              </div>
-              <Collapse
-                className="v2-reco-breakdown"
-                defaultActiveKey={status === "ok" ? [] : ["cat"]}
-                items={[{
-                  key: "cat",
-                  label: "Aufschlüsselung pro Kategorie (sortiert nach Diskrepanz)",
-                  children: (
-                    <table className="v2-reco-cat-table">
-                      <thead>
-                        <tr>
-                          <th>Kategorie</th>
-                          <th className="num">Bestand prev €</th>
-                          <th className="num">Bestand curr €</th>
-                          <th className="num">Δ gemessen €</th>
-                          <th className="num">Wareneingänge €</th>
-                          <th className="num">Verkäufe (FC) €</th>
-                          <th className="num">Δ erwartet €</th>
-                          <th className="num">Diskrepanz €</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {reconciliation.perCategory.map((c) => {
-                          const catStatus = classify(c.discrepancy, c.measuredDelta, c.expectedDelta);
-                          const cls = catStatus === "ok" ? "" : catStatus === "warn" ? "v2-reco-cat-warn" : "v2-reco-cat-bad";
-                          return (
-                            <tr key={c.label} className={cls}>
-                              <td>{c.label}</td>
-                              <td className="num">{formatEur(c.prevEur)}</td>
-                              <td className="num">{formatEur(c.currEur)}</td>
-                              <td className="num"><strong>{formatEurSigned(c.measuredDelta)}</strong></td>
-                              <td className="num">{formatEur(c.inboundEur)}</td>
-                              <td className="num">{formatEur(c.salesEur)}</td>
-                              <td className="num"><strong>{formatEurSigned(c.expectedDelta)}</strong></td>
-                              <td className="num"><strong>{formatEurSigned(c.discrepancy)}</strong></td>
-                            </tr>
-                          );
-                        })}
-                        <tr className="v2-reco-cat-total">
-                          <td><strong>Gesamt</strong></td>
-                          <td className="num"><strong>{formatEur(t.prevEur)}</strong></td>
-                          <td className="num"><strong>{formatEur(t.currEur)}</strong></td>
-                          <td className="num"><strong>{formatEurSigned(t.measuredDelta)}</strong></td>
-                          <td className="num"><strong>{formatEur(t.inboundEur)}</strong></td>
-                          <td className="num"><strong>{formatEur(t.salesEur)}</strong></td>
-                          <td className="num"><strong>{formatEurSigned(t.expectedDelta)}</strong></td>
-                          <td className="num"><strong>{formatEurSigned(t.discrepancy)}</strong></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  ),
-                }]}
-              />
+            <Card className="v2-reco-card">
               {stalePos.length ? (
                 <div className="v2-reco-stale">
                   <div className="v2-reco-stale-head">
