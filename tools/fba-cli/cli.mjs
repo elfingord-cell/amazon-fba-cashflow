@@ -24,6 +24,7 @@ import { validateState } from "./validate.mjs";
 import * as entities from "./entities.mjs";
 import { setSetting, removeById } from "./entities.mjs";
 import { runImportBwa } from "./import-bwa.mjs";
+import { runSyncPoStatus } from "./sync-po-status.mjs";
 
 function parseArgs(argv) {
   const positional = [];
@@ -79,6 +80,7 @@ async function main() {
       "  set-setting <pfad> <json> [--commit]",
       "  rm <collection> <id> [--commit] [--id-field=<feld>]",
       "  import-bwa <csv> [--commit] [--base-year=2025] [--forecast-year=2026]",
+      "  sync-po-status [--commit]      PO-Empfangsstatus von VentoryOne in CFP übertragen",
       "Optionen: --commit (echtes Schreiben), --force (trotz Validierungsfehler), --workspace=<uuid>",
     ].join("\n"));
     return;
@@ -136,6 +138,17 @@ async function main() {
       force,
       baseYear: flags["base-year"] || 2025,
       forecastYear: flags["forecast-year"] || 2026,
+      workspaceId: flags.workspace,
+    });
+    return;
+  }
+
+  if (cmd === "sync-po-status") {
+    // PO-Empfangsstatus von VentoryOne (führend) in den CFP-State übertragen.
+    // Logik + Report leben in sync-po-status.mjs; default Dry-Run, echtes Schreiben nur mit --commit.
+    await runSyncPoStatus({
+      commit: Boolean(flags.commit),
+      force,
       workspaceId: flags.workspace,
     });
     return;
