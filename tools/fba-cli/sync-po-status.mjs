@@ -50,6 +50,54 @@ export function normalizePoNo(raw) {
   return String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+// --- "Voll bezahlt?"-Erkennung (subtil!) ----------------------------------
+// Eine CFP-PO hat `milestones[]` (z.B. Deposit 30% + Balance 70%) und `paymentLog{}` (Map).
+// Im paymentLog steht NUR was schon bezahlt wurde — OFFENE Milestones FEHLEN dort komplett.
+// "status":"paid" an einzelnen Einträgen reicht also NICHT, um "voll bezahlt" zu erkennen.
+//
+// Mapping Milestone -> Zahlung:
+//   - paymentLog ist eine Map, deren KEY oft die Milestone-id ist (z.B. paymentLog["7e0mf66"]
+//     für milestone.id "7e0mf66"); ODER der Eintrag trägt .milestoneId, das auf die Milestone zeigt.
+//   - Eine Zahlung gilt als bezahlt, wenn status === "paid".
+//   - Auto-Zusatzeinträge ("po-auto-...-duty" / "-eust" / "-fx_fee" / "-freight") sind KEINE
+//     Milestones, nur Nebenkosten — sie werden beim Milestone-Abgleich ignoriert.
+//
+// Bedingung "voll bezahlt": Für JEDEN Eintrag in milestones[] muss es eine bezahlte Zahlung geben.
+//   => jede milestone.id ist in der Menge der bezahlten Milestone-Referenzen.
+//
+// Fallback (keine milestones[]): defensiv "voll bezahlt", wenn mindestens eine paymentLog-Zahlung
+//   status==="paid" hat UND keine Zahlung status!=="paid" hat.
+const AUTO_LOG_KEY_RE = /^po-auto-/i;
+
+export function isPoFullyPaid(po) {
+  const log = (po && po.paymentLog && typeof po.paymentLog === "object") ? po.paymentLog : {};
+  const logEntries = Object.entries(log);
+
+  // Bezahlte Milestone-Referenzen sammeln: key (wenn kein Auto-Eintrag) + .milestoneId,
+  // jeweils nur wenn der Eintrag status==="paid" trägt.
+  const paidRefs = new Set();
+  let anyPaid = false;
+  let anyUnpaid = false;
+  for (const [key, raw] of logEntries) {
+    const entry = (raw && typeof raw === "object") ? raw : {};
+    const isPaid = entry.status === "paid";
+    if (isPaid) anyPaid = true; else anyUnpaid = true;
+    if (!isPaid) continue;
+    if (!AUTO_LOG_KEY_RE.test(key)) paidRefs.add(String(key));
+    if (entry.milestoneId != null) paidRefs.add(String(entry.milestoneId));
+  }
+
+  const milestones = Array.isArray(po?.milestones) ? po.milestones : [];
+  if (milestones.length === 0) {
+    // Fallback (dokumentiert): ohne Milestones gilt voll bezahlt, wenn es paid-Zahlungen
+    // gibt und keine offene (status!=="paid") Zahlung im Log steht.
+    return anyPaid && !anyUnpaid;
+  }
+
+  // Voll bezahlt <=> jede milestone.id hat eine bezahlte Referenz.
+  return milestones.every((m) => m && m.id != null && paidRefs.has(String(m.id)));
+}
+
 // Alle plausiblen Match-Keys eines PO-Bezeichners (mit + ohne PO-Präfix).
 function matchKeys(raw) {
   const norm = normalizePoNo(raw);
@@ -62,9 +110,17 @@ function matchKeys(raw) {
 
 // --- Reine, testbare Planungsfunktion ------------------------------------
 // Baut für jede CFP-PO einen Plan-Eintrag und bestimmt die Aktion:
-//   ARCHIVE  VO=Received UND CFP noch nicht archived  -> als empfangen markieren
-//   MAP      ventoryPoId noch nicht im CFP-PO gespeichert (und kein ARCHIVE) -> nur mappen
-//   NOOP     nichts zu tun
+//   ARCHIVE         VO=Received, CFP noch nicht archived UND PO voll bezahlt -> als empfangen
+//                   markieren + archivieren.
+//   RECEIVE_UNPAID  VO=Received, CFP noch nicht archived, ABER NICHT voll bezahlt -> Empfang
+//                   eintragen (arrivalDate + ventoryPoId), aber NICHT archivieren. Hintergrund:
+//                   der CFP-Cashflow ignoriert Zahlungen archivierter POs (poPaymentsLedger.js:453,
+//                   paymentJournalCore.js:419 `if (record.archived) return;`). mahona setzt POs in
+//                   VO oft 2-3 Tage VOR Ankunft auf "Received", während die 70%-Balance noch offen
+//                   ist. Archivieren würde die offene Restzahlung aus dem Cashflow entfernen.
+//   MAP             ventoryPoId noch nicht im CFP-PO gespeichert (und kein ARCHIVE/RECEIVE_UNPAID)
+//                   -> nur mappen.
+//   NOOP            nichts zu tun.
 // Kein VO-Match -> unmatched.
 export function planPoStatusSync(cfpPos, voPos) {
   // Map normalisierte VO-po_number (inkl. PO-loser Variante) -> VO-PO.
@@ -78,6 +134,7 @@ export function planPoStatusSync(cfpPos, voPos) {
 
   const all = [];
   const toArchive = [];
+  const toReceiveUnpaid = [];
   const toMapOnly = [];
   const unmatched = [];
 
@@ -100,9 +157,14 @@ export function planPoStatusSync(cfpPos, voPos) {
     const ventoryPoId = vo.id;
     const idAlreadyMapped = cfpPo.ventoryPoId != null && String(cfpPo.ventoryPoId) === String(ventoryPoId);
 
+    const fullyPaid = isPoFullyPaid(cfpPo);
+
     let action;
-    if (vo.status === "Received" && !currentlyArchived) {
+    if (vo.status === "Received" && !currentlyArchived && fullyPaid) {
       action = "ARCHIVE";
+    } else if (vo.status === "Received" && !currentlyArchived && !fullyPaid) {
+      // Empfangen, aber Restzahlung offen -> NICHT archivieren (Cashflow-Schutz).
+      action = "RECEIVE_UNPAID";
     } else if (!idAlreadyMapped) {
       action = "MAP";
     } else {
@@ -117,19 +179,24 @@ export function planPoStatusSync(cfpPos, voPos) {
       voStatus: vo.status,
       voReceivedDate,
       currentlyArchived,
+      fullyPaid,
       action,
     };
     all.push(entry);
     if (action === "ARCHIVE") toArchive.push(entry);
+    else if (action === "RECEIVE_UNPAID") toReceiveUnpaid.push(entry);
     else if (action === "MAP") toMapOnly.push(entry);
   }
 
-  return { toArchive, toMapOnly, unmatched, all };
+  return { toArchive, toReceiveUnpaid, toMapOnly, unmatched, all };
 }
 
 // --- Mutator: wendet den Plan auf den State an (in-place) -----------------
 // Fasst NUR archived / arrivalDate / ventoryPoId der betroffenen POs an. VO ist die Wahrheit:
 // arrivalDate wird mit voReceivedDate überschrieben (sofern vorhanden).
+//   ARCHIVE        -> archived=true + arrivalDate + ventoryPoId
+//   RECEIVE_UNPAID -> arrivalDate + ventoryPoId, KEIN archived (offene Restzahlung bleibt im Cashflow)
+//   MAP            -> nur ventoryPoId
 export function applyPoStatusSync(state, plan) {
   const pos = Array.isArray(state?.pos) ? state.pos : [];
   const byId = new Map(pos.map((p) => [String(p?.id), p]));
@@ -138,6 +205,14 @@ export function applyPoStatusSync(state, plan) {
     const po = byId.get(String(e.cfpId));
     if (!po) continue;
     po.archived = true;
+    if (e.voReceivedDate) po.arrivalDate = e.voReceivedDate;
+    po.ventoryPoId = e.ventoryPoId;
+  }
+  for (const e of plan?.toReceiveUnpaid || []) {
+    const po = byId.get(String(e.cfpId));
+    if (!po) continue;
+    // Empfang eintragen, aber NICHT archivieren — sonst verschwindet die offene
+    // Restzahlung aus dem Cashflow (poPaymentsLedger.js:453 / paymentJournalCore.js:419).
     if (e.voReceivedDate) po.arrivalDate = e.voReceivedDate;
     po.ventoryPoId = e.ventoryPoId;
   }
@@ -183,9 +258,12 @@ function printReport(plan, dryRun) {
   console.log("CFP poNo   | VO po_number | VO-Status  | order_received_date | Aktion");
   console.log("-----------+--------------+------------+---------------------+--------");
   for (const e of rows) {
+    const actionLabel = e.action === "RECEIVE_UNPAID"
+      ? "RECEIVE_UNPAID (empfangen, Restzahlung offen → nicht archiviert)"
+      : e.action;
     console.log(
       `${String(e.poNo || "").padEnd(10)} | ${String(e.voPoNumber || "").padEnd(12)} | ` +
-      `${String(e.voStatus || "").padEnd(10)} | ${String(e.voReceivedDate || "—").padEnd(19)} | ${e.action}`,
+      `${String(e.voStatus || "").padEnd(10)} | ${String(e.voReceivedDate || "—").padEnd(19)} | ${actionLabel}`,
     );
   }
   if (plan.unmatched.length) {
@@ -195,7 +273,8 @@ function printReport(plan, dryRun) {
   }
   console.log("");
   console.log(
-    `Zusammenfassung: ${plan.toArchive.length} POs werden als empfangen archiviert, ` +
+    `Zusammenfassung: ${plan.toArchive.length} POs werden als empfangen archiviert (voll bezahlt), ` +
+    `${(plan.toReceiveUnpaid || []).length} empfangen aber NICHT archiviert (Restzahlung offen), ` +
     `${plan.toMapOnly.length} nur gemappt, ${plan.unmatched.length} unmatched.`,
   );
   console.log("");
