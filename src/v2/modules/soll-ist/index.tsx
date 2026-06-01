@@ -1438,8 +1438,17 @@ export default function SollIstModule(): JSX.Element {
               <Card size="small">
                 <Statistic
                   title="Jahres-Umsatz-Prognose"
-                  value={formatCurrency(bwaCalibration.jahrUmsatzPrognose)}
+                  value={formatCurrency(
+                    bwaCalibration.jahrUmsatzPrognoseBrutto ?? bwaCalibration.jahrUmsatzPrognose,
+                  )}
                 />
+                {bwaCalibration.jahrUmsatzPrognoseBrutto != null ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    brutto · netto {formatCurrency(bwaCalibration.jahrUmsatzPrognose)}
+                  </Text>
+                ) : (
+                  <Text type="secondary" style={{ fontSize: 12 }}>netto (DATEV-Basis)</Text>
+                )}
               </Card>
             </Col>
             <Col xs={12} md={6}>

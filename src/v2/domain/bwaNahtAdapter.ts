@@ -19,7 +19,8 @@
 import type { AppStateV2 } from "../state/types";
 
 export interface BwaNahtForecastCalibration {
-  jahrUmsatzPrognose: number | null;
+  jahrUmsatzPrognose: number | null; // netto (DATEV-/Steuer-Basis)
+  jahrUmsatzPrognoseBrutto: number | null; // brutto (Sellerboard-Maßstab)
   jahrErgebnisVorSteuernPrognose: number | null;
   jahrVorlaeufigesErgebnisPrognose: number | null;
   niveauFaktor: number | null;
@@ -30,6 +31,7 @@ export interface BwaNahtForecastCalibration {
   kalibrierteForecastMonate: Record<string, number>;
   margeVorSteuern: number | null;
   margeNachSteuern: number | null;
+  prognoseMethode: string | null;
   stand: string | null;
 }
 
@@ -106,6 +108,7 @@ export function buildBwaNaht(state: AppStateV2): BwaNahtResult {
     const c = calibrationRaw as Record<string, unknown>;
     forecastCalibration = {
       jahrUmsatzPrognose: toNumberOrNull(c.jahrUmsatzPrognose),
+      jahrUmsatzPrognoseBrutto: toNumberOrNull(c.jahrUmsatzPrognoseBrutto),
       jahrErgebnisVorSteuernPrognose: toNumberOrNull(c.jahrErgebnisVorSteuernPrognose),
       jahrVorlaeufigesErgebnisPrognose: toNumberOrNull(c.jahrVorlaeufigesErgebnisPrognose),
       niveauFaktor: toNumberOrNull(c.niveauFaktor),
@@ -118,6 +121,7 @@ export function buildBwaNaht(state: AppStateV2): BwaNahtResult {
       kalibrierteForecastMonate: toRecord(c.kalibrierteForecastMonate) as Record<string, number>,
       margeVorSteuern: toNumberOrNull(c.margeVorSteuern),
       margeNachSteuern: toNumberOrNull(c.margeNachSteuern),
+      prognoseMethode: c.prognoseMethode == null ? null : String(c.prognoseMethode),
       stand: c.stand == null ? null : String(c.stand),
     };
   } else {
