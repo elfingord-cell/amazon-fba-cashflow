@@ -77,8 +77,62 @@ function parseVorlaeufigesErgebnis(quelle) {
 
 const monthKey = (year, m) => `${year}-${String(m).padStart(2, "0")}`;
 
+// --- VentoryOne-Bruttoumsatz-Forecast aggregieren -----------------------
+// Liefert { "YYYY-MM": bruttoUmsatzEUR } für alle 12 Monate des forecastYear.
+// Quelle je SKU/Monat (in dieser Reihenfolge):
+//   1. forecastManual[sku][mk]            -> units × Bruttopreis (manuelle Übersteuerung)
+//   2. forecastImport[sku][mk].revenueEur -> VOs EIGENER Umsatz-Forecast (maßgeblich!)
+//   3. forecastImport[sku][mk].units      -> Fallback units × Bruttopreis (falls kein revenueEur)
+// VOs revenueEur berücksichtigt Preisstaffeln/Marktplatz-Mix je Monat und ist
+// daher genauer als units×Durchschnittspreis (~+2 % auf Jahressicht). SKUs ohne
+// nutzbaren Wert tragen 0 bei. Alles defensiv in Number gewandelt.
+export function computeVoForecastBrutto(state, forecastYear) {
+  const out = {};
+  for (let m = 1; m <= 12; m += 1) out[monthKey(forecastYear, m)] = 0;
+  if (!state || typeof state !== "object") return out;
+
+  const forecast = state.forecast || {};
+  const fm = forecast.forecastManual || {};
+  const fi = forecast.forecastImport || {};
+
+  // Preis je SKU (getrimmt) aus den Produkten — nur für den units-Pfad nötig.
+  const priceBySku = {};
+  for (const p of state.products || []) {
+    if (!p || p.sku == null) continue;
+    const sku = String(p.sku).trim();
+    const price = Number(p.avgSellingPriceGrossEUR);
+    priceBySku[sku] = Number.isFinite(price) ? price : 0;
+  }
+
+  const skus = new Set([...Object.keys(fm), ...Object.keys(fi)]);
+  for (const sku of skus) {
+    const price = priceBySku[String(sku).trim()] || 0;
+    for (const mk of Object.keys(out)) {
+      // 1) Manuelle Übersteuerung (units × Preis).
+      const manualUnits = fm[sku] ? Number(fm[sku][mk]) : NaN;
+      if (Number.isFinite(manualUnits)) {
+        out[mk] += manualUnits * price;
+        continue;
+      }
+      // 2) VOs eigener revenueEur (maßgeblich).
+      const imp = fi[sku] ? fi[sku][mk] : undefined;
+      const rev = imp ? Number(imp.revenueEur) : NaN;
+      if (Number.isFinite(rev)) {
+        out[mk] += rev;
+        continue;
+      }
+      // 3) Fallback: Import-units × Preis.
+      const impUnits = imp ? Number(imp.units) : NaN;
+      if (Number.isFinite(impUnits) && price) out[mk] += impUnits * price;
+    }
+  }
+  return out;
+}
+
 // Saison-Kalibrierung berechnen. Erwartet die geparsten CSV-Zeilen.
-export function computeCalibration(rows, baseYear, forecastYear, csvPath) {
+// Mit { state } wird die Jahresprognose über den Blend (DATEV-Ist + VO-Forecast) gerechnet;
+// ohne state greift der Saison-Faktor-Fallback (Basisjahr-Kurve × Niveau-Faktor).
+export function computeCalibration(rows, baseYear, forecastYear, csvPath, { state, bruttoNettoFaktor = 1.367 } = {}) {
   const months = rows.filter((r) => isMonth(r.periode));
   const monthUmsatz = (year, m) => {
     const row = months.find((r) => r.periode === monthKey(year, m));
@@ -138,27 +192,68 @@ export function computeCalibration(rows, baseYear, forecastYear, csvPath) {
   const baseYearErgebnisVorSteuern = yearRow.ergebnisVorSteuern; // aus Spalte 3 der JAHR-Zeile
   const baseYearVorlaeufigesErgebnis = parseVorlaeufigesErgebnis(yearRow.quelle); // aus dem Quelle-Text
 
-  // 4) Kennzahlen.
+  // 4) Kennzahlen. niveauFaktor/saisonAnteil bleiben als Kontext + Fallback erhalten.
   const niveauFaktor = istUmsatzAbgeschlossen / basisUmsatzGleicherZeitraum;
   const saisonAnteil = basisUmsatzGleicherZeitraum / baseYearTotalUmsatz;
-  const jahrUmsatzPrognose = istUmsatzAbgeschlossen / saisonAnteil; // == niveauFaktor * baseYearTotalUmsatz
   const margeVorSteuern =
     baseYearErgebnisVorSteuern != null ? baseYearErgebnisVorSteuern / baseYearTotalUmsatz : null;
   const margeNachSteuern =
     baseYearVorlaeufigesErgebnis != null ? baseYearVorlaeufigesErgebnis / baseYearTotalUmsatz : null;
+
+  // 5) Jahresprognose: NEU = Blend (DATEV-Ist + VO-Forecast), wenn state da ist;
+  //    sonst Saison-Faktor-Fallback (Basisjahr-Kurve × niveauFaktor).
+  let jahrUmsatzPrognose; // NETTO
+  let jahrUmsatzPrognoseBrutto = null;
+  let prognoseMethode;
+  let monatsForecast = null; // { "YYYY-MM": { netto, brutto, quelle } } — nur im Blend-Modus
+  const kalibrierteForecastMonate = {};
+
+  if (state) {
+    // --- Blend: abgeschlossene Monate = DATEV-Ist netto, Zukunft = VO-Brutto / Faktor ---
+    prognoseMethode = "blend_ist_vo";
+    const voBrutto = computeVoForecastBrutto(state, forecastYear);
+    monatsForecast = {};
+    let summeNetto = 0;
+    for (let m = 1; m <= 12; m += 1) {
+      const mk = monthKey(forecastYear, m);
+      const ist = monthUmsatz(forecastYear, m); // DATEV-Ist netto aus CSV-rows
+      let netto;
+      let quelle;
+      if (ist != null) {
+        netto = ist;
+        quelle = "ist";
+      } else if (voBrutto[mk] != null) {
+        netto = voBrutto[mk] / bruttoNettoFaktor;
+        quelle = "vo";
+        // Card zeigt die echte VO-Kurve für die Zukunftsmonate (netto).
+        kalibrierteForecastMonate[mk] = netto;
+      } else {
+        netto = 0;
+        quelle = "none";
+      }
+      monatsForecast[mk] = { netto, brutto: netto * bruttoNettoFaktor, quelle };
+      summeNetto += netto;
+    }
+    jahrUmsatzPrognose = summeNetto;
+    jahrUmsatzPrognoseBrutto = jahrUmsatzPrognose * bruttoNettoFaktor;
+  } else {
+    // --- Fallback (kein state): alte Saison-Faktor-Logik ---
+    prognoseMethode = "saison_faktor";
+    jahrUmsatzPrognose = istUmsatzAbgeschlossen / saisonAnteil; // == niveauFaktor * baseYearTotalUmsatz
+    jahrUmsatzPrognoseBrutto = jahrUmsatzPrognose * bruttoNettoFaktor;
+    for (let m = stichtagMonthNum + 1; m <= 12; m += 1) {
+      const u = monthUmsatz(baseYear, m);
+      if (u == null) continue; // kein Basiswert -> nicht kalibrierbar
+      kalibrierteForecastMonate[monthKey(forecastYear, m)] = u * niveauFaktor;
+    }
+  }
+
+  // 6) Gewinn IMMER über die strukturelle Basisjahr-Marge auf den neuen Umsatz (NETTO) —
+  //    nie aus dem verzerrten Einzelmonats-Ist (Bestandsaufbau).
   const jahrErgebnisVorSteuernPrognose =
     margeVorSteuern != null ? jahrUmsatzPrognose * margeVorSteuern : null;
   const jahrVorlaeufigesErgebnisPrognose =
     margeNachSteuern != null ? jahrUmsatzPrognose * margeNachSteuern : null;
-
-  // 5) Kalibrierte Forecast-Monate: jeder Monat NACH dem Stichtag = baseYearMonatUmsatz * niveauFaktor.
-  //    Abgeschlossene Monate (<= Stichtag) bleiben Ist und werden NICHT kalibriert.
-  const kalibrierteForecastMonate = {};
-  for (let m = stichtagMonthNum + 1; m <= 12; m += 1) {
-    const u = monthUmsatz(baseYear, m);
-    if (u == null) continue; // kein Basiswert -> nicht kalibrierbar
-    kalibrierteForecastMonate[monthKey(forecastYear, m)] = u * niveauFaktor;
-  }
 
   return {
     baseYear,
@@ -174,14 +269,21 @@ export function computeCalibration(rows, baseYear, forecastYear, csvPath) {
     niveauFaktor,
     saisonAnteil,
     jahrUmsatzPrognose,
+    jahrUmsatzPrognoseBrutto,
+    bruttoNettoFaktor,
+    prognoseMethode,
+    monatsForecast,
     margeVorSteuern,
     margeNachSteuern,
     jahrErgebnisVorSteuernPrognose,
     jahrVorlaeufigesErgebnisPrognose,
     kalibrierteForecastMonate,
     methode:
-      "Umsatz kalibriert über Saison-Anteil; Gewinn über STRUKTURELLE Basisjahr-Marge, " +
-      "NICHT aus verzerrtem Ist-Ergebnis (Bestandsaufbau); Stichtag = letzter testierter Monat",
+      prognoseMethode === "blend_ist_vo"
+        ? "Umsatz = Blend: abgeschlossene Monate DATEV-Ist (netto) + Zukunftsmonate VentoryOne-Forecast " +
+          "(VOs revenueEur direkt, Fallback units×Bruttopreis; ÷ Brutto/Netto-Faktor); Gewinn über STRUKTURELLE Basisjahr-Marge"
+        : "Umsatz kalibriert über Saison-Anteil; Gewinn über STRUKTURELLE Basisjahr-Marge, " +
+          "NICHT aus verzerrtem Ist-Ergebnis (Bestandsaufbau); Stichtag = letzter testierter Monat",
     stand: todayIso(),
     quelleCsv: csvPath,
   };
@@ -237,17 +339,32 @@ function printReport(rows, cal, writtenMonths, dryRun) {
   console.log(`Saison-Anteil (abgeschl./Jahr):  ${fmtPct(c.saisonAnteil)}`);
   console.log("");
   console.log("--- Jahres-Prognose ---");
-  console.log(`Umsatz-Prognose:                 ${fmtEUR(c.jahrUmsatzPrognose)}`);
+  console.log(`Umsatz-Prognose (netto):         ${fmtEUR(c.jahrUmsatzPrognose)}`);
+  console.log(`Umsatz-Prognose (brutto):        ${fmtEUR(c.jahrUmsatzPrognoseBrutto)}`);
+  if (c.prognoseMethode === "blend_ist_vo") {
+    console.log("Methode:                         blend_ist_vo (DATEV-Ist + VentoryOne-Forecast)");
+    console.log(`Brutto/Netto-Faktor:             ${c.bruttoNettoFaktor}`);
+  } else {
+    console.log(`Methode:                         ${c.prognoseMethode} (Basisjahr-Kurve × Niveau-Faktor)`);
+  }
   console.log(`Marge v. St. (Basisjahr):        ${fmtPct(c.margeVorSteuern)}`);
   console.log(`Marge n. St. (Basisjahr):        ${fmtPct(c.margeNachSteuern)}`);
   console.log(`Ergebnis-v.-Steuern-Prognose:    ${fmtEUR(c.jahrErgebnisVorSteuernPrognose)}`);
   console.log(`Vorl.-Ergebnis-Prognose:         ${fmtEUR(c.jahrVorlaeufigesErgebnisPrognose)}`);
   console.log("");
-  console.log("--- Kalibrierte Forecast-Monate (Monate NACH Stichtag) ---");
-  const km = c.kalibrierteForecastMonate;
-  const keys = Object.keys(km).sort();
-  if (!keys.length) console.log("  (keine — alle Basisjahr-Monate liegen vor dem Stichtag oder fehlen)");
-  for (const k of keys) console.log(`  ${k}: ${fmtEUR(km[k])}`);
+  if (c.monatsForecast) {
+    console.log("--- Monats-Prognose (netto, je Quelle ist/vo) ---");
+    for (const k of Object.keys(c.monatsForecast).sort()) {
+      const mf = c.monatsForecast[k];
+      console.log(`  ${k}: ${fmtEUR(mf.netto).padStart(14)}  [${mf.quelle}]`);
+    }
+  } else {
+    console.log("--- Kalibrierte Forecast-Monate (Monate NACH Stichtag) ---");
+    const km = c.kalibrierteForecastMonate;
+    const keys = Object.keys(km).sort();
+    if (!keys.length) console.log("  (keine — alle Basisjahr-Monate liegen vor dem Stichtag oder fehlen)");
+    for (const k of keys) console.log(`  ${k}: ${fmtEUR(km[k])}`);
+  }
   console.log("");
   console.log("CAVEAT (Methodik-Leitplanke):");
   console.log("  Der Gewinn wird NICHT aus dem abgeschlossenen Ist-Ergebnis hochgerechnet — der unterjährige");
@@ -265,14 +382,18 @@ export async function runImportBwa({ csvPath, commit = false, force = false, bas
   if (!fs.existsSync(csvPath)) throw new Error(`CSV nicht gefunden: ${csvPath}`);
   const text = fs.readFileSync(csvPath, "utf8");
   const rows = parseBwaCsv(text);
-  const calibration = computeCalibration(rows, Number(baseYear), Number(forecastYear), csvPath);
 
   const cfg = getConfig({ workspaceId });
   const dryRun = !commit;
   let writtenMonths = [];
+  // Kalibrierung muss den geladenen State sehen (VO-Forecast-Daten) -> INNERHALB des
+  // commitState-Callbacks berechnen. commitState kann den Callback bei REV_MISMATCH-Retry
+  // mehrfach rufen — die letzte Berechnung gilt, das ist korrekt.
+  let calibration = null;
   const res = await commitState(
     cfg,
     (state) => {
+      calibration = computeCalibration(rows, Number(baseYear), Number(forecastYear), csvPath, { state });
       const r = applyBwaImport(state, { rows, calibration, log: () => {} });
       writtenMonths = r.writtenMonths;
     },
