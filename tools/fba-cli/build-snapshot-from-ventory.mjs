@@ -1,10 +1,18 @@
 // Baut einen Bestands-Snapshot fuer einen Monat aus VentoryOne-Live-Daten und schreibt ihn
 // (via commitState) in state.inventory.snapshots des Cashflow-Tools.
 //
-// Mapping (1:1 zur Tool-Paste-Logik "FBA Bestand"-Spalte = verfuegbar + reserviert):
-//   amazonUnits  = InStockSupplyQuantity + afn_reserved_quantity   (FBA on-hand, ohne Inbound)
-//   threePLUnits = wh_pcs_left                                     (Lager/3PL)
-// Inbound (fba_pcs_on_the_way) wird NICHT in den Snapshot geschrieben -> das modellieren die POs/FOs.
+// Mapping:
+//   amazonUnits  = InStockSupplyQuantity + afn_reserved_quantity   (FBA on-hand: verfuegbar + reserviert)
+//   threePLUnits = max(wh_pcs_left, fba_pcs_on_the_way)            (Majamo-Lager ODER FBA-Transit)
+//
+// Setzung (GF-Entscheidung Pierre): mahona bezieht EXW, Forto als Spediteur, 3PL ist Majamo.
+// Ware, die von Majamo zu Amazon-FBA unterwegs ist (fba_pcs_on_the_way), gehoert wirtschaftlich
+// zum Bestand ("im Kreislauf") und wird mitgezaehlt.
+// max() gegen DOPPELZAEHLUNG: Manche Chargen stehen GLEICHZEITIG im Majamo-Lager (wh_pcs_left)
+// UND als FBA-Transit (fba_pcs_on_the_way) -- dieselbe Charge. max() zaehlt sie EINMAL:
+//   - noch im Lager gebucht (wh=504, onway=504) -> 504, nicht 1008.
+//   - schon ausgebucht       (wh=0,   onway=63)  -> 63  (Transit zaehlt).
+//   - Lager dominiert         (wh=1300, onway=19) -> 1300.
 //
 // Aufruf:
 //   node tools/fba-cli/build-snapshot-from-ventory.mjs --month=2026-05            # Dry-Run
@@ -13,6 +21,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { getConfig } from "./config.mjs";
 import { commitState, loadState } from "./client.mjs";
 import { validateState } from "./validate.mjs";
@@ -39,6 +48,30 @@ async function fetchVentoryStock() {
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
+// Reine Mapping-Funktion: eine VentoryOne-Stock-Zeile -> Snapshot-Item.
+// Doppelzaehlungsfrei: threePLUnits = max(Majamo-Lager, FBA-Transit).
+// Rueckgabe enthaelt _components (Audit/Anzeige) -- wird vor dem Schreiben entfernt.
+export function mapVentoryRowToItem(voRow, canonicalSku) {
+  const r = voRow || {};
+  const inStock = num(r.InStockSupplyQuantity);
+  const reserved = num(r.afn_reserved_quantity);
+  const wh = num(r.wh_pcs_left);
+  const onTheWay = num(r.fba_pcs_on_the_way);
+
+  const amazonUnits = Math.max(0, Math.round(inStock + reserved));
+  // max() statt Summe -> Transit-Charge, die noch im Lager gebucht ist, zaehlt nur einmal.
+  const threePLUnits = Math.max(0, Math.round(Math.max(wh, onTheWay)));
+
+  return {
+    sku: canonicalSku, note: "", amazonUnits, threePLUnits,
+    _components: {
+      inStock, reserved, wh, onTheWay,
+      whStockUnits: Math.max(0, Math.round(wh)),
+      inTransitUnits: Math.max(0, Math.round(onTheWay)),
+    },
+  };
+}
+
 async function main() {
   const args = Object.fromEntries(process.argv.slice(2).map((a) => {
     const m = a.match(/^--([^=]+)=?(.*)$/); return m ? [m[1], m[2] === "" ? true : m[2]] : [a, true];
@@ -58,22 +91,25 @@ async function main() {
     const skuRaw = String(r.sku || "");
     const canonical = productSkus.get(skuRaw.toLowerCase());
     if (!canonical) { if (skuRaw) unmatched.push(skuRaw); continue; }
-    const amazonUnits = Math.max(0, Math.round(num(r.InStockSupplyQuantity) + num(r.afn_reserved_quantity)));
-    const threePLUnits = Math.max(0, Math.round(num(r.wh_pcs_left)));
-    items.push({
-      sku: canonical, note: "", amazonUnits, threePLUnits,
-      _components: { inStock: num(r.InStockSupplyQuantity), reserved: num(r.afn_reserved_quantity), wh: num(r.wh_pcs_left), onTheWay: num(r.fba_pcs_on_the_way) },
-    });
+    items.push(mapVentoryRowToItem(r, canonical));
   }
 
   // Vorschau-Tabelle
   console.log(`\nVentoryOne -> Snapshot ${month}: ${items.length} SKUs gemappt, ${unmatched.length} unmatched.`);
   if (unmatched.length) console.log("  unmatched (in VO, nicht in Produkten):", unmatched.join(", "));
-  console.log("\n  SKU                                amazon(=inStock+reserved)  3PL   [inStock/reserved/onWay]");
+  console.log("\n  SKU                                amazon(=inStk+resv)    wh  transit  3PL(=max)  [inStk/resv/wh/onWay]");
+  let sumAmazon = 0, sumThreePL = 0;
   for (const it of items.slice().sort((a, b) => b.amazonUnits - a.amazonUnits)) {
     const c = it._components;
-    console.log(`  ${it.sku.padEnd(34)} ${String(it.amazonUnits).padStart(6)}            ${String(it.threePLUnits).padStart(4)}   [${c.inStock}/${c.reserved}/${c.onTheWay}]`);
+    sumAmazon += it.amazonUnits; sumThreePL += it.threePLUnits;
+    const flag = c.whStockUnits > 0 && c.inTransitUnits > 0 ? " <-max" : "";
+    console.log(
+      `  ${it.sku.padEnd(34)} ${String(it.amazonUnits).padStart(6)}` +
+      `        ${String(c.whStockUnits).padStart(5)}  ${String(c.inTransitUnits).padStart(5)}    ${String(it.threePLUnits).padStart(6)}` +
+      `   [${c.inStock}/${c.reserved}/${c.wh}/${c.onTheWay}]${flag}`,
+    );
   }
+  console.log(`\n  SUMME: amazon=${sumAmazon}  3PL=${sumThreePL}  gesamt(amazon+3PL)=${sumAmazon + sumThreePL}`);
 
   // _components vor dem Schreiben entfernen (nur Anzeige)
   const cleanItems = items.map(({ _components, ...rest }) => rest);
@@ -99,4 +135,7 @@ async function main() {
   }
 }
 
-main().catch((e) => { process.stderr.write(`FEHLER: ${e.message}\n`); process.exit(1); });
+// Nur ausfuehren, wenn direkt gestartet (nicht beim Import durch den Test).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { process.stderr.write(`FEHLER: ${e.message}\n`); process.exit(1); });
+}
