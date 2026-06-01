@@ -128,7 +128,7 @@ export function StockReconciliationPanel({ snapshot, productBySku }: Props): JSX
             <th style={th}>Transit</th>
             <th style={th}>3PL</th>
             <th style={th}><Tooltip title="CFP-Bestand − reserviert = was VentoryOne (TotalSupplyQuantity) anzeigt">VO-Äquiv.</Tooltip></th>
-            <th style={th}>Velocity/Tag</th>
+            <th style={th}><Tooltip title="Verkäufe pro Tag — VentoryOne 3-Tage-Schnitt (reagiert am schnellsten auf den aktuellen Abverkauf)">Velocity/Tag</Tooltip></th>
             <th style={th}><Tooltip title="VO-Äquivalent − Velocity × Tage seit Snapshot ≈ heutiger VentoryOne-Stand">proj. VO heute</Tooltip></th>
           </tr>
         </thead>

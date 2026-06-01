@@ -73,12 +73,14 @@ export function mapVentoryRowToItem(voRow, canonicalSku) {
   // Nur das externe 3PL-Lager (Majamo). wh und onway sind disjunkt -> keine Doppelzaehlung.
   const threePLUnits = Math.max(0, Math.round(wh));
 
-  // Verkaufs-Velocity (Stk/Tag) fuer die Reconciliation-Projektion. Headline = 7-Tage-Schnitt
-  // (aktueller Trend), Fallback Forecast bzw. 30-Tage. Rohwerte in components fuer Transparenz.
+  // Verkaufs-Velocity (Stk/Tag) fuer die Reconciliation-Projektion. Headline = 3-Tage-Schnitt
+  // (reagiert am schnellsten auf den aktuellen Abverkauf), Fallback 7-Tage / Forecast / 30-Tage.
+  // Rohwerte in components fuer Transparenz.
+  const sales3 = round1(r.sales_last_3_days);
   const sales7 = round1(r.sales_last_7_days);
   const sales30 = round1(r.sales_last_30_days);
   const forecastVel = round1(r.forecasted_sales_velocity);
-  const velocityPerDay = sales7 || forecastVel || sales30;
+  const velocityPerDay = sales3 || sales7 || forecastVel || sales30;
 
   return {
     sku: canonicalSku, note: "", amazonUnits, threePLUnits, velocityPerDay,
@@ -86,7 +88,7 @@ export function mapVentoryRowToItem(voRow, canonicalSku) {
       inStock, reserved, wh, onTheWay,
       whStockUnits: Math.max(0, Math.round(wh)),
       inTransitUnits: Math.max(0, Math.round(onTheWay)),
-      sales7, sales30, forecastVel,
+      sales3, sales7, sales30, forecastVel,
     },
   };
 }
