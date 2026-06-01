@@ -3,7 +3,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { planPoStatusSync, applyPoStatusSync, isPoFullyPaid } from "./sync-po-status.mjs";
+import {
+  planPoStatusSync,
+  applyPoStatusSync,
+  isPoFullyPaid,
+  isCorrectionVoPo,
+  pickRealVoPo,
+} from "./sync-po-status.mjs";
 
 // --- Helper: eine voll bezahlte PO (Deposit + Balance beide paid) ----------
 function fullyPaidPo(extra = {}) {
@@ -155,6 +161,62 @@ test("5. CFP-PO ohne VO-Match -> unmatched", () => {
   assert.equal(plan.toArchive.length, 0);
   assert.equal(plan.toReceiveUnpaid.length, 0);
   assert.equal(plan.toMapOnly.length, 0);
+});
+
+// --- Korrektur-Erkennung + Dubletten-Disambiguierung ----------------------
+
+test("isCorrectionVoPo: 'Korrektur Sitzkissen' / 'Manuelle Korrektur' -> true; echte PO -> false", () => {
+  assert.equal(isCorrectionVoPo({ order_name: "PO26x - Korrektur Sitzkissen" }), true);
+  assert.equal(isCorrectionVoPo({ order_name: "Manuelle Korrektur - Lenkertasche großes Logo" }), true);
+  assert.equal(isCorrectionVoPo({ order_name: "PO260006 - BIKEPACK-Grossbestellung" }), false);
+  assert.equal(isCorrectionVoPo({ order_name: "" }), false);
+});
+
+test("pickRealVoPo: bei Dublette gewinnt die echte PO, nicht die Korrektur-Buchung (Sitzkissen)", () => {
+  const correction = { id: 300359, po_number: "PO260006", order_name: "PO26x - Korrektur Sitzkissen", status: "Received", archived: true, order_placed_date: null };
+  const real = { id: 301542, po_number: "PO260006", order_name: "PO260006 - BIKEPACK-Grossbestellung", status: "Ordered", archived: false, order_placed_date: "2026-04-02" };
+  assert.equal(pickRealVoPo([correction, real], "260006").id, 301542);
+  assert.equal(pickRealVoPo([real, correction], "260006").id, 301542); // reihenfolgeunabhängig
+});
+
+test("pickRealVoPo: Nespresso-Dublette -> echte PO 307545 statt 'Manuelle Korrektur'", () => {
+  const correction = { id: 307464, po_number: "PO260009", order_name: "Manuelle Korrektur - Lenkertasche großes Logo", status: "Received", archived: false, order_placed_date: null };
+  const real = { id: 307545, po_number: "PO260009", order_name: "PO260009 - Nespresso 2er + Dichtungsringe", status: "Ordered", archived: false, order_placed_date: "2026-05-29" };
+  assert.equal(pickRealVoPo([correction, real], "260009").id, 307545);
+});
+
+test("pickRealVoPo: Einzelkandidat wird IMMER zurückgegeben (auch ohne order_placed_date)", () => {
+  const only = { id: 300359, po_number: "PO260006", status: "Received", order_received_date: "2026-03-23" };
+  assert.equal(pickRealVoPo([only], "260006").id, 300359);
+  assert.equal(pickRealVoPo([], "260006"), null);
+});
+
+test("8. planPoStatusSync: Dublette (Korrektur + echt) -> mappt auf die echte VO-id", () => {
+  const cfpPos = [{ id: "c6", poNo: "260006", archived: false }];
+  const voPos = [
+    { id: 300359, po_number: "PO260006", order_name: "PO26x - Korrektur Sitzkissen", status: "Received", order_received_date: "2026-03-23", archived: true, order_placed_date: null },
+    { id: 301542, po_number: "PO260006", order_name: "PO260006 - BIKEPACK-Grossbestellung", status: "Ordered", order_received_date: "2026-07-07", archived: false, order_placed_date: "2026-04-02" },
+  ];
+  const plan = planPoStatusSync(cfpPos, voPos);
+  assert.equal(plan.unmatched.length, 0);
+  assert.equal(plan.all[0].ventoryPoId, 301542);   // echte PO, NICHT die Korrektur 300359
+  assert.equal(plan.all[0].voStatus, "Ordered");
+  assert.equal(plan.toArchive.length, 0);            // Ordered -> kein Empfang/Archiv
+  assert.equal(plan.toMapOnly.length, 1);
+});
+
+test("9. planPoStatusSync: bereits gemappte ventoryPoId hat VORRANG vor po_number (id-primär)", () => {
+  // CFP ist auf die echte PO (301542) gemappt; eine Korrektur-Dublette mit gleicher po_number
+  // darf NICHT mehr greifen.
+  const cfpPos = [{ id: "c6", poNo: "260006", archived: false, ventoryPoId: 301542 }];
+  const voPos = [
+    { id: 300359, po_number: "PO260006", order_name: "Korrektur", status: "Received", order_received_date: "2026-03-23", archived: true },
+    { id: 301542, po_number: "PO260006", order_name: "PO260006 - Grossbestellung", status: "Ordered", order_placed_date: "2026-04-02" },
+  ];
+  const plan = planPoStatusSync(cfpPos, voPos);
+  assert.equal(plan.all[0].ventoryPoId, 301542);
+  assert.equal(plan.all[0].voStatus, "Ordered");
+  assert.equal(plan.toArchive.length, 0);            // nicht über die Korrektur (Received) archivieren
 });
 
 // --- applyPoStatusSync ----------------------------------------------------

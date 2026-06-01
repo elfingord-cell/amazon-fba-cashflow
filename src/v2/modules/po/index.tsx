@@ -73,6 +73,8 @@ interface PoAutoEventDraft {
 interface PoFormValues {
   id?: string;
   poNo: string;
+  /** Stabile VentoryOne-PO-id (Sync-Schlüssel). Read-only, wird vom VO->CFP-Sync gesetzt. */
+  ventoryPoId?: string | number | null;
   supplierId: string;
   orderDate: string;
   etdManual?: string;
@@ -2058,6 +2060,7 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
     const baseDraft: PoFormValues = {
       id: existing?.id ? String(existing.id) : undefined,
       poNo: String(existing?.poNo || ""),
+      ventoryPoId: (existing?.ventoryPoId as string | number | null | undefined) ?? null,
       supplierId,
       orderDate: String(prefill?.orderDate || existing?.orderDate || new Date().toISOString().slice(0, 10)),
       etdManual: String(prefill?.etdManual || existing?.etdManual || ""),
@@ -3073,6 +3076,14 @@ export default function PoModule({ embedded = false }: PoModuleProps = {}): JSX.
               rules={[{ required: true, message: "PO Nummer ist erforderlich." }]}
             >
               <Input />
+            </Form.Item>
+            <Form.Item
+              name="ventoryPoId"
+              label="VentoryOne-ID"
+              tooltip="Stabiler Sync-Schlüssel aus VentoryOne (eindeutige PO-id). Wird vom VO→CFP-Sync automatisch gesetzt und ist nicht editierbar."
+              style={{ width: 150 }}
+            >
+              <Input disabled placeholder="— nicht gemappt —" />
             </Form.Item>
             <Form.Item
               name="supplierId"
