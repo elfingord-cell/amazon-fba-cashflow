@@ -1,20 +1,26 @@
 // Baut einen Bestands-Snapshot fuer einen Monat aus VentoryOne-Live-Daten und schreibt ihn
 // (via commitState) in state.inventory.snapshots des Cashflow-Tools.
 //
-// Mapping:
-//   amazonUnits  = InStockSupplyQuantity + afn_reserved_quantity   (FBA on-hand: verfuegbar + reserviert)
-//   threePLUnits = wh_pcs_left + fba_pcs_on_the_way                (Majamo-Lager + FBA-Transit, ADDITIV)
+// Mapping (GF-Entscheidung Pierre 2026-06-01):
+//   amazonUnits  = InStockSupplyQuantity + afn_reserved_quantity + fba_pcs_on_the_way
+//                  (alles bei + unterwegs zu Amazon: verfuegbar + reserviert + Transit-zu-FBA)
+//   threePLUnits = wh_pcs_left                                     (nur Majamo-3PL-Lager)
 //
-// Setzung (GF-Entscheidung Pierre): mahona bezieht EXW, Forto als Spediteur, 3PL ist Majamo.
-// Ware, die von Majamo zu Amazon-FBA unterwegs ist (fba_pcs_on_the_way), gehoert wirtschaftlich
-// zum Bestand ("im Kreislauf") und wird mitgezaehlt.
-// KEINE Doppelzaehlung trotz Addition: VentoryOne bucht bei einer FBA-Einsendung die Ware SOFORT
-// aus dem Majamo-Bestand aus (wh_pcs_left) und fuehrt sie als Transit (fba_pcs_on_the_way). Die
-// beiden Felder sind also DISJUNKT -- verifiziert an VOs eigenem Bestandsfeld
-// `pcs_total_wh_and_fba_excl_on_the_way` = InStock + wh + onway (z.B. FRAMEBAG-EDGE: wh 504 +
-// onway 504 = 1008; das sind zwei verschiedene Chargen, nicht dieselbe). Daher: wh + onway addieren.
-// (reservierte Ware zaehlt mit -- physisch noch im FC bis zur Auslieferung; das ist mahona-Setzung,
-//  VOs Anzeige laesst reserved weg.)
+// Warum so:
+// - Transit zu Amazon (fba_pcs_on_the_way) gehoert in den AMAZON-Eimer, nicht ins 3PL -- die Ware
+//   ist auf dem Weg ins FC. (Frueher lag sie im 3PL-Eimer; am Gesamt-Total aendert die Verschiebung
+//   nichts, nur an der Zuordnung Amazon vs 3PL.)
+// - Reservierte Ware (afn_reserved_quantity) zaehlt MIT: sie liegt physisch im FC und ist mahonas
+//   Eigentum bis zur Auslieferung an den Kunden. Damit ist der CFP-Snapshot ein vollstaendiger
+//   EIGENTUMS-/Bestandswert. ACHTUNG: VOs Headline (`TotalSupplyQuantity`) zaehlt reservierte NICHT
+//   -> der CFP liegt bewusst ~reserved hoeher als VO. Beim Vergleich gilt: CFP ~= VO + reserved
+//   (und + ggf. Verkaufstage-Differenz ueber die Sales-Velocity, wenn Snapshot-Tag != heute).
+// - KEINE Doppelzaehlung wh vs Transit: VentoryOne bucht bei einer FBA-Einsendung die Ware SOFORT
+//   aus dem Majamo-Bestand aus (wh_pcs_left) und fuehrt sie als Transit (fba_pcs_on_the_way) -- die
+//   Felder sind disjunkt (verifiziert an `pcs_total_wh_and_fba_excl_on_the_way` = InStock+wh+onway).
+//
+// Die Rohkomponenten (inStock/reserved/wh/onTheWay) werden je SKU mit gespeichert (`components`),
+// damit "warum ist die Zahl so?" spaeter ohne erneuten VO-Abruf beantwortbar bleibt.
 //
 // Aufruf:
 //   node tools/fba-cli/build-snapshot-from-ventory.mjs --month=2026-05            # Dry-Run
@@ -51,8 +57,9 @@ async function fetchVentoryStock() {
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 
 // Reine Mapping-Funktion: eine VentoryOne-Stock-Zeile -> Snapshot-Item.
-// threePLUnits = Majamo-Lager + FBA-Transit (additiv; Felder sind disjunkt, s. Kopf-Kommentar).
-// Rueckgabe enthaelt _components (Audit/Anzeige) -- wird vor dem Schreiben entfernt.
+// amazonUnits  = InStock + reserviert + Transit-zu-FBA (alles bei/unterwegs zu Amazon).
+// threePLUnits = nur wh_pcs_left (Majamo-3PL). S. Kopf-Kommentar.
+// `components` (inStock/reserved/wh/onTheWay) wird MIT gespeichert (Audit/Reconciliation).
 export function mapVentoryRowToItem(voRow, canonicalSku) {
   const r = voRow || {};
   const inStock = num(r.InStockSupplyQuantity);
@@ -60,13 +67,14 @@ export function mapVentoryRowToItem(voRow, canonicalSku) {
   const wh = num(r.wh_pcs_left);
   const onTheWay = num(r.fba_pcs_on_the_way);
 
-  const amazonUnits = Math.max(0, Math.round(inStock + reserved));
-  // Additiv: VO bucht Transit-Ware aus dem Lager aus -> wh und onway sind disjunkt, kein Doppel.
-  const threePLUnits = Math.max(0, Math.round(wh + onTheWay));
+  // Transit zaehlt zu Amazon (Ware ist auf dem Weg ins FC); reserviert zaehlt mit (Eigentum im FC).
+  const amazonUnits = Math.max(0, Math.round(inStock + reserved + onTheWay));
+  // Nur das externe 3PL-Lager (Majamo). wh und onway sind disjunkt -> keine Doppelzaehlung.
+  const threePLUnits = Math.max(0, Math.round(wh));
 
   return {
     sku: canonicalSku, note: "", amazonUnits, threePLUnits,
-    _components: {
+    components: {
       inStock, reserved, wh, onTheWay,
       whStockUnits: Math.max(0, Math.round(wh)),
       inTransitUnits: Math.max(0, Math.round(onTheWay)),
@@ -99,22 +107,22 @@ async function main() {
   // Vorschau-Tabelle
   console.log(`\nVentoryOne -> Snapshot ${month}: ${items.length} SKUs gemappt, ${unmatched.length} unmatched.`);
   if (unmatched.length) console.log("  unmatched (in VO, nicht in Produkten):", unmatched.join(", "));
-  console.log("\n  SKU                                amazon(=inStk+resv)    wh  transit  3PL(=wh+transit)  [inStk/resv/wh/onWay]");
+  console.log("\n  SKU                                amazon(=inStk+resv+transit)    3PL(=wh)  [inStk/resv/wh/onWay]");
   let sumAmazon = 0, sumThreePL = 0;
   for (const it of items.slice().sort((a, b) => b.amazonUnits - a.amazonUnits)) {
-    const c = it._components;
+    const c = it.components;
     sumAmazon += it.amazonUnits; sumThreePL += it.threePLUnits;
     const flag = c.inTransitUnits > 0 ? " <-Transit" : "";
     console.log(
       `  ${it.sku.padEnd(34)} ${String(it.amazonUnits).padStart(6)}` +
-      `        ${String(c.whStockUnits).padStart(5)}  ${String(c.inTransitUnits).padStart(5)}    ${String(it.threePLUnits).padStart(6)}` +
+      `              ${String(it.threePLUnits).padStart(6)}` +
       `   [${c.inStock}/${c.reserved}/${c.wh}/${c.onTheWay}]${flag}`,
     );
   }
   console.log(`\n  SUMME: amazon=${sumAmazon}  3PL=${sumThreePL}  gesamt(amazon+3PL)=${sumAmazon + sumThreePL}`);
 
-  // _components vor dem Schreiben entfernen (nur Anzeige)
-  const cleanItems = items.map(({ _components, ...rest }) => rest);
+  // components bleiben erhalten (Audit/Reconciliation) -> direkt schreiben.
+  const cleanItems = items;
 
   const mutate = (s) => {
     if (!s.inventory || typeof s.inventory !== "object") s.inventory = {};
