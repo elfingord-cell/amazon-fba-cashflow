@@ -10,7 +10,17 @@
 //     `po.archived` (bool) unterschieden (Belege: inventory/index.tsx 418/538, stalePos-Liste).
 //   => "Received" in VO  ==  archived=true im CFP.
 //
-// Mapping: CFP `poNo` <-> VO `po_number`, normalisiert (uppercase, nur [A-Z0-9]), mit/ohne "PO"-Präfix.
+// Matching (WICHTIG — kollisionssicher):
+//   1. PRIMÄR über die stabile VentoryOne-`id` (== CFP `ventoryPoId`). Ist eine CFP-PO einmal
+//      gemappt, wird IMMER direkt über diese id gematcht -> eindeutig, unabhängig von po_number.
+//   2. FALLBACK (nur für noch nicht gemappte POs) über `po_number`, normalisiert (uppercase, nur
+//      [A-Z0-9]), mit/ohne "PO"-Präfix.
+//
+// Warum nicht allein po_number? VentoryOne zählt PO-Nummern automatisch hoch. Für vergangene
+// Bestandskorrekturen wurden Korrektur-POs angelegt (die ebenfalls eine Nummer bekamen); der Zähler
+// wurde danach manuell zurückgesetzt -> es existieren ZWEI VO-POs mit identischer po_number (eine
+// echte Bestellung + eine "Korrektur"-Buchung). Beim po_number-Fallback werden Korrektur-Buchungen
+// deshalb ausgeschlossen (siehe pickRealVoPo / isCorrectionVoPo).
 //   (NICHT über order_name matchen — das Feld ist frei/inkonsistent.)
 //
 // Aufruf (eigenständig):
@@ -108,6 +118,47 @@ function matchKeys(raw) {
   return [...keys];
 }
 
+// --- Korrektur-Buchung erkennen (für den po_number-Fallback) --------------
+// VO-Korrekturbuchungen sind keine echten Bestellungen. Hartes Merkmal: order_name enthält
+// "Korrektur" / "Manuelle Korrektur" / "Korr." / "correction" (case-insensitive).
+// (order_placed_date==null ist ein zusätzliches SCHWACHES Signal, das nur ins Scoring einfließt —
+//  nicht als harter Ausschluss, sonst würden legitime POs ohne Bestelldatum fälschlich verworfen.)
+const CORRECTION_NAME_RE = /korrektur|korr\.|correction/i;
+
+export function isCorrectionVoPo(vo) {
+  if (!vo) return true;
+  return CORRECTION_NAME_RE.test(String(vo.order_name || ""));
+}
+
+// Aus EINEM oder MEHREREN VO-POs mit gleicher po_number die "echte" wählen.
+//   - 1 Kandidat -> direkt zurück (keine Dublette, nichts zu entscheiden).
+//   - mehrere Kandidaten -> Scoring (höchster gewinnt, bei Gleichstand kleinste VO-id):
+//       +8  keine Korrektur-Buchung (Name)         <- stärkstes Signal
+//       +4  order_placed_date gesetzt (echte Bestellung hat ein Bestelldatum)
+//       +2  in VO nicht archiviert
+//       +1  order_name beginnt mit dem sauberen "PO<nr>"-Token (z.B. "PO260006 - ...")
+export function pickRealVoPo(candidates, cfpPoNo) {
+  const list = (candidates || []).filter(Boolean);
+  if (list.length === 0) return null;
+  if (list.length === 1) return list[0];
+
+  const cleanToken = normalizePoNo(cfpPoNo);
+  const score = (vo) => {
+    let s = 0;
+    if (!isCorrectionVoPo(vo)) s += 8;
+    if (vo.order_placed_date) s += 4;
+    if (vo.archived !== true) s += 2;
+    const nameNorm = normalizePoNo(vo.order_name);
+    if (cleanToken && (nameNorm.startsWith(cleanToken) || nameNorm.startsWith(`PO${cleanToken}`))) s += 1;
+    return s;
+  };
+  return list.slice().sort((a, b) => {
+    const d = score(b) - score(a);
+    if (d !== 0) return d;
+    return Number(a.id) - Number(b.id);
+  })[0];
+}
+
 // --- Reine, testbare Planungsfunktion ------------------------------------
 // Baut für jede CFP-PO einen Plan-Eintrag und bestimmt die Aktion:
 //   ARCHIVE         VO=Received, CFP noch nicht archived UND PO voll bezahlt -> als empfangen
@@ -123,12 +174,18 @@ function matchKeys(raw) {
 //   NOOP            nichts zu tun.
 // Kein VO-Match -> unmatched.
 export function planPoStatusSync(cfpPos, voPos) {
-  // Map normalisierte VO-po_number (inkl. PO-loser Variante) -> VO-PO.
-  const voByKey = new Map();
+  // Index 1: stabile VO-id -> VO-PO (Primärschlüssel).
+  const voById = new Map();
+  // Index 2: normalisierte VO-po_number (inkl. PO-loser Variante) -> LISTE aller VO-POs mit dem
+  // Key (Dubletten möglich!) — nur für den Fallback bei noch nicht gemappten CFP-POs.
+  const voCandidatesByKey = new Map();
   for (const vo of voPos || []) {
     if (!vo) continue;
+    if (vo.id != null) voById.set(String(vo.id), vo);
     for (const key of matchKeys(vo.po_number)) {
-      if (!voByKey.has(key)) voByKey.set(key, vo);
+      if (!voCandidatesByKey.has(key)) voCandidatesByKey.set(key, []);
+      const arr = voCandidatesByKey.get(key);
+      if (!arr.includes(vo)) arr.push(vo);
     }
   }
 
@@ -141,10 +198,20 @@ export function planPoStatusSync(cfpPos, voPos) {
   for (const cfpPo of cfpPos || []) {
     if (!cfpPo) continue;
 
-    // Match über die normalisierten Keys des CFP-poNo.
     let vo = null;
-    for (const key of matchKeys(cfpPo.poNo)) {
-      if (voByKey.has(key)) { vo = voByKey.get(key); break; }
+
+    // (1) PRIMÄR: bereits gemappt -> direkt über die stabile VO-id matchen. Kollisionssicher.
+    if (cfpPo.ventoryPoId != null && voById.has(String(cfpPo.ventoryPoId))) {
+      vo = voById.get(String(cfpPo.ventoryPoId));
+    } else {
+      // (2) FALLBACK: noch nicht gemappt -> über po_number, aber Korrektur-Buchungen ausschließen.
+      const candidates = [];
+      for (const key of matchKeys(cfpPo.poNo)) {
+        for (const c of (voCandidatesByKey.get(key) || [])) {
+          if (!candidates.includes(c)) candidates.push(c);
+        }
+      }
+      vo = pickRealVoPo(candidates, cfpPo.poNo);
     }
 
     if (!vo) {
