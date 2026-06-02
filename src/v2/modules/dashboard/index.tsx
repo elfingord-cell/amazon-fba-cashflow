@@ -38,6 +38,7 @@ import {
   isDashboardPhantomFoEntry,
 } from "../../domain/dashboardCashflow";
 import { buildCashInPayoutMirrorByMonth } from "../../domain/cashInPayoutMirror";
+import { CredibilityBadge } from "../../components/CredibilityBadge";
 import { buildMonthPlanningResult, type MonthPlanningMonth } from "../../domain/monthPlanning";
 import {
   buildPhantomFoSuggestions,
@@ -1905,6 +1906,7 @@ export default function DashboardModule(): JSX.Element {
 
   return (
     <div className="v2-page">
+      <CredibilityBadge audit={stateObject.audit as Parameters<typeof CredibilityBadge>[0]["audit"]} />
       <Card className="v2-intro-card">
         <Row gutter={[10, 10]} className="v2-page-head">
           <Col xs={24} xl={12}>
