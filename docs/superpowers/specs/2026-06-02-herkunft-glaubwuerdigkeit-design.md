@@ -130,6 +130,21 @@ Keine Migration nötig: fehlen die Keys, verhält sich alles wie heute.
 - Sellerboard-/Holvi-Reconcile-Checks (Phase 2).
 - UI-Umbau/Nav-Konsolidierung (separates, späteres Thema).
 
+## Festgelegte Parameter (2026-06-02)
+
+- **Schwellen**: `snapshot_fresh` grün ≤ 35 T / amber 36–60 / rot > 60. `forecast_current` grün ≤ 35 T /
+  amber ≤ 60 / rot > 60. `revenue_realistic` grün |ø-Δ| ≤ 25 % / amber ≤ 40 / rot > 40. `provenance_coverage`
+  grün ≥ 80 % / amber 50–79 / rot < 50. Schwellen zentral in `provenanceRules.js` (`AUDIT_THRESHOLDS`), nicht
+  hartcodiert verstreut.
+- **`overall`-Ableitung**: rot, wenn ≥1 Check rot; sonst amber, wenn ≥1 amber; sonst grün. `provenance_coverage`
+  ist „nur Info" und kann `overall` höchstens auf amber ziehen, nie auf rot.
+- **entityKey-Konvention**: `product:<sku>`, `po:<id>`, `fo:<id>`, `setting:<dottedPath>`,
+  `snapshot:<month>`, `forecastImport:<sku>`, `fixcost:<id>`, `supplier:<id>`, `opening:balance`.
+- **`changeLog`**: Ringpuffer, gekappt auf die letzten **100** Einträge (älteste fallen raus).
+- **Report-Kanal**: Telegram **Mahona-Gruppe** (gleicher Kanal/Token wie `cfp-monats-bestandssnapshot`).
+- **Audit-Kadenz (Scheduled)**: wöchentlich **Montag 07:00** (Europe/Berlin) + jederzeit on-demand per CLI.
+- **MVP-Set**: die 8 Checks aus Abschnitt C. `revenue_reconciled` + `payments_matched` = Phase 2.
+
 ## Phasen
 1. **Regelwerk** (Doc + `provenanceRules.js`) — reine Festlegung, kein Risiko.
 2. **Audit-CLI** (`audit`-Verb, MVP-Checks, `--write`) + Tests.
