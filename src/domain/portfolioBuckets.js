@@ -157,6 +157,7 @@ export function buildProductProfileIndex(state) {
       portfolioBucket: bucket,
       effectivePortfolioBucket: effectiveBucket,
       poExists: poSkuSet.has(skuKey),
+      discontinued: product.discontinued === true,
     });
   });
   return {
@@ -183,6 +184,7 @@ export function resolveProductProfile(input) {
     portfolioBucket,
     effectivePortfolioBucket,
     poExists: poSkuSet.has(normalizeSkuKey(sku)),
+    discontinued: product.discontinued === true,
   };
 }
 

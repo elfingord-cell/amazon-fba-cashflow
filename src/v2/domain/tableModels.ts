@@ -46,6 +46,8 @@ export interface ForecastProductRow {
   alias: string;
   categoryLabel: string;
   isActive: boolean;
+  // Auslaufend: kein Nachschub mehr, Forecast-Umsatz wird im Cashflow am Bestand gedeckelt (Sell-Through).
+  discontinued?: boolean;
   avgSellingPriceGrossEUR: number | null;
   sellerboardMarginPct: number | null;
   isPlan?: boolean;
@@ -276,6 +278,7 @@ export function buildForecastProducts(
         alias: String(product.alias || sku),
         categoryLabel: categoriesById.get(String(product.categoryId || "")) || "Ohne Kategorie",
         isActive: isForecastProductActive(product),
+        discontinued: product.discontinued === true,
         avgSellingPriceGrossEUR: parseDeNumber(product.avgSellingPriceGrossEUR),
         sellerboardMarginPct: parseDeNumber(product.sellerboardMarginPct),
         sourceLabel: "csv",

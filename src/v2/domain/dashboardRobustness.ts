@@ -234,6 +234,8 @@ function mapRiskClassToShortageIssueType(riskClass: ProjectionRiskClass): Shorta
 
 function isActiveProduct(product: Record<string, unknown>): boolean {
   if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
+  // Auslaufend: kein Nachschub -> erzeugt keine Bestell-/Coverage-Pflicht (keine Order-Duty-Issues).
+  if (product.discontinued === true) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

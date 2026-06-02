@@ -130,6 +130,9 @@ function round2(value: number): number {
 
 function statusIsActive(product: Record<string, unknown>): boolean {
   if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;
+  // Auslaufend (discontinued): kein Nachschub mehr -> aus der Reorder-/Phantom-FO-Generierung raus,
+  // auch wenn das Produkt sonst aktiv ist (es verkauft seinen Restbestand ab).
+  if (product.discontinued === true) return false;
   if (typeof product.active === "boolean") return product.active;
   const status = String(product.status || "").trim().toLowerCase();
   if (!status) return true;

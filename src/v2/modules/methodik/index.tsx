@@ -315,7 +315,8 @@ export default function MethodikModule(): JSX.Element {
                 ["Ideenprodukt", "Geplant", "nein", "nein", "Plan (grob) / keine"],
                 ["Planprodukt", "Prelaunch", "ja", "nein", "Plan-Brücke (Baseline × Saisonalität)"],
                 ["Kernprodukt", "Aktiv", "ja", "ja", "VentoryOne-Live (Verkaufshistorie)"],
-                ["(Auslaufend / Inaktiv)", "Inaktiv", "ja", "—", "— / manuell"],
+                ["Kernprodukt", "Auslaufend", "ja", "ja (Restbestand)", "VO-Live, am Bestand gedeckelt — kein Nachschub"],
+                ["—", "Inaktiv", "ja", "nein", "— / manuell"],
               ].map((cells) => (
                 <tr key={cells[0]} style={{ borderBottom: "1px solid var(--v2-border, #f0f0f0)" }}>
                   {cells.map((c, idx) => (
@@ -337,6 +338,23 @@ export default function MethodikModule(): JSX.Element {
                 Lebenszyklus Prelaunch → Aktiv und Quelle Plan → VO-Live; die Plan-Brücke phast sich pro Monat aus.
                 Solange ein Produkt noch nicht gelauncht ist, steht es im VentoryOne-Import auf 0 (keine Historie) — die
                 Plan-Brücke füllt die Lücke.
+              </span>
+            )}
+          />
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginTop: 8 }}
+            message="Auslaufend (Sell-Through ohne Nachschub)"
+            description={(
+              <span>
+                Ein Produkt mit dem Marker <strong>Auslaufend</strong> wird nicht mehr nachbestellt: Es erscheint in
+                keiner Bestell-/PO-/FO-/PFO-Empfehlung mehr. Der Forecast-Umsatz läuft aber weiter, <strong>gedeckelt am
+                verfügbaren Bestand</strong> (jüngster Snapshot): solange kumulierte Forecast-Stück ≤ Bestand voller
+                Umsatz, der Überlaufmonat anteilig, danach 0. Bestand 0 ⇒ sofort 0. Die Deckelung wird bei jeder
+                Berechnung frisch ermittelt und übersteht VentoryOne-Re-Imports. Geändert wird der Marker in der
+                Produkt-Tabelle. Hinweis: Forecast-Import-Zeilen ohne zugehöriges Produkt (verwaist) zählen gar nicht
+                mehr in den Cashflow.
               </span>
             )}
           />

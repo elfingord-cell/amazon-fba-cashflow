@@ -503,9 +503,59 @@ test("shared plan projection reuses an existing virtual SKU instead of minting a
   );
 
   const suggestions = buildPhantomFoSuggestions({ state, months, maxSuggestions: 5 });
+  const planAlphaSuggestions = suggestions.filter((entry) => entry.alias === "Plan Alpha");
+  // Die ANZAHL der PFOs ist eine Coverage-Ketten-Größe und damit datums-/monatsgrenzen-
+  // abhängig (ein Produkt ohne Bestand mit Mehrmonats-Forecast erzeugt legitim mehrere
+  // überfällige PFOs — verifiziert: ein gleichwertiges echtes Produkt liefert identisch viele).
+  // Die eigentliche Shared-Path-Invariante ist: alle PFOs des Planprodukts laufen über EINE
+  // virtuelle SKU — es darf kein zweiter geminteter Plan-SKU entstehen.
+  assert.ok(
+    planAlphaSuggestions.length >= 1,
+    "Das aktive Planprodukt muss mindestens einen PFO-Vorschlag erzeugen.",
+  );
+  const planAlphaSkus = new Set(planAlphaSuggestions.map((entry) => entry.sku));
+  assert.deepEqual(
+    [...planAlphaSkus],
+    [firstProjection.entries[0]?.planningSku],
+    "Alle PFO-Vorschläge des Planprodukts müssen dieselbe virtuelle SKU wiederverwenden — kein zweiter geminteter Plan-SKU.",
+  );
+});
+
+test("discontinued product generates no phantom-FO (kein Nachschub)", async () => {
+  const now = currentMonthKey();
+  const months = monthRange(now, 12);
+  const sku = "SKU-EOL";
+  const shortageInput = {
+    snapshotItems: [{ sku, amazonUnits: 0, threePLUnits: 0 }],
+    forecastManual: {
+      [sku]: Object.fromEntries(months.map((month) => [month, 80])),
+    },
+  };
+
+  // Kontrolle: aktives Produkt mit Fehlbestand -> es MUSS einen PFO geben.
+  const activeState = buildState({
+    ...shortageInput,
+    products: [makeProduct(sku, { productionLeadTimeDaysDefault: 20, transitDays: 25 })],
+  });
+  const activeSuggestions = buildPhantomFoSuggestions({ state: activeState, months });
+  assert.ok(
+    activeSuggestions.filter((entry) => entry.sku === sku).length >= 1,
+    "Kontrolle: aktives Produkt mit Fehlbestand muss einen PFO erzeugen.",
+  );
+
+  // Auslaufend: gleicher Fehlbestand, aber discontinued -> KEIN PFO.
+  const eolState = buildState({
+    ...shortageInput,
+    products: [makeProduct(sku, {
+      productionLeadTimeDaysDefault: 20,
+      transitDays: 25,
+      extra: { discontinued: true },
+    })],
+  });
+  const eolSuggestions = buildPhantomFoSuggestions({ state: eolState, months });
   assert.equal(
-    suggestions.filter((entry) => entry.alias === "Plan Alpha").length,
-    1,
-    "Ein einzelnes Planprodukt darf im Shared-Path nicht als duplizierter PFO-Fall erneut erscheinen.",
+    eolSuggestions.filter((entry) => entry.sku === sku).length,
+    0,
+    "Auslaufprodukt (discontinued) darf keinen Nachschub-PFO erzeugen.",
   );
 });

@@ -6,6 +6,7 @@ exports.fmtEUR = fmtEUR;
 exports.fmtPct = fmtPct;
 exports.computeOutflowStack = computeOutflowStack;
 exports.expandFixcostInstances = expandFixcostInstances;
+exports.capRevenueByStock = capRevenueByStock;
 exports.computeSeries = computeSeries;
 exports.getEffectiveCashInMonth = getEffectiveCashInMonth;
 exports.buildEffectiveCashInByMonth = buildEffectiveCashInByMonth;
@@ -1209,6 +1210,62 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     return events;
 }
 // ---------- Aggregation ----------
+// Sell-Through-Deckelung fuer auslaufende Produkte: Forecast-Umsatz laeuft, solange Bestand reicht.
+// entries: [{ month, units, revenueEur }] fuer EINE SKU. availableStock: aktuell verfuegbare Stueck.
+// Liefert Map<month, gedeckelterUmsatz>: voller Umsatz solange kumulierte Stueck <= Bestand, der
+// Ueberlaufmonat anteilig, danach 0. Ohne Stueckinfo (units<=0) voller Umsatz solange Bestand da ist
+// (kein Verbrauch -> keine Division durch 0).
+function capRevenueByStock(entries, availableStock) {
+    const out = new Map();
+    const stock = Number.isFinite(Number(availableStock)) ? Math.max(0, Number(availableStock)) : 0;
+    const sorted = [...(Array.isArray(entries) ? entries : [])]
+        .sort((a, b) => String(a?.month || "").localeCompare(String(b?.month || "")));
+    let cumUnits = 0;
+    for (const entry of sorted) {
+        const month = entry?.month;
+        if (!month)
+            continue;
+        const units = Number(entry?.units) || 0;
+        const rawRevenue = Number(entry?.revenueEur);
+        const revenue = Number.isFinite(rawRevenue) ? rawRevenue : 0;
+        if (cumUnits >= stock) {
+            out.set(month, 0);
+            continue;
+        }
+        if (units <= 0) {
+            out.set(month, revenue);
+            continue;
+        }
+        if (cumUnits + units <= stock) {
+            out.set(month, revenue);
+        }
+        else {
+            const fraction = (stock - cumUnits) / units;
+            out.set(month, revenue * fraction);
+        }
+        cumUnits += units;
+    }
+    return out;
+}
+// Verfuegbarer Bestand je SKU aus dem juengsten Inventar-Snapshot (amazonUnits + threePLUnits).
+function buildLatestSnapshotStockIndex(state) {
+    const map = new Map();
+    const snapshots = Array.isArray(state?.inventory?.snapshots) ? state.inventory.snapshots : [];
+    if (!snapshots.length)
+        return map;
+    const latest = snapshots
+        .slice()
+        .sort((a, b) => String(b?.month || "").localeCompare(String(a?.month || "")))[0];
+    const items = Array.isArray(latest?.items) ? latest.items : [];
+    items.forEach((item) => {
+        const skuKey = (0, portfolioBuckets_js_1.normalizeSkuKey)(item?.sku);
+        if (!skuKey)
+            return;
+        const units = (Number(item?.amazonUnits) || 0) + (Number(item?.threePLUnits) || 0);
+        map.set(skuKey, units);
+    });
+    return map;
+}
 function computeSeries(state) {
     const s = state || {};
     const startMonth = (s.settings && s.settings.startMonth) || '2025-01';
@@ -1354,16 +1411,36 @@ function computeSeries(state) {
         });
     });
     if (forecastEnabled) {
+        const snapshotStockBySku = buildLatestSnapshotStockIndex(s);
         if (s?.forecast?.forecastImport && typeof s.forecast.forecastImport === "object") {
             Object.entries(s.forecast.forecastImport).forEach(([sku, monthMap]) => {
+                const skuKey = (0, portfolioBuckets_js_1.normalizeSkuKey)(sku);
+                // Orphan-Guard: forecastImport-SKU ohne zugehoeriges Produkt traegt nichts bei
+                // (kein Katalogartikel -> kein verkaufbarer Umsatz; verhindert Phantom-Umsatz nach Re-Import).
+                if (!productProfileBySku.has(skuKey))
+                    return;
                 const profile = profileForSku(sku);
                 if (!profile.includeInForecast)
                     return;
                 const bucketName = (0, portfolioBuckets_js_1.normalizePortfolioBucket)(profile.effectivePortfolioBucket, portfolioBuckets_js_1.PORTFOLIO_BUCKET.CORE);
+                // Auslaufend (discontinued): Forecast-Umsatz am verfuegbaren Bestand deckeln (Sell-Through bis 0).
+                let cappedRevenueByMonth = null;
+                if (profile.discontinued) {
+                    const capEntries = Object.entries(monthMap || {})
+                        .filter(([month]) => month && bucket[month])
+                        .map(([month, entry]) => ({
+                        month,
+                        units: Number(entry?.units ?? entry?.qty ?? 0) || 0,
+                        revenueEur: parseEuro(entry?.revenueEur ?? entry?.revenue ?? null),
+                    }));
+                    cappedRevenueByMonth = capRevenueByStock(capEntries, snapshotStockBySku.get(skuKey) || 0);
+                }
                 Object.entries(monthMap || {}).forEach(([month, entry]) => {
                     if (!month || !bucket[month])
                         return;
-                    const revenue = parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
+                    const revenue = cappedRevenueByMonth
+                        ? Number(cappedRevenueByMonth.get(month) || 0)
+                        : parseEuro(entry?.revenueEur ?? entry?.revenue ?? null);
                     if (!Number.isFinite(revenue))
                         return;
                     forecastMapLive[month] = (forecastMapLive[month] || 0) + revenue;

@@ -95,6 +95,7 @@ interface ProductDraft {
   status: "active" | "prelaunch" | "inactive";
   portfolioBucket: string;
   includeInForecast: boolean;
+  discontinued?: boolean;
   launchCosts: Array<{
     id?: string;
     type: string;
@@ -387,6 +388,7 @@ function productDraftFromRow(row?: ProductRow): ProductDraft {
     status: row?.status || "active",
     portfolioBucket: normalizePortfolioBucket(row?.raw.portfolioBucket, PORTFOLIO_BUCKET.CORE),
     includeInForecast: row?.includeInForecast !== false,
+    discontinued: row?.raw?.discontinued === true,
     launchCosts: launchCostsRaw.map((entry, index) => {
       const rowCost = entry as Record<string, unknown>;
       return {
@@ -838,6 +840,7 @@ export default function ProductsModule(): JSX.Element {
       fnsku: current.fnsku || baseRaw.fnsku || "",
       portfolioBucket: normalizePortfolioBucket(current.portfolioBucket ?? baseRaw.portfolioBucket, PORTFOLIO_BUCKET.CORE),
       includeInForecast: current.includeInForecast !== false,
+      discontinued: current.discontinued === true,
       launchCosts: normalizeLaunchCosts((current.launchCosts as unknown[]) ?? (baseRaw.launchCosts as unknown[]), "draft-lc"),
       hsCode: current.hsCode || baseRaw.hsCode || "",
       goodsDescription: current.goodsDescription || baseRaw.goodsDescription || "",
@@ -1389,6 +1392,7 @@ export default function ProductsModule(): JSX.Element {
         status: values.status || "active",
         portfolioBucket: finalBucket,
         includeInForecast,
+        discontinued: values.discontinued === true,
         launchCosts,
         avgSellingPriceGrossEUR: values.avgSellingPriceGrossEUR,
         sellerboardMarginPct: grossMargin,
@@ -1852,6 +1856,11 @@ export default function ProductsModule(): JSX.Element {
             <div className="v2-form-row">
               <Form.Item name="includeInForecast" valuePropName="checked" style={{ marginBottom: 0 }}>
                 <Checkbox>Im Forecast berücksichtigen</Checkbox>
+              </Form.Item>
+              <Form.Item name="discontinued" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Tooltip title="Kein Nachschub mehr (keine PO/FO/PFO). Forecast-Umsatz läuft, bis der Bestand verkauft ist, dann 0.">
+                  <Checkbox>Auslaufend (kein Nachschub)</Checkbox>
+                </Tooltip>
               </Form.Item>
               {(() => {
                 const draftSku = String(draftValues?.sku || editing?.sku || "").trim().toLowerCase();

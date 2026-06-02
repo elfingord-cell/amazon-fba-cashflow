@@ -12,6 +12,7 @@ import {
   Select,
   Space,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from "antd";
@@ -531,6 +532,13 @@ export default function ForecastModule(): JSX.Element {
         cell: ({ row }) => {
           const r = row.original;
           if (r.isPlan) return <Tag color="blue">Plan</Tag>;
+          if (r.discontinued) {
+            return (
+              <Tooltip title="Auslaufend – kein Nachschub. Forecast-Umsatz läuft, bis der Bestand verkauft ist, dann 0.">
+                <Tag color="orange">Auslaufend</Tag>
+              </Tooltip>
+            );
+          }
           if (r.isPlanMapped) {
             // Lebenszyklus: solange noch Plan-Brücken-Monate offen sind = Prelaunch (echte SKU,
             // noch nicht gelauncht). Sobald alle Monate Live sind = ganz normal Aktiv.

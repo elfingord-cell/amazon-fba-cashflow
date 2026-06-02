@@ -222,6 +222,7 @@ function buildForecastProducts(state, categoriesById) {
             alias: String(product.alias || sku),
             categoryLabel: categoriesById.get(String(product.categoryId || "")) || "Ohne Kategorie",
             isActive: isForecastProductActive(product),
+            discontinued: product.discontinued === true,
             avgSellingPriceGrossEUR: (0, dataHealth_js_1.parseDeNumber)(product.avgSellingPriceGrossEUR),
             sellerboardMarginPct: (0, dataHealth_js_1.parseDeNumber)(product.sellerboardMarginPct),
             sourceLabel: "csv",
