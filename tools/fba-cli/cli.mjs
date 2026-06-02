@@ -25,6 +25,7 @@ import * as entities from "./entities.mjs";
 import { setSetting, removeById } from "./entities.mjs";
 import { runImportBwa } from "./import-bwa.mjs";
 import { runSyncPoStatus } from "./sync-po-status.mjs";
+import { runAudit } from "./audit.mjs";
 
 function parseArgs(argv) {
   const positional = [];
@@ -81,6 +82,8 @@ async function main() {
       "  rm <collection> <id> [--commit] [--id-field=<feld>]",
       "  import-bwa <csv> [--commit] [--base-year=2025] [--forecast-year=2026]",
       "  sync-po-status [--commit]      PO-Empfangsstatus von VentoryOne in CFP übertragen",
+      "  audit [--commit]               Glaubwürdigkeits-Ampel berechnen (Default Dry, --commit schreibt state.audit)",
+      "  provenance-backfill [--commit] Best-effort Herkunft für Produkte/POs/FOs stempeln",
       "Optionen: --commit (echtes Schreiben), --force (trotz Validierungsfehler), --workspace=<uuid>",
     ].join("\n"));
     return;
@@ -120,6 +123,12 @@ async function main() {
     const { state } = await loadState(cfg);
     if (positional[1]) { fs.writeFileSync(positional[1], JSON.stringify(state, null, 2)); out(`Backup: ${positional[1]}`); }
     else out(`Backup: ${writeBackup(state, "manual")}`);
+    return;
+  }
+
+  if (cmd === "audit") {
+    // Glaubwürdigkeits-Ampel: rein lesend; mit --commit wird state.audit additiv geschrieben.
+    await runAudit({ commit: Boolean(flags.commit), workspaceId: flags.workspace });
     return;
   }
 
@@ -169,7 +178,8 @@ async function main() {
     const [, dottedPath, rawValue] = positional;
     let value;
     try { value = JSON.parse(rawValue); } catch { value = rawValue; }
-    const res = await commitState(cfg, (state) => { setSetting(state, dottedPath, value); }, { dryRun, force, label: `set-${dottedPath}`, validateFn: validateState });
+    const res = await commitState(cfg, (state) => { setSetting(state, dottedPath, value); }, { dryRun, force, label: `set-${dottedPath}`, validateFn: validateState,
+      provenance: { entityKeys: [`setting:${dottedPath}`], source: flags.source || "human", by: "claude", method: "cli-set-setting", label: `set-${dottedPath}`, summary: `${dottedPath}=${JSON.stringify(value)}` } });
     reportWrite(res, dryRun, { change: `settings.${dottedPath} = ${JSON.stringify(value)}` });
     return;
   }
@@ -177,8 +187,23 @@ async function main() {
   if (cmd === "rm") {
     const [, collection, id] = positional;
     const idField = flags["id-field"] || "id";
-    const res = await commitState(cfg, (state) => { removeById(state, collection, id, idField); }, { dryRun, force, label: `rm-${collection}`, validateFn: validateState });
+    const res = await commitState(cfg, (state) => { removeById(state, collection, id, idField); }, { dryRun, force, label: `rm-${collection}`, validateFn: validateState,
+      provenance: { entityKeys: [`${collection}:${id}`], source: flags.source || "claude", by: "claude", method: "cli-rm", label: `rm-${collection}`, summary: `remove ${collection}.${idField}=${id}` } });
     reportWrite(res, dryRun, { change: `remove ${collection}.${idField}=${id}` });
+    return;
+  }
+
+  if (cmd === "provenance-backfill") {
+    // Best-effort: bekannte Quellen stempeln, falls noch kein Stempel existiert (kein Überschreiben).
+    const res = await commitState(cfg, (state) => {
+      if (!state.provenance || typeof state.provenance !== "object") state.provenance = {};
+      const stamp = (key, source) => { if (!state.provenance[key]) state.provenance[key] = { source, asOf: null, by: "backfill", method: "backfill", rev: null }; };
+      (state.products || []).forEach((p) => p?.sku && stamp(`product:${p.sku}`, "vo"));
+      (state.pos || []).forEach((p) => p?.id && stamp(`po:${p.id}`, "vo"));
+      (state.fos || []).forEach((f) => f?.id && stamp(`fo:${f.id}`, "computed"));
+    }, { dryRun, force, label: "provenance-backfill", validateFn: validateState,
+      provenance: { source: "claude", by: "claude", method: "provenance-backfill", label: "provenance-backfill", summary: "best-effort Herkunft fuer Produkte/POs/FOs" } });
+    reportWrite(res, dryRun, { change: "provenance backfill (best-effort)" });
     return;
   }
 

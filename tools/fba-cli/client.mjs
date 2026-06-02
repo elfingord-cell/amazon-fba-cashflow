@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getConfig, backupDir } from "./config.mjs";
+import { applyProvenance } from "./provenance.mjs";
 
 function headers(cfg, extra = {}) {
   return {
@@ -111,6 +112,12 @@ export async function commitState(cfg, mutate, options = {}) {
     const next = (returned && typeof returned === "object" && returned.schemaVersion !== undefined)
       ? returned
       : draft;
+
+    // Provenienz-Stempel + changeLog (additiv, non-breaking). rev = der Basis-rev, auf dem dieser
+    // Write aufsetzt (der neue rev steht erst nach app_sync fest). Engine ignoriert provenance/changeLog.
+    if (options.provenance) {
+      applyProvenance(next, { ...options.provenance, rev: options.provenance.rev ?? rev, nowIso: new Date().toISOString() });
+    }
 
     // Validierung: vorbestehende Fehler (schon im before-State) blockieren NICHT — nur
     // NEU eingeführte Fehler (Regression durch diese Mutation) blockieren. Wie in der App ist
