@@ -363,6 +363,44 @@ export default function MethodikModule(): JSX.Element {
 
       <Card>
         <Space direction="vertical" size={4} style={{ width: "100%" }}>
+          <Title level={5} style={{ margin: 0 }}>Änderungs-Log (letzte Writes)</Title>
+          <Text type="secondary">
+            Jeder API-/CLI-Write hinterlässt einen Eintrag (Zeit · was · Quelle · rev). Lückenloser Audit-Trail —
+            so ist nachvollziehbar, wer wann woher etwas geändert hat.
+          </Text>
+          {(() => {
+            const log = Array.isArray((state as Record<string, unknown>).changeLog)
+              ? [...((state as Record<string, unknown>).changeLog as Array<Record<string, unknown>>)].reverse()
+              : [];
+            if (!log.length) return <Text type="secondary">Noch keine Einträge (entsteht ab dem nächsten API-Write).</Text>;
+            return (
+              <table className="v2-reifegrad-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 4 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", borderBottom: "1px solid var(--v2-border, #e5e7eb)" }}>
+                    <th style={{ padding: "4px 8px" }}>Zeit</th>
+                    <th style={{ padding: "4px 8px" }}>Was</th>
+                    <th style={{ padding: "4px 8px" }}>Quelle</th>
+                    <th style={{ padding: "4px 8px" }}>rev</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {log.slice(0, 30).map((e, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid var(--v2-border, #f0f0f0)" }}>
+                      <td style={{ padding: "4px 8px" }}>{e.at ? new Date(String(e.at)).toLocaleString("de-DE") : "—"}</td>
+                      <td style={{ padding: "4px 8px" }}>{String(e.label || "")}{e.summary ? ` · ${String(e.summary)}` : ""}</td>
+                      <td style={{ padding: "4px 8px" }}>{String(e.source || "—")}</td>
+                      <td style={{ padding: "4px 8px" }}>{String(e.rev || "").slice(0, 8)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
+        </Space>
+      </Card>
+
+      <Card>
+        <Space direction="vertical" size={4} style={{ width: "100%" }}>
           <Title level={5} style={{ margin: 0 }}>Bestands-Snapshot (VentoryOne → CFP)</Title>
           <Text type="secondary">
             Wie der Monats-Snapshot in der <strong>Bestandsaufnahme</strong> aus VentoryOne-Live-Daten gebildet wird —
