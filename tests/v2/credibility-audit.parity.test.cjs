@@ -74,8 +74,9 @@ test("balance_sane: red when closing is NaN", () => {
   const res = audit.runCredibilityAudit(baseInput({ report: { ...baseInput().report, breakdown: [{ month: "2026-06", closing: NaN }] } }));
   assert.equal(find(res, "balance_sane").status, "red");
 });
-test("balance_sane: amber when a month goes negative", () => {
-  const res = audit.runCredibilityAudit(baseInput({ report: { ...baseInput().report, firstNegativeMonth: "2026-09" } }));
+test("balance_sane: amber when a month goes negative (real computeSeries shape: kpis.firstNegativeMonth)", () => {
+  const base = baseInput();
+  const res = audit.runCredibilityAudit({ ...base, report: { ...base.report, kpis: { ...base.report.kpis, firstNegativeMonth: "2026-09" } } });
   assert.equal(find(res, "balance_sane").status, "amber");
 });
 

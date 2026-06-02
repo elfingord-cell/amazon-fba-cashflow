@@ -96,7 +96,8 @@ function checkBalanceSane(report) {
   const nan = rows.some((r) => !Number.isFinite(Number(r?.closing)));
   if (nan) return { key: "balance_sane", label: "Kontostand belastbar", status: "red",
     detail: "Ungültiger (NaN) Kontostand in der Projektion", drill: "#/v2/dashboard" };
-  const neg = report?.firstNegativeMonth || null;
+  // computeSeries legt firstNegativeMonth unter kpis ab; Top-Level nur als Fallback (Altdaten/Tests).
+  const neg = report?.kpis?.firstNegativeMonth ?? report?.firstNegativeMonth ?? null;
   return { key: "balance_sane", label: "Kontostand belastbar", status: neg ? "amber" : "green",
     detail: neg ? `Negativer Kontostand ab ${neg}` : "Kontostand-Kette durchgehend positiv", drill: "#/v2/dashboard" };
 }
