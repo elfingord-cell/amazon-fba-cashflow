@@ -1797,11 +1797,16 @@ export default function DashboardModule(): JSX.Element {
   }, [monthCloseStatusByMonth, monthHasActualClosing, visibleMonths]);
 
   function resetCalculationCockpit(): void {
+    // Setzt das Cockpit auf die Standard-Rechenbasis zurueck. Die Umsatzbasis/Kalibrierung/Quote
+    // liegen in settings (persistiert) — daher ueber persistDashboardCashInSettings, nicht ueber
+    // lokale Setter (die es hier nicht gibt). Zeitraum + Portfolio-Scope sind lokaler View-State.
     setRange("next6");
     setBucketScopeValues(DEFAULT_V2_BUCKET_SCOPE.slice());
-    setRevenueBasisMode(methodikRevenueBasisMode);
-    setCalibrationEnabled(methodikCalibrationEnabled);
-    setQuoteMode("manual");
+    void persistDashboardCashInSettings({
+      cashInRevenueBasisMode: "hybrid",
+      cashInCalibrationEnabled: true,
+      cashInQuoteMode: "recommendation",
+    });
   }
 
   function openBlockerTarget(blocker: RobustMonthBlocker): void {
