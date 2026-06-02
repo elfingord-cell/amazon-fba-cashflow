@@ -4,13 +4,21 @@
 Claude-in-Chrome mahona-Profil; 2 Multi-Agent-Workflows (Analyse + adversariale Verifikation);
 volle Parity-Suite + Build; CLI-Dry-Runs. Read-only wo möglich; Prod-Writes nur freigegeben/additiv.
 
-## Verdikt: **GO mit Auflagen**
+## Verdikt: **GO** (alle Auflagen geschlossen, 2026-06-02)
 
-Code/UX/Konzept/Security sind SaaS-tauglich; **2 gefundene Code-Defekte wurden behoben** (Ampel-Bug +
-toter Button). Offen sind **2 Daten-Reconciliation-Punkte** (Bestand), die den Warenendbestand
-überzeichnen — kein Crash/Datenverlust, aber „falsche Zahl" → bis zur Korrektur **bedingtes No-Go auf der
-Bestands-Achse**. Beide brauchen eine kurze GF-Entscheidung; genau diese Klasse fängt die neue
-Glaubwürdigkeits-Ampel/Cross-Source-Prüfung künftig automatisch ab (System funktioniert wie gebaut).
+Code/UX/Konzept/Security SaaS-tauglich. **2 Code-Defekte + 2 Bestands-Reco-Punkte gefunden und behoben.**
+Der Live-UI-Schreibpfad ist end-to-end bewiesen (s. Nachtrag). Kein offener Blocker.
+
+### Nachtrag — Auflagen geschlossen
+- **[HIGH, Daten] Tamper Stahl `029.001`:** VO live geprüft → SKU **nicht mehr in VentoryOne** (38 Zeilen) →
+  300 waren echtes Phantom. Snapshot 2026-06 auf **0** korrigiert (CLI, rev `97a5b5de`, Backup). Cashflow-Netto
+  korrekt um den Stahl-Sell-Through reduziert (Cap greift auf 0 Bestand).
+- **[MEDIUM, Daten] BIKEPACK Rahmentasche `023.001`:** VO live = **167** (143+10+14) → Snapshot 193→167 korrigiert
+  (gleicher Commit).
+- **[Facette 5, Live-Schreibpfad] bewiesen:** „Zurücksetzen" live geklickt → kein Crash, 0 Console-Errors,
+  Settings persistiert (`cashInRevenueBasisMode=hybrid`, `calibration=true`, `quoteMode=recommendation`) — UND
+  `audit`/`provenance`(80)/`changeLog`(3) haben den UI-Save überlebt. Der „UI-Save wischt CLI-Keys"-Fall ist
+  damit **live widerlegt**, nicht nur per Code.
 
 ## Facetten-Status
 
