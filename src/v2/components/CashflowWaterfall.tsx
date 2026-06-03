@@ -172,7 +172,10 @@ export function CashflowWaterfall({ row, cashIn, monthLabel }: { row: unknown; c
           backgroundColor: "rgba(255,255,255,0.78)",
           padding: [1, 3, 1, 3],
           borderRadius: 3,
-          formatter: (p: { dataIndex: number }) => EURk(running[p.dataIndex]),
+          // Start/Ende sind bereits als Gesamtwert am Balken beschriftet -> Saldo-Label dort ausblenden.
+          formatter: (p: { dataIndex: number }) => (
+            (p.dataIndex === 0 || p.dataIndex === running.length - 1) ? "" : EURk(running[p.dataIndex])
+          ),
         },
       },
     ],
