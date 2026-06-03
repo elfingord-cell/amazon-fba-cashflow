@@ -34,19 +34,22 @@ function outflowGroup(entry: Record<string, unknown>): { key: string; label: str
   return { key: "sonstige-aus", label: "− Sonstige Ausgaben", order: 4 };
 }
 
-export function buildCashflowWaterfall(report: unknown, month: string): WaterfallStep[] {
-  const rep = (report && typeof report === "object" ? report : {}) as Record<string, unknown>;
-  const series = Array.isArray(rep.series) ? rep.series as Record<string, unknown>[] : [];
-  const row = series.find((r) => String(r?.month) === String(month));
-  if (!row) return [];
-  const cash = ((rep.cashInByMonth as Record<string, Record<string, unknown>>) || {})[month] || {};
-  const entries = Array.isArray(row.entries) ? row.entries as Record<string, unknown>[] : [];
+// row: eine (steuer-augmentierte) Breakdown-/Series-Zeile mit `entries` (Ein-/Auszahlungen inkl. Steuern).
+// cashIn: report.cashInByMonth[month] für die Einkommens-Zerlegung (Brutto/Kalibrierung/Quote).
+// Alle Summen werden AUS DEN EINTRÄGEN gerechnet → identisch mit der PnL-Aggregation (inkl. Steuern).
+export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): WaterfallStep[] {
+  const r = (row && typeof row === "object" ? row : null) as Record<string, unknown> | null;
+  if (!r) return [];
+  const cash = (cashIn && typeof cashIn === "object" ? cashIn : {}) as Record<string, unknown>;
+  const entries = Array.isArray(r.entries) ? r.entries as Record<string, unknown>[] : [];
 
   const brutto = num(cash.forecastRevenueRaw);
   const used = num(cash.appliedRevenue);
   const payoutComputed = num(cash.payout);
-  const inflowTotal = num((row.inflow as Record<string, unknown>)?.total);
-  const netTotal = num((row.net as Record<string, unknown>)?.total);
+  // Summen konsequent aus den Einträgen (so wie die PnL-Matrix sie aggregiert):
+  const inflowTotal = entries
+    .filter((e) => String(e?.direction) === "in")
+    .reduce((s, e) => s + Math.abs(num(e.amount)), 0);
 
   const salesPayoutActual = entries
     .filter((e) => String(e?.kind) === "sales-payout" && String(e?.direction) === "in")
@@ -107,7 +110,7 @@ export function buildCashflowWaterfall(report: unknown, month: string): Waterfal
       running = out;
     });
 
-  steps.push({ key: "netto", label: "= Netto-Cashflow des Monats", kind: "end", inValue: running, outValue: netTotal });
+  steps.push({ key: "netto", label: "= Netto-Cashflow des Monats", kind: "end", inValue: running, outValue: running });
 
   return steps.map((s) => ({
     ...s,

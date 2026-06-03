@@ -2300,8 +2300,8 @@ export default function DashboardModule(): JSX.Element {
       </Card>
 
       <CashflowWaterfall
-        report={report}
-        month={selectedMonth}
+        row={selectedMonthBreakdown}
+        cashIn={(report.cashInByMonth as Record<string, unknown> | undefined)?.[selectedMonth]}
         monthLabel={selectedMonth ? formatMonthLabel(selectedMonth) : undefined}
       />
 

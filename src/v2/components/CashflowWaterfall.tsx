@@ -6,8 +6,8 @@ const EUR = (v: number) => new Intl.NumberFormat("de-DE", { style: "currency", c
 
 // Nachrechenbarer Monats-Wasserfall: Brutto-Umsatz (VO) → … → Netto-Cashflow.
 // Reine Anzeige; Datenquelle ist buildCashflowWaterfall (rekonziliert per Konstruktion zum Netto-Balken).
-export function CashflowWaterfall({ report, month, monthLabel }: { report: unknown; month: string; monthLabel?: string }) {
-  const steps: WaterfallStep[] = month ? buildCashflowWaterfall(report, month) : [];
+export function CashflowWaterfall({ row, cashIn, monthLabel }: { row: unknown; cashIn?: unknown; monthLabel?: string }) {
+  const steps: WaterfallStep[] = row ? buildCashflowWaterfall(row, cashIn) : [];
   if (!steps.length) {
     return (
       <Card size="small" style={{ marginTop: 12 }} title="Wie der Cashflow zustande kommt">
