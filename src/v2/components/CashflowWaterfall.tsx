@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Card, Typography } from "antd";
 import ReactECharts from "echarts-for-react";
 import { buildCashflowWaterfall, type WaterfallStep } from "../domain/cashflowWaterfall";
@@ -5,12 +6,12 @@ import { v2ChartPalette } from "../app/chartPalette";
 
 const EUR0 = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const EUR = (v: number) => EUR0.format(Number(v) || 0);
-// Kompakte Achsen-/Label-Notation: 133.279 -> "133 T", 1.250.000 -> "1,25 Mio"
+// Kompakte Achsen-/Label-Notation: 133.279 -> "133,3 T", 1.250 -> "1,3 T", 1.250.000 -> "1,25 Mio"
 const EURk = (v: number) => {
   const n = Number(v) || 0;
   const abs = Math.abs(n);
   if (abs >= 1_000_000) return `${(n / 1_000_000).toLocaleString("de-DE", { maximumFractionDigits: 2 })} Mio`;
-  if (abs >= 1_000) return `${Math.round(n / 1_000).toLocaleString("de-DE")} T`;
+  if (abs >= 1_000) return `${(n / 1_000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} T`;
   return `${Math.round(n)}`;
 };
 const signed = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${EUR(Math.abs(v))}`;
@@ -186,7 +187,38 @@ export function CashflowWaterfall({ row, cashIn, monthLabel }: { row: unknown; c
         Veränderung, die gestrichelte Linie den <strong>laufenden Saldo</strong> (= aktuelle Höhe). Hover zeigt Rechnung,
         Herkunft &amp; Einzelposten. Endwert <strong>{EUR(netto)}</strong> = der Netto-Balken im Chart oben (eingebaute Selbstkontrolle).
       </Typography.Paragraph>
-      <ReactECharts key={monthLabel || "wf"} option={option} notMerge style={{ height: 420 }} opts={{ renderer: "canvas" }} />
+      <WaterfallChart option={option} rerenderKey={monthLabel || "wf"} />
     </Card>
+  );
+}
+
+// Eigenständiger Chart-Wrapper mit ResizeObserver: ECharts wird unter dem Fold/in Cards
+// gelegentlich mit falscher Größe initialisiert und malt die Serien erst nach einem Resize.
+// Der Observer erzwingt ein resize(), sobald der Container seine echte Größe hat -> rendert zuverlässig beim Laden.
+function WaterfallChart({ option, rerenderKey }: { option: unknown; rerenderKey: string }) {
+  const chartRef = useRef<ReactECharts>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => {
+      const inst = chartRef.current?.getEchartsInstance?.();
+      if (inst) inst.resize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={wrapRef} style={{ width: "100%" }}>
+      <ReactECharts
+        key={rerenderKey}
+        ref={chartRef}
+        option={option as Record<string, unknown>}
+        notMerge
+        style={{ height: 420 }}
+        opts={{ renderer: "canvas" }}
+        onChartReady={(inst: { resize: () => void }) => { setTimeout(() => inst.resize(), 0); }}
+      />
+    </div>
   );
 }
