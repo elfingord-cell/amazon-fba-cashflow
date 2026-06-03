@@ -43,7 +43,6 @@ import { CashflowWaterfall } from "../../components/CashflowWaterfall";
 import { buildMonthPlanningResult, type MonthPlanningMonth } from "../../domain/monthPlanning";
 import {
   buildPhantomFoSuggestions,
-  buildStateWithPhantomFos,
   type PhantomFoSuggestion,
 } from "../../domain/phantomFo";
 import { ensureForecastVersioningContainers } from "../../domain/forecastVersioning";
@@ -582,7 +581,6 @@ export default function DashboardModule(): JSX.Element {
     ? "forecast_direct"
     : "hybrid";
   const quoteMode = normalizeCashInQuoteMode(settings.cashInQuoteMode);
-  const showPhantomFoInChart = settings.dashboardShowPhantomFoInChart === true;
   const sharedPlanProjection = useMemo(
     () => buildSharedPlanProductProjection({ state: stateObject }),
     [stateObject],
@@ -612,16 +610,12 @@ export default function DashboardModule(): JSX.Element {
     () => new Set(phantomFoSuggestions.map((entry) => entry.id)),
     [phantomFoSuggestions],
   );
-  const planningState = useMemo(
-    () => buildStateWithPhantomFos({
-      state: (sharedPlanProjection?.planningState || stateObject) as Record<string, unknown>,
-      suggestions: phantomFoSuggestions,
-    }),
-    [phantomFoSuggestions, sharedPlanProjection, stateObject],
-  );
+  // 2-Stufen-Modell: Cashflow + Robustheit lesen ausschließlich PO (VentoryOne) + FO (persistiert).
+  // Phantom-FOs sind reines Vorschlags-Radar (buildPhantomFoSuggestions -> "Offene PFO"-KPI) und
+  // treiben weder Cashflow noch Robustheit. Daher hier NICHT mehr ins Berechnungs-State injizieren.
   const dashboardSeriesState = useMemo(
-    () => (showPhantomFoInChart ? planningState : (sharedPlanProjection?.planningState || stateObject)),
-    [planningState, sharedPlanProjection, showPhantomFoInChart, stateObject],
+    () => (sharedPlanProjection?.planningState || stateObject),
+    [sharedPlanProjection, stateObject],
   );
   const currentMonth = useMemo(() => currentMonthKey(), []);
   const requiredHorizon = useMemo(() => {
@@ -726,11 +720,8 @@ export default function DashboardModule(): JSX.Element {
 
   const visibleBreakdown = useMemo(() => {
     const filteredByMonth = dashboardBreakdown.filter((row) => visibleMonthSet.has(row.month));
-    return applyDashboardBucketScopeToBreakdown(filteredByMonth, bucketScopeSet, {
-      includePhantomFo: showPhantomFoInChart,
-      provisionalFoIds: phantomFoIdSet,
-    });
-  }, [bucketScopeSet, dashboardBreakdown, phantomFoIdSet, showPhantomFoInChart, visibleMonthSet]);
+    return applyDashboardBucketScopeToBreakdown(filteredByMonth, bucketScopeSet);
+  }, [bucketScopeSet, dashboardBreakdown, visibleMonthSet]);
   const robustness = useMemo(() => {
     return buildMonthPlanningResult({
       state: stateObject,
@@ -1112,7 +1103,6 @@ export default function DashboardModule(): JSX.Element {
     const amazonCoreSeriesName = "Amazon Kern";
     const amazonPlannedSeriesName = "Amazon Plan";
     const amazonNewSeriesName = "Amazon Neu";
-    const phantomFoSeriesName = "PFO Simulation";
     const amazonSeriesNames = new Set([amazonCoreSeriesName, amazonPlannedSeriesName, amazonNewSeriesName]);
     const { firstUnreliableIndex, dashedChainByIndex } = closingLineReliability;
     const monthLabels = visibleMonths.map((month) => formatMonthLabel(month));
@@ -1129,7 +1119,6 @@ export default function DashboardModule(): JSX.Element {
     const taxOutflowSeries = outflowSplitSeries.map((row) => -row.tax);
     const poOutflowSeries = outflowSplitSeries.map((row) => -row.po);
     const foOutflowSeries = outflowSplitSeries.map((row) => -row.fo);
-    const phantomFoOutflowSeries = outflowSplitSeries.map((row) => -row.phantomFo);
     const legendItems = [
       amazonCoreSeriesName,
       amazonPlannedSeriesName,
@@ -1139,7 +1128,6 @@ export default function DashboardModule(): JSX.Element {
       "Steuern",
       "PO",
       "FO",
-      ...(showPhantomFoInChart ? [phantomFoSeriesName] : []),
       "Netto",
       "Kontostand",
     ];
@@ -1322,15 +1310,6 @@ export default function DashboardModule(): JSX.Element {
           data: foOutflowSeries,
           itemStyle: { color: v2DashboardChartColors.fo },
         },
-        ...(showPhantomFoInChart
-          ? [{
-            name: phantomFoSeriesName,
-            type: "bar",
-            stack: "cash",
-            data: phantomFoOutflowSeries,
-            itemStyle: { color: v2DashboardChartColors.phantomFo },
-          }]
-          : []),
         {
           name: "Netto",
           type: "line",
@@ -1380,7 +1359,6 @@ export default function DashboardModule(): JSX.Element {
     closingLineReliability,
     otherInflowSeries,
     outflowSplitSeries,
-    showPhantomFoInChart,
     simulatedBreakdown,
     visibleBreakdown,
     visibleMonths,
@@ -1606,15 +1584,6 @@ export default function DashboardModule(): JSX.Element {
             values: values((month) => -(outflowSplitByMonth.get(month)?.fo || 0)),
             children: outflowOrderRowsByCategory.fo.length ? outflowOrderRowsByCategory.fo : undefined,
           },
-          ...(showPhantomFoInChart
-            ? [{
-              key: "outflows-phantom-fo",
-              label: "PFO Simulation",
-              rowType: "category" as const,
-              values: values((month) => -(outflowSplitByMonth.get(month)?.phantomFo || 0)),
-              children: outflowOrderRowsByCategory.phantom.length ? outflowOrderRowsByCategory.phantom : undefined,
-            }]
-            : []),
           {
             key: "outflows-fixcost",
             label: "Fixkosten",
@@ -1655,7 +1624,7 @@ export default function DashboardModule(): JSX.Element {
       },
     ];
     return rows;
-  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, showPhantomFoInChart, simulatedBreakdown, taxMatrixGroup, visibleMonths]);
+  }, [inflowSplitByMonth, outflowOrderRowsByCategory, outflowSplitByMonth, simulatedBreakdown, taxMatrixGroup, visibleMonths]);
   const allExpandablePnlRowKeys = useMemo(
     () => collectExpandableRowKeys(pnlMatrixRows),
     [pnlMatrixRows],
@@ -2276,22 +2245,12 @@ export default function DashboardModule(): JSX.Element {
           <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
           <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
           <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-          {phantomFoSuggestions.length ? <Tag color="gold">Offene PFO: {phantomFoSuggestions.length}</Tag> : null}
+          {phantomFoSuggestions.length ? <Tag color="gold">Offene Reorder-Vorschläge: {phantomFoSuggestions.length}</Tag> : null}
         </div>
-        <Space size={8} align="center" style={{ marginBottom: 8 }} wrap>
-          <Text>Simulation: PFOs im Cashflow anzeigen</Text>
-          <Switch
-            size="small"
-            checked={showPhantomFoInChart}
-            onChange={(checked) => {
-              void persistDashboardCashInSettings({
-                dashboardShowPhantomFoInChart: checked,
-              }).catch(() => {});
-            }}
-          />
-        </Space>
         <Text type="secondary" className="v2-dashboard-chart-hint">
-          Robustheit und Coverage bleiben immer im Realzustand; der Schalter wirkt nur auf die Cashflow-Simulation.
+          Cashflow, Robustheit und P&amp;L lesen ausschließlich platzierte Bestellungen (PO, aus VentoryOne)
+          und geplante Nachbestellungen (FO). Offene Reorder-Vorschläge sind nur ein Hinweis und werden erst
+          nach Prüfung als FO übernommen.
         </Text>
         <Text type="secondary" className="v2-dashboard-chart-hint">
           Klick auf Monat oder Balken für Details. Legende ist scrollbar.

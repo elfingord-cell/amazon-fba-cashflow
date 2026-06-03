@@ -65,7 +65,6 @@ test("local V2 demo seed includes a visible shared-path plan product case", asyn
   const report = computeSeries(planningState);
 
   assert.equal(state.forecast.settings.useForecast, true);
-  assert.equal(state.settings.dashboardShowPhantomFoInChart, true);
   assert.ok(Array.isArray(state.planProducts) && state.planProducts.length > 0);
   assert.ok(
     projection.sharedPathEntries.some((entry) => entry.alias === "Planprodukt Demo Shaker"),
