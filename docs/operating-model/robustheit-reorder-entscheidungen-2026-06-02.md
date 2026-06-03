@@ -4,6 +4,40 @@
 Ausgabenseite (PO/FO/PFO-Nachbestellungen) genauso vollständig geplant ist wie die Einnahmenseite
 (Forecast-Umsatz). „Alles selber entscheiden und protokollieren."
 
+---
+
+## ⚠️ KORREKTUR 2026-06-03 (GF-Anstoß Pierre: „food pouch – keine order? schau in VO PO260006")
+
+Zwei Aussagen dieses Protokolls von 2026-06-02 waren **falsch** und sind korrigiert (rev `9cc20f14`):
+
+1. **Food Pouch 035.001 IST bestellt — kein offener Launch-Entscheid.**
+   VO-Live-Beleg: **PO260006** („BIKEPACK-Grossbestellung", VO-id 301542, Status *Bestellt*, ETA 07.07.)
+   enthält **035.001-FOOD-POUCH = 450 + 50 = 500 Stk @ 3,20 USD**. Die CFP-PO260006 hatte nur 5 der
+   6 VO-SKUs (Σ 4.338 statt 4.838 Stk) — die Food-Pouch-Zeile **fehlte** (Differenz exakt 500). Das war
+   eine **CFP↔VO-Sync-Lücke**, kein Prelaunch. → Zeile in CFP-PO260006 ergänzt (Fracht 3.674 € volumen-
+   proportional geschätzt, GF-freigegeben; VO-Logistik noch „Anfrage"/offen). Food Pouch hat danach
+   **keine Order-Duty-Flags** mehr (Re-Audit bestätigt). Tabellen-/E3-Zeilen unten zu „035.001 Prelaunch"
+   sind damit **überholt**.
+
+2. **Die 3 DRAFT-FOs aus E2 waren Duplikate und sind entfernt.**
+   Rahmentasche (023.001), Gabeltasche (032.001) und Dichtungsringe (I5-IMBE-OGXU) haben bereits POs
+   (260005/260006/260008 bzw. 260009, ETA ~Jul) — die Juni-OOS ist die **akzeptierte Transit-Lücke**
+   (E4, Sea-Reorder, keine Luftfracht), nicht eine fehlende Bestellung. Mit `dashboardShowPhantomFoInChart
+   =true` treiben Phantom-FOs den Cashflow ohnehin → die manuell angelegten DRAFT-FOs doppelten die reale
+   Beschaffung (Doppelzählung Ausgabenseite). → 3 FOs gelöscht (28 → 25). Framebag/Fork-Bag danach
+   flag-frei; Juni 0 Order-Duty-Issues.
+
+**Rest-Themen aus dem Re-Audit 2026-06-03 (offen, NICHT auto-geändert):**
+- **Messerblock gerade/schräg (021.002/003): `stock_oos` ab Aug** — die E3-Accepts sind auf
+  `stock_under_safety` gestellt, der echte Issue ist `stock_oos` → **Reason-Typ-Mismatch, Accept greift
+  nicht.** Accept-Reason auf `stock_oos` umstellen oder Reorder/Launch-Menge prüfen.
+- **Dichtungsringe I5: `stock_under_safety` ab Aug** — PO260009 (200 Stk) reicht für Aug+ nicht; nach
+  FO-Löschung kein Accept. Echte (Mini-)Reorder-Lücke, Centartikel (0,48 USD) — Reorder oder Accept.
+- **Tassimo 1er-200ml (024.001):** aktive (≠ auslaufende 2er 024.002) **ACTIVE-FO ohne VO-PO**, Deposit
+  27.05. gezahlt, Balance 700 USD fällig 10.06. → klären: echte Bestellung (fehlt in VO) oder Altrest.
+
+---
+
 ## Befund (Engine-Robustheit + VO-Live-Cross-Check)
 
 **Kein Monat Jun–Dez 2026 ist `robust`** — Einnahmeseite (VO-Forecast) überall hinterlegt, Ausgabenseite
