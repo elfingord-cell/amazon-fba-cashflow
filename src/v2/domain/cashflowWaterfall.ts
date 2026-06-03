@@ -63,7 +63,7 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
   // Realismus / Kalibrierung: Brutto -> verwendeter Umsatz
   if (Math.abs(used - brutto) > 0.5) {
     const factor = brutto > 0 ? used / brutto : 1;
-    const accuracyPct = Math.round(factor * 1000) / 10;
+    const pctDe = (v: number) => (Math.round(v * 1000) / 10).toLocaleString("de-DE", { maximumFractionDigits: 1 });
     steps.push({
       key: "kalibrierung",
       label: "Realismus-Korrektur",
@@ -72,7 +72,7 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
       factor,
       amount: round2(used - brutto),
       outValue: used,
-      explain: `Aus abgeschlossenen Monaten gelernt: der Ist-Umsatz lag im Schnitt bei ${accuracyPct}% der Prognose, daher wird der Forecast um ${Math.round((1 - factor) * 1000) / 10}% ${factor < 1 ? "gekürzt" : "angehoben"}. Für weiter entfernte Monate nähert sich der Faktor 100%.`,
+      explain: `Aus abgeschlossenen Monaten gelernt: der Ist-Umsatz lag im Schnitt bei ${pctDe(factor)} % der Prognose, daher wird der Forecast um ${pctDe(Math.abs(1 - factor))} % ${factor < 1 ? "gekürzt" : "angehoben"}. Für weiter entfernte Monate nähert sich der Faktor 100 %.`,
     });
     running = used;
   } else {
@@ -82,7 +82,7 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
   // Auszahlungsquote: verwendeter Umsatz -> Sales-Cash-Eingang
   const quoteBase = running;
   const factor = quoteBase > 0 ? payoutComputed / quoteBase : 0;
-  const quotePct = Math.round(factor * 1000) / 10;
+  const quotePctDe = (Math.round(factor * 1000) / 10).toLocaleString("de-DE", { maximumFractionDigits: 1 });
   steps.push({
     key: "quote",
     label: "Amazon-Abzüge",
@@ -91,7 +91,7 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
     factor,
     amount: round2(payoutComputed - running),
     outValue: payoutComputed,
-    explain: `Auszahlungsquote ${quotePct}%: Anteil des Umsatzes, der nach Amazon-Gebühren, PPC, Retouren & Reserve tatsächlich als Auszahlung ankommt (empfohlen aus der Ist-Historie). Abzug = Gebühren/Werbung/Retouren.`,
+    explain: `Auszahlungsquote ${quotePctDe} %: Anteil des Umsatzes, der nach Amazon-Gebühren, PPC, Retouren & Reserve tatsächlich als Auszahlung ankommt (empfohlen aus der Ist-Historie). Abzug = Gebühren, Werbung & Retouren.`,
   });
   running = payoutComputed;
 
