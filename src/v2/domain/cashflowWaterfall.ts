@@ -13,6 +13,7 @@ export interface WaterfallStep {
   factor?: number;
   amount?: number;
   items?: Array<{ label: string; amount: number }>;
+  explain?: string;
 }
 
 function num(v: unknown): number {
@@ -27,11 +28,11 @@ function outflowGroup(entry: Record<string, unknown>): { key: string; label: str
   const g = String(entry?.group || "");
   const src = String(entry?.source || "");
   const kind = String(entry?.kind || "");
-  if (g === "Fixkosten") return { key: "fix", label: "− Fixkosten", order: 0 };
-  if (/steuer/i.test(g) || /steuer|tax|ust|vat/i.test(kind) || /steuer|tax/i.test(src)) return { key: "steuern", label: "− Steuern", order: 1 };
-  if (src === "po") return { key: "po", label: "− PO-Zahlungen", order: 2 };
-  if (src === "fo") return { key: "fo", label: "− FO/PFO-Zahlungen", order: 3 };
-  return { key: "sonstige-aus", label: "− Sonstige Ausgaben", order: 4 };
+  if (g === "Fixkosten") return { key: "fix", label: "Fixkosten", order: 0 };
+  if (/steuer/i.test(g) || /steuer|tax|ust|vat/i.test(kind) || /steuer|tax/i.test(src)) return { key: "steuern", label: "Steuern", order: 1 };
+  if (src === "po") return { key: "po", label: "Wareneinkauf (PO)", order: 2 };
+  if (src === "fo") return { key: "fo", label: "Wareneinkauf geplant (FO)", order: 3 };
+  return { key: "sonstige-aus", label: "Sonstige Ausgaben", order: 4 };
 }
 
 // row: eine (steuer-augmentierte) Breakdown-/Series-Zeile mit `entries` (Ein-/Auszahlungen inkl. Steuern).
@@ -57,12 +58,22 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
 
   const steps: WaterfallStep[] = [];
   let running = brutto;
-  steps.push({ key: "brutto", label: "Brutto-Umsatz (VO-Prognose)", kind: "start", inValue: brutto, outValue: brutto });
+  steps.push({ key: "brutto", label: "Brutto-Umsatz (Prognose)", kind: "start", inValue: brutto, outValue: brutto, explain: "Prognostizierter Brutto-Umsatz des Monats (VentoryOne-Forecast, auf Basis der aktuellen Verkaufsgeschwindigkeit je Produkt)." });
 
   // Realismus / Kalibrierung: Brutto -> verwendeter Umsatz
   if (Math.abs(used - brutto) > 0.5) {
     const factor = brutto > 0 ? used / brutto : 1;
-    steps.push({ key: "kalibrierung", label: "Realismus / Kalibrierung", kind: "multiply", inValue: running, factor, outValue: used });
+    const accuracyPct = Math.round(factor * 1000) / 10;
+    steps.push({
+      key: "kalibrierung",
+      label: "Realismus-Korrektur",
+      kind: "multiply",
+      inValue: running,
+      factor,
+      amount: round2(used - brutto),
+      outValue: used,
+      explain: `Aus abgeschlossenen Monaten gelernt: der Ist-Umsatz lag im Schnitt bei ${accuracyPct}% der Prognose, daher wird der Forecast um ${Math.round((1 - factor) * 1000) / 10}% ${factor < 1 ? "gekürzt" : "angehoben"}. Für weiter entfernte Monate nähert sich der Faktor 100%.`,
+    });
     running = used;
   } else {
     running = used || brutto;
@@ -71,7 +82,17 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
   // Auszahlungsquote: verwendeter Umsatz -> Sales-Cash-Eingang
   const quoteBase = running;
   const factor = quoteBase > 0 ? payoutComputed / quoteBase : 0;
-  steps.push({ key: "quote", label: "Auszahlungsquote (Amazon-Gebühren / PPC / Retouren / Reserve)", kind: "multiply", inValue: running, factor, outValue: payoutComputed });
+  const quotePct = Math.round(factor * 1000) / 10;
+  steps.push({
+    key: "quote",
+    label: "Amazon-Abzüge",
+    kind: "multiply",
+    inValue: running,
+    factor,
+    amount: round2(payoutComputed - running),
+    outValue: payoutComputed,
+    explain: `Auszahlungsquote ${quotePct}%: Anteil des Umsatzes, der nach Amazon-Gebühren, PPC, Retouren & Reserve tatsächlich als Auszahlung ankommt (empfohlen aus der Ist-Historie). Abzug = Gebühren/Werbung/Retouren.`,
+  });
   running = payoutComputed;
 
   // Anpassung auf tatsächlichen Sales-Cash-Eingang (Rundung/Mix Kern+Plan)
@@ -87,7 +108,7 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
     const items = entries
       .filter((e) => String(e?.direction) === "in" && String(e?.kind) !== "sales-payout")
       .map((e) => ({ label: String(e?.label || e?.kind || "Einzahlung"), amount: round2(Math.abs(num(e.amount))) }));
-    steps.push({ key: "sonstige-ein", label: "+ Sonstige Einzahlungen (USt-Erstattung u. a.)", kind: "add", inValue: running, amount: otherIn, outValue: inflowTotal, items });
+    steps.push({ key: "sonstige-ein", label: "Sonstige Einzahlungen", kind: "add", inValue: running, amount: otherIn, outValue: inflowTotal, items, explain: "Zusätzliche Geldeingänge neben der Amazon-Auszahlung (z. B. USt-Erstattung, FO-Rückzahlungen)." });
   }
   running = inflowTotal;
 
@@ -110,7 +131,7 @@ export function buildCashflowWaterfall(row: unknown, cashIn?: unknown): Waterfal
       running = out;
     });
 
-  steps.push({ key: "netto", label: "= Netto-Cashflow des Monats", kind: "end", inValue: running, outValue: running });
+  steps.push({ key: "netto", label: "Netto-Cashflow", kind: "end", inValue: running, outValue: running, explain: "Was am Monatsende real auf dem Konto übrig bleibt — entspricht exakt dem Netto-Balken im Chart oben." });
 
   return steps.map((s) => ({
     ...s,
