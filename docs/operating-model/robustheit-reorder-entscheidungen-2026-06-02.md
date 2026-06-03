@@ -71,3 +71,19 @@ ist dann ausschließlich den **Prelaunch-Items** (E3) zuzuordnen — also Launch
 **Fazit:** Die Ausgabenseite ist für alle *echten Routine-Reorders* jetzt geplant; die verbleibende
 Nicht-Robustheit Jun–Dez ist sauber zugeordnet auf (a) die Rahmen-/Gabeltasche-Lieferlücke (Ops-Entscheid) und
 (b) Prelaunch-Launch-Timing — **nicht** auf fehlende/falsch hinterlegte Daten.
+
+## Finale Entscheidungen + Endstand (2026-06, alle committed)
+
+- **E4 (GF-Entscheid): keine Luftfracht** — OOS-Lücke Rahmen-/Gabeltasche Jun–Sep als **Risiko akzeptiert**
+  (`settings.phantomFoShortageAcceptBySku`, rev `6301634c`). Die 2–3-Wochen-Lücke ist real und bewusst akzeptiert;
+  Sea-FOs (E2) bilden die nächste Charge ab (ETA Sept).
+- **E3 (Messerblock gerade/schräg): under_safety-Risiko Jun–Jul akzeptiert** (rev `08a8616c`) — spekulativer
+  Pre-Launch-Reorder nicht gerechtfertigt (PO260007 deckt Launch, ETA Aug).
+
+**Endstand Robustheit Jun–Dez 2026** — alle Routine-Reorders geplant/abgeschlossen; verbleibend ausschließlich
+zwei legitime GF-Vorwärts-Entscheidungen (KEINE Daten-Lücken, NICHT grün-geschönt):
+1. **Food Pouch 035.001** (Jun–Dez): Prelaunch ohne Order → Launch-Entscheidung offen.
+2. **Messerblock gerade/schräg 021.002/003** (ab Aug, `stock_oos`): Post-Launch-Reorder — nach PO260007-Launch
+   (Aug) entscheiden; bewusst nicht spekulativ vorweggenommen.
+
+Kontostand-Plan (ehrlich, nach allen Einkaufs-Abflüssen): min Jun **88.126 €**, Dez **329.023 €**, alle Monate positiv.
