@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, "../..");
 
 let server;
 let buildMonthPlanningResult;
+let buildDashboardRobustness;
 let currentMonthKey;
 let addMonths;
 let monthRange;
@@ -179,6 +180,7 @@ test.before(async () => {
 
   ({ buildMonthPlanningResult } = await server.ssrLoadModule("/src/v2/domain/monthPlanning.ts"));
   ({ isMonthPlanningReadOnly } = await server.ssrLoadModule("/src/v2/domain/monthPlanning.ts"));
+  ({ buildDashboardRobustness } = await server.ssrLoadModule("/src/v2/domain/dashboardRobustness.ts"));
   ({
     buildMonthPlanningActionSurface,
     buildMonthPlanningSupplyVisualModel,
@@ -343,6 +345,40 @@ test("month planning splits revenue input blockers from master-data blockers", a
     month.reviewItems.some((entry) => entry.type === "master_data_blocking" && entry.sku === "SKU-BLOCKED"),
     true,
     "Geblockte Stammdatenfälle müssen als master_data_blocking auftauchen.",
+  );
+});
+
+test("cash-in basis zählt forecast-abgeleiteten Umsatz (rollendes Fenster), nicht nur incomings-Zeilen", async () => {
+  const now = currentMonthKey();
+  const months = [now];
+  const cashInCheck = (state) => buildDashboardRobustness({ state, months })
+    .months.find((entry) => entry.month === now)
+    .checks.find((entry) => entry.key === "cash_in");
+
+  // (a) Forecast liefert Umsatz für den Monat, aber KEINE incomings-Zeile und keine Actuals.
+  const stateForecast = buildState({
+    incomings: [],
+    monthlyActuals: {},
+    products: [makeProduct("SKU-FC", { avgSellingPriceGrossEUR: 19 })],
+    forecastImport: { "SKU-FC": { [now]: { units: 50, revenueEur: 5000 } } },
+  });
+  assert.equal(
+    cashInCheck(stateForecast).passed,
+    true,
+    "Forecast-Umsatz muss als Cash-In-Basis zählen, auch ohne incomings-Zeile (rollendes Fenster).",
+  );
+
+  // (b) Weder Forecast noch incomings noch Actuals -> Cash-In-Basis fehlt weiterhin.
+  const stateNone = buildState({
+    incomings: [],
+    monthlyActuals: {},
+    products: [makeProduct("SKU-FC", { avgSellingPriceGrossEUR: 19 })],
+    forecastImport: {},
+  });
+  assert.equal(
+    cashInCheck(stateNone).passed,
+    false,
+    "Ohne jede Cash-In-Basis (kein Forecast/incomings/Actuals) muss der Check weiterhin fehlschlagen.",
   );
 });
 

@@ -492,6 +492,31 @@ function resolveCoverageStatus(input: {
   return "insufficient";
 }
 
+// Forecast-abgeleitete Cash-In-Basis: liefert der Forecast (forecastImport) für den Monat
+// Umsatz/Absatz, existiert eine belastbare Cash-In-Basis — denn der Cash-In-Mirror leitet den
+// Monatsumsatz genau daraus ab (buildCashInPayoutMirrorByMonth -> buildForecastRevenueByMonth),
+// sobald der Monat im Planungshorizont liegt. Ohne diese Angleichung meldete der Check 2027 als
+// "fehlend", obwohl der Cashflow dort längst forecast-basierten Umsatz bucht (rollendes Fenster).
+function monthForecastHasRevenue(state: Record<string, unknown>, month: string): boolean {
+  const forecast = (state.forecast && typeof state.forecast === "object")
+    ? state.forecast as Record<string, unknown>
+    : {};
+  const forecastImport = (forecast.forecastImport && typeof forecast.forecastImport === "object")
+    ? forecast.forecastImport as Record<string, Record<string, Record<string, unknown>>>
+    : {};
+  for (const sku of Object.keys(forecastImport)) {
+    const entry = forecastImport[sku]?.[month];
+    if (!entry) continue;
+    const units = toNumber(entry.units);
+    const revenue = toNumber(entry.revenueEur ?? entry.revenue);
+    if ((Number.isFinite(units as number) && Number(units) > 0)
+      || (Number.isFinite(revenue as number) && Number(revenue) > 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function monthHasCashIn(state: Record<string, unknown>, month: string): boolean {
   const incomings = Array.isArray(state.incomings) ? state.incomings as Record<string, unknown>[] : [];
   const incoming = incomings.find((entry) => String(entry.month || "") === month);
@@ -505,8 +530,14 @@ function monthHasCashIn(state: Record<string, unknown>, month: string): boolean 
     ? state.monthlyActuals as Record<string, Record<string, unknown>>
     : {};
   const actual = monthlyActuals[month];
-  if (!actual) return false;
-  return Number.isFinite(toNumber(actual.realRevenueEUR) as number) || Number.isFinite(toNumber(actual.realPayoutRatePct) as number);
+  if (actual
+    && (Number.isFinite(toNumber(actual.realRevenueEUR) as number)
+      || Number.isFinite(toNumber(actual.realPayoutRatePct) as number))) {
+    return true;
+  }
+
+  // Forecast-abgeleitete Basis (rollendes Fenster, an die Cashflow-Berechnung angeglichen).
+  return monthForecastHasRevenue(state, month);
 }
 
 function resolveVatConfig(state: Record<string, unknown>): VatConfigInfo {
