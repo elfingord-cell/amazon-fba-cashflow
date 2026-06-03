@@ -9,7 +9,7 @@ export interface OrdersTabMeta {
 export const ORDERS_TAB_ITEMS: OrdersTabMeta[] = [
   { key: "po", label: "Bestellungen (PO)", path: "/v2/orders/po" },
   { key: "fo", label: "Forecast Orders (FO)", path: "/v2/orders/fo" },
-  { key: "pfo", label: "Phantom Forecast Orders (PFO)", path: "/v2/orders/pfo" },
+  { key: "pfo", label: "Bestellvorschläge (PFO)", path: "/v2/orders/pfo" },
   { key: "ghost-fo", label: "Verwaiste FOs", path: "/v2/orders/ghost-fo" },
   { key: "sku", label: "SKU Sicht", path: "/v2/orders/sku" },
   { key: "lieferantenausblick", label: "Lieferantenausblick", path: "/v2/orders/lieferantenausblick" },

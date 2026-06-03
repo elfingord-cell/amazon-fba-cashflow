@@ -20,6 +20,7 @@ import {
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "../../components/DataTable";
 import { DeNumberInput } from "../../components/DeNumberInput";
+import { ProvenanceTag } from "../../components/ProvenanceTag";
 import ReactECharts from "echarts-for-react";
 import { readCollaborationDisplayNames, resolveCollaborationUserLabel } from "../../domain/collaboration";
 import { buildCategoryOrderMap, sortCategoryGroups } from "../../domain/categoryOrder";
@@ -686,6 +687,7 @@ export default function ProductsModule(): JSX.Element {
           <div className="v2-proj-alias">
             <Text className="v2-proj-alias-main">{row.original.alias || row.original.sku}</Text>
             <Text className="v2-proj-sku-secondary" type="secondary">{row.original.sku}</Text>
+            <ProvenanceTag entry={(stateObject as Record<string, Record<string, { source?: string; asOf?: string | null; by?: string; method?: string }>>)?.provenance?.[`product:${row.original.sku}`]} />
           </div>
         ),
       },
