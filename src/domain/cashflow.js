@@ -2269,6 +2269,23 @@ export function computeSeries(state) {
     plannedPayoutByMonth[m] = revenue * (payoutPct / 100);
   });
 
+  // Cash-in-Zerlegung je Monat (für den Monats-Wasserfall: Brutto VO → Realismus/Kalibrierung →
+  // verwendeter Umsatz → Auszahlungsquote → Sales-Cash-Eingang). Additiv; Engine sonst unberührt.
+  const cashInByMonth = {};
+  Object.keys(bucket).forEach((m) => {
+    const meta = cashInMetaByMonth[m] || {};
+    const payoutPct = Number.isFinite(appliedPayoutPctByMonth[m])
+      ? Number(appliedPayoutPctByMonth[m])
+      : (Number.isFinite(Number(meta.payoutPct)) ? Number(meta.payoutPct) : null);
+    cashInByMonth[m] = {
+      forecastRevenueRaw: Number(meta.forecastRevenueRaw) || 0,
+      appliedRevenue: Number(meta.appliedRevenue) || 0,
+      calibrationFactorApplied: Number.isFinite(Number(meta.calibrationFactorApplied)) ? Number(meta.calibrationFactorApplied) : null,
+      payoutPct,
+      payout: Number(plannedPayoutByMonth[m]) || 0,
+    };
+  });
+
   const kpis = {
     opening,
     openingToday: opening,
@@ -2419,7 +2436,7 @@ export function computeSeries(state) {
     avgPayoutDeltaPct,
   };
 
-  return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons };
+  return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons, cashInByMonth };
 }
 
 export function getEffectiveCashInMonth(monthKey, state, globalSettings = null, options = {}) {

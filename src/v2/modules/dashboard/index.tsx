@@ -39,6 +39,7 @@ import {
 } from "../../domain/dashboardCashflow";
 import { buildCashInPayoutMirrorByMonth } from "../../domain/cashInPayoutMirror";
 import { CredibilityBadge } from "../../components/CredibilityBadge";
+import { CashflowWaterfall } from "../../components/CashflowWaterfall";
 import { buildMonthPlanningResult, type MonthPlanningMonth } from "../../domain/monthPlanning";
 import {
   buildPhantomFoSuggestions,
@@ -2297,6 +2298,12 @@ export default function DashboardModule(): JSX.Element {
         </Text>
         <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} notMerge />
       </Card>
+
+      <CashflowWaterfall
+        report={report}
+        month={selectedMonth}
+        monthLabel={selectedMonth ? formatMonthLabel(selectedMonth) : undefined}
+      />
 
       <Card>
         <Space style={{ width: "100%", justifyContent: "space-between" }} wrap>
