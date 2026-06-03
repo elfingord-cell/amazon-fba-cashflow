@@ -9,6 +9,25 @@ volle Parity-Suite + Build; CLI-Dry-Runs. Read-only wo möglich; Prod-Writes nur
 Code/UX/Konzept/Security SaaS-tauglich. **2 Code-Defekte + 2 Bestands-Reco-Punkte gefunden und behoben.**
 Der Live-UI-Schreibpfad ist end-to-end bewiesen (s. Nachtrag). Kein offener Blocker.
 
+### Nachtrag 2 (2. Probelauf-Durchgang) — zu großzügig abgehakte Zeilen echt geschlossen
+- **Herkunfts-Badge war NICHT sichtbar** (Komponente gebaut, aber nicht in Zeilen eingebunden). Behoben
+  (`5d7c4fd2`): `ProvenanceTag` in Produkt-Zeilen → **live verifiziert** „Herkunft: VentoryOne · —" bei allen
+  40 Produkten (Datum „—" = asOf null aus Backfill, echte Syncs setzen es).
+- **Begriffskonflikt Ghost/Phantom:** PFO-Tab „Phantom Forecast Orders (PFO)" → **„Bestellvorschläge (PFO)"**
+  umbenannt (ghost-fo-Tab war bereits „Verwaiste FOs"). Live verifiziert.
+- **Backup-Stichprobe:** jüngstes `~/.fba-cli-backups`-File = valides JSON, 40 Produkte, schemaVersion 2,
+  voll rückspielbar. ✅
+- **SaaS-Security/RLS:** RLS-Policies aktiv auf workspace_state/_meta/_members (`app_is_workspace_member`),
+  service-role nur im CLI, keine Secrets im dist-Bundle. ✅
+- **Performance:** alle 20 Tabs < 5 s, kein Hänger; computeSeries im Workflow sauber (Settings-Horizont 12).
+- **Invalid-Input:** Produkt-Completeness flaggt unvollständige Stammdaten (Korrekturbedarf-Zähler + WARN bei
+  Ø-Einstand 0,00). REV_MISMATCH code-belegt (Workflow).
+- **Vorbehalt Responsiv:** AntD-`Col xs/md/xl`-Grid vorhanden, aber der Chrome-Screenshot normalisiert die
+  Capture-Breite → schmaler Viewport nicht zweifelsfrei per Bild belegt (low; nicht-blockierend).
+- **Low-Hinweis:** Produkt-Tabelle zeigt Stahl-Tamper als „Aktiv" (Status), Forecast-Grid als „Auslaufend"
+  (discontinued-Marker). Konsistent gemeint (Status vs. Lebenszyklus), aber für einen neuen Seller minimal
+  verwirrend — optional: discontinued auch in der Produkt-Tabelle taggen.
+
 ### Nachtrag — Auflagen geschlossen
 - **[HIGH, Daten] Tamper Stahl `029.001`:** VO live geprüft → SKU **nicht mehr in VentoryOne** (38 Zeilen) →
   300 waren echtes Phantom. Snapshot 2026-06 auf **0** korrigiert (CLI, rev `97a5b5de`, Backup). Cashflow-Netto
