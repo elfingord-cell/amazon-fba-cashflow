@@ -1096,7 +1096,7 @@ export default function SkuPlanningModule(): JSX.Element {
           data: markerPoints.fo,
         },
         ...(showSimulation ? [{
-          name: "Phantom Ankunft",
+          name: "Vorschlag Ankunft",
           type: "scatter",
           symbol: "triangle",
           symbolSize: 13,
@@ -1181,7 +1181,7 @@ export default function SkuPlanningModule(): JSX.Element {
   const renderEventLabel = useCallback((event: MonthEvent): string => {
     if (event.type === "po") return `PO ${event.label}`;
     if (event.type === "fo") return `FO ${event.label}`;
-    return `Phantom ${event.label}`;
+    return `Vorschlag ${event.label}`;
   }, []);
 
   const selectedSkuLabel = selectedOverviewRow?.alias || selectedOverviewRow?.sku || "";
@@ -1194,7 +1194,7 @@ export default function SkuPlanningModule(): JSX.Element {
           <div>
             <Title level={3}>SKU Planung</Title>
             <Paragraph>
-              Interaktive SKU-Planung mit Bestandsverlauf, PO/FO-Ankuenften und Phantom-FO Simulation als reines Overlay.
+              Interaktive SKU-Planung mit Bestandsverlauf, PO/FO-Ankünften und Bestellvorschlags-Simulation als reines Overlay.
             </Paragraph>
           </div>
         </div>
@@ -1202,7 +1202,7 @@ export default function SkuPlanningModule(): JSX.Element {
           <div className="v2-toolbar-row">
             <Tag color="blue">Horizont: {planningSettings.horizonMonths} Monate</Tag>
             <Tag color="default">ABC Scope: {planningSettings.abcScope.toUpperCase()}</Tag>
-            <Tag color="default">Max Phantom je SKU: {planningSettings.maxPhantomSuggestionsPerSku}</Tag>
+            <Tag color="default">Max Vorschläge je SKU: {planningSettings.maxPhantomSuggestionsPerSku}</Tag>
             <Tag color="green">Forecast: {forecastLabel}</Tag>
             <Tag color={summaryTags.oosCount > 0 ? "red" : "green"}>OOS Risiko: {summaryTags.oosCount}</Tag>
             <Tag color={summaryTags.underSafetyCount > 0 ? "gold" : "green"}>Unter Safety: {summaryTags.underSafetyCount}</Tag>
@@ -1273,7 +1273,7 @@ export default function SkuPlanningModule(): JSX.Element {
                     <Switch checked={showSimulation} onChange={setShowSimulation} />
                   </Space>
                   <Button onClick={() => openManualPhantomModal(focusedMonth || null)}>
-                    + Phantom-FO manuell
+                    + Bestellvorschlag manuell
                   </Button>
                 </div>
 
@@ -1286,8 +1286,8 @@ export default function SkuPlanningModule(): JSX.Element {
                 <div className="v2-sku-planning-hints">
                   <Tag>PO Marker: Kreis</Tag>
                   <Tag color="green">FO Marker: Diamant</Tag>
-                  {showSimulation ? <Tag color="orange">Phantom Marker: Dreieck (Simulation)</Tag> : <Tag color="default">Simulation aus</Tag>}
-                  <Text type="secondary">Marker anklicken oeffnet PO/FO/Phantom-Detail.</Text>
+                  {showSimulation ? <Tag color="orange">Vorschlag-Marker: Dreieck (Simulation)</Tag> : <Tag color="default">Simulation aus</Tag>}
+                  <Text type="secondary">Marker anklicken öffnet PO-/FO-/Vorschlag-Detail.</Text>
                 </div>
 
                 <Card size="small" style={{ marginTop: 10 }}>
@@ -1296,7 +1296,7 @@ export default function SkuPlanningModule(): JSX.Element {
                       Monat im Fokus: {focusedMonth ? formatMonthLabel(focusedMonth) : "—"}
                     </Title>
                     <Button size="small" onClick={() => openManualPhantomModal(focusedMonth || null)}>
-                      Phantom fuer Monat hinzufuegen
+                      Bestellvorschlag für Monat hinzufügen
                     </Button>
                   </Space>
                   {!focusedEvents.length ? (
@@ -1361,7 +1361,7 @@ export default function SkuPlanningModule(): JSX.Element {
                 </Card>
 
                 <Card size="small" style={{ marginTop: 10 }}>
-                  <Title level={5} style={{ marginTop: 0 }}>Automatische Phantom-FO Vorschlaege</Title>
+                  <Title level={5} style={{ marginTop: 0 }}>Automatische Bestellvorschläge</Title>
                   {selectedSkuShortageAcceptances.length ? (
                     <Space wrap style={{ marginBottom: 8 }}>
                       {selectedSkuShortageAcceptances.map((acceptance) => (
@@ -1423,9 +1423,9 @@ export default function SkuPlanningModule(): JSX.Element {
                 </Card>
 
                 <Card size="small" style={{ marginTop: 10 }}>
-                  <Title level={5} style={{ marginTop: 0 }}>Manuelle Phantom-FOs</Title>
+                  <Title level={5} style={{ marginTop: 0 }}>Manuelle Bestellvorschläge</Title>
                   {!manualPhantomEntries.length ? (
-                    <Text type="secondary">Noch keine manuellen Phantom-FOs.</Text>
+                    <Text type="secondary">Noch keine manuellen Bestellvorschläge.</Text>
                   ) : (
                     <div className="v2-sku-planning-focus-list">
                       {manualPhantomEntries.map((entry) => (
@@ -1453,7 +1453,7 @@ export default function SkuPlanningModule(): JSX.Element {
       </Row>
 
       <Modal
-        title="Phantom-FO manuell hinzufügen"
+        title="Bestellvorschlag manuell hinzufügen"
         open={manualModalOpen}
         onCancel={() => setManualModalOpen(false)}
         onOk={addManualPhantom}
@@ -1481,7 +1481,7 @@ export default function SkuPlanningModule(): JSX.Element {
       </Modal>
 
       <Modal
-        title="Phantom-FO Detail"
+        title="Bestellvorschlag-Detail"
         open={Boolean(phantomModalEntry)}
         onCancel={() => setPhantomModalEntry(null)}
         footer={phantomModalEntry ? (

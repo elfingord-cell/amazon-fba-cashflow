@@ -841,7 +841,7 @@ export default function SkuTimelineView(): JSX.Element {
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--po-transit" /> PO Transit</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-production" /> FO Produktion</span>
         <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-transit" /> FO Transit</span>
-        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-phantom" /> Phantom FO (vorbehaltlich)</span>
+        <span><span className="v2-orders-gantt-legend-box v2-orders-gantt-legend-box--fo-phantom" /> Bestellvorschlag (vorbehaltlich)</span>
       </div>
 
       <OrdersGanttTimeline
@@ -896,7 +896,7 @@ export default function SkuTimelineView(): JSX.Element {
       />
 
       <Space style={{ marginTop: 10 }} wrap>
-        <Text type="secondary">Klick auf ein Segment oeffnet den Datensatz; Phantom-FOs öffnen den vorausgefüllten FO-Entwurf.</Text>
+        <Text type="secondary">Klick auf ein Segment öffnet den Datensatz; Bestellvorschläge öffnen den vorausgefüllten FO-Entwurf.</Text>
         <Button size="small" onClick={() => navigate("/v2/orders/po?view=timeline")}>
           PO Timeline oeffnen
         </Button>

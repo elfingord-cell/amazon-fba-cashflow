@@ -2346,7 +2346,7 @@ export default function FoModule({ embedded = false }: FoModuleProps = {}): JSX.
 
       applyReturnContext();
       openCreateModal(prefill, { preserveReturnContext: true, preservePfoWorklistDecision: true });
-      message.info("Phantom-FO geladen. Bitte Daten prüfen, bei Bedarf anpassen und speichern.");
+      message.info("Bestellvorschlag geladen. Bitte Daten prüfen, bei Bedarf anpassen und speichern.");
       clearHandledParams([
         "source",
         "decisionSource",

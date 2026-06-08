@@ -1670,7 +1670,7 @@ export default function DashboardModule(): JSX.Element {
             <div className="v2-dashboard-pnl-label-cell">
               <Space size={6} wrap>
                 <Text strong>{row.label}</Text>
-                {row.orderType === "phantom" ? <Tag color="gold">Phantom</Tag> : null}
+                {row.orderType === "phantom" ? <Tag color="gold">Vorschlag</Tag> : null}
                 {aliasSummary ? <Text type="secondary">Alias: {aliasSummary}</Text> : null}
                 {Number.isFinite(Number(row.units)) && Number(row.units) > 0 ? <Tag>Stk: {formatNumber(row.units, 0)}</Tag> : null}
               </Space>
