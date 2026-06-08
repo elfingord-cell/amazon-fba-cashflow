@@ -2245,11 +2245,11 @@ export default function DashboardModule(): JSX.Element {
           <Tag color="green">Einzahlungen: {formatCurrency(totalInflow)}</Tag>
           <Tag color="red">Auszahlungen: {formatCurrency(totalOutflow)}</Tag>
           <Tag color={totalNet >= 0 ? "green" : "red"}>Netto: {formatCurrency(totalNet)}</Tag>
-          {phantomFoSuggestions.length ? <Tag color="gold">Offene Reorder-Vorschläge: {phantomFoSuggestions.length}</Tag> : null}
+          {phantomFoSuggestions.length ? <Tag color="gold">Offene Bestellvorschläge: {phantomFoSuggestions.length}</Tag> : null}
         </div>
         <Text type="secondary" className="v2-dashboard-chart-hint">
           Cashflow, Robustheit und P&amp;L lesen ausschließlich platzierte Bestellungen (PO, aus VentoryOne)
-          und geplante Nachbestellungen (FO). Offene Reorder-Vorschläge sind nur ein Hinweis und werden erst
+          und geplante Nachbestellungen (FO). Offene Bestellvorschläge sind nur ein Hinweis und werden erst
           nach Prüfung als FO übernommen.
         </Text>
         <Text type="secondary" className="v2-dashboard-chart-hint">

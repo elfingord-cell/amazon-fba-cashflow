@@ -59,9 +59,9 @@ function checkForecastCurrent(state, now, thr) {
 
 function checkPfoComplete(phantomSuggestions) {
   const overdue = (phantomSuggestions || []).filter((s) => s && s.overdue === true);
-  return { key: "pfo_complete", label: "PFOs vollständig",
+  return { key: "pfo_complete", label: "Bestellvorschläge vollständig",
     status: overdue.length ? "red" : "green",
-    detail: overdue.length ? `${overdue.length} überfällige Bestellvorschläge offen` : "Keine überfälligen PFOs",
+    detail: overdue.length ? `${overdue.length} überfällige Bestellvorschläge offen` : "Keine überfälligen Bestellvorschläge",
     drill: "#/v2/orders/po" };
 }
 

@@ -543,7 +543,7 @@ function collectPfoBreakdowns(input: {
     pushBreakdown(input.target, sku, arrivalMonth, {
       sourceType: "pfo",
       sourceId: normalizeText(entry.id) || randomId("pfo"),
-      sourceLabel: `PFO ${normalizeText(entry.id || entry.sku) || "PFO"}`,
+      sourceLabel: `Bestellvorschlag ${normalizeText(entry.id || entry.sku) || ""}`.trim(),
       qty: normalizeQty(entry.suggestedUnits),
       sku,
       arrivalMonth,

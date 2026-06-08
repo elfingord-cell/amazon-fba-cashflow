@@ -3248,12 +3248,12 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
           <div className="v2-proj-worklist">
             <div className="v2-proj-worklist-head">
               <Space wrap>
-                <Text strong>PFO-Arbeitsliste</Text>
+                <Text strong>Bestellvorschläge</Text>
                 <Tag color={pfoWorklist.length ? "gold" : "green"}>
-                  {pfoWorklist.length} PFO(s)
+                  {pfoWorklist.length} offen
                 </Tag>
                 <Tag color="blue">Sortierung: Bestelldatum / Monat aufsteigend</Tag>
-                <Tag color="default">Überfällige PFOs bleiben sichtbar</Tag>
+                <Tag color="default">Überfällige Vorschläge bleiben sichtbar</Tag>
               </Space>
               {pfoWorklist.length ? (
                 <Button
@@ -3261,13 +3261,13 @@ export default function InventoryModule({ view = "both" }: InventoryModuleProps 
                   type="primary"
                   onClick={() => navigateToPfoWorklistFo(pfoWorklist[0] || null)}
                 >
-                  Erste PFO öffnen
+                  Ersten Vorschlag öffnen
                 </Button>
               ) : null}
             </div>
 
             {!pfoWorklist.length ? (
-              <Text type="secondary">Keine offenen PFOs im aktuellen 6-Monats-Fenster oder als überfälliger Fall.</Text>
+              <Text type="secondary">Keine offenen Bestellvorschläge im aktuellen 6-Monats-Fenster oder als überfälliger Fall.</Text>
             ) : (
               <StatsTableShell>
                 <table className="v2-stats-table" data-layout="auto">

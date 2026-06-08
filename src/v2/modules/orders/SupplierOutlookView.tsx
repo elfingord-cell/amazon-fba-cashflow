@@ -55,7 +55,7 @@ const { Paragraph, Text, Title } = Typography;
 const SOURCE_OPTIONS = [
   { value: "po", label: "PO" },
   { value: "fo", label: "FO" },
-  { value: "pfo", label: "PFO (indikativ)" },
+  { value: "pfo", label: "Bestellvorschlag (indikativ)" },
 ] satisfies Array<{ value: SupplierOutlookSourceType; label: string }>;
 
 const HORIZON_OPTIONS = [6, 12, 18];

@@ -1860,7 +1860,7 @@ export default function ProductsModule(): JSX.Element {
                 <Checkbox>Im Forecast berücksichtigen</Checkbox>
               </Form.Item>
               <Form.Item name="discontinued" valuePropName="checked" style={{ marginBottom: 0 }}>
-                <Tooltip title="Kein Nachschub mehr (keine PO/FO/PFO). Forecast-Umsatz läuft, bis der Bestand verkauft ist, dann 0.">
+                <Tooltip title="Kein Nachschub mehr (keine PO/FO/Bestellvorschlag). Forecast-Umsatz läuft, bis der Bestand verkauft ist, dann 0.">
                   <Checkbox>Auslaufend (kein Nachschub)</Checkbox>
                 </Tooltip>
               </Form.Item>

@@ -349,7 +349,7 @@ export default function MethodikModule(): JSX.Element {
             description={(
               <span>
                 Ein Produkt mit dem Marker <strong>Auslaufend</strong> wird nicht mehr nachbestellt: Es erscheint in
-                keiner Bestell-/PO-/FO-/PFO-Empfehlung mehr. Der Forecast-Umsatz läuft aber weiter, <strong>gedeckelt am
+                keiner Bestell-/PO-/FO-Empfehlung mehr. Der Forecast-Umsatz läuft aber weiter, <strong>gedeckelt am
                 verfügbaren Bestand</strong> (jüngster Snapshot): solange kumulierte Forecast-Stück ≤ Bestand voller
                 Umsatz, der Überlaufmonat anteilig, danach 0. Bestand 0 ⇒ sofort 0. Die Deckelung wird bei jeder
                 Berechnung frisch ermittelt und übersteht VentoryOne-Re-Imports. Geändert wird der Marker in der
