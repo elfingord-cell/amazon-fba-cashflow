@@ -1176,6 +1176,15 @@ test("computeSeries applies revenue calibration with live anchor, mode switch an
           source: "forecast",
         },
       ],
+      products: [
+        {
+          sku: "SKU-LIVE",
+          alias: "Live",
+          status: "active",
+          includeInForecast: true,
+          portfolioBucket: "core",
+        },
+      ],
       monthlyActuals: {},
       extras: [],
       dividends: [],
