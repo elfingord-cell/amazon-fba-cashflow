@@ -511,6 +511,72 @@ test("v2 PO list summary matches shared resolved outgoing event truth", async ()
   assert.equal(summary.statusText, "mixed");
 });
 
+test("PO duty uses the per-PO duty rate when the global settings duty rate is 0 (PO 260003 regression)", async () => {
+  // Reproduces PO 260003: global settings.dutyRatePct = 0, but the PO carries its
+  // own dutyRatePct = 6.5 and has no materialized autoEvents yet. The dashboard
+  // resolver reads the per-PO rate, so it shows Zoll as open. The PO modal planning
+  // must agree — otherwise the duty line is computed at 0 EUR and filtered out of the
+  // selectable payment list, leaving the user unable to book the customs payment.
+  const { buildResolvedPoPaymentMilestones } = await loadPoPaymentResolver();
+  const settings = {
+    fxRate: 1.19,
+    fxFeePct: 0,
+    dutyRatePct: 0, // global default is 0 …
+    dutyIncludeFreight: true,
+    eustRatePct: 19,
+    vatRefundEnabled: false,
+    vatRefundLagMonths: 0,
+    freightLagDays: 0,
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+  const po = {
+    id: "po-83xub4y",
+    poNo: "260003",
+    supplierId: "sup-a",
+    orderDate: "2026-01-09",
+    etaManual: "2026-05-19",
+    prodDays: 45,
+    transitDays: 45,
+    dutyRatePct: 6.5, // … but this PO has its own 6.5 % duty rate
+    eustRatePct: 19,
+    dutyIncludeFreight: true,
+    fxOverride: 1.19,
+    freightEur: "2472,50",
+    items: [
+      { id: "poi-1", sku: "SKU-A", units: "750", unitCostUsd: "8,70", unitExtraUsd: "0,00", extraFlatUsd: "0,00" },
+      { id: "poi-2", sku: "SKU-B", units: "1000", unitCostUsd: "8,30", unitExtraUsd: "0,00", extraFlatUsd: "0,00" },
+      { id: "poi-3", sku: "SKU-C", units: "1000", unitCostUsd: "6,65", unitExtraUsd: "0,00", extraFlatUsd: "0,00" },
+    ],
+    milestones: [
+      { id: "ms-dep", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "ms-bal", label: "Balance", percent: 70, anchor: "ETA", lagDays: -10 },
+    ],
+    paymentLog: {},
+    autoEvents: [], // not materialized yet → ensureAutoEvents creates them fresh
+  };
+
+  const planning = buildPoPaymentPlanning(po, PO_CONFIG, settings, []);
+  const modalDuty = planning.paymentRows.find((row) => String(row.eventType || "") === "duty");
+
+  const milestones = buildResolvedPoPaymentMilestones(po, settings, [], { today: "2026-06-08" });
+  const dashboardDuty = milestones.find((entry) => String(entry.eventType || "") === "duty");
+
+  assert.ok(dashboardDuty, "dashboard resolver should surface a duty milestone");
+  assert.ok(Number(dashboardDuty.plannedEur) > 0, "dashboard duty should be a non-zero open amount");
+
+  assert.ok(modalDuty, "modal planning should surface a duty payment row");
+  assert.ok(
+    Number(modalDuty.plannedEur) > 0,
+    "modal duty plannedEur must be > 0 so the line is bookable (currently filtered out at 0 EUR)",
+  );
+  assert.equal(
+    round2(modalDuty.plannedEur),
+    round2(dashboardDuty.plannedEur),
+    "modal duty amount must match the dashboard resolver",
+  );
+});
+
 test("PO planning snapshot keeps milestone offsets and settings-derived auto-event due dates aligned", () => {
   const settings = {
     fxRate: 1,

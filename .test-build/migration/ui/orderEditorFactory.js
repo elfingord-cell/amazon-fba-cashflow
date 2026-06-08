@@ -1315,8 +1315,14 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
     }).filter(Boolean);
     rows.push(...manualComputed);
     const dutyIncludeFreight = record.dutyIncludeFreight !== false;
-    const stateDutyRate = typeof record.dutyRatePct === "number" ? record.dutyRatePct : clampPct(record.dutyRatePct);
-    const stateEustRate = typeof record.eustRatePct === "number" ? record.eustRatePct : clampPct(record.eustRatePct);
+    // Effective duty/eust rates: the per-PO field wins, falling back to the global
+    // settings rate, mirroring the dashboard resolver (poPaymentResolver.js). The
+    // autoEvent.percent is a stale denormalized copy (ensureAutoEvents seeds it from the
+    // GLOBAL settings rate) and must NOT take precedence – when the global rate is 0 it
+    // would zero out duty for POs that carry their own rate, hiding the Zoll line from the
+    // payment modal (PO 260003: settings.dutyRatePct = 0 but record.dutyRatePct = 6.5).
+    const stateDutyRate = clampPct(record.dutyRatePct ?? settings.dutyRatePct ?? 0);
+    const stateEustRate = clampPct(record.eustRatePct ?? settings.eustRatePct ?? 0);
     const stateFxFee = typeof record.fxFeePct === "number" ? record.fxFeePct : clampPct(record.fxFeePct);
     const vatLagMonths = Number(record.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0) || 0;
     const autoResults = {};
@@ -1373,7 +1379,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             continue;
         }
         if (autoEvt.type === "duty") {
-            const percent = clampPct(autoEvt.percent ?? stateDutyRate ?? settings.dutyRatePct ?? 0);
+            const percent = stateDutyRate;
             const baseValue = goods + (dutyIncludeFreight ? freight : 0);
             const due = addDays(baseDate, lagDays);
             const amount = -(baseValue * (percent / 100));
@@ -1400,7 +1406,7 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             continue;
         }
         if (autoEvt.type === "eust") {
-            const percent = clampPct(autoEvt.percent ?? stateEustRate ?? settings.eustRatePct ?? 0);
+            const percent = stateEustRate;
             const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
             const baseValue = goods + freight + dutyAbs;
             const due = addDays(baseDate, lagDays);
