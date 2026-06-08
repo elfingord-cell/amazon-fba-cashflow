@@ -25,7 +25,7 @@ import {
 } from "./dashboardCashflow";
 import { buildCashInPayoutMirrorByMonth } from "./cashInPayoutMirror";
 import { buildMonthPlanningResult, type MonthPlanningMonth, type MonthPlanningResult } from "./monthPlanning";
-import { buildPhantomFoSuggestions, type PhantomFoSuggestion } from "./phantomFo";
+import { buildPhantomFoSuggestions } from "./phantomFo";
 import { currentMonthKey, formatMonthLabel, monthIndex, normalizeMonthKey } from "./months";
 
 // Re-Export für die Mobile-Schicht (cfpModel ist die Mobile-zugewandte API).
@@ -72,21 +72,6 @@ export interface CfpMonthRow {
   isCurrent: boolean;
 }
 
-export interface CfpRadarItem {
-  id: string;
-  sku: string;
-  alias: string;
-  supplierId: string;
-  units: number;
-  value: number | null;
-  latestOrderDate: string;
-  requiredArrivalDate: string;
-  orderMonth: string;
-  firstRiskMonth: string;
-  overdue: boolean;
-  shortageUnits: number | null;
-}
-
 export interface CfpModel {
   months: string[];
   visibleMonths: string[];
@@ -99,8 +84,6 @@ export interface CfpModel {
   firstNegativeVisibleMonth: string | null;
   rows: CfpMonthRow[];
   totals: { inflow: number; outflow: number; net: number; minClosing: number | null };
-  radar: CfpRadarItem[];
-  radarTotalValue: number | null;
   robustness: MonthPlanningResult;
   cockpit: {
     bucketScope: string[];
@@ -135,26 +118,6 @@ function applyDashboardCalculationOverrides(
   settings.cashInCalibrationEnabled = options.calibrationEnabled;
   settings.cashInRevenueBasisMode = options.revenueBasisMode;
   return next;
-}
-
-function deriveRadarValue(suggestion: PhantomFoSuggestion): number | null {
-  const fo = (suggestion.foRecord && typeof suggestion.foRecord === "object")
-    ? suggestion.foRecord as Record<string, unknown>
-    : {};
-  const direct = toFiniteNumberOrNull(fo.value ?? fo.amount ?? fo.totalValue ?? fo.orderValue);
-  if (direct != null && direct > 0) return direct;
-  const items = Array.isArray(fo.items) ? fo.items as Record<string, unknown>[] : [];
-  if (items.length) {
-    const sum = items.reduce((acc, item) => {
-      const lineValue = toFiniteNumberOrNull(item.value ?? item.amount ?? item.lineTotal);
-      if (lineValue != null) return acc + lineValue;
-      const units = Number(item.units ?? item.qty ?? item.quantity ?? 0);
-      const unitCost = toFiniteNumberOrNull(item.unitCost ?? item.ek ?? item.landedCost);
-      return unitCost != null ? acc + units * unitCost : acc;
-    }, 0);
-    if (sum > 0) return sum;
-  }
-  return null;
 }
 
 /**
@@ -252,7 +215,8 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
   // 9) Robustheit / Monatsplanung
   const robustness = buildMonthPlanningResult({ state: stateObject, months: visibleMonths });
 
-  // 10) Phantom-FO-Vorschläge (Radar)
+  // 10) Phantom-FO-IDs — nur für die Aggregations-Parität (provisionalFoIds),
+  // identisch zum Desktop. Werden in der Mobile-UI NICHT als eigener Bereich gezeigt.
   const phantomFoSuggestions = buildPhantomFoSuggestions({ state: stateObject });
   const phantomFoIdSet = new Set(phantomFoSuggestions.map((entry) => entry.id));
 
@@ -303,23 +267,6 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
   const minClosing = rows.length ? Math.min(...rows.map((row) => row.closing)) : null;
   const firstNegativeVisibleMonth = rows.find((row) => row.closing < 0)?.month || null;
 
-  const radar: CfpRadarItem[] = phantomFoSuggestions.map((suggestion) => ({
-    id: suggestion.id,
-    sku: suggestion.sku,
-    alias: suggestion.alias || suggestion.sku,
-    supplierId: suggestion.supplierId || "",
-    units: Number(suggestion.suggestedUnits || 0),
-    value: deriveRadarValue(suggestion),
-    latestOrderDate: suggestion.latestOrderDate || "",
-    requiredArrivalDate: suggestion.requiredArrivalDate || "",
-    orderMonth: suggestion.orderMonth || "",
-    firstRiskMonth: suggestion.firstRiskMonth || "",
-    overdue: suggestion.overdue === true,
-    shortageUnits: suggestion.shortageUnits ?? null,
-  }));
-  const radarValues = radar.map((entry) => entry.value).filter((value): value is number => value != null);
-  const radarTotalValue = radarValues.length ? radarValues.reduce((sum, value) => sum + value, 0) : null;
-
   return {
     months,
     visibleMonths,
@@ -329,8 +276,6 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
     firstNegativeVisibleMonth,
     rows,
     totals: { inflow: totalInflow, outflow: totalOutflow, net: totalNet, minClosing },
-    radar,
-    radarTotalValue,
     robustness,
     cockpit: {
       bucketScope,

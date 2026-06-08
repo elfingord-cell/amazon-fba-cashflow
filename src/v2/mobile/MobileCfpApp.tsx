@@ -9,19 +9,17 @@ import { SegmentedControl } from "./components/primitives";
 import { MonthSheet } from "./components/MonthSheet";
 import { CashflowView } from "./views/CashflowView";
 import { MonateView } from "./views/MonateView";
-import { RadarView } from "./views/RadarView";
 import { SettingsView } from "./views/SettingsView";
 import {
-  IconCashflow, IconMonate, IconRadar, IconMehr,
-  IconBell, IconRefresh, IconCalendar, IconSliders, IconUser,
+  IconCashflow, IconMonate, IconMehr,
+  IconBell, IconRefresh, IconCalendar, IconUser,
 } from "./components/icons";
 
-type Tab = "cashflow" | "monate" | "radar" | "mehr";
+type Tab = "cashflow" | "monate" | "mehr";
 
 const TABS: Array<{ key: Tab; label: string; Icon: (p: { size?: number }) => JSX.Element }> = [
   { key: "cashflow", label: "Cashflow", Icon: IconCashflow },
   { key: "monate", label: "Monate", Icon: IconMonate },
-  { key: "radar", label: "Radar", Icon: IconRadar },
   { key: "mehr", label: "Mehr", Icon: IconMehr },
 ];
 
@@ -29,7 +27,6 @@ function actionLabel(Icon: (p: { size?: number }) => JSX.Element): string {
   if (Icon === IconRefresh) return "Aktualisieren";
   if (Icon === IconBell) return "Benachrichtigungen";
   if (Icon === IconCalendar) return "Kalender";
-  if (Icon === IconSliders) return "Filter";
   if (Icon === IconUser) return "Konto";
   return "Aktion";
 }
@@ -50,8 +47,6 @@ export default function MobileCfpApp(): JSX.Element {
     switch (tab) {
       case "monate":
         return { title: "Monate", sub: `${cfp.model.rows.length}-Monats-Vorschau · Endsaldo je Monat`, actions: [IconCalendar], showRange: true };
-      case "radar":
-        return { title: "Radar", sub: "PO/FO-Bestellempfehlungen", actions: [IconSliders], showRange: false };
       case "mehr":
         return { title: "Cockpit", sub: "Einstellungen & Steuerung", actions: [IconUser], showRange: false };
       default:
@@ -104,7 +99,6 @@ export default function MobileCfpApp(): JSX.Element {
           <>
             {tab === "cashflow" ? <CashflowView model={cfp.model} onSelectMonth={setSelectedMonth} /> : null}
             {tab === "monate" ? <MonateView model={cfp.model} onSelectMonth={setSelectedMonth} /> : null}
-            {tab === "radar" ? <RadarView model={cfp.model} onNavigate={handleNavigate} /> : null}
             {tab === "mehr" ? (
               <SettingsView
                 model={cfp.model}
