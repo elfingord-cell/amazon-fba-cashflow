@@ -24,6 +24,7 @@ const confirmDialog_js_1 = require("./utils/confirmDialog.js");
 const prefill_js_1 = require("../lib/prefill.js");
 const productCompleteness_js_1 = require("../lib/productCompleteness.js");
 const poPaymentIdentity_js_1 = require("../domain/poPaymentIdentity.js");
+const poPlanningCore_js_1 = require("../domain/poPlanningCore.js");
 function $(sel, r = document) { return r.querySelector(sel); }
 function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -1268,14 +1269,16 @@ function buildPlanningFormulaLabel(input) {
     return planningOffsetFormula(input?.anchor, input?.offsetValue, input?.offsetUnit);
 }
 function derivePoPlanningRows(record, config, settings, options = {}) {
-    const totals = computeGoodsTotals(record, settings);
+    // Goods + freight come from the shared core (poPlanningCore.js) so the modal planning
+    // uses the exact same basis as the dashboard/cashflow resolver.
+    const totals = (0, poPlanningCore_js_1.computeGoodsTotals)(record, settings);
     let goods = totals.eur;
     if (!goods) {
         const fallback = parseDE(record.goodsEur);
         if (fallback)
             goods = fallback;
     }
-    const freight = resolveFreightTotal(record, totals);
+    const freight = (0, poPlanningCore_js_1.computeFreightTotal)(record, totals);
     const manual = Array.isArray(record.milestones) ? record.milestones : [];
     const auto = ensureAutoEvents(record, settings, manual);
     const schedule = computeTimeline(record, settings);
@@ -1314,17 +1317,15 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
         };
     }).filter(Boolean);
     rows.push(...manualComputed);
-    const dutyIncludeFreight = record.dutyIncludeFreight !== false;
-    // Effective duty/eust rates: the per-PO field wins, falling back to the global
-    // settings rate, mirroring the dashboard resolver (poPaymentResolver.js). The
-    // autoEvent.percent is a stale denormalized copy (ensureAutoEvents seeds it from the
-    // GLOBAL settings rate) and must NOT take precedence – when the global rate is 0 it
-    // would zero out duty for POs that carry their own rate, hiding the Zoll line from the
-    // payment modal (PO 260003: settings.dutyRatePct = 0 but record.dutyRatePct = 6.5).
-    const stateDutyRate = clampPct(record.dutyRatePct ?? settings.dutyRatePct ?? 0);
-    const stateEustRate = clampPct(record.eustRatePct ?? settings.eustRatePct ?? 0);
-    const stateFxFee = typeof record.fxFeePct === "number" ? record.fxFeePct : clampPct(record.fxFeePct);
-    const vatLagMonths = Number(record.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0) || 0;
+    // All import-cost rates + amounts come from the shared core (poPlanningCore.js): the
+    // per-PO field wins, settings is the fallback, and the stale denormalized
+    // autoEvent.percent is ignored. This is the single source of truth shared with the
+    // dashboard/cashflow resolver, so the modal and the dashboard can no longer drift –
+    // the bug that hid the Zoll/FX lines when the global rate was 0 but the PO carried its
+    // own rate (e.g. PO 260003: settings.dutyRatePct = 0 but record.dutyRatePct = 6.5).
+    const rates = (0, poPlanningCore_js_1.resolveRates)(record, settings);
+    const breakdown = (0, poPlanningCore_js_1.computeImportCostBreakdown)({ goods, freight, rates });
+    const vatLagMonths = rates.vatRefundLagMonths;
     const autoResults = {};
     for (const autoEvt of auto) {
         if (!autoEvt)
@@ -1354,12 +1355,11 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             continue;
         }
         if (autoEvt.type === "freight") {
-            const amountAbs = resolveFreightTotal(record, totals);
             const due = addDays(baseDate, lagDays);
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
-            const amount = -(amountAbs || 0);
+            const amount = -(freight || 0);
             rows.push({
                 id: autoEvt.id,
                 label: String(autoEvt.label || "").trim(),
@@ -1379,10 +1379,8 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             continue;
         }
         if (autoEvt.type === "duty") {
-            const percent = stateDutyRate;
-            const baseValue = goods + (dutyIncludeFreight ? freight : 0);
             const due = addDays(baseDate, lagDays);
-            const amount = -(baseValue * (percent / 100));
+            const amount = -breakdown.dutyEur;
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
@@ -1406,11 +1404,8 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             continue;
         }
         if (autoEvt.type === "eust") {
-            const percent = stateEustRate;
-            const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
-            const baseValue = goods + freight + dutyAbs;
             const due = addDays(baseDate, lagDays);
-            const amount = -(baseValue * (percent / 100));
+            const amount = -breakdown.eustEur;
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
@@ -1435,7 +1430,6 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
         }
         if (autoEvt.type === "vat_refund") {
             const eust = autoResults.eust;
-            const percent = clampPct(autoEvt.percent ?? 100);
             const months = Number((autoEvt.lagMonths ?? vatLagMonths) || 0);
             const baseDay = addDays((eust && eust.due) || baseDate, lagDays);
             const shifted = addMonths(baseDay, months);
@@ -1443,8 +1437,8 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
-            const amount = eust && eust.amount !== 0 && record.vatRefundEnabled !== false
-                ? Math.abs(eust.amount) * (percent / 100)
+            const amount = eust && eust.amount !== 0
+                ? (0, poPlanningCore_js_1.computeVatRefundEur)(breakdown.eustEur, autoEvt.percent ?? 100, rates.vatRefundEnabled)
                 : 0;
             autoResults.vat = { amount, due };
             rows.push({
@@ -1466,12 +1460,11 @@ function derivePoPlanningRows(record, config, settings, options = {}) {
             continue;
         }
         if (autoEvt.type === "fx_fee") {
-            const percent = clampPct(autoEvt.percent ?? stateFxFee ?? settings.fxFeePct ?? 0);
             const due = addDays(baseDate, lagDays);
             const dueIso = isoDate(due);
             if (!dueIso)
                 continue;
-            const amount = -(goods * (percent / 100));
+            const amount = -breakdown.fxFeeEur;
             rows.push({
                 id: autoEvt.id,
                 label: String(autoEvt.label || "FX").trim(),

@@ -680,3 +680,79 @@ test("PO planning snapshot keeps milestone offsets and settings-derived auto-eve
     "vat_refund",
   ]);
 });
+
+test("PO modal and dashboard agree on duty/eust/fx when global rates are 0 and autoEvents carry stale percent=0", async () => {
+  // Generalizes the PO 260003 duty regression to eust AND fx. The PO carries its own
+  // per-PO rates, but the materialized autoEvents still hold a STALE denormalized
+  // percent = 0 (seeded back when the global settings rate was 0). The denormalized
+  // autoEvent.percent must NEVER win over the per-PO record rate – otherwise the line
+  // is computed at 0 EUR and filtered out, hiding a bookable import-cost payment.
+  // Duty/eust already ignore autoEvent.percent; fx must follow the same rule.
+  const { buildResolvedPoPaymentMilestones } = await loadPoPaymentResolver();
+  const settings = {
+    fxRate: 1,
+    fxFeePct: 0, // global FX fee is 0 …
+    dutyRatePct: 0, // global duty is 0 …
+    dutyIncludeFreight: true,
+    eustRatePct: 0, // global EUSt is 0 …
+    vatRefundEnabled: false,
+    vatRefundLagMonths: 0,
+    freightLagDays: 0,
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+  const po = {
+    id: "po-stale-percent",
+    poNo: "260099",
+    supplierId: "sup-a",
+    orderDate: "2026-01-09",
+    etaManual: "2026-05-19",
+    prodDays: 45,
+    transitDays: 45,
+    dutyRatePct: 6.5, // … but this PO carries real per-PO rates
+    eustRatePct: 19,
+    fxFeePct: 2,
+    dutyIncludeFreight: true,
+    fxOverride: 1,
+    freightEur: "1000,00",
+    items: [
+      { id: "poi-1", sku: "SKU-A", units: "100", unitCostUsd: "100,00", unitExtraUsd: "0,00", extraFlatUsd: "0,00" },
+    ],
+    milestones: [
+      { id: "ms-dep", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "ms-bal", label: "Balance", percent: 70, anchor: "ETA", lagDays: -10 },
+    ],
+    paymentLog: {},
+    autoEvents: [
+      { id: "ae-freight", type: "freight", enabled: true, anchor: "ETA", lagDays: 30, label: "Fracht" },
+      { id: "ae-duty", type: "duty", enabled: true, anchor: "ETA", lagDays: 30, label: "Zoll", percent: 0 },
+      { id: "ae-eust", type: "eust", enabled: true, anchor: "ETA", lagDays: 30, label: "EUSt", percent: 0 },
+      { id: "ae-fx", type: "fx_fee", enabled: true, anchor: "ORDER_DATE", lagDays: 0, label: "FX-Gebühr", percent: 0 },
+    ],
+  };
+
+  const planning = buildPoPaymentPlanning(JSON.parse(JSON.stringify(po)), PO_CONFIG, settings, []);
+  const modalDuty = planning.paymentRows.find((row) => String(row.eventType || "") === "duty");
+  const modalEust = planning.paymentRows.find((row) => String(row.eventType || "") === "eust");
+  const modalFx = planning.paymentRows.find((row) => String(row.eventType || "") === "fx_fee");
+
+  const milestones = buildResolvedPoPaymentMilestones(JSON.parse(JSON.stringify(po)), settings, [], { today: "2026-06-08" });
+  const dashDuty = milestones.find((entry) => String(entry.eventType || "") === "duty");
+  const dashEust = milestones.find((entry) => String(entry.eventType || "") === "eust");
+  const dashFx = milestones.find((entry) => String(entry.eventType || "") === "fx_fee");
+
+  assert.ok(modalDuty && Number(modalDuty.plannedEur) > 0, "modal duty must be bookable (>0)");
+  assert.ok(modalEust && Number(modalEust.plannedEur) > 0, "modal eust must be bookable (>0)");
+  assert.ok(modalFx && Number(modalFx.plannedEur) > 0, "modal fx must be bookable (>0) – stale autoEvent.percent must not win");
+
+  assert.ok(dashDuty && Number(dashDuty.plannedEur) > 0, "dashboard duty must be open (>0)");
+  assert.ok(dashEust && Number(dashEust.plannedEur) > 0, "dashboard eust must be open (>0)");
+  assert.ok(dashFx && Number(dashFx.plannedEur) > 0, "dashboard fx must be open (>0) – stale autoEvent.percent must not win");
+
+  assert.equal(round2(modalDuty.plannedEur), round2(dashDuty.plannedEur), "duty must match between modal and dashboard");
+  assert.equal(round2(modalEust.plannedEur), round2(dashEust.plannedEur), "eust must match between modal and dashboard");
+  assert.equal(round2(modalFx.plannedEur), round2(dashFx.plannedEur), "fx must match between modal and dashboard");
+
+  // FX = per-PO fxFeePct (2 %) of goods (100 units × 100 USD ÷ fx 1 = 10 000 EUR) = 200 EUR
+  assert.equal(round2(modalFx.plannedEur), 200, "fx must use the per-PO fxFeePct (2 %), not the stale 0 %");
+});
