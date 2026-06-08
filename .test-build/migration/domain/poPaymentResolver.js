@@ -98,6 +98,10 @@ function normaliseAutoEvents(record, settings, manual) {
         percent: settings?.fxFeePct,
         anchor: (firstManual && firstManual.anchor) || "ORDER_DATE",
         lagDays: (firstManual && Number(firstManual.lagDays || 0)) || 0,
+        // Mirror the modal's ensureAutoEvents: decide enabled off the EFFECTIVE FX-fee rate so
+        // both paths agree. Previously fx_fee had no enabled default here (→ undefined → treated
+        // as enabled), which only matched the modal when settings.fxFeePct > 0.
+        enabled: (0, poPlanningCore_js_1.resolveRates)(record, settings).fxFeePct > 0,
     });
     clones.sort((left, right) => order.indexOf(left.type) - order.indexOf(right.type));
     if (record?.ddp) {

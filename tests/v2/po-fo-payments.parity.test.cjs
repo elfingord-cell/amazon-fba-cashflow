@@ -577,6 +577,70 @@ test("PO duty uses the per-PO duty rate when the global settings duty rate is 0 
   );
 });
 
+test("PO fx fee enabled-default follows the effective rate when global fxFeePct is 0 but the PO carries its own (no materialized autoEvents)", async () => {
+  // Last narrow drift left after the duty/eust/fx percent consolidation (dce34b7e):
+  // the *enabled* flag, not the percent. settings.fxFeePct = 0, but the PO carries its
+  // own fxFeePct = 2 and has NO materialized autoEvents yet. ensureAutoEvents (modal)
+  // used to seed fx_fee with `enabled: settings.fxFeePct > 0` → enabled=false → the FX
+  // line was filtered out of the bookable payment list, while the dashboard resolver
+  // (which sets no enabled default → treated as enabled) showed it open. Both paths must
+  // decide identically off the EFFECTIVE rate.
+  const { buildResolvedPoPaymentMilestones } = await loadPoPaymentResolver();
+  const settings = {
+    fxRate: 1,
+    fxFeePct: 0, // global FX fee is 0 …
+    dutyRatePct: 0,
+    dutyIncludeFreight: true,
+    eustRatePct: 0,
+    vatRefundEnabled: false,
+    vatRefundLagMonths: 0,
+    freightLagDays: 0,
+    cny: { start: "", end: "" },
+    cnyBlackoutByYear: {},
+  };
+  const po = {
+    id: "po-fx-enabled-default",
+    poNo: "260098",
+    supplierId: "sup-a",
+    orderDate: "2026-01-09",
+    etaManual: "2026-05-19",
+    prodDays: 45,
+    transitDays: 45,
+    fxFeePct: 2, // … but this PO carries its own 2 % FX fee
+    fxOverride: 1,
+    freightEur: "1000,00",
+    items: [
+      { id: "poi-1", sku: "SKU-A", units: "100", unitCostUsd: "100,00", unitExtraUsd: "0,00", extraFlatUsd: "0,00" },
+    ],
+    milestones: [
+      { id: "ms-dep", label: "Deposit", percent: 30, anchor: "ORDER_DATE", lagDays: 0 },
+      { id: "ms-bal", label: "Balance", percent: 70, anchor: "ETA", lagDays: -10 },
+    ],
+    paymentLog: {},
+    autoEvents: [], // not materialized yet → ensureAutoEvents seeds fx_fee fresh
+  };
+
+  const planning = buildPoPaymentPlanning(JSON.parse(JSON.stringify(po)), PO_CONFIG, settings, []);
+  const modalFx = planning.paymentRows.find((row) => String(row.eventType || "") === "fx_fee");
+
+  const milestones = buildResolvedPoPaymentMilestones(JSON.parse(JSON.stringify(po)), settings, [], { today: "2026-06-08" });
+  const dashFx = milestones.find((entry) => String(entry.eventType || "") === "fx_fee");
+
+  assert.ok(dashFx && Number(dashFx.plannedEur) > 0, "dashboard fx must be open (>0)");
+  assert.ok(
+    modalFx && Number(modalFx.plannedEur) > 0,
+    "modal fx must be bookable (>0) – fx_fee enabled-default must follow the effective rate, not settings alone",
+  );
+  assert.equal(
+    round2(modalFx.plannedEur),
+    round2(dashFx.plannedEur),
+    "modal fx amount must match the dashboard resolver",
+  );
+
+  // FX = per-PO fxFeePct (2 %) of goods (100 units × 100 USD ÷ fx 1 = 10 000 EUR) = 200 EUR
+  assert.equal(round2(modalFx.plannedEur), 200, "fx must use the per-PO fxFeePct (2 %)");
+});
+
 test("PO planning snapshot keeps milestone offsets and settings-derived auto-event due dates aligned", () => {
   const settings = {
     fxRate: 1,

@@ -922,7 +922,11 @@ function ensureAutoEvents(record, settings, manualMilestones = []) {
         percent: settings.fxFeePct || 0,
         anchor: firstMs?.anchor || "ORDER_DATE",
         lagDays: firstMs?.lagDays || 0,
-        enabled: settings.fxFeePct > 0,
+        // Seed the enabled flag off the EFFECTIVE FX-fee rate (per-PO field wins, settings is
+        // the fallback) – the exact same resolution the amount uses (coreResolveRates). Keying
+        // it on settings.fxFeePct alone hid the FX line in the modal when the global rate was 0
+        // but the PO carried its own rate, while the dashboard (no enabled default) showed it.
+        enabled: (0, poPlanningCore_js_1.resolveRates)(record, settings).fxFeePct > 0,
     });
     record.autoEvents = [
         "freight",
