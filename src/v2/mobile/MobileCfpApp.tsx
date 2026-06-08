@@ -97,7 +97,7 @@ export default function MobileCfpApp(): JSX.Element {
           <div className="cfp-empty"><span>Workspace wird geladen …</span></div>
         ) : (
           <>
-            {tab === "cashflow" ? <CashflowView model={cfp.model} onSelectMonth={setSelectedMonth} /> : null}
+            {tab === "cashflow" ? <CashflowView model={cfp.model} selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} /> : null}
             {tab === "monate" ? <MonateView model={cfp.model} onSelectMonth={setSelectedMonth} /> : null}
             {tab === "mehr" ? (
               <SettingsView

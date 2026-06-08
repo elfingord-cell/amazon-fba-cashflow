@@ -1,19 +1,21 @@
-// Tab „Cashflow": Hero-Liquiditätskarte, KPI-Strip, Zeitrahl, Monatskarten.
+// Tab „Cashflow": Hero-Liquiditätskarte, Monats-Diagramm (Kontostand + Netto),
+// Monatskarten. Ziel: Monat-für-Monat-Liquidität beurteilen (z. B. „reicht der
+// Kontostand für eine Dividende im Juli?").
 import { useMemo, type JSX } from "react";
 import type { CfpModel } from "../../domain/cfpModel";
 import { HeroCard } from "../components/HeroCard";
-import { MonthTimeline } from "../components/MonthTimeline";
+import { CashflowChart } from "../components/CashflowChart";
 import { MonthCard } from "../components/MonthCard";
-import { formatCompactCurrency, formatSignedCurrency, formatMonthLabel } from "../cfpFormat";
-import { IconInflow } from "../components/icons";
+import { formatMonthLabel } from "../cfpFormat";
 
-export function CashflowView({ model, onSelectMonth }: {
+export function CashflowView({ model, selectedMonth, onSelectMonth }: {
   model: CfpModel;
+  selectedMonth: string | null;
   onSelectMonth: (month: string) => void;
 }): JSX.Element {
   const rows = model.rows;
   const futureRows = useMemo(() => rows.filter((row) => !row.isPast), [rows]);
-  const timelineRows = futureRows.length ? futureRows : rows;
+  const cardRows = futureRows.length ? futureRows : rows;
 
   const hero = useMemo(() => {
     const currentRow = rows.find((row) => row.isCurrent);
@@ -44,35 +46,23 @@ export function CashflowView({ model, onSelectMonth }: {
 
       <HeroCard {...hero} onGapClick={() => model.firstNegativeVisibleMonth && onSelectMonth(model.firstNegativeVisibleMonth)} />
 
-      <div className="cfp-kpis">
-        <div className="cfp-kpi">
-          <span className="cfp-kpi-label"><IconInflow size={13} /> Eingänge</span>
-          <span className="cfp-kpi-value cfp-num cfp-pos">{formatCompactCurrency(model.totals.inflow)}</span>
-        </div>
-        <div className="cfp-kpi">
-          <span className="cfp-kpi-label">Ausgänge</span>
-          <span className="cfp-kpi-value cfp-num cfp-neg">{formatCompactCurrency(model.totals.outflow)}</span>
-        </div>
-        <div className="cfp-kpi">
-          <span className="cfp-kpi-label">Netto</span>
-          <span className={`cfp-kpi-value cfp-num ${model.totals.net < 0 ? "cfp-neg" : "cfp-pos"}`}>
-            {formatSignedCurrency(model.totals.net)}
-          </span>
-        </div>
-      </div>
-
       <div className="cfp-section-head">
-        <h2 className="cfp-section-title">Zeitrahl</h2>
-        <span className="cfp-section-meta">Netto je Monat</span>
+        <h2 className="cfp-section-title">Kontostand & Cashflow</h2>
+        <span className="cfp-section-meta">Monat für Monat · tippen für Details</span>
       </div>
-      <MonthTimeline rows={timelineRows} onSelect={onSelectMonth} />
+      <CashflowChart
+        rows={rows}
+        selectedMonth={selectedMonth}
+        currentMonth={model.currentMonth}
+        onSelectMonth={onSelectMonth}
+      />
 
       <div className="cfp-section-head">
         <h2 className="cfp-section-title">Monate</h2>
-        <span className="cfp-section-meta">{futureRows.length} kommende</span>
+        <span className="cfp-section-meta">{cardRows.length}{futureRows.length ? " kommende" : ""}</span>
       </div>
       <div className="cfp-monthcards">
-        {timelineRows.map((row) => (
+        {cardRows.map((row) => (
           <MonthCard key={row.month} row={row} onClick={() => onSelectMonth(row.month)} />
         ))}
       </div>
