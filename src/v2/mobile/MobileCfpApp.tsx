@@ -105,6 +105,7 @@ export default function MobileCfpApp(): JSX.Element {
                 onQuoteMode={cfp.setQuoteMode}
                 onToggleBucket={cfp.toggleBucket}
                 onCalibration={cfp.setCalibration}
+                onSetBuffer={cfp.setBuffer}
                 onNavigate={handleNavigate}
               />
             ) : null}
@@ -129,8 +130,10 @@ export default function MobileCfpApp(): JSX.Element {
 
       {selectedRow ? (
         <MonthSheet
+          key={selectedRow.month}
           row={selectedRow}
           bucketScope={cfp.model.cockpit.bucketScope}
+          cashBuffer={cfp.model.cashBuffer}
           onClose={() => setSelectedMonth(null)}
           onNavigate={(route) => {
             setSelectedMonth(null);

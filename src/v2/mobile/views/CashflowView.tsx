@@ -5,8 +5,16 @@ import type { CfpModel, CfpRange } from "../../domain/cfpModel";
 import { HeroCard } from "../components/HeroCard";
 import { CashflowChart } from "../components/CashflowChart";
 import { MonthCard } from "../components/MonthCard";
-import { formatMonthLabel, formatSignedCurrency } from "../cfpFormat";
+import { formatMonthLabel, formatCurrency } from "../cfpFormat";
 import { IconWarning, IconChevron } from "../components/icons";
+
+// Liquiditäts-Ampel: grün ab Cash-Puffer, amber 0..Puffer, rot unter 0.
+function ampelStatus(value: number | null, buffer: number): "ok" | "warn" | "bad" {
+  if (value == null) return "ok";
+  if (value < 0) return "bad";
+  if (buffer > 0 && value < buffer) return "warn";
+  return "ok";
+}
 
 function relativeTime(iso: string | null): string {
   if (!iso) return "";
@@ -60,6 +68,7 @@ export function CashflowView({ model, selectedMonth, lastSavedAt, onSelectMonth,
       endValue: lastRow ? lastRow.closing : 0,
       lowValue: model.totals.minClosing,
       lowMonthLabel: model.minClosingMonth ? formatMonthLabel(model.minClosingMonth) : null,
+      lowStatus: ampelStatus(model.totals.minClosing, model.cashBuffer),
       gap: gapRow ? { monthLabel: gapRow.label, value: gapRow.closing } : null,
     };
   }, [rows, model]);
@@ -92,8 +101,30 @@ export function CashflowView({ model, selectedMonth, lastSavedAt, onSelectMonth,
         selectedMonth={selectedMonth}
         currentMonth={model.currentMonth}
         minClosingMonth={model.minClosingMonth}
+        cashBuffer={model.cashBuffer}
         onSelectMonth={onSelectMonth}
       />
+
+      {model.topOutflows.length ? (
+        <>
+          <div className="cfp-section-head">
+            <h2 className="cfp-section-title">Größte Ausgaben</h2>
+            <span className="cfp-section-meta">im Zeitraum</span>
+          </div>
+          <div className="cfp-list">
+            {model.topOutflows.map((o, i) => (
+              <button key={`${o.month}-${i}`} type="button" className="cfp-toprow" onClick={() => onSelectMonth(o.month)}>
+                <span className="cfp-toprow-rank">{i + 1}</span>
+                <span className="cfp-toprow-main">
+                  <span className="cfp-toprow-label">{o.label}</span>
+                  <span className="cfp-toprow-sub">{o.monthLabel}{o.sub ? ` · ${o.sub}` : ""}</span>
+                </span>
+                <span className="cfp-toprow-amount cfp-num cfp-neg">−{formatCurrency(o.amount)}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       <div className="cfp-section-head">
         <h2 className="cfp-section-title">Monate</h2>

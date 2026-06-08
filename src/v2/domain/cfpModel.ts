@@ -19,6 +19,8 @@ import {
   alignDashboardCashInToMirror,
   applyDashboardBucketScopeToBreakdown,
   applyTaxInstancesToBreakdown,
+  isDashboardEntryInBucketScope,
+  isDashboardPhantomFoEntry,
   DEFAULT_V2_BUCKET_SCOPE,
   type DashboardCashflowEntry,
   type DashboardMonthAggregation,
@@ -59,6 +61,8 @@ export interface CfpMonthRow {
   inflowSplit: DashboardMonthAggregation["inflow"];
   outflowSplit: DashboardMonthAggregation["outflow"];
   entries: DashboardCashflowEntry[];
+  // Cash-in-Herkunft des Monats (für die Waterfall-Erklärung) — report.cashInByMonth[month].
+  cashIn?: Record<string, unknown>;
   robust: boolean;
   statusKey: string;
   statusLabel: string;
@@ -75,6 +79,14 @@ export interface CfpMonthRow {
   isCurrent: boolean;
 }
 
+export interface CfpTopOutflow {
+  month: string;
+  monthLabel: string;
+  label: string;
+  sub?: string;
+  amount: number;
+}
+
 export interface CfpModel {
   months: string[];
   visibleMonths: string[];
@@ -89,6 +101,10 @@ export interface CfpModel {
   minClosingMonth: string | null;
   rows: CfpMonthRow[];
   totals: { inflow: number; outflow: number; net: number; minClosing: number | null };
+  // Cash-Mindestpuffer (settings.cashMinBuffer) für die Liquiditäts-Ampel; 0 = nicht gesetzt.
+  cashBuffer: number;
+  // Die größten Einzel-Ausgaben über den sichtbaren Zeitraum (Top 5).
+  topOutflows: CfpTopOutflow[];
   robustness: MonthPlanningResult;
   cockpit: {
     bucketScope: string[];
@@ -184,10 +200,11 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
   } as Record<string, unknown>;
 
   // 4) Serie berechnen
-  const report = computeSeries(calculationState) as {
+  const report = computeSeries(calculationState) as unknown as {
     months?: string[];
     breakdown?: Array<{ month: string }>;
     kpis?: { opening?: number; firstNegativeMonth?: string | null };
+    cashInByMonth?: Record<string, Record<string, unknown>>;
   };
   const months = report.months || [];
   const breakdown = (report.breakdown || []) as Parameters<typeof applyTaxInstancesToBreakdown>[0];
@@ -274,6 +291,7 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
       inflowSplit: aggregation.inflow,
       outflowSplit: aggregation.outflow,
       entries,
+      cashIn: report.cashInByMonth?.[row.month],
       robust: planMonth?.robust === true,
       statusKey: coverage?.statusKey || "insufficient",
       statusLabel: planMonth?.statusLabel || coverage?.statusLabel || "—",
@@ -295,6 +313,32 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
   const minClosing = rows.length ? Math.min(...rows.map((row) => row.closing)) : null;
   const minClosingMonth = minClosing != null ? (rows.find((row) => row.closing === minClosing)?.month || null) : null;
   const firstNegativeVisibleMonth = rows.find((row) => row.closing < 0)?.month || null;
+  const cashBuffer = Math.max(0, Number(settings.cashMinBuffer) || 0);
+
+  // Top-5 Einzel-Ausgaben über den sichtbaren Zeitraum (bucket-scoped, ohne Phantom-FO).
+  const topOutflowCandidates: CfpTopOutflow[] = [];
+  rows.forEach((rowEntry) => {
+    rowEntry.entries.forEach((entry) => {
+      if (!isDashboardEntryInBucketScope(entry, bucketScopeSet)) return;
+      if (isDashboardPhantomFoEntry(entry)) return;
+      const src = String(entry.source || "").toLowerCase();
+      const dir = String(entry.direction || "").toLowerCase();
+      if (src === "sales" || dir === "in") return;
+      const amount = Math.abs(Number(entry.amount || 0));
+      if (amount < 1) return;
+      const number = String(entry.sourceNumber || "").trim();
+      const label = String(entry.label || "").trim() || number || "Ausgabe";
+      topOutflowCandidates.push({
+        month: rowEntry.month,
+        monthLabel: rowEntry.label,
+        label,
+        sub: number && !label.includes(number) ? number : undefined,
+        amount,
+      });
+    });
+  });
+  topOutflowCandidates.sort((a, b) => b.amount - a.amount);
+  const topOutflows = topOutflowCandidates.slice(0, 5);
 
   return {
     months,
@@ -306,6 +350,8 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
     minClosingMonth,
     rows,
     totals: { inflow: totalInflow, outflow: totalOutflow, net: totalNet, minClosing },
+    cashBuffer,
+    topOutflows,
     robustness,
     cockpit: {
       bucketScope,

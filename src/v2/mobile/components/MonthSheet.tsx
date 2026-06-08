@@ -2,6 +2,7 @@
 // aufklappbarer Breakdown (mit Fälligkeit + bezahlt/geplant), CTA.
 import { useMemo, useState, type JSX } from "react";
 import type { CfpMonthRow } from "../../domain/cfpModel";
+import { buildCashflowWaterfall } from "../../domain/cashflowWaterfall";
 import { buildMonthBreakdown, type BreakdownGroup } from "../monthBreakdown";
 import { formatCurrency, formatSignedCurrency, formatPercent, formatDayMonth } from "../cfpFormat";
 import { StatusPill } from "./primitives";
@@ -13,6 +14,14 @@ import {
 function fmtAmount(value: number, direction: "in" | "out"): string {
   const adds = direction === "in" ? value >= 0 : value < 0;
   return `${adds ? "+" : "−"}${formatCurrency(Math.abs(value))}`;
+}
+
+function wfStepValue(step: { kind: string; outValue?: number; amount?: number }): string {
+  if (step.kind === "start" || step.kind === "end") {
+    return formatCurrency(Number(step.outValue ?? step.amount ?? 0));
+  }
+  const amt = Number(step.amount ?? 0);
+  return `${amt >= 0 ? "+" : "−"}${formatCurrency(Math.abs(amt))}`;
 }
 
 function groupIcon(key: string): JSX.Element {
@@ -75,19 +84,29 @@ function GroupBlock({ group, direction, open, onToggle }: {
   );
 }
 
-export function MonthSheet({ row, bucketScope, onClose, onNavigate }: {
+export function MonthSheet({ row, bucketScope, cashBuffer, onClose, onNavigate }: {
   row: CfpMonthRow;
   bucketScope: string[];
+  cashBuffer: number;
   onClose: () => void;
   onNavigate: (route: string) => void;
 }): JSX.Element {
   const [closing, setClosing] = useState(false);
   const breakdown = useMemo(() => buildMonthBreakdown(row, new Set(bucketScope)), [row, bucketScope]);
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(["amazon"]));
+  const [wfOpen, setWfOpen] = useState(false);
+  const [divAmount, setDivAmount] = useState(0);
 
+  const waterfall = useMemo(() => buildCashflowWaterfall({ entries: row.entries }, row.cashIn), [row]);
   const monatsplanungRoute = `/v2/monatsplanung?month=${encodeURIComponent(row.month)}`;
   const coverageGap = row.activeSkus > 0 && row.coverageRatio > 0 && row.coverageRatio < 1;
   const hasDataBlockers = row.blockers.length > 0 || coverageGap;
+
+  // Dividenden-/Ausschüttungs-Simulator: Betrag senkt den Tiefststand ab diesem Monat.
+  const simMax = Math.max(20000, Math.ceil((Math.max(0, row.minClosingFromHere) + 10000) / 5000) * 5000);
+  const newLow = row.minClosingFromHere - divAmount;
+  const simStatus: "ok" | "warn" | "bad" = newLow < 0 ? "bad" : (cashBuffer > 0 && newLow < cashBuffer ? "warn" : "ok");
+  const verdict = simStatus === "bad" ? "reißt ins Minus" : simStatus === "warn" ? "knapp — unter Cash-Puffer" : "tragbar";
 
   function toggle(key: string): void {
     setOpenGroups((current) => {
@@ -169,6 +188,27 @@ export function MonthSheet({ row, bucketScope, onClose, onNavigate }: {
             </div>
           ) : null}
 
+          {/* Dividenden-/Ausschüttungs-Simulator (Was-wäre-wenn) */}
+          <div className="cfp-sim">
+            <div className="cfp-sim-head">Was-wäre-wenn · Ausschüttung in {row.label}</div>
+            <input
+              type="range"
+              min={0}
+              max={simMax}
+              step={1000}
+              value={divAmount}
+              onChange={(e) => setDivAmount(Number(e.target.value))}
+              className="cfp-sim-range"
+              aria-label="Ausschüttungsbetrag"
+            />
+            <div className="cfp-sim-result cfp-num">
+              <span className="cfp-sim-amount">{formatCurrency(divAmount)}</span>
+              <span className="cfp-sim-arrow">→</span>
+              <span className="cfp-sim-low"><span className={`cfp-amp-dot is-${simStatus}`} />Tiefst. ab hier {formatCurrency(newLow)}</span>
+            </div>
+            {divAmount > 0 ? <div className={`cfp-sim-verdict is-${simStatus}`}>{verdict}</div> : null}
+          </div>
+
           <button
             type="button"
             className={`cfp-cta${row.robust && row.closing >= 0 ? " is-mint" : ""}`}
@@ -200,6 +240,27 @@ export function MonthSheet({ row, bucketScope, onClose, onNavigate }: {
                 <GroupBlock key={group.key} group={group} direction="out"
                   open={openGroups.has(group.key)} onToggle={() => toggle(group.key)} />
               ))}
+            </div>
+          ) : null}
+
+          {waterfall.length ? (
+            <div className="cfp-wf">
+              <button type="button" className={`cfp-wf-toggle${wfOpen ? " is-open" : ""}`} onClick={() => setWfOpen((v) => !v)}>
+                Wie entsteht der Netto-Wert? <IconChevronDown size={16} />
+              </button>
+              {wfOpen ? (
+                <div className="cfp-wf-steps">
+                  {waterfall.map((step, i) => (
+                    <div className="cfp-wf-step" key={`${step.key}-${i}`}>
+                      <div className="cfp-wf-step-row">
+                        <span className="cfp-wf-step-label">{step.label}</span>
+                        <span className="cfp-wf-step-value cfp-num">{wfStepValue(step)}</span>
+                      </div>
+                      {step.explain ? <div className="cfp-wf-step-explain">{step.explain}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

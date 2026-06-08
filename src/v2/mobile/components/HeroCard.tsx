@@ -14,6 +14,7 @@ export interface HeroCardProps {
   endValue: number;
   lowValue: number | null;
   lowMonthLabel: string | null;
+  lowStatus: "ok" | "warn" | "bad";
   gap: { monthLabel: string; value: number } | null;
   onGapClick: () => void;
 }
@@ -27,6 +28,7 @@ export function HeroCard({
   endValue,
   lowValue,
   lowMonthLabel,
+  lowStatus,
   gap,
   onGapClick,
 }: HeroCardProps): JSX.Element {
@@ -48,7 +50,7 @@ export function HeroCard({
           <span className="cfp-hero-foot-value cfp-num">{formatCurrency(endValue)}</span>
         </div>
         <div className="cfp-hero-foot-item">
-          <span className="cfp-hero-foot-label">Tiefstand{lowMonthLabel ? ` · ${lowMonthLabel}` : ""}</span>
+          <span className="cfp-hero-foot-label"><span className={`cfp-amp-dot is-${lowStatus}`} />Tiefstand{lowMonthLabel ? ` · ${lowMonthLabel}` : ""}</span>
           <span className="cfp-hero-foot-value cfp-num">{lowValue == null ? "–" : formatCurrency(lowValue)}</span>
         </div>
       </div>

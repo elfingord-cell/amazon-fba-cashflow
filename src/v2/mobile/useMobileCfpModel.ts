@@ -29,6 +29,7 @@ export interface UseMobileCfpModel {
   setQuoteMode: (mode: CfpQuoteMode) => void;
   toggleBucket: (bucket: string, enabled: boolean) => void;
   setCalibration: (enabled: boolean) => void;
+  setBuffer: (value: number) => void;
   reload: () => void;
   lastSavedAt: string | null;
 }
@@ -69,6 +70,10 @@ export function useMobileCfpModel(): UseMobileCfpModel {
     void persistSettings({ cashInCalibrationEnabled: enabled }).catch(() => {});
   }, [persistSettings]);
 
+  const setBuffer = useCallback((value: number) => {
+    void persistSettings({ cashMinBuffer: Math.max(0, Math.round(Number(value) || 0)) }).catch(() => {});
+  }, [persistSettings]);
+
   const toggleBucket = useCallback((bucket: string, enabled: boolean) => {
     if (!PORTFOLIO_BUCKET_VALUES.includes(bucket)) return;
     setBucketScope((current) => {
@@ -85,5 +90,5 @@ export function useMobileCfpModel(): UseMobileCfpModel {
 
   const reloadModel = useCallback(() => { void reload(); }, [reload]);
 
-  return { loading, error, range, setRange, model, setQuoteMode, toggleBucket, setCalibration, reload: reloadModel, lastSavedAt };
+  return { loading, error, range, setRange, model, setQuoteMode, toggleBucket, setCalibration, setBuffer, reload: reloadModel, lastSavedAt };
 }

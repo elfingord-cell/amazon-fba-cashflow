@@ -20,11 +20,12 @@ function niceColor(positive: boolean): string {
   return positive ? "#16a34a" : "#e4585a";
 }
 
-export function CashflowChart({ rows, selectedMonth, currentMonth, minClosingMonth, onSelectMonth }: {
+export function CashflowChart({ rows, selectedMonth, currentMonth, minClosingMonth, cashBuffer, onSelectMonth }: {
   rows: CfpMonthRow[];
   selectedMonth: string | null;
   currentMonth: string;
   minClosingMonth: string | null;
+  cashBuffer: number;
   onSelectMonth: (month: string) => void;
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -101,6 +102,16 @@ export function CashflowChart({ rows, selectedMonth, currentMonth, minClosingMon
         {/* Kontostand-Fläche + Linie */}
         <path d={geo.areaPath} fill="rgba(31,157,134,0.12)" />
         <path d={geo.linePath} fill="none" stroke="#0f766e" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+        {/* Cash-Puffer-Linie (Mindest-Liquidität) */}
+        {cashBuffer > 0 ? (() => {
+          const by = Math.max(LINE_TOP, Math.min(LINE_BOTTOM, geo.yLine(cashBuffer)));
+          return (
+            <>
+              <line x1={PAD_L} y1={by} x2={width - PAD_R} y2={by} stroke="rgba(245,158,11,0.75)" strokeWidth={1} strokeDasharray="4 3" />
+              <text x={width - PAD_R} y={by - 3} textAnchor="end" fontSize={9} fontWeight={700} fill="#b45309">Puffer</text>
+            </>
+          );
+        })() : null}
         {/* Tiefstand-Marker + Punkte */}
         {geo.linePts.map(([x, y], i) => {
           const isSel = rows[i].month === selectedMonth;

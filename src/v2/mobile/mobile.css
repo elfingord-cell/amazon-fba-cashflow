@@ -885,6 +885,74 @@
 .cfp-blocker-note { font-size: 12px; color: #92590f; padding: 2px 4px; }
 .cfp-blocker-more { border: 0; background: transparent; width: 100%; text-align: left; font-weight: 600; }
 
+/* Liquiditäts-Ampel-Punkt (Hero / Simulator) */
+.cfp-amp-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.cfp-amp-dot.is-ok { background: #16a34a; }
+.cfp-amp-dot.is-warn { background: #f59e0b; }
+.cfp-amp-dot.is-bad { background: #e4585a; }
+.cfp-hero .cfp-amp-dot.is-ok { background: #7ef0c8; }
+.cfp-hero .cfp-amp-dot.is-warn { background: #ffd45a; }
+.cfp-hero .cfp-amp-dot.is-bad { background: #ff8a8a; }
+
+/* Stepper (Cash-Puffer) */
+.cfp-stepper { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.cfp-stepper button {
+  width: 30px; height: 30px; border: 1px solid var(--cfp-line); border-radius: 8px;
+  background: var(--cfp-surface); font-size: 18px; font-weight: 700; color: var(--cfp-ink);
+  line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+.cfp-stepper button:active { background: var(--cfp-mint-tint); }
+.cfp-stepper-val { min-width: 54px; text-align: center; font-weight: 700; font-size: 13.5px; }
+
+/* Top-Ausgaben-Liste */
+.cfp-toprow {
+  width: 100%; border: 0; background: transparent;
+  display: flex; align-items: center; gap: 11px; padding: 11px 15px; text-align: left;
+  border-bottom: 1px solid var(--cfp-line);
+}
+.cfp-toprow:last-child { border-bottom: 0; }
+.cfp-toprow:active { background: rgba(15, 27, 45, 0.03); }
+.cfp-toprow-rank {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 7px;
+  background: rgba(228, 88, 90, 0.12); color: #c0454a; font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cfp-toprow-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cfp-toprow-label { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfp-toprow-sub { font-size: 11.5px; color: var(--cfp-muted); }
+.cfp-toprow-amount { font-size: 14.5px; font-weight: 700; white-space: nowrap; }
+
+/* Dividenden-/Ausschüttungs-Simulator */
+.cfp-sim {
+  margin-top: 12px; padding: 12px 14px; border-radius: var(--cfp-radius-sm);
+  background: var(--cfp-mint-tint-2); border: 1px solid rgba(59, 194, 167, 0.28);
+}
+.cfp-sim-head { font-size: 12.5px; font-weight: 700; color: var(--cfp-mint-700); }
+.cfp-sim-range { width: 100%; margin: 10px 0 6px; accent-color: var(--cfp-mint); }
+.cfp-sim-result { display: flex; align-items: center; gap: 8px; font-size: 13.5px; flex-wrap: wrap; }
+.cfp-sim-amount { font-weight: 700; }
+.cfp-sim-arrow { color: var(--cfp-faint); }
+.cfp-sim-low { font-weight: 700; }
+.cfp-sim-verdict { font-size: 12px; font-weight: 700; margin-top: 3px; }
+.cfp-sim-verdict.is-ok { color: #15803d; }
+.cfp-sim-verdict.is-warn { color: #b45309; }
+.cfp-sim-verdict.is-bad { color: #b91c1c; }
+
+/* Waterfall-Erklärung */
+.cfp-wf { margin-top: 16px; border-top: 1px solid var(--cfp-line); padding-top: 12px; }
+.cfp-wf-toggle {
+  width: 100%; border: 0; background: transparent; display: flex; align-items: center; justify-content: space-between;
+  font-size: 13.5px; font-weight: 600; color: var(--cfp-ink); padding: 4px 2px;
+}
+.cfp-wf-toggle svg { transition: transform 0.2s ease; color: var(--cfp-faint); }
+.cfp-wf-toggle.is-open svg { transform: rotate(180deg); }
+.cfp-wf-steps { display: grid; gap: 8px; margin-top: 8px; }
+.cfp-wf-step { border-left: 2px solid var(--cfp-mint-tint); padding-left: 10px; }
+.cfp-wf-step-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cfp-wf-step-label { font-size: 13px; font-weight: 600; }
+.cfp-wf-step-value { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cfp-wf-step-explain { font-size: 11px; color: var(--cfp-muted); margin-top: 2px; }
+
 /* ---- Settings / Cockpit ---- */
 .cfp-set-group { margin-top: 22px; }
 .cfp-set-group-title {

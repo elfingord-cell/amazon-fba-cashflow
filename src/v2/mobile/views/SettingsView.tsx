@@ -5,6 +5,9 @@ import type { CfpModel, CfpQuoteMode } from "../../domain/cfpModel";
 import { CFP_BUCKET_OPTIONS } from "../../domain/cfpModel";
 import { SegmentedControl, Toggle, BucketPill } from "../components/primitives";
 import { IconCalibration, IconBuffer, IconChevron, IconUser } from "../components/icons";
+import { formatCompactCurrency } from "../cfpFormat";
+
+const BUFFER_STEP = 5000;
 
 const MODULE_LINKS: Array<{ label: string; route: string }> = [
   { label: "Monatsplanung", route: "/v2/monatsplanung" },
@@ -15,11 +18,12 @@ const MODULE_LINKS: Array<{ label: string; route: string }> = [
   { label: "Einstellungen", route: "/v2/settings" },
 ];
 
-export function SettingsView({ model, onQuoteMode, onToggleBucket, onCalibration, onNavigate }: {
+export function SettingsView({ model, onQuoteMode, onToggleBucket, onCalibration, onSetBuffer, onNavigate }: {
   model: CfpModel;
   onQuoteMode: (mode: CfpQuoteMode) => void;
   onToggleBucket: (bucket: string, enabled: boolean) => void;
   onCalibration: (enabled: boolean) => void;
+  onSetBuffer: (value: number) => void;
   onNavigate: (route: string) => void;
 }): JSX.Element {
   const scope = new Set(model.cockpit.bucketScope);
@@ -78,6 +82,18 @@ export function SettingsView({ model, onQuoteMode, onToggleBucket, onCalibration
               <span className="cfp-set-row-sub">Prognose an Ist-Zahlen anpassen</span>
             </span>
             <Toggle on={model.cockpit.calibrationEnabled} onChange={onCalibration} ariaLabel="Auto-Kalibrierung" />
+          </div>
+          <div className="cfp-set-row">
+            <span className="cfp-set-row-icon"><IconBuffer size={15} /></span>
+            <span className="cfp-set-row-main">
+              <span className="cfp-set-row-label">Cash-Puffer</span>
+              <span className="cfp-set-row-sub">Mindest-Liquidität für die Ampel</span>
+            </span>
+            <span className="cfp-stepper">
+              <button type="button" aria-label="Cash-Puffer verringern" onClick={() => onSetBuffer(Math.max(0, model.cashBuffer - BUFFER_STEP))}>−</button>
+              <span className="cfp-stepper-val cfp-num">{model.cashBuffer > 0 ? formatCompactCurrency(model.cashBuffer) : "aus"}</span>
+              <button type="button" aria-label="Cash-Puffer erhöhen" onClick={() => onSetBuffer(model.cashBuffer + BUFFER_STEP)}>+</button>
+            </span>
           </div>
           <button type="button" className="cfp-set-row" onClick={() => onNavigate("/v2/settings")}>
             <span className="cfp-set-row-icon"><IconBuffer size={15} /></span>
