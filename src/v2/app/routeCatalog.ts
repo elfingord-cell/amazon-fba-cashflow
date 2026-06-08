@@ -23,7 +23,9 @@ function lazyRoute(importer: () => Promise<{ default: ComponentType<any> }>): Co
   return lazy(importer) as unknown as ComponentType<any>;
 }
 
-const DashboardModule = lazyRoute(() => import("../modules/dashboard"));
+// Dashboard-Route: Wrapper, der auf Desktop das DashboardModule und auf Mobile
+// die native CFP-Mobile-App rendert (Desktop-Render-Pfad bleibt unverändert).
+const DashboardModule = lazyRoute(() => import("../modules/dashboard/DashboardRoute"));
 const MonthPlanningModule = lazyRoute(() => import("../modules/month-planning"));
 const SandboxModule = lazyRoute(() => import("../modules/sandbox"));
 const MethodikModule = lazyRoute(() => import("../modules/methodik"));
