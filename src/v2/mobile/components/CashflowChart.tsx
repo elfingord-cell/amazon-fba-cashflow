@@ -20,10 +20,11 @@ function niceColor(positive: boolean): string {
   return positive ? "#16a34a" : "#e4585a";
 }
 
-export function CashflowChart({ rows, selectedMonth, currentMonth, onSelectMonth }: {
+export function CashflowChart({ rows, selectedMonth, currentMonth, minClosingMonth, onSelectMonth }: {
   rows: CfpMonthRow[];
   selectedMonth: string | null;
   currentMonth: string;
+  minClosingMonth: string | null;
   onSelectMonth: (month: string) => void;
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -108,6 +109,17 @@ export function CashflowChart({ rows, selectedMonth, currentMonth, onSelectMonth
           return <circle key={`pt-${i}`} cx={x} cy={y} r={isSel ? 4 : 3.2}
             fill={isMin ? "#e4585a" : "#0f766e"} stroke="#fff" strokeWidth={1.6} />;
         })}
+        {/* Tiefstand-Label am Marker (randsicher) */}
+        {geo.minIdx >= 0 && geo.linePts[geo.minIdx] ? (() => {
+          const [mx, my] = geo.linePts[geo.minIdx];
+          const anchor = mx < width * 0.16 ? "start" : mx > width * 0.84 ? "end" : "middle";
+          const mon = minClosingMonth ? splitMonthLabel(minClosingMonth).mon : "";
+          return (
+            <text x={mx} y={my - 9} textAnchor={anchor} fontSize={9.5} fontWeight={700} fill="#e4585a">
+              Tief{mon ? ` ${mon}` : ""}
+            </text>
+          );
+        })() : null}
 
         {/* Auswahl-Hervorhebung + Tap-Targets + Labels */}
         {rows.map((r, i) => {

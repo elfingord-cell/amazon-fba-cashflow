@@ -97,7 +97,7 @@ export default function MobileCfpApp(): JSX.Element {
           <div className="cfp-empty"><span>Workspace wird geladen …</span></div>
         ) : (
           <>
-            {tab === "cashflow" ? <CashflowView model={cfp.model} selectedMonth={selectedMonth} onSelectMonth={setSelectedMonth} /> : null}
+            {tab === "cashflow" ? <CashflowView model={cfp.model} selectedMonth={selectedMonth} lastSavedAt={cfp.lastSavedAt} onSelectMonth={setSelectedMonth} onSetRange={cfp.setRange} /> : null}
             {tab === "monate" ? <MonateView model={cfp.model} onSelectMonth={setSelectedMonth} /> : null}
             {tab === "mehr" ? (
               <SettingsView
@@ -132,9 +132,9 @@ export default function MobileCfpApp(): JSX.Element {
           row={selectedRow}
           bucketScope={cfp.model.cockpit.bucketScope}
           onClose={() => setSelectedMonth(null)}
-          onNavigate={(month) => {
+          onNavigate={(route) => {
             setSelectedMonth(null);
-            navigate(`/v2/monatsplanung?month=${encodeURIComponent(month)}`);
+            navigate(route);
           }}
         />
       ) : null}

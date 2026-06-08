@@ -1,16 +1,15 @@
-// Monats-Detail-Bottom-Sheet: Kopf, Blocker-Box, aufklappbarer Breakdown, CTA.
+// Monats-Detail-Bottom-Sheet: Kopf, Liquiditäts-/Blocker-Hinweise, „Puffer ab hier",
+// aufklappbarer Breakdown (mit Fälligkeit + bezahlt/geplant), CTA.
 import { useMemo, useState, type JSX } from "react";
 import type { CfpMonthRow } from "../../domain/cfpModel";
 import { buildMonthBreakdown, type BreakdownGroup } from "../monthBreakdown";
-import { formatCurrency, formatSignedCurrency, formatPercent } from "../cfpFormat";
+import { formatCurrency, formatSignedCurrency, formatPercent, formatDayMonth } from "../cfpFormat";
 import { StatusPill } from "./primitives";
 import {
   IconChevron, IconChevronDown, IconWarning,
   IconInflow, IconSupplier, IconImport, IconFixcost, IconTax, IconDividend,
 } from "./icons";
 
-// Vorzeichenrichtige Darstellung: Eingänge addieren (+), Ausgänge entziehen (−);
-// eine negative Ausgaben-Summe (z. B. Steuer-Erstattung) wird als Gutschrift (+) gezeigt.
 function fmtAmount(value: number, direction: "in" | "out"): string {
   const adds = direction === "in" ? value >= 0 : value < 0;
   return `${adds ? "+" : "−"}${formatCurrency(Math.abs(value))}`;
@@ -28,17 +27,12 @@ function groupIcon(key: string): JSX.Element {
   }
 }
 
-function buildBlockerReasons(row: CfpMonthRow): string[] {
-  const reasons: string[] = [];
-  if (row.closing < 0) reasons.push(`Endsaldo negativ (${formatSignedCurrency(row.closing)})`);
-  row.blockers.slice(0, 3).forEach((blocker) => {
-    if (blocker.message) reasons.push(blocker.message);
-  });
-  if (row.coverageRatio > 0 && row.coverageRatio < 1) {
-    reasons.push(`Deckung nur ${formatPercent(row.coverageRatio * 100)}`);
-  }
-  // Duplikate entfernen, Reihenfolge erhalten
-  return Array.from(new Set(reasons));
+function itemMeta(item: { date?: string; paid?: boolean }): string {
+  const parts: string[] = [];
+  if (item.date) parts.push(formatDayMonth(item.date));
+  if (item.paid === true) parts.push("bezahlt");
+  else if (item.paid === false) parts.push("geplant");
+  return parts.join(" · ");
 }
 
 function GroupBlock({ group, direction, open, onToggle }: {
@@ -63,12 +57,18 @@ function GroupBlock({ group, direction, open, onToggle }: {
       </button>
       {open && expandable ? (
         <div className="cfp-bd-items">
-          {group.items.map((item, idx) => (
-            <div className="cfp-bd-item" key={`${item.label}-${idx}`}>
-              <span className="cfp-bd-item-label">{item.label}{item.sub ? ` · ${item.sub}` : ""}</span>
-              <span className="cfp-bd-item-amount">{fmtAmount(item.amount, direction)}</span>
-            </div>
-          ))}
+          {group.items.map((item, idx) => {
+            const meta = itemMeta(item);
+            return (
+              <div className="cfp-bd-item" key={`${item.label}-${idx}`}>
+                <span className="cfp-bd-item-label">
+                  {item.label}{item.sub ? ` · ${item.sub}` : ""}
+                  {meta ? <span className="cfp-bd-item-meta">{meta}</span> : null}
+                </span>
+                <span className="cfp-bd-item-amount">{fmtAmount(item.amount, direction)}</span>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>
@@ -79,12 +79,15 @@ export function MonthSheet({ row, bucketScope, onClose, onNavigate }: {
   row: CfpMonthRow;
   bucketScope: string[];
   onClose: () => void;
-  onNavigate: (month: string) => void;
+  onNavigate: (route: string) => void;
 }): JSX.Element {
   const [closing, setClosing] = useState(false);
   const breakdown = useMemo(() => buildMonthBreakdown(row, new Set(bucketScope)), [row, bucketScope]);
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(["amazon"]));
-  const reasons = useMemo(() => buildBlockerReasons(row), [row]);
+
+  const monatsplanungRoute = `/v2/monatsplanung?month=${encodeURIComponent(row.month)}`;
+  const coverageGap = row.activeSkus > 0 && row.coverageRatio > 0 && row.coverageRatio < 1;
+  const hasDataBlockers = row.blockers.length > 0 || coverageGap;
 
   function toggle(key: string): void {
     setOpenGroups((current) => {
@@ -121,24 +124,55 @@ export function MonthSheet({ row, bucketScope, onClose, onNavigate }: {
           </div>
           <div className="cfp-sheet-meta cfp-num">
             <span>Startsaldo <strong>{formatCurrency(row.opening)}</strong></span>
-            {row.activeSkus > 0 ? <span>Deckung <strong>{formatPercent(row.coverageRatio * 100)}</strong></span> : null}
+            <span>Tiefststand ab hier <strong className={row.minClosingFromHere < 0 ? "cfp-neg" : ""}>{formatCurrency(row.minClosingFromHere)}</strong></span>
           </div>
         </div>
 
         <div className="cfp-sheet-body">
-          {reasons.length ? (
+          {/* Liquidität (Cash) — getrennt vom Daten-/Bestands-Thema */}
+          {row.closing < 0 ? (
+            <div className="cfp-liqbox">
+              <IconWarning size={16} />
+              <div>
+                <div className="cfp-liqbox-title">Liquidität: Endsaldo negativ</div>
+                <div className="cfp-liqbox-sub cfp-num">{formatSignedCurrency(row.closing)} — Zahlung vorziehen/schieben oder Cash-in prüfen.</div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Bestand / Forecast / Daten — pro Blocker antippbar (Deep-Link) */}
+          {hasDataBlockers ? (
             <div className="cfp-blockerbox">
-              <div className="cfp-blockerbox-title"><IconWarning size={16} /> Blocker · Deckung gefährdet</div>
-              <ul className="cfp-blockerbox-list">
-                {reasons.map((reason, idx) => <li key={idx}>{reason}</li>)}
-              </ul>
+              <div className="cfp-blockerbox-title"><IconWarning size={16} /> Zu prüfen · Bestand / Forecast / Daten</div>
+              <div className="cfp-blocker-list">
+                {row.blockers.slice(0, 6).map((blocker) => (
+                  <button
+                    key={blocker.id}
+                    type="button"
+                    className="cfp-blocker-row"
+                    onClick={() => onNavigate(blocker.route || monatsplanungRoute)}
+                  >
+                    <span className="cfp-blocker-cat">{blocker.category}</span>
+                    <span className="cfp-blocker-msg">{blocker.message}</span>
+                    <IconChevron size={15} />
+                  </button>
+                ))}
+                {row.blockers.length > 6 ? (
+                  <button type="button" className="cfp-blocker-note cfp-blocker-more" onClick={() => onNavigate(monatsplanungRoute)}>
+                    +{row.blockers.length - 6} weitere · in Monatsplanung →
+                  </button>
+                ) : null}
+                {coverageGap ? (
+                  <div className="cfp-blocker-note cfp-num">Deckung nur {formatPercent(row.coverageRatio * 100)}</div>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
           <button
             type="button"
-            className={`cfp-cta${row.robust ? " is-mint" : ""}`}
-            onClick={() => onNavigate(row.month)}
+            className={`cfp-cta${row.robust && row.closing >= 0 ? " is-mint" : ""}`}
+            onClick={() => onNavigate(monatsplanungRoute)}
           >
             Zur Monatsplanung <IconChevron size={16} />
           </button>

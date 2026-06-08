@@ -813,12 +813,77 @@
 
 .cfp-bd-items { display: grid; gap: 0; padding: 0 2px 4px 43px; }
 .cfp-bd-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
   padding: 8px 0;
   font-size: 12.5px;
 }
-.cfp-bd-item-label { color: var(--cfp-muted); min-width: 0; }
-.cfp-bd-item-amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cfp-bd-item-label { color: var(--cfp-muted); min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cfp-bd-item-meta { font-size: 11px; color: var(--cfp-faint); }
+.cfp-bd-item-amount { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Liquiditätslücke außerhalb des Fensters (Cashflow-Tab) */
+.cfp-hiddengap {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  border-radius: var(--cfp-radius-sm);
+  background: var(--cfp-warn-tint);
+  text-align: left;
+}
+.cfp-hiddengap-icon { color: var(--cfp-warn); flex: 0 0 auto; }
+.cfp-hiddengap-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cfp-hiddengap-title { font-size: 13.5px; font-weight: 700; color: #b45309; }
+.cfp-hiddengap-sub { font-size: 12px; color: #92590f; }
+.cfp-hiddengap-chev { color: #b45309; }
+
+/* Liquiditäts-Callout im Sheet (Cash, getrennt von Daten-Blockern) */
+.cfp-liqbox {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--cfp-radius-sm);
+  background: var(--cfp-neg-tint);
+  border: 1px solid rgba(228, 88, 90, 0.3);
+  color: #b91c1c;
+}
+.cfp-liqbox-title { font-size: 13.5px; font-weight: 700; }
+.cfp-liqbox-sub { font-size: 12px; color: #c0656a; margin-top: 1px; }
+
+/* Blocker-Liste im Sheet — pro Blocker antippbar (Deep-Link) */
+.cfp-blocker-list { display: grid; gap: 6px; margin-top: 8px; }
+.cfp-blocker-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+}
+.cfp-blocker-row:active { background: rgba(255, 255, 255, 0.85); }
+.cfp-blocker-cat {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.2);
+  color: #92590f;
+}
+.cfp-blocker-msg { flex: 1; min-width: 0; font-size: 12.5px; color: #6b4a0f; }
+.cfp-blocker-sku { font-weight: 600; color: #92590f; }
+.cfp-blocker-row > svg { color: #b45309; flex: 0 0 auto; }
+.cfp-blocker-note { font-size: 12px; color: #92590f; padding: 2px 4px; }
+.cfp-blocker-more { border: 0; background: transparent; width: 100%; text-align: left; font-weight: 600; }
 
 /* ---- Settings / Cockpit ---- */
 .cfp-set-group { margin-top: 22px; }

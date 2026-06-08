@@ -1,10 +1,10 @@
 // Tab „Mehr"/Cockpit: Cash-in-Modus, Portfolio-Buckets, Kalibrierung,
 // Werkzeug-Navigation in die übrigen V2-Module.
-import { useState, type JSX } from "react";
+import type { JSX } from "react";
 import type { CfpModel, CfpQuoteMode } from "../../domain/cfpModel";
 import { CFP_BUCKET_OPTIONS } from "../../domain/cfpModel";
 import { SegmentedControl, Toggle, BucketPill } from "../components/primitives";
-import { IconCalibration, IconBuffer, IconBell, IconChevron, IconUser } from "../components/icons";
+import { IconCalibration, IconBuffer, IconChevron, IconUser } from "../components/icons";
 
 const MODULE_LINKS: Array<{ label: string; route: string }> = [
   { label: "Monatsplanung", route: "/v2/monatsplanung" },
@@ -22,7 +22,6 @@ export function SettingsView({ model, onQuoteMode, onToggleBucket, onCalibration
   onCalibration: (enabled: boolean) => void;
   onNavigate: (route: string) => void;
 }): JSX.Element {
-  const [gapWarnings, setGapWarnings] = useState(true);
   const scope = new Set(model.cockpit.bucketScope);
 
   return (
@@ -84,18 +83,10 @@ export function SettingsView({ model, onQuoteMode, onToggleBucket, onCalibration
             <span className="cfp-set-row-icon"><IconBuffer size={15} /></span>
             <span className="cfp-set-row-main">
               <span className="cfp-set-row-label">Mindestbestand</span>
-              <span className="cfp-set-row-sub">Sicherheitspuffer · in Einstellungen</span>
+              <span className="cfp-set-row-sub">Lager-Sicherheitsbestand · in Einstellungen</span>
             </span>
             <span className="cfp-set-row-chev"><IconChevron size={16} /></span>
           </button>
-          <div className="cfp-set-row">
-            <span className="cfp-set-row-icon"><IconBell size={15} /></span>
-            <span className="cfp-set-row-main">
-              <span className="cfp-set-row-label">Lücken-Warnungen</span>
-              <span className="cfp-set-row-sub">Hinweis bei neuem Blocker</span>
-            </span>
-            <Toggle on={gapWarnings} onChange={setGapWarnings} ariaLabel="Lücken-Warnungen" />
-          </div>
         </div>
       </div>
 

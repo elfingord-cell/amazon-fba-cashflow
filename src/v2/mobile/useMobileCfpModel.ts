@@ -30,10 +30,11 @@ export interface UseMobileCfpModel {
   toggleBucket: (bucket: string, enabled: boolean) => void;
   setCalibration: (enabled: boolean) => void;
   reload: () => void;
+  lastSavedAt: string | null;
 }
 
 export function useMobileCfpModel(): UseMobileCfpModel {
-  const { state, loading, error, saveWith, reload } = useWorkspaceState();
+  const { state, loading, error, saveWith, reload, lastSavedAt } = useWorkspaceState();
   const [range, setRange] = useState<CfpRange>("next12");
   const [bucketScope, setBucketScope] = useState<string[]>(() => DEFAULT_V2_BUCKET_SCOPE.slice());
 
@@ -84,5 +85,5 @@ export function useMobileCfpModel(): UseMobileCfpModel {
 
   const reloadModel = useCallback(() => { void reload(); }, [reload]);
 
-  return { loading, error, range, setRange, model, setQuoteMode, toggleBucket, setCalibration, reload: reloadModel };
+  return { loading, error, range, setRange, model, setQuoteMode, toggleBucket, setCalibration, reload: reloadModel, lastSavedAt };
 }

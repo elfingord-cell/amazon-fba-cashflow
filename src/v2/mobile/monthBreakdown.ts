@@ -19,6 +19,8 @@ export interface BreakdownItem {
   label: string;
   sub?: string;
   amount: number;
+  date?: string;        // Fälligkeitsdatum (entry.date)
+  paid?: boolean;       // true = bezahlt, false = geplant/offen
 }
 
 export interface BreakdownGroup {
@@ -69,7 +71,14 @@ function itemsFor(entries: DashboardCashflowEntry[], predicate: (e: DashboardCas
   return entries
     .filter(predicate)
     .filter((entry) => Math.abs(Number(entry.amount || 0)) > 0)
-    .map((entry) => ({ ...itemLabel(entry), amount: Math.abs(Number(entry.amount || 0)) }));
+    .map((entry) => ({
+      ...itemLabel(entry),
+      amount: Math.abs(Number(entry.amount || 0)),
+      date: entry.date ? String(entry.date) : undefined,
+      paid: typeof entry.paid === "boolean" ? entry.paid : undefined,
+    }))
+    // Größte Beträge zuerst — beantwortet „welche Zahlung treibt den Monat?" ohne Suchen.
+    .sort((a, b) => b.amount - a.amount);
 }
 
 export function buildMonthBreakdown(row: CfpMonthRow, bucketScope: Set<string>): MonthBreakdown {

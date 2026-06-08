@@ -66,7 +66,10 @@ export interface CfpMonthRow {
   coveredSkus: number;
   activeSkus: number;
   blockerCount: number;
-  blockers: Array<{ id: string; message: string; route: string }>;
+  blockers: Array<{ id: string; message: string; route: string; category: string; sku?: string; alias?: string }>;
+  // Niedrigster Endsaldo von DIESEM Monat bis zum Ende des Fensters — „Puffer ab hier".
+  // Beantwortet z. B. „kann ich in diesem Monat eine Dividende leisten, ohne den Tiefstand zu reißen?".
+  minClosingFromHere: number;
   hasActualClosing: boolean;
   isPast: boolean;
   isCurrent: boolean;
@@ -82,6 +85,8 @@ export interface CfpModel {
   // Erster Negativmonat im SICHTBAREN Fenster (rows). Treibt Hero-Chip & Banner,
   // damit die Liquiditätslücken-Warnung immer mit Tiefstand/minClosing übereinstimmt.
   firstNegativeVisibleMonth: string | null;
+  // Monat des niedrigsten Endsaldos im sichtbaren Fenster (Tiefstand) — für „Tiefstand · <Monat>".
+  minClosingMonth: string | null;
   rows: CfpMonthRow[];
   totals: { inflow: number; outflow: number; net: number; minClosing: number | null };
   robustness: MonthPlanningResult;
@@ -124,6 +129,19 @@ function applyDashboardCalculationOverrides(
  * Baut das komplette Mobile-Datenmodell aus dem rohen Workspace-State.
  * Spiegelt die Desktop-Pipeline (siehe Kopfkommentar).
  */
+// Leitet eine grobe Blocker-Kategorie ab, damit am Handy „mein Job (Bestand/Forecast)"
+// von „Finanz-/Datenthema" unterscheidbar ist (Felder kommen 1:1 aus der Robustheit).
+function blockerCategory(blocker: { issueType?: string; checkKey?: string; sourceKind?: string }): string {
+  const it = String(blocker.issueType || "").toLowerCase();
+  const ck = String(blocker.checkKey || "").toLowerCase();
+  const sk = String(blocker.sourceKind || "").toLowerCase();
+  if (it.includes("stock") || ck.includes("stock") || ck.includes("coverage") || ck.includes("inventory")) return "Bestand";
+  if (it === "order_duty" || ck.includes("order")) return "Bestellpflicht";
+  if (sk.includes("forecast") || ck.includes("forecast")) return "Forecast";
+  if (ck.includes("cash") || ck.includes("vat") || ck.includes("tax") || ck.includes("fixcost") || ck.includes("revenue")) return "Finanzen / Daten";
+  return "Prüfen";
+}
+
 export function buildCfpModel(rawState: Record<string, unknown>, params: CfpModelParams): CfpModel {
   const stateObject = (rawState && typeof rawState === "object") ? rawState : {};
   const settings = (stateObject.settings && typeof stateObject.settings === "object")
@@ -222,7 +240,13 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
 
   // 11) Pro-Monats-Zeilen mit In-/Outflow-Split
   const currentIdx = monthIndex(currentMonth);
-  const rows: CfpMonthRow[] = visibleBreakdown.map((row) => {
+  // Suffix-Minimum der Endsalden: niedrigster Endsaldo ab Monat i bis Ende ("Puffer ab hier").
+  const closingSeq = visibleBreakdown.map((row) => Number(row.closing || 0));
+  const suffixMinClosing: number[] = new Array(closingSeq.length);
+  for (let i = closingSeq.length - 1; i >= 0; i -= 1) {
+    suffixMinClosing[i] = i === closingSeq.length - 1 ? closingSeq[i] : Math.min(closingSeq[i], suffixMinClosing[i + 1]);
+  }
+  const rows: CfpMonthRow[] = visibleBreakdown.map((row, rowPos) => {
     const entries = Array.isArray(row.entries) ? row.entries : [];
     const aggregation = aggregateDashboardMonthEntries(entries, {
       bucketScope: bucketScopeSet,
@@ -235,6 +259,9 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
       id: String(blocker.id || `${row.month}:blocker`),
       message: String(blocker.message || ""),
       route: String(blocker.route || ""),
+      category: blockerCategory(blocker),
+      sku: blocker.sku ? String(blocker.sku) : undefined,
+      alias: blocker.alias ? String(blocker.alias) : undefined,
     }));
     return {
       month: row.month,
@@ -255,6 +282,7 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
       activeSkus: Number(coverage?.activeSkus || 0),
       blockerCount: Number(planMonth?.blockerCount || 0),
       blockers,
+      minClosingFromHere: suffixMinClosing[rowPos] ?? Number(row.closing || 0),
       hasActualClosing: row.hasActualClosing === true,
       isPast: rowIdx != null && currentIdx != null ? rowIdx < currentIdx : row.month < currentMonth,
       isCurrent: row.month === currentMonth,
@@ -265,6 +293,7 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
   const totalOutflow = rows.reduce((sum, row) => sum + row.outflow, 0);
   const totalNet = rows.reduce((sum, row) => sum + row.net, 0);
   const minClosing = rows.length ? Math.min(...rows.map((row) => row.closing)) : null;
+  const minClosingMonth = minClosing != null ? (rows.find((row) => row.closing === minClosing)?.month || null) : null;
   const firstNegativeVisibleMonth = rows.find((row) => row.closing < 0)?.month || null;
 
   return {
@@ -274,6 +303,7 @@ export function buildCfpModel(rawState: Record<string, unknown>, params: CfpMode
     opening: Number(report.kpis?.opening || 0),
     firstNegativeMonth: report.kpis?.firstNegativeMonth || null,
     firstNegativeVisibleMonth,
+    minClosingMonth,
     rows,
     totals: { inflow: totalInflow, outflow: totalOutflow, net: totalNet, minClosing },
     robustness,
