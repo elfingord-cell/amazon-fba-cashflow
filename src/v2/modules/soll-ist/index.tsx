@@ -120,9 +120,7 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
+import { round2 } from "../../../domain/shared/math.js";
 
 function round4(value: number): number {
   return Math.round(value * 10000) / 10000;

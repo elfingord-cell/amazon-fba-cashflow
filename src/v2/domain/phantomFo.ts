@@ -123,10 +123,7 @@ function asPositiveNumber(value: unknown): number | null {
   return parsed;
 }
 
-function round2(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.round(value * 100) / 100;
-}
+import { round2OrZero as round2 } from "../../domain/shared/math.js";
 
 function statusIsActive(product: Record<string, unknown>): boolean {
   if (!normalizeIncludeInForecast(product.includeInForecast, true)) return false;

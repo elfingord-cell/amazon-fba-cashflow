@@ -383,7 +383,7 @@ function addMonths(yyyymm, delta) {
 function monthRange(startMonth, n) { const out = []; for (let i = 0; i < n; i++)
     out.push(addMonths(startMonth, i)); return out; }
 function toMonthKey(date) { const d = new Date(date); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
-function addDays(date, days) { const d = new Date(date.getTime()); d.setDate(d.getDate() + (days || 0)); return d; }
+const dates_js_1 = require("./shared/dates.js");
 function isoDate(date) {
     if (!(date instanceof Date) || Number.isNaN(date.getTime()))
         return null;
@@ -423,7 +423,7 @@ function applyCnyBlackout(orderDate, prodDays, settings) {
         return { prodDone: orderDate, adjustmentDays: 0 };
     }
     const baseDays = Math.max(0, Number(prodDays || 0));
-    const prodEnd = addDays(orderDate, baseDays);
+    const prodEnd = (0, dates_js_1.addDays)(orderDate, baseDays);
     if (!settings || baseDays === 0) {
         return { prodDone: prodEnd, adjustmentDays: 0 };
     }
@@ -441,7 +441,7 @@ function applyCnyBlackout(orderDate, prodDays, settings) {
         const overlap = Math.round((overlapEnd.getTime() - overlapStart.getTime()) / (24 * 60 * 60 * 1000)) + 1;
         adjustmentDays += Math.max(0, overlap);
     }
-    const prodDone = adjustmentDays ? addDays(prodEnd, adjustmentDays) : prodEnd;
+    const prodDone = adjustmentDays ? (0, dates_js_1.addDays)(prodEnd, adjustmentDays) : prodEnd;
     return { prodDone, adjustmentDays };
 }
 function anchorsFor(row, settings) {
@@ -449,9 +449,9 @@ function anchorsFor(row, settings) {
     const prodDays = Number(row.productionLeadTimeDays ?? row.prodDays ?? 0);
     const transitDays = Number(row.logisticsLeadTimeDays ?? row.transitDays ?? 0);
     const cnyAdjusted = applyCnyBlackout(od, prodDays, settings);
-    const prodDone = cnyAdjusted.prodDone ?? addDays(od, prodDays);
+    const prodDone = cnyAdjusted.prodDone ?? (0, dates_js_1.addDays)(od, prodDays);
     const etdComputed = prodDone;
-    const etaComputed = addDays(etdComputed, transitDays);
+    const etaComputed = (0, dates_js_1.addDays)(etdComputed, transitDays);
     const etdManual = parseISODate(row.etdManual);
     const etaManual = parseISODate(row.etaManual);
     const etd = etdManual || etdComputed; // einfache Konvention
@@ -1015,7 +1015,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
             const trigger = payment.triggerEvent || 'ORDER_DATE';
             const anchorKey = trigger === 'PROD_DONE' ? 'PROD_DONE' : trigger;
             const baseDate = anchors[anchorKey] || anchors.ORDER_DATE;
-            const due = payment.dueDate ? new Date(payment.dueDate) : addDays(baseDate, Number(payment.offsetDays || 0));
+            const due = payment.dueDate ? new Date(payment.dueDate) : (0, dates_js_1.addDays)(baseDate, Number(payment.offsetDays || 0));
             const amountRaw = Number(payment.amount || 0);
             const direction = amountRaw >= 0 ? 'out' : 'in';
             const amount = Math.abs(amountRaw);
@@ -1047,7 +1047,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
     for (const [idx, ms] of manual.entries()) {
         const pct = parsePct(ms.percent);
         const baseDate = anchors[ms.anchor || 'ORDER_DATE'] || anchors.ORDER_DATE;
-        const due = addDays(baseDate, Number(ms.lagDays || 0));
+        const due = (0, dates_js_1.addDays)(baseDate, Number(ms.lagDays || 0));
         const manualId = ms.id || `${row.id || prefixBase}-${idx}-${ms.id || 'manual'}`;
         events.push({
             label: `${prefix}${ms.label ? ` – ${ms.label}` : ''}`,
@@ -1085,7 +1085,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
             if (!amount)
                 continue;
             const freightId = auto.id || `${row.id || prefixBase}-auto-freight`;
-            const due = addDays(baseDate, Number(auto.lagDays || 0));
+            const due = (0, dates_js_1.addDays)(baseDate, Number(auto.lagDays || 0));
             events.push({
                 label: `${prefix} – ${auto.label || 'Fracht'}`,
                 amount,
@@ -1105,7 +1105,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
         }
         if (auto.type === 'duty') {
             const percent = parsePct(auto.percent ?? dutyRate);
-            const due = addDays(baseDate, Number(auto.lagDays || 0));
+            const due = (0, dates_js_1.addDays)(baseDate, Number(auto.lagDays || 0));
             const baseValue = goods + (dutyIncludeFreight ? freight : 0);
             const amount = baseValue * (percent / 100);
             const dutyId = auto.id || `${row.id || prefixBase}-auto-duty`;
@@ -1132,7 +1132,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
             const percent = parsePct(auto.percent ?? eustRate);
             const dutyAbs = Math.abs(autoResults.duty?.amount || 0);
             const baseValue = goods + freight + dutyAbs;
-            const due = addDays(baseDate, Number(auto.lagDays || 0));
+            const due = (0, dates_js_1.addDays)(baseDate, Number(auto.lagDays || 0));
             const amount = baseValue * (percent / 100);
             const eustId = auto.id || `${row.id || prefixBase}-auto-eust`;
             autoResults.eust = { amount, due };
@@ -1160,7 +1160,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
                 continue;
             const percent = parsePct(auto.percent ?? 100);
             const months = Number((auto.lagMonths ?? vatLagMonths) || 0);
-            const baseDay = addDays(eust.due || baseDate, Number(auto.lagDays || 0));
+            const baseDay = (0, dates_js_1.addDays)(eust.due || baseDate, Number(auto.lagDays || 0));
             const due = monthEndDate(addMonthsDate(baseDay, months));
             const amount = Math.abs(eust.amount) * (percent / 100);
             const vatId = auto.id || `${row.id || prefixBase}-auto-vat`;
@@ -1186,7 +1186,7 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
             const percent = parsePct(auto.percent ?? fxFeePct);
             if (!percent)
                 continue;
-            const due = addDays(baseDate, Number(auto.lagDays || 0));
+            const due = (0, dates_js_1.addDays)(baseDate, Number(auto.lagDays || 0));
             const amount = goods * (percent / 100);
             const fxId = auto.id || `${row.id || prefixBase}-auto-fx`;
             events.push({
@@ -2237,6 +2237,22 @@ function computeSeries(state) {
         plannedRevenueByMonth[m] = revenue;
         plannedPayoutByMonth[m] = revenue * (payoutPct / 100);
     });
+    // Cash-in-Zerlegung je Monat (für den Monats-Wasserfall: Brutto VO → Realismus/Kalibrierung →
+    // verwendeter Umsatz → Auszahlungsquote → Sales-Cash-Eingang). Additiv; Engine sonst unberührt.
+    const cashInByMonth = {};
+    Object.keys(bucket).forEach((m) => {
+        const meta = cashInMetaByMonth[m] || {};
+        const payoutPct = Number.isFinite(appliedPayoutPctByMonth[m])
+            ? Number(appliedPayoutPctByMonth[m])
+            : (Number.isFinite(Number(meta.payoutPct)) ? Number(meta.payoutPct) : null);
+        cashInByMonth[m] = {
+            forecastRevenueRaw: Number(meta.forecastRevenueRaw) || 0,
+            appliedRevenue: Number(meta.appliedRevenue) || 0,
+            calibrationFactorApplied: Number.isFinite(Number(meta.calibrationFactorApplied)) ? Number(meta.calibrationFactorApplied) : null,
+            payoutPct,
+            payout: Number(plannedPayoutByMonth[m]) || 0,
+        };
+    });
     const kpis = {
         opening,
         openingToday: opening,
@@ -2381,7 +2397,7 @@ function computeSeries(state) {
         avgRevenueDeltaPct,
         avgPayoutDeltaPct,
     };
-    return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons };
+    return { startMonth, horizon, months, series, kpis, breakdown, actualComparisons, cashInByMonth };
 }
 function getEffectiveCashInMonth(monthKey, state, globalSettings = null, options = {}) {
     const normalizedMonth = String(monthKey || '').trim();

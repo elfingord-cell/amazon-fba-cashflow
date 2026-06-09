@@ -1133,6 +1133,9 @@ export default function DashboardModule(): JSX.Element {
     ];
 
     return {
+      // Keine Einstiegs-Animation: bei erzwungenen Redraws (Resize/Scroll/Realtime-Pull)
+      // blieben Balken sonst sichtbar im Animations-Anfangszustand hängen (L1, Audit 2026-06-09).
+      animation: false,
       tooltip: {
         trigger: "axis",
         formatter: (params: unknown) => {
@@ -2255,7 +2258,7 @@ export default function DashboardModule(): JSX.Element {
         <Text type="secondary" className="v2-dashboard-chart-hint">
           Klick auf Monat oder Balken für Details. Legende ist scrollbar.
         </Text>
-        <ReactECharts style={{ height: 430 }} option={chartOption} onEvents={chartEvents} notMerge />
+        <ReactECharts style={{ height: 430, width: "100%" }} option={chartOption} onEvents={chartEvents} notMerge lazyUpdate />
       </Card>
 
       <CashflowWaterfall

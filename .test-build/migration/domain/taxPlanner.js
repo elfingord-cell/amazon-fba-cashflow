@@ -80,9 +80,9 @@ function isoDate(date) {
     const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
 }
+const months_js_1 = require("./shared/months.js");
 function normalizeMonth(value) {
-    const raw = String(value || "").trim();
-    return /^\d{4}-\d{2}$/.test(raw) ? raw : "";
+    return (0, months_js_1.normalizeMonthKey)(value) ?? "";
 }
 function normalizeDate(value) {
     const raw = String(value || "").trim();

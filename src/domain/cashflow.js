@@ -388,7 +388,7 @@ function addMonths(yyyymm, delta) {
 }
 function monthRange(startMonth, n) { const out = []; for (let i = 0; i < n; i++) out.push(addMonths(startMonth, i)); return out; }
 function toMonthKey(date) { const d = new Date(date); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; }
-function addDays(date, days) { const d = new Date(date.getTime()); d.setDate(d.getDate() + (days || 0)); return d; }
+import { addDays } from "./shared/dates.js";
 function isoDate(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;

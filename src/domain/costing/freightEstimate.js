@@ -20,9 +20,7 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null;
 }
 
-function round2(value) {
-  return Math.round(value * 100) / 100;
-}
+import { round2 } from "../shared/math.js";
 
 function resolveProduct(productsBySku, sku) {
   if (!sku || !productsBySku) return null;

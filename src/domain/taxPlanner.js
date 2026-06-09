@@ -63,9 +63,10 @@ function isoDate(date) {
   return `${year}-${month}-${day}`;
 }
 
+import { normalizeMonthKey } from "./shared/months.js";
+
 function normalizeMonth(value) {
-  const raw = String(value || "").trim();
-  return /^\d{4}-\d{2}$/.test(raw) ? raw : "";
+  return normalizeMonthKey(value) ?? "";
 }
 
 function normalizeDate(value) {

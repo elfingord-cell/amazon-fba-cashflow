@@ -20,10 +20,9 @@
 // Each path keeps its own row/event assembly (ids, labels, due-date anchoring, output
 // shape) because those already agree and are not the drift surface.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.addDays = exports.round2 = void 0;
 exports.parseNumber = parseNumber;
 exports.parsePercent = parsePercent;
-exports.round2 = round2;
-exports.addDays = addDays;
 exports.addMonthsDate = addMonthsDate;
 exports.monthEndDate = monthEndDate;
 exports.normalizeIsoDate = normalizeIsoDate;
@@ -47,17 +46,10 @@ function parseNumber(value, fallback = 0) {
 function parsePercent(value) {
     return Math.min(100, Math.max(0, parseNumber(value, 0)));
 }
-function round2(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric))
-        return null;
-    return Math.round(numeric * 100) / 100;
-}
-function addDays(date, days) {
-    const next = new Date(date.getTime());
-    next.setUTCDate(next.getUTCDate() + Number(days || 0));
-    return next;
-}
+const math_js_1 = require("./shared/math.js");
+Object.defineProperty(exports, "round2", { enumerable: true, get: function () { return math_js_1.round2OrNull; } });
+const dates_js_1 = require("./shared/dates.js");
+Object.defineProperty(exports, "addDays", { enumerable: true, get: function () { return dates_js_1.addDays; } });
 function addMonthsDate(date, months) {
     const next = new Date(date.getTime());
     next.setUTCMonth(next.getUTCMonth() + Number(months || 0));
@@ -132,7 +124,7 @@ function applyCnyBlackout(orderDate, prodDays, settings) {
         return { prodDone: orderDate, adjustmentDays: 0 };
     }
     const baseDays = Math.max(0, Number(prodDays || 0));
-    const prodEnd = addDays(orderDate, baseDays);
+    const prodEnd = (0, dates_js_1.addDays)(orderDate, baseDays);
     if (!settings || baseDays === 0) {
         return { prodDone: prodEnd, adjustmentDays: 0 };
     }
@@ -151,7 +143,7 @@ function applyCnyBlackout(orderDate, prodDays, settings) {
         adjustmentDays += Math.max(0, overlap);
     }
     return {
-        prodDone: adjustmentDays ? addDays(prodEnd, adjustmentDays) : prodEnd,
+        prodDone: adjustmentDays ? (0, dates_js_1.addDays)(prodEnd, adjustmentDays) : prodEnd,
         adjustmentDays,
     };
 }
@@ -218,9 +210,9 @@ function computeAnchors(record, settings) {
     const prodDays = Number(record?.productionLeadTimeDays ?? record?.prodDays ?? 0);
     const transitDays = Number(record?.logisticsLeadTimeDays ?? record?.transitDays ?? 0);
     const blackout = applyCnyBlackout(orderDate, prodDays, settings);
-    const prodDone = blackout.prodDone ?? addDays(orderDate, prodDays);
+    const prodDone = blackout.prodDone ?? (0, dates_js_1.addDays)(orderDate, prodDays);
     const etdComputed = prodDone;
-    const etaComputed = addDays(etdComputed, transitDays);
+    const etaComputed = (0, dates_js_1.addDays)(etdComputed, transitDays);
     const etdManual = parseISODate(record?.etdManual);
     const etaManual = parseISODate(record?.etaManual);
     return {

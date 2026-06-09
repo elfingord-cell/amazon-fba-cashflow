@@ -32,9 +32,10 @@ function normalizeKey(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+import { normalizeMonthKey } from "./shared/months.js";
+
 function normalizeMonth(value) {
-  const raw = String(value || "").trim();
-  return /^\d{4}-\d{2}$/.test(raw) ? raw : "";
+  return normalizeMonthKey(value) ?? "";
 }
 
 function parseNumber(value) {
@@ -48,11 +49,7 @@ function readFiniteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function round2(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return null;
-  return Math.round(number * 100) / 100;
-}
+import { round2OrNull as round2 } from "./shared/math.js";
 
 function firstNonEmpty(...values) {
   for (const value of values) {

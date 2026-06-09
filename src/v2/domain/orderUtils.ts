@@ -286,11 +286,7 @@ function toIsoDate(value: Date | null): string | null {
   return value.toISOString().slice(0, 10);
 }
 
-function addDays(value: Date, days: number): Date {
-  const next = new Date(value.getTime());
-  next.setUTCDate(next.getUTCDate() + Number(days || 0));
-  return next;
-}
+import { addDays } from "../../domain/shared/dates.js";
 
 function addMonths(value: Date, months: number): Date {
   const next = new Date(value.getTime());

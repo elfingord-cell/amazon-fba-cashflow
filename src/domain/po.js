@@ -23,7 +23,7 @@ function parseDE(x) {
 }
 function fmtEUR(n){ return Number(n||0).toLocaleString("de-DE",{style:"currency",currency:"EUR"}) }
 function clampPct(x){ const v=parseDE(x); if (v<0) return 0; if (v>100) return 100; return v; }
-function addDays(date, days){ const d=new Date(date); d.setDate(d.getDate()+Number(days||0)); return d; }
+import { addDays } from "./shared/dates.js";
 function ym(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; }
 
 function defaultPO(){

@@ -79,13 +79,13 @@ function cellStringOrNull(value: unknown): string | null {
   return raw === "" ? null : raw;
 }
 
+import { normalizeMonthKey as toCanonicalMonthKey } from "../../domain/shared/months.js";
+
+// Bewusst tolerant: Nicht-Monats-Strings werden unverändert durchgereicht
+// (Alt-Verhalten, auf das Call-Sites in diesem Modul bauen).
 function normalizeMonthKey(value: unknown): string | null {
   if (!value) return null;
-  const raw = String(value);
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  const match = raw.match(/^(\d{2})-(\d{4})$/);
-  if (match) return `${match[2]}-${match[1]}`;
-  return raw;
+  return toCanonicalMonthKey(value) ?? String(value);
 }
 
 /**

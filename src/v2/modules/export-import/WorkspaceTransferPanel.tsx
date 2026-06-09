@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
-import { Alert, Button, Card, Col, Row, Space, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Input, Modal, Row, Space, Tag, Typography, message } from "antd";
 import { expandFixcostInstances } from "../../../domain/cashflow.js";
+import { validateState } from "../../../lib/stateValidation.mjs";
 import { ensureAppStateV2 } from "../../state/appState";
 import { createWorkspaceBackup } from "../../sync/storageAdapters";
 import { useWorkspaceState } from "../../state/workspace";
@@ -38,120 +39,7 @@ function looksLikeMonth(value: unknown): boolean {
   return /^\d{4}-\d{2}$/.test(String(value || ""));
 }
 
-function isValidIsoDate(value: unknown): boolean {
-  const raw = String(value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
-  const [year, month, day] = raw.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  return (
-    Number.isFinite(date.getTime())
-    && date.getFullYear() === year
-    && date.getMonth() + 1 === month
-    && date.getDate() === day
-  );
-}
-
-function validateState(state: Record<string, unknown>): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  const settings = (state.settings || {}) as Record<string, unknown>;
-  const opening = parseDE(settings.openingBalance);
-  if (opening < 0) errors.push("Opening Balance darf nicht negativ sein.");
-  if (!looksLikeMonth(settings.startMonth)) errors.push("Startmonat fehlt oder ist ungueltig (settings.startMonth).");
-  const horizon = Number(settings.horizonMonths || 0);
-  if (!Number.isFinite(horizon) || horizon <= 0) errors.push("Horizont fehlt oder ist ungueltig (settings.horizonMonths).");
-  const baselineNormal = parseDENull(settings.cashInRecommendationBaselineNormalPct);
-  if (!(baselineNormal != null && baselineNormal >= 40 && baselineNormal <= 60)) {
-    errors.push("settings.cashInRecommendationBaselineNormalPct muss im Band 40..60 liegen.");
-  }
-  if (settings.cashInRecommendationBaselineQ4Pct != null && String(settings.cashInRecommendationBaselineQ4Pct).trim() !== "") {
-    const baselineQ4 = parseDENull(settings.cashInRecommendationBaselineQ4Pct);
-    if (!(baselineQ4 != null && baselineQ4 >= 40 && baselineQ4 <= 60)) {
-      errors.push("settings.cashInRecommendationBaselineQ4Pct muss im Band 40..60 liegen.");
-    }
-  }
-
-  (Array.isArray(state.incomings) ? state.incomings : []).forEach((entry, index) => {
-    const row = (entry || {}) as Record<string, unknown>;
-    if (!looksLikeMonth(row.month)) errors.push(`Incomings ${index + 1}: Monat fehlt/ungueltig.`);
-    const revenue = parseDENull(row.revenueEur);
-    if (!(Number.isFinite(revenue) && revenue >= 0)) errors.push(`Incomings ${index + 1}: Umsatz ungueltig.`);
-    let payout = Number(row.payoutPct || 0);
-    if (!Number.isFinite(payout)) payout = 0;
-    if (payout > 1) payout /= 100;
-    if (!(payout >= 0 && payout <= 1)) {
-      errors.push(`Incomings ${index + 1}: payoutPct muss 0..1 oder 0..100 sein.`);
-    }
-
-    const month = String(row.month || "");
-    const calibrationCutoffDate = String(row.calibrationCutoffDate || "").trim();
-    if (calibrationCutoffDate) {
-      if (!isValidIsoDate(calibrationCutoffDate)) {
-        errors.push(`Incomings ${index + 1}: calibrationCutoffDate ungueltig (erwartet JJJJ-MM-TT).`);
-      } else if (looksLikeMonth(month) && calibrationCutoffDate.slice(0, 7) !== month) {
-        errors.push(`Incomings ${index + 1}: calibrationCutoffDate muss im selben Monat wie row.month liegen.`);
-      }
-    }
-
-    const calibrationRevenueToDateRaw = row.calibrationRevenueToDateEur;
-    if (calibrationRevenueToDateRaw != null && String(calibrationRevenueToDateRaw).trim() !== "") {
-      const value = parseDENull(calibrationRevenueToDateRaw);
-      if (!(Number.isFinite(value) && value >= 0)) {
-        errors.push(`Incomings ${index + 1}: calibrationRevenueToDateEur muss numerisch und >= 0 sein.`);
-      }
-    }
-
-    const calibrationSellerboardRaw = row.calibrationSellerboardMonthEndEur;
-    if (calibrationSellerboardRaw != null && String(calibrationSellerboardRaw).trim() !== "") {
-      const value = parseDENull(calibrationSellerboardRaw);
-      if (!(Number.isFinite(value) && value >= 0)) {
-        errors.push(`Incomings ${index + 1}: calibrationSellerboardMonthEndEur muss numerisch und >= 0 sein.`);
-      }
-    }
-
-    const calibrationPayoutRateToDateRaw = row.calibrationPayoutRateToDatePct;
-    if (calibrationPayoutRateToDateRaw != null && String(calibrationPayoutRateToDateRaw).trim() !== "") {
-      const value = parseDENull(calibrationPayoutRateToDateRaw);
-      if (!Number.isFinite(value) || value < 0) {
-        errors.push(`Incomings ${index + 1}: calibrationPayoutRateToDatePct muss numerisch und >= 0 sein.`);
-      }
-    }
-  });
-
-  (Array.isArray(state.extras) ? state.extras : []).forEach((entry, index) => {
-    const row = (entry || {}) as Record<string, unknown>;
-    const month = row.month || (row.date ? String(row.date).slice(0, 7) : "");
-    if (!looksLikeMonth(month)) warnings.push(`Extras ${index + 1}: Monat fehlt.`);
-    if (parseDENull(row.amountEur) == null) errors.push(`Extras ${index + 1}: Betrag ungueltig.`);
-  });
-
-  (Array.isArray(state.fixcosts) ? state.fixcosts : []).forEach((entry, index) => {
-    const row = (entry || {}) as Record<string, unknown>;
-    if (!String(row.name || "").trim()) errors.push(`Fixkosten ${index + 1}: Name fehlt.`);
-    if (!(parseDE(row.amount) > 0)) errors.push(`Fixkosten ${index + 1}: Betrag ungueltig.`);
-    if (looksLikeMonth(row.startMonth) && looksLikeMonth(row.endMonth) && String(row.startMonth) > String(row.endMonth)) {
-      errors.push(`Fixkosten ${index + 1}: Startmonat darf nicht nach Endmonat liegen.`);
-    }
-  });
-
-  const overrides = (state.fixcostOverrides && typeof state.fixcostOverrides === "object")
-    ? state.fixcostOverrides as Record<string, Record<string, Record<string, unknown>>>
-    : {};
-  Object.entries(overrides).forEach(([fixId, monthRows]) => {
-    if (!monthRows || typeof monthRows !== "object") return;
-    Object.entries(monthRows).forEach(([monthKey, values]) => {
-      if (values?.amount != null && parseDENull(values.amount) == null) {
-        errors.push(`Fixkosten-Override ${fixId}/${monthKey}: Betrag ungueltig.`);
-      }
-      if (values?.dueDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(String(values.dueDate))) {
-        warnings.push(`Fixkosten-Override ${fixId}/${monthKey}: dueDate sollte JJJJ-MM-TT sein.`);
-      }
-    });
-  });
-
-  return { errors, warnings };
-}
+// validateState kommt aus src/lib/stateValidation.mjs — gemeinsame Wahrheit für UI und fba-cli.
 
 function buildForecastExport(state: Record<string, unknown>): Record<string, unknown> {
   const settings = (state.settings || {}) as Record<string, unknown>;
@@ -242,6 +130,8 @@ export function WorkspaceTransferPanel(): JSX.Element {
   const { state, loading, saving, error, saveWith } = useWorkspaceState();
   const [messageApi, contextHolder] = message.useMessage();
   const [importResult, setImportResult] = useState<string>("");
+  const [pendingImport, setPendingImport] = useState<Record<string, unknown> | null>(null);
+  const [confirmText, setConfirmText] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const stateObject = state as unknown as Record<string, unknown>;
@@ -284,25 +174,54 @@ export function WorkspaceTransferPanel(): JSX.Element {
       return;
     }
 
- 	    const confirmed = window.confirm("Workspace durch diese JSON-Datei ersetzen?");
-  	    if (!confirmed) return;
+    // Destruktiv: ganzer Workspace wird ersetzt — Tipp-Bestätigung im Modal statt window.confirm.
+    setConfirmText("");
+    setPendingImport(input);
+  }
 
-	    const inputState = ensureAppStateV2(input);
-	    const backupId = createWorkspaceBackup("v2:workspace-transfer:pre-import", ensureAppStateV2(state));
-	    try {
-	      await saveWith(() => inputState, "v2:workspace-transfer:import");
-	      const resultMessage = `Import erfolgreich. Backup: ${backupId}`;
-	      setImportResult(resultMessage);
-	      messageApi.success(resultMessage);
-	    } catch (error) {
-	      const reason = error instanceof Error ? error.message : "Unbekannter Fehler";
-	      messageApi.error(`Import fehlgeschlagen: ${reason}`);
-	    }
-	  }
+  async function applyPendingImport(): Promise<void> {
+    if (!pendingImport) return;
+    const inputState = ensureAppStateV2(pendingImport);
+    // Automatisches Sicherheitsnetz VOR dem Ersetzen: Datei-Download + lokaler Backup-Slot.
+    downloadJson(stateObject, buildFileName("amazon-fba-cashflow-v2-backup-pre-import"));
+    const backupId = createWorkspaceBackup("v2:workspace-transfer:pre-import", ensureAppStateV2(state));
+    setPendingImport(null);
+    try {
+      await saveWith(() => inputState, "v2:workspace-transfer:import");
+      const resultMessage = `Import erfolgreich. Backup: ${backupId}`;
+      setImportResult(resultMessage);
+      messageApi.success(resultMessage);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Unbekannter Fehler";
+      messageApi.error(`Import fehlgeschlagen: ${reason}`);
+    }
+  }
 
   return (
     <div className="v2-import-wizard">
       {contextHolder}
+      <Modal
+        open={pendingImport != null}
+        title="Workspace komplett ersetzen?"
+        okText="Workspace ersetzen"
+        okButtonProps={{ danger: true, disabled: confirmText.trim().toUpperCase() !== "ERSETZEN" }}
+        cancelText="Abbrechen"
+        confirmLoading={saving}
+        onCancel={() => setPendingImport(null)}
+        onOk={() => { void applyPendingImport(); }}
+      >
+        <Paragraph>
+          Der gesamte Workspace wird durch die JSON-Datei ersetzt — das gilt für alle Nutzer.
+          Vor dem Ersetzen wird automatisch ein Backup-JSON heruntergeladen und ein lokaler Backup-Slot angelegt.
+        </Paragraph>
+        <Paragraph>Zum Bestätigen <Text code>ERSETZEN</Text> eintippen:</Paragraph>
+        <Input
+          value={confirmText}
+          onChange={(event) => setConfirmText(event.target.value)}
+          placeholder="ERSETZEN"
+          autoFocus
+        />
+      </Modal>
       <Card>
         <Title level={4}>Workspace JSON Transfer</Title>
         <Paragraph>

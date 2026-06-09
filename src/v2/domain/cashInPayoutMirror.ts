@@ -10,7 +10,7 @@ import {
   parsePayoutPctInput,
 } from "../../domain/cashInRules.js";
 import { buildEffectiveCashInByMonth } from "../../domain/cashflow.js";
-import { currentMonthKey, monthRange } from "./months";
+import { currentMonthKey, monthRange, normalizeMonthKey } from "./months";
 import {
   buildCategoryLabelMap,
   buildForecastProducts,
@@ -41,13 +41,8 @@ interface EffectiveCashInMonthSnapshot {
   payoutEUR?: number | null;
 }
 
-function isMonthKey(value: unknown): boolean {
-  return /^\d{4}-\d{2}$/.test(String(value || "").trim());
-}
-
 function normalizeMonth(value: unknown, fallback = currentMonthKey()): string {
-  const raw = String(value || "").trim();
-  return isMonthKey(raw) ? raw : fallback;
+  return normalizeMonthKey(value) ?? fallback;
 }
 
 function toNumber(value: unknown): number | null {

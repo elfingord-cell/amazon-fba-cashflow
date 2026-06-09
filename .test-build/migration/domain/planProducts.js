@@ -42,19 +42,9 @@ function asMonthNumber(value) {
         return null;
     return rounded;
 }
-function normalizeMonthKey(value) {
-    if (!value)
-        return null;
-    const raw = String(value).trim();
-    if (/^\d{4}-\d{2}$/.test(raw))
-        return raw;
-    const mmYYYY = raw.match(/^(\d{2})-(\d{4})$/);
-    if (mmYYYY)
-        return `${mmYYYY[2]}-${mmYYYY[1]}`;
-    return null;
-}
+const months_js_1 = require("./shared/months.js");
 function monthIndex(month) {
-    const normalized = normalizeMonthKey(month);
+    const normalized = (0, months_js_1.normalizeMonthKey)(month);
     if (!normalized)
         return null;
     const [year, monthNumber] = normalized.split("-").map(Number);
@@ -70,15 +60,11 @@ function addMonths(month, offset) {
     return `${year}-${String(monthNumber).padStart(2, "0")}`;
 }
 function monthRange(startMonth, months) {
-    const normalized = normalizeMonthKey(startMonth);
+    const normalized = (0, months_js_1.normalizeMonthKey)(startMonth);
     const count = Number.isFinite(months) ? Math.max(0, Math.round(months)) : 0;
     if (!normalized || !count)
         return [];
     return Array.from({ length: count }, (_, index) => addMonths(normalized, index));
-}
-function currentMonthKey() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 function clamp(value, min, max) {
     if (!Number.isFinite(value))
@@ -164,14 +150,14 @@ function monthKeyFromDateUtc(date) {
     return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 function daysInMonth(month) {
-    const normalized = normalizeMonthKey(month);
+    const normalized = (0, months_js_1.normalizeMonthKey)(month);
     if (!normalized)
         return null;
     const [year, monthNumber] = normalized.split("-").map(Number);
     return new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
 }
 function monthStartDateUtc(month) {
-    const normalized = normalizeMonthKey(month);
+    const normalized = (0, months_js_1.normalizeMonthKey)(month);
     if (!normalized)
         return null;
     const [year, monthNumber] = normalized.split("-").map(Number);
@@ -182,7 +168,7 @@ function normalizeMonthValueMap(input) {
     if (!input || typeof input !== "object")
         return out;
     Object.entries(input).forEach(([monthRaw, value]) => {
-        const month = normalizeMonthKey(monthRaw);
+        const month = (0, months_js_1.normalizeMonthKey)(monthRaw);
         const parsed = asNumber(value);
         if (!month || !Number.isFinite(parsed))
             return;
@@ -266,7 +252,7 @@ function normalizePlanProductMappingRecord(raw, fallbackIndex = 0) {
     const row = raw && typeof raw === "object" ? raw : {};
     const planUnitsByMonth = normalizeMonthValueMap(row.planUnitsByMonth);
     const months = Array.isArray(row.months)
-        ? row.months.map((month) => normalizeMonthKey(month)).filter(Boolean)
+        ? row.months.map((month) => (0, months_js_1.normalizeMonthKey)(month)).filter(Boolean)
         : Object.keys(planUnitsByMonth);
     return {
         id: String(row.id || `plan-map-${fallbackIndex + 1}`),
@@ -306,7 +292,7 @@ function computeSeasonalityFromForecastImport(forecastImport, sku) {
         return null;
     const points = Object.entries(monthMap)
         .map(([monthRaw, payload]) => {
-        const month = normalizeMonthKey(monthRaw);
+        const month = (0, months_js_1.normalizeMonthKey)(monthRaw);
         if (!month)
             return null;
         const monthNumber = asMonthNumber(month.slice(5, 7));
@@ -415,7 +401,7 @@ function rampFactorForDate(input) {
     return clamp(softStartShare + ((1 - softStartShare) * progress), softStartShare, 1);
 }
 function applyLaunchRampToMonth(input) {
-    const month = normalizeMonthKey(input?.month);
+    const month = (0, months_js_1.normalizeMonthKey)(input?.month);
     const baseUnits = asNumber(input?.baseUnits);
     const monthStart = monthStartDateUtc(month);
     const totalDays = daysInMonth(month);
@@ -465,7 +451,7 @@ function applyLaunchRampToMonth(input) {
 }
 function planningMonthsFromState(state) {
     const settings = state?.settings && typeof state.settings === "object" ? state.settings : {};
-    const startMonth = normalizeMonthKey(settings.startMonth) || currentMonthKey();
+    const startMonth = (0, months_js_1.normalizeMonthKey)(settings.startMonth) || (0, months_js_1.currentMonthKey)();
     const horizon = asNumber(settings.horizonMonths);
     const count = Number.isFinite(horizon) && horizon > 0 ? Math.round(horizon) : 18;
     return monthRange(startMonth, count);
@@ -492,7 +478,7 @@ function liveImportUnitsByMonth(forecastImport, sku) {
     if (!map || typeof map !== "object")
         return out;
     Object.entries(map).forEach(([monthRaw, value]) => {
-        const month = normalizeMonthKey(monthRaw);
+        const month = (0, months_js_1.normalizeMonthKey)(monthRaw);
         if (!month)
             return;
         const units = asNumber(value && typeof value === "object" ? value.units : value);
@@ -518,7 +504,7 @@ function ensureUniqueVirtualSku(baseSku, usedSkuKeys) {
 function normalizeUnitsByMonthMap(input) {
     const out = {};
     Object.entries(input || {}).forEach(([monthRaw, unitsRaw]) => {
-        const month = normalizeMonthKey(monthRaw);
+        const month = (0, months_js_1.normalizeMonthKey)(monthRaw);
         const units = asNumber(unitsRaw);
         if (!month || !Number.isFinite(units))
             return;
@@ -554,7 +540,7 @@ function buildPlanProductForecastRow(input) {
         ? input.forecastImport
         : {};
     const months = Array.isArray(input?.months) && input.months.length
-        ? input.months.filter((month) => normalizeMonthKey(month))
+        ? input.months.filter((month) => (0, months_js_1.normalizeMonthKey)(month))
         : [];
     const seasonality = computeSeasonalityFromForecastImport(forecastImport, normalized.seasonalityReferenceSku);
     const unitsByMonth = {};
@@ -628,7 +614,7 @@ function buildSharedPlanProductProjection(input) {
     const state = input?.state && typeof input.state === "object" ? input.state : {};
     const settings = state.settings && typeof state.settings === "object" ? state.settings : {};
     const months = Array.isArray(input?.months) && input.months.length
-        ? input.months.map((month) => normalizeMonthKey(month)).filter(Boolean)
+        ? input.months.map((month) => (0, months_js_1.normalizeMonthKey)(month)).filter(Boolean)
         : planningMonthsFromState(state);
     const rows = buildPlanProductForecastRows({ state, months });
     const forecastImport = (state.forecast && typeof state.forecast === "object"
@@ -863,7 +849,7 @@ function buildPlanVsLiveComparisonRows(input) {
     const liveMap = resolveForecastSkuMap(input?.forecastImport, sku) || {};
     const liveUnitsByMonth = {};
     Object.entries(liveMap).forEach(([monthRaw, payload]) => {
-        const month = normalizeMonthKey(monthRaw);
+        const month = (0, months_js_1.normalizeMonthKey)(monthRaw);
         if (!month)
             return;
         const units = payload && typeof payload === "object"
@@ -874,7 +860,7 @@ function buildPlanVsLiveComparisonRows(input) {
         liveUnitsByMonth[month] = Number(units);
     });
     const requestedMonths = Array.isArray(input?.months)
-        ? input.months.map((month) => normalizeMonthKey(month)).filter(Boolean)
+        ? input.months.map((month) => (0, months_js_1.normalizeMonthKey)(month)).filter(Boolean)
         : [];
     const unionMonths = requestedMonths.length
         ? requestedMonths
@@ -883,7 +869,7 @@ function buildPlanVsLiveComparisonRows(input) {
             ...Object.keys(liveUnitsByMonth),
             ...(mapping.months || []),
         ])).sort();
-    const launchMonth = normalizeMonthKey(input?.launchMonth || monthKeyFromDateUtc(parseIsoDateUtc(mapping.launchDate)));
+    const launchMonth = (0, months_js_1.normalizeMonthKey)(input?.launchMonth || monthKeyFromDateUtc(parseIsoDateUtc(mapping.launchDate)));
     const maxMonths = asPositiveInt(input?.maxMonths);
     const filteredMonths = unionMonths
         .filter((month) => {

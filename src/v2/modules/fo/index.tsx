@@ -290,13 +290,7 @@ function toIsoDateStrict(value: unknown): string | null {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function normalizeMonthKey(value: unknown): string | null {
-  const raw = String(value || "").trim();
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  const mmYYYY = raw.match(/^(\d{2})-(\d{4})$/);
-  if (mmYYYY) return `${mmYYYY[2]}-${mmYYYY[1]}`;
-  return null;
-}
+import { normalizeMonthKey } from "../../domain/months";
 
 function normalizeShortageIssueType(value: unknown): ShortageIssueType | null {
   const raw = String(value || "").trim().toLowerCase();
@@ -386,9 +380,7 @@ function isFoMissed(foRaw: Record<string, unknown>, rowOrderDate: string | null,
   return orderDate < todayIso;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
+import { round2 } from "../../../domain/shared/math.js";
 
 function toNumberOrNull(value: unknown): number | null {
   const parsed = Number(value);

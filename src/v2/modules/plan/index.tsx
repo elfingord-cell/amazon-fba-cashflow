@@ -61,11 +61,7 @@ function parseDate(value: unknown, fallback?: Date): Date | null {
   return date;
 }
 
-function addDays(date: Date, days: number): Date {
-  const out = new Date(date.getTime());
-  out.setDate(out.getDate() + Number(days || 0));
-  return out;
-}
+import { addDays } from "../../../domain/shared/dates.js";
 
 function parseEuro(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;

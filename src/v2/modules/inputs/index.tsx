@@ -25,7 +25,7 @@ import {
   parsePayoutPctInput,
 } from "../../../domain/cashInRules.js";
 import { buildEffectiveCashInByMonth } from "../../../domain/cashflow.js";
-import { addMonths, currentMonthKey, formatMonthLabel, monthRange } from "../../domain/months";
+import { addMonths, currentMonthKey, formatMonthLabel, monthRange, normalizeMonthKey } from "../../domain/months";
 import {
   buildCategoryLabelMap,
   buildForecastProducts,
@@ -159,9 +159,7 @@ function toNumber(value: unknown): number | null {
 }
 
 function normalizeMonth(value: unknown, fallback = currentMonthKey()): string {
-  const raw = String(value || "").trim();
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  return fallback;
+  return normalizeMonthKey(value) ?? fallback;
 }
 
 function normalizeIsoDate(value: unknown): string {

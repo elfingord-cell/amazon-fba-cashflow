@@ -83,9 +83,7 @@ function parseDateOptional(value?: string | null): Date | null {
   return dt;
 }
 
-function addDays(value: Date, days: number): Date {
-  return new Date(value.getTime() + days * MILLIS_PER_DAY);
-}
+import { addDays } from "./shared/dates.js";
 
 function getCnyWindow(settings: Settings, year: number): { start: Date; end: Date } | null {
   if (settings?.cny?.start && settings?.cny?.end) {
@@ -130,9 +128,7 @@ function lastOfMonth(year: number, month: number): Date {
   return new Date(Date.UTC(year, month + 1, 0));
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
+import { round2 } from "./shared/math.js";
 
 function getFx(po: PO, settings: Settings): number {
   return po.fxOverride ?? settings.fxRate;

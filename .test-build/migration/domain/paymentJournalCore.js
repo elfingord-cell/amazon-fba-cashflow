@@ -27,9 +27,9 @@ const RELEVANT_POSITIONS = new Set([
 function normalizeKey(value) {
     return String(value || "").trim().toLowerCase();
 }
+const months_js_1 = require("./shared/months.js");
 function normalizeMonth(value) {
-    const raw = String(value || "").trim();
-    return /^\d{4}-\d{2}$/.test(raw) ? raw : "";
+    return (0, months_js_1.normalizeMonthKey)(value) ?? "";
 }
 function parseNumber(value) {
     const parsed = (0, dataHealth_js_1.parseDeNumber)(value);
@@ -41,12 +41,7 @@ function readFiniteNumber(value) {
     const number = Number(value);
     return Number.isFinite(number) ? number : null;
 }
-function round2(value) {
-    const number = Number(value);
-    if (!Number.isFinite(number))
-        return null;
-    return Math.round(number * 100) / 100;
-}
+const math_js_1 = require("./shared/math.js");
 function firstNonEmpty(...values) {
     for (const value of values) {
         const text = String(value || "").trim();
@@ -488,7 +483,7 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
                 paidDate,
                 paymentId: paymentId || "",
                 amountPlannedEur: planned,
-                amountActualEur: status === "PAID" ? round2(actual) : null,
+                amountActualEur: status === "PAID" ? (0, math_js_1.round2OrNull)(actual) : null,
                 payer: firstNonEmpty(paymentRow.paidBy, paymentRecord?.payer, logEntry.payer),
                 paymentMethod: firstNonEmpty(paymentRow.method, paymentRecord?.method, logEntry.method),
                 note: firstNonEmpty(paymentRow.note, paymentRecord?.note, logEntry.note),
@@ -553,7 +548,7 @@ function collectEventRowsForPo({ state, settings, supplierNameMap, skuAliasMap, 
                 paidDate,
                 paymentId: paymentId || "",
                 amountPlannedEur: planned,
-                amountActualEur: round2(actual),
+                amountActualEur: (0, math_js_1.round2OrNull)(actual),
                 payer: firstNonEmpty(paymentRecord?.payer, logEntry.payer),
                 paymentMethod: firstNonEmpty(paymentRecord?.method, logEntry.method),
                 note: firstNonEmpty(paymentRecord?.note, logEntry.note),
@@ -590,10 +585,10 @@ function mergeGroupedPoPayments(eventRows, paymentIndexes) {
             ...rows.flatMap((row) => row.issues || []),
             "GROUPED_PAYMENT",
         ]);
-        const plannedTotal = round2(rows.reduce((sum, row) => sum + (Number(row.amountPlannedEur) || 0), 0));
+        const plannedTotal = (0, math_js_1.round2OrNull)(rows.reduce((sum, row) => sum + (Number(row.amountPlannedEur) || 0), 0));
         let actual = readFiniteNumber(paymentRecord?.amountActualEurTotal);
         if (!isActualAmountUsable(actual, plannedTotal)) {
-            actual = round2(rows.reduce((sum, row) => sum + (Number(row.amountActualEur) || 0), 0));
+            actual = (0, math_js_1.round2OrNull)(rows.reduce((sum, row) => sum + (Number(row.amountActualEur) || 0), 0));
         }
         if (!isActualAmountUsable(actual, plannedTotal)) {
             if (Number.isFinite(plannedTotal)) {
@@ -635,7 +630,7 @@ function mergeGroupedPoPayments(eventRows, paymentIndexes) {
             paidDate,
             paymentId,
             amountPlannedEur: plannedTotal,
-            amountActualEur: round2(actual),
+            amountActualEur: (0, math_js_1.round2OrNull)(actual),
             payer: firstNonEmpty(paymentRecord?.payer, ...rows.map((row) => row.payer)),
             paymentMethod: firstNonEmpty(paymentRecord?.method, ...rows.map((row) => row.paymentMethod)),
             note: firstNonEmpty(paymentRecord?.note, ...rows.map((row) => row.note)),
@@ -695,7 +690,7 @@ function collectFoRows({ state, supplierNameMap, skuAliasMap }) {
                 dueDate,
                 paidDate: "",
                 paymentId: "",
-                amountPlannedEur: round2(planned),
+                amountPlannedEur: (0, math_js_1.round2OrNull)(planned),
                 amountActualEur: null,
                 payer: "",
                 paymentMethod: "",

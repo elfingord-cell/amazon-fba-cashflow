@@ -145,10 +145,10 @@ function monthLabel(ym: string): string {
   return new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" }).format(date);
 }
 
+import { normalizeMonthKey } from "../../domain/months";
+
 function normalizeMonth(value: unknown): string {
-  const raw = String(value || "").trim();
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  return "";
+  return normalizeMonthKey(value) ?? "";
 }
 
 function normalizeDate(value: unknown): string {

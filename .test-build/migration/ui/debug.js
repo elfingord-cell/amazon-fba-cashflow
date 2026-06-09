@@ -53,7 +53,6 @@ function buildDemoState() {
         cashInQuoteMode: "manual",
         cashInRevenueBasisMode: "forecast_direct",
         cashInCalibrationEnabled: false,
-        dashboardShowPhantomFoInChart: true,
     };
     demo.incomings = Array.from({ length: Number(demo.settings.horizonMonths || 0) }, (_, index) => {
         const month = addMonths(planningStartMonth, index);

@@ -123,11 +123,7 @@ function toIsoDate(value) {
         return null;
     return value.toISOString().slice(0, 10);
 }
-function addDays(value, days) {
-    const next = new Date(value.getTime());
-    next.setUTCDate(next.getUTCDate() + Number(days || 0));
-    return next;
-}
+const dates_js_1 = require("../../domain/shared/dates.js");
 function addMonths(value, months) {
     const next = new Date(value.getTime());
     next.setUTCMonth(next.getUTCMonth() + Number(months || 0));
@@ -328,7 +324,7 @@ function buildScheduleDates(schedule) {
         DELIVERY: parseIsoDate(schedule.deliveryDate),
     };
     if (!dates.ETD && dates.ETA && Number.isFinite(Number(schedule.logisticsLeadTimeDays))) {
-        dates.ETD = addDays(dates.ETA, -Number(schedule.logisticsLeadTimeDays || 0));
+        dates.ETD = (0, dates_js_1.addDays)(dates.ETA, -Number(schedule.logisticsLeadTimeDays || 0));
     }
     return dates;
 }
@@ -336,7 +332,7 @@ function resolveDueDate(trigger, offsetDays, offsetMonths, scheduleDates) {
     const base = scheduleDates[trigger] || null;
     if (!base)
         return null;
-    let due = addDays(base, Number(offsetDays || 0));
+    let due = (0, dates_js_1.addDays)(base, Number(offsetDays || 0));
     if (offsetMonths) {
         due = addMonths(due, Number(offsetMonths || 0));
     }
@@ -422,10 +418,10 @@ function computeFoSchedule(input) {
             logisticsLeadTimeDays,
         };
     }
-    const orderDate = addDays(target, -(productionLeadTimeDays + logisticsLeadTimeDays + bufferDays));
-    const productionEndDate = addDays(orderDate, productionLeadTimeDays);
+    const orderDate = (0, dates_js_1.addDays)(target, -(productionLeadTimeDays + logisticsLeadTimeDays + bufferDays));
+    const productionEndDate = (0, dates_js_1.addDays)(orderDate, productionLeadTimeDays);
     const etdDate = productionEndDate;
-    const etaDate = addDays(etdDate, logisticsLeadTimeDays);
+    const etaDate = (0, dates_js_1.addDays)(etdDate, logisticsLeadTimeDays);
     return {
         orderDate: toIsoDate(orderDate),
         productionEndDate: toIsoDate(productionEndDate),
@@ -450,9 +446,9 @@ function computeScheduleFromOrderDate(input) {
             logisticsLeadTimeDays,
         };
     }
-    const productionEndDate = addDays(order, productionLeadTimeDays + bufferDays);
+    const productionEndDate = (0, dates_js_1.addDays)(order, productionLeadTimeDays + bufferDays);
     const etdDate = productionEndDate;
-    const etaDate = addDays(etdDate, logisticsLeadTimeDays);
+    const etaDate = (0, dates_js_1.addDays)(etdDate, logisticsLeadTimeDays);
     return {
         orderDate: toIsoDate(order),
         productionEndDate: toIsoDate(productionEndDate),
@@ -525,7 +521,7 @@ function computePoAggregateMetrics(input) {
         prodDays = Math.max(prodDays, item.prodDays);
         transitDays = Math.max(transitDays, item.transitDays);
         if (orderDate) {
-            const eta = addDays(orderDate, item.prodDays + item.transitDays);
+            const eta = (0, dates_js_1.addDays)(orderDate, item.prodDays + item.transitDays);
             if (!minEtaDate || eta < minEtaDate)
                 minEtaDate = eta;
             if (!maxEtaDate || eta > maxEtaDate)
@@ -846,7 +842,7 @@ function resolveOrderDateForFoMerge(input) {
     const target = parseIsoDate(input.targetDeliveryDate);
     if (target) {
         const leadDays = Math.max(0, Math.round(Number(input.maxProdDays || 0) + Number(input.maxTransitDays || 0)));
-        return toIsoDate(addDays(target, -leadDays));
+        return toIsoDate((0, dates_js_1.addDays)(target, -leadDays));
     }
     const fallback = parseIsoDate(input.fallbackOrderDate);
     return fallback ? toIsoDate(fallback) : null;
@@ -1284,7 +1280,7 @@ function resolveInboundArrivalDate(record) {
         return null;
     const prodDays = asPositive(record?.prodDays ?? record?.productionLeadTimeDays, 0);
     const transitDays = asPositive(record?.transitDays ?? record?.logisticsLeadTimeDays, 0);
-    return addDays(orderDate, prodDays + transitDays);
+    return (0, dates_js_1.addDays)(orderDate, prodDays + transitDays);
 }
 function extractInboundItems(record) {
     if (Array.isArray(record?.items) && record.items.length > 0) {

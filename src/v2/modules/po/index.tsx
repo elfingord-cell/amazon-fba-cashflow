@@ -644,11 +644,7 @@ function buildSuggestedInvoiceFilename(input: {
   return `${date}_PO-${poNo}_${alias}_${units}u_${paymentChunk}.pdf`.replace(/-+/g, "-");
 }
 
-function round2(value: unknown): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.round(parsed * 100) / 100;
-}
+import { round2OrZero as round2 } from "../../../domain/shared/math.js";
 
 function poSettingsFromState(state: Record<string, unknown>): Record<string, unknown> {
   const settings = (state.settings || {}) as Record<string, unknown>;

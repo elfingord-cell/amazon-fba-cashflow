@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Select, Space, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Modal, Select, Space, Tag, Typography, message } from "antd";
 import { computeAbcClassification } from "../../../domain/abcClassification.js";
 import { countDrafts, getLastCommitSummary } from "../../../storage/store.js";
 import { createEmptyAppStateV2, ensureAppStateV2 } from "../../state/appState";
+import { createWorkspaceBackup } from "../../sync/storageAdapters";
 import type { AppStateV2 } from "../../state/types";
 import { useWorkspaceState } from "../../state/workspace";
 
@@ -79,11 +80,30 @@ export default function DebugModule(): JSX.Element {
     return abcSnapshot.bySku.get(normalizeSku(selectedSku)) || null;
   }, [abcSnapshot.bySku, selectedSku]);
 
+  function confirmDestructive(options: { title: string; content: string; okText: string }): Promise<boolean> {
+    return new Promise((resolve) => {
+      Modal.confirm({
+        title: options.title,
+        content: options.content,
+        okText: options.okText,
+        okButtonProps: { danger: true },
+        cancelText: "Abbrechen",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+  }
+
   async function runSeed(): Promise<void> {
     const currentSnapshot = ensureAppStateV2(structuredClone(stateObject));
     if (hasExistingData(stateObject)) {
-      const confirmed = window.confirm("Daten vorhanden - ueberschreiben?");
+      const confirmed = await confirmDestructive({
+        title: "Vorhandene Daten überschreiben?",
+        content: "Der Workspace enthält Daten. Sie werden durch Testdaten ersetzt (für alle Nutzer). Vorher wird ein lokales Backup angelegt.",
+        okText: "Mit Testdaten überschreiben",
+      });
       if (!confirmed) return;
+      createWorkspaceBackup("v2:debug:pre-seed", currentSnapshot);
       setLastSnapshot(currentSnapshot);
     } else {
       setLastSnapshot(null);
@@ -94,8 +114,13 @@ export default function DebugModule(): JSX.Element {
   }
 
   async function runWipe(): Promise<void> {
-    const confirmed = window.confirm("Wirklich alle Daten loeschen?");
+    const confirmed = await confirmDestructive({
+      title: "Wirklich ALLE Daten löschen?",
+      content: "Der komplette Workspace wird geleert — das gilt für alle Nutzer. Vorher wird automatisch ein lokales Backup angelegt (Export/Import → Backups).",
+      okText: "Alle Daten löschen",
+    });
     if (!confirmed) return;
+    createWorkspaceBackup("v2:debug:pre-wipe", ensureAppStateV2(structuredClone(stateObject)));
     await saveWith(() => createEmptyAppStateV2(), "v2:debug:wipe");
     messageApi.success("Alle Daten wurden zurueckgesetzt.");
   }

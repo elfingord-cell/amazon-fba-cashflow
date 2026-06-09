@@ -31,17 +31,9 @@ export function parsePercent(value) {
   return Math.min(100, Math.max(0, parseNumber(value, 0)));
 }
 
-export function round2(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return null;
-  return Math.round(numeric * 100) / 100;
-}
-
-export function addDays(date, days) {
-  const next = new Date(date.getTime());
-  next.setUTCDate(next.getUTCDate() + Number(days || 0));
-  return next;
-}
+import { round2OrNull as round2 } from "./shared/math.js";
+import { addDays } from "./shared/dates.js";
+export { round2, addDays };
 
 export function addMonthsDate(date, months) {
   const next = new Date(date.getTime());

@@ -5,10 +5,7 @@ export const DASHBOARD_RANGE_OPTIONS = [
   { value: "ALL", label: "Alles", count: null },
 ];
 
-export function currentMonthKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
+export { currentMonthKey } from "../domain/shared/months.js";
 
 function monthIndex(ym) {
   if (!/^\d{4}-\d{2}$/.test(ym || "")) return null;

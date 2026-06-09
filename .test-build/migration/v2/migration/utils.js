@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.normalizeMonthKey = normalizeMonthKey;
+exports.normalizeMonthKey = void 0;
 exports.normalizeMonthInEntry = normalizeMonthInEntry;
 exports.stableHash = stableHash;
 exports.deterministicId = deterministicId;
@@ -9,21 +9,10 @@ exports.deepClone = deepClone;
 exports.isObject = isObject;
 exports.pushIssue = pushIssue;
 const dataHealth_js_1 = require("../../lib/dataHealth.js");
-function normalizeMonthKey(value) {
-    if (typeof value !== "string")
-        return null;
-    const raw = value.trim();
-    if (!raw)
-        return null;
-    if (/^\d{4}-\d{2}$/.test(raw))
-        return raw;
-    const deMatch = raw.match(/^(\d{2})-(\d{4})$/);
-    if (deMatch)
-        return `${deMatch[2]}-${deMatch[1]}`;
-    return null;
-}
+const months_js_1 = require("../../domain/shared/months.js");
+Object.defineProperty(exports, "normalizeMonthKey", { enumerable: true, get: function () { return months_js_1.normalizeMonthKey; } });
 function normalizeMonthInEntry(entry) {
-    const monthValue = normalizeMonthKey(entry.month);
+    const monthValue = (0, months_js_1.normalizeMonthKey)(entry.month);
     if (!monthValue || monthValue === entry.month) {
         return { value: entry, normalized: false };
     }

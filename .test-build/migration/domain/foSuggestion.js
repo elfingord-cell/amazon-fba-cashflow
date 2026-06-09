@@ -57,9 +57,7 @@ function monthKeyToDate(monthKeyValue) {
 function daysInMonth(year, monthIndex) {
     return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 }
-function addDays(date, days) {
-    return new Date(date.getTime() + days * MILLIS_PER_DAY);
-}
+const dates_js_1 = require("./shared/dates.js");
 function resolveSkuPolicy(sku, overrides = {}, defaults = {}) {
     const override = overrides?.[sku] ?? {};
     return {
@@ -202,7 +200,7 @@ function countOverlapDays(windowStart, windowEnd, blackoutStart, blackoutEnd) {
     if (!windowStartUtc || !windowEndUtc || !blackoutStartUtc || !blackoutEndUtc)
         return 0;
     const overlapStart = windowStartUtc > blackoutStartUtc ? windowStartUtc : blackoutStartUtc;
-    const blackoutEndExclusive = addDays(blackoutEndUtc, 1);
+    const blackoutEndExclusive = (0, dates_js_1.addDays)(blackoutEndUtc, 1);
     const overlapEnd = windowEndUtc < blackoutEndExclusive ? windowEndUtc : blackoutEndExclusive;
     const diffMs = overlapEnd.getTime() - overlapStart.getTime();
     if (diffMs <= 0)
@@ -283,17 +281,17 @@ function computeFoRecommendation({ sku, baselineMonth, projection, plannedSalesB
         : firstRisk.month;
     const selectedProjectionMonth = projectionByMonth.get(selectedArrivalMonth) || firstRisk;
     const requiredArrivalDate = monthKeyToDate(selectedArrivalMonth);
-    const orderDate = addDays(requiredArrivalDate, -Number(leadTimeDays || 0));
+    const orderDate = (0, dates_js_1.addDays)(requiredArrivalDate, -Number(leadTimeDays || 0));
     const overlapDays = countOverlapDays(orderDate, requiredArrivalDate, cnyPeriod?.start, cnyPeriod?.end);
     const orderDateAdjusted = overlapDays > 0
-        ? addDays(orderDate, -overlapDays)
+        ? (0, dates_js_1.addDays)(orderDate, -overlapDays)
         : orderDate;
     const targetCoverageDays = Math.max(1, Number(coverageDays || 0));
     const coverageDemand = integrateDemand({
         plansBySku: plannedSalesBySku,
         sku,
         startDate: requiredArrivalDate,
-        endDate: addDays(requiredArrivalDate, targetCoverageDays),
+        endDate: (0, dates_js_1.addDays)(requiredArrivalDate, targetCoverageDays),
         warnings: [],
     });
     const coverageDemandUnits = Number.isFinite(coverageDemand?.demandUnits)
@@ -409,9 +407,9 @@ function computeFoSuggestion({ sku, today = new Date(), operationalCoverageDays,
     const warnings = [];
     const policy = resolveSkuPolicy(sku, policyOverrides, policyDefaults);
     const todayDate = parseIsoDate(today);
-    const eta = etaDate ? parseIsoDate(etaDate) : addDays(todayDate, policy.leadTimeDaysTotal);
+    const eta = etaDate ? parseIsoDate(etaDate) : (0, dates_js_1.addDays)(todayDate, policy.leadTimeDaysTotal);
     const targetCoverageDays = operationalCoverageDays != null ? operationalCoverageDays : policy.operationalCoverageDaysDefault;
-    const horizonEnd = addDays(eta, targetCoverageDays);
+    const horizonEnd = (0, dates_js_1.addDays)(eta, targetCoverageDays);
     const demandInfo = integrateDemand({
         plansBySku: plannedSalesBySku,
         sku,
@@ -541,7 +539,7 @@ function findEtaForMinDoh({ sku, today = new Date(), minimumDohDays, plannedSale
         return { etaDate: null, warnings, status: "missing_minimum_doh" };
     }
     const todayDate = parseIsoDate(today);
-    const horizonEnd = addDays(todayDate, maxHorizonDays);
+    const horizonEnd = (0, dates_js_1.addDays)(todayDate, maxHorizonDays);
     const demandInfo = integrateDemand({
         plansBySku: plannedSalesBySku,
         sku,
@@ -553,7 +551,7 @@ function findEtaForMinDoh({ sku, today = new Date(), minimumDohDays, plannedSale
         warnings.push("Forecast is incomplete; ETA is estimated from partial data.");
     }
     for (let offset = 0; offset <= maxHorizonDays; offset += 1) {
-        const currentDate = addDays(todayDate, offset);
+        const currentDate = (0, dates_js_1.addDays)(todayDate, offset);
         const inventoryInfo = estimateInventoryOnDate({
             snapshotsBySku: closingStockBySku,
             plansBySku: plannedSalesBySku,
@@ -591,7 +589,7 @@ exports.foSuggestionUtils = {
     monthKeyToDate,
     compareMonthKeys,
     daysInMonth,
-    addDays,
+    addDays: dates_js_1.addDays,
     getDailyRateForDate,
     estimateInventoryOnDate,
     integrateDemand,

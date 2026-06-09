@@ -24,9 +24,7 @@ function toNumber(value) {
     const num = Number(normalized);
     return Number.isFinite(num) ? num : null;
 }
-function round2(value) {
-    return Math.round(value * 100) / 100;
-}
+const math_js_1 = require("../shared/math.js");
 function resolveProduct(productsBySku, sku) {
     if (!sku || !productsBySku)
         return null;
@@ -90,7 +88,7 @@ function computeFreightEstimate(po, productsBySku) {
                     lineIssues.push("NEGATIVE_DERIVED_LOGISTICS");
                     negativeCount += 1;
                 }
-                derived = round2(computed.value);
+                derived = (0, math_js_1.round2)(computed.value);
                 autoTotal += (0, shipping_js_1.calculateLineShippingEur)({
                     units,
                     shippingPerUnitEur: derived,
@@ -103,19 +101,19 @@ function computeFreightEstimate(po, productsBySku) {
             sku,
             units,
             landedUnitCostEur,
-            goodsPerUnitEur: goodsPerUnitEur != null ? round2(goodsPerUnitEur) : null,
+            goodsPerUnitEur: goodsPerUnitEur != null ? (0, math_js_1.round2)(goodsPerUnitEur) : null,
             derivedLogisticsPerUnitEur: derived,
             issues: lineIssues,
         });
     });
-    const autoFreightEur = round2(autoTotal);
+    const autoFreightEur = (0, math_js_1.round2)(autoTotal);
     const totalUnits = items.reduce((sum, item) => sum + (toNumber(item?.units) || 0), 0);
     const manualMode = po?.freightMode === "per_unit" ? "PER_UNIT_EUR" : "TOTAL_EUR";
     const manualPerUnit = toNumber(po?.timeline?.freightPerUnitEur ?? po?.freightPerUnitEur) || 0;
     const manualTotal = toNumber(po?.timeline?.freightTotalEur ?? po?.freightEur) || 0;
     const manualFreightEur = manualMode === "PER_UNIT_EUR"
-        ? round2(manualPerUnit * totalUnits)
-        : round2(manualTotal);
+        ? (0, math_js_1.round2)(manualPerUnit * totalUnits)
+        : (0, math_js_1.round2)(manualTotal);
     const includeFreight = po?.timeline?.includeFreight !== false;
     const mode = resolveFreightMode(po);
     const estimatedFreightEur = includeFreight && mode === "AUTO_FROM_LANDED"

@@ -1,7 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DASHBOARD_RANGE_OPTIONS = void 0;
-exports.currentMonthKey = currentMonthKey;
+exports.currentMonthKey = exports.DASHBOARD_RANGE_OPTIONS = void 0;
 exports.getMonthlyBuckets = getMonthlyBuckets;
 exports.getVisibleMonths = getVisibleMonths;
 exports.DASHBOARD_RANGE_OPTIONS = [
@@ -10,10 +9,8 @@ exports.DASHBOARD_RANGE_OPTIONS = [
     { value: "NEXT_24", label: "Nächste 24 Monate", count: 24 },
     { value: "ALL", label: "Alles", count: null },
 ];
-function currentMonthKey() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
+var months_js_1 = require("../domain/shared/months.js");
+Object.defineProperty(exports, "currentMonthKey", { enumerable: true, get: function () { return months_js_1.currentMonthKey; } });
 function monthIndex(ym) {
     if (!/^\d{4}-\d{2}$/.test(ym || ""))
         return null;

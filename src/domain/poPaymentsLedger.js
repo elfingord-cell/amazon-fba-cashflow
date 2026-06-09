@@ -20,15 +20,10 @@ const CSV_HEADERS = [
   "notes",
 ];
 
-function currentMonthKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
+import { currentMonthKey, normalizeMonthKey } from "./shared/months.js";
 
 function normalizeMonth(value) {
-  const raw = String(value || "").trim();
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  return currentMonthKey();
+  return normalizeMonthKey(value) ?? currentMonthKey();
 }
 
 function parseNumber(value) {
@@ -291,11 +286,7 @@ function firstNonEmpty(...values) {
   return "";
 }
 
-function round2(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return null;
-  return Math.round(number * 100) / 100;
-}
+import { round2OrNull as round2 } from "./shared/math.js";
 
 function formatCsvNumber(value, options = {}) {
   const number = Number(value);

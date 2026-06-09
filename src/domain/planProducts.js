@@ -36,14 +36,7 @@ function asMonthNumber(value) {
   return rounded;
 }
 
-function normalizeMonthKey(value) {
-  if (!value) return null;
-  const raw = String(value).trim();
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  const mmYYYY = raw.match(/^(\d{2})-(\d{4})$/);
-  if (mmYYYY) return `${mmYYYY[2]}-${mmYYYY[1]}`;
-  return null;
-}
+import { currentMonthKey, normalizeMonthKey } from "./shared/months.js";
 
 function monthIndex(month) {
   const normalized = normalizeMonthKey(month);
@@ -66,11 +59,6 @@ function monthRange(startMonth, months) {
   const count = Number.isFinite(months) ? Math.max(0, Math.round(months)) : 0;
   if (!normalized || !count) return [];
   return Array.from({ length: count }, (_, index) => addMonths(normalized, index));
-}
-
-function currentMonthKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function clamp(value, min, max) {

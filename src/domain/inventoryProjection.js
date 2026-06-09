@@ -3,13 +3,13 @@ import { normalizeIncludeInForecast } from "./portfolioBuckets.js";
 
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 
+import { addMonths, normalizeMonthKey as toCanonicalMonthKey } from "./shared/months.js";
+
+// Bewusst tolerant: Nicht-Monats-Strings werden unverändert durchgereicht
+// (Alt-Verhalten, auf das Call-Sites in diesem Modul bauen).
 function normalizeMonthKey(value) {
   if (!value) return null;
-  const raw = String(value);
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  const match = raw.match(/^(\d{2})-(\d{4})$/);
-  if (match) return `${match[2]}-${match[1]}`;
-  return raw;
+  return toCanonicalMonthKey(value) ?? String(value);
 }
 
 function normalizeSku(value) {
@@ -48,11 +48,8 @@ function compareMonthKeys(a, b) {
 }
 
 function addMonthsToMonthKey(monthKey, offset) {
-  const parsed = parseMonthKey(monthKey);
-  if (!parsed) return null;
-  const date = new Date(parsed.year, parsed.monthIndex, 1);
-  date.setMonth(date.getMonth() + Number(offset || 0));
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  if (!parseMonthKey(monthKey)) return null;
+  return addMonths(monthKey, Number(offset || 0));
 }
 
 function monthStartDateUtc(monthKey) {

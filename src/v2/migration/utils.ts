@@ -1,14 +1,8 @@
 import { parseDeNumber } from "../../lib/dataHealth.js";
 
-export function normalizeMonthKey(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const raw = value.trim();
-  if (!raw) return null;
-  if (/^\d{4}-\d{2}$/.test(raw)) return raw;
-  const deMatch = raw.match(/^(\d{2})-(\d{4})$/);
-  if (deMatch) return `${deMatch[2]}-${deMatch[1]}`;
-  return null;
-}
+import { normalizeMonthKey } from "../../domain/shared/months.js";
+
+export { normalizeMonthKey };
 
 export function normalizeMonthInEntry<T extends Record<string, unknown>>(entry: T): { value: T; normalized: boolean } {
   const monthValue = normalizeMonthKey(entry.month);

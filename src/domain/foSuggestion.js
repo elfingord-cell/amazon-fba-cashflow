@@ -57,9 +57,7 @@ function daysInMonth(year, monthIndex) {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 }
 
-function addDays(date, days) {
-  return new Date(date.getTime() + days * MILLIS_PER_DAY);
-}
+import { addDays } from "./shared/dates.js";
 
 function resolveSkuPolicy(sku, overrides = {}, defaults = {}) {
   const override = overrides?.[sku] ?? {};

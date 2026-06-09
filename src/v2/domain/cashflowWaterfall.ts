@@ -20,9 +20,7 @@ function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-function round2(v: number): number {
-  return Math.round(v * 100) / 100;
-}
+import { round2 } from "../../domain/shared/math.js";
 
 function outflowGroup(entry: Record<string, unknown>): { key: string; label: string; order: number } {
   const g = String(entry?.group || "");

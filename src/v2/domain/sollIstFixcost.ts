@@ -31,9 +31,7 @@ export interface FixcostComparisonSnapshot {
   rows: FixcostComparisonRow[];
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
+import { round2 } from "../../domain/shared/math.js";
 
 function toFiniteOrNull(value: unknown): number | null {
   if (value == null || value === "") return null;

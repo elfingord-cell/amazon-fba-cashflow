@@ -53,15 +53,7 @@ function todayIsoLocal(): string {
   return `${year}-${month}-${day}`;
 }
 
-function addDaysIso(value: string, days: number): string | null {
-  const date = toDate(value);
-  if (!date) return null;
-  date.setDate(date.getDate() + days);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
+import { addDaysIso } from "../../domain/shared/dates.js";
 
 function parseUnits(value: unknown): number {
   const parsed = Number(value);

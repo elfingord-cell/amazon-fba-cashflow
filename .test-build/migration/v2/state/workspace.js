@@ -35,7 +35,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.useWorkspaceState = useWorkspaceState;
 const react_1 = require("react");
+const antd_1 = require("antd");
 const storageLocal_js_1 = require("../../data/storageLocal.js");
+const storageAdapters_1 = require("../sync/storageAdapters");
 const runtimeConfig_js_1 = require("../../storage/runtimeConfig.js");
 const presence_1 = require("../sync/presence");
 const realtimeWorkspace_1 = require("../sync/realtimeWorkspace");
@@ -103,6 +105,7 @@ function useWorkspaceState() {
     const remotePullTimerRef = (0, react_1.useRef)(null);
     const stopPollingRef = (0, react_1.useRef)(null);
     const isRemotePullingRef = (0, react_1.useRef)(false);
+    const savingRef = (0, react_1.useRef)(false);
     const connectionStateRef = (0, react_1.useRef)("idle");
     (0, react_1.useEffect)(() => {
         stateRef.current = state;
@@ -126,8 +129,11 @@ function useWorkspaceState() {
             || !syncSession.isAuthenticated) {
             return;
         }
+        // "pending"/"push-failed" nicht final werten: ein abgebrochener/fehlgeschlagener
+        // Push darf den Import nicht dauerhaft blockieren — der Re-Check gegen das Remote
+        // entscheidet (existiert es inzwischen, wird "remote-exists" gesetzt).
         const marker = readImportMarker(syncSession.workspaceId);
-        if (marker)
+        if (marker && marker !== "pending" && marker !== "push-failed")
             return;
         const remoteApi = await loadRemoteStateApi();
         const remote = await remoteApi.fetchRemoteState();
@@ -140,19 +146,35 @@ function useWorkspaceState() {
             return;
         }
         const localState = (0, appState_1.ensureAppStateV2)((0, storageLocal_js_1.loadState)());
-        let shouldImport = false;
-        if (typeof window !== "undefined" && typeof window.confirm === "function") {
-            shouldImport = window.confirm("Im Browser wurden lokale Daten gefunden und der Shared Workspace ist leer. Lokale Daten jetzt einmalig in den Workspace importieren?");
-        }
+        const shouldImport = await new Promise((resolve) => {
+            antd_1.Modal.confirm({
+                title: "Lokale Daten in den Shared Workspace importieren?",
+                content: "Im Browser wurden lokale Daten gefunden und der Shared Workspace ist leer. Die lokalen Daten werden einmalig hochgeladen. Vorher wird automatisch ein lokales Backup angelegt.",
+                okText: "Importieren",
+                cancelText: "Nicht importieren",
+                onOk: () => resolve(true),
+                onCancel: () => resolve(false),
+            });
+        });
         if (!shouldImport) {
             writeImportMarker(syncSession.workspaceId, "user-skipped");
             return;
         }
-        await remoteApi.pushRemoteState({
-            ifMatchRev: remote?.rev || null,
-            updatedBy: syncSession.email || syncSession.userId || "workspace-import",
-            data: localState,
-        });
+        // Marker VOR dem Push: schlägt der Push fehl, bleibt "push-failed" stehen und
+        // der nächste Load prüft erneut gegen das Remote statt blind nochmal zu pushen.
+        (0, storageAdapters_1.createWorkspaceBackup)("v2:initial-import:pre-push", localState);
+        writeImportMarker(syncSession.workspaceId, "pending");
+        try {
+            await remoteApi.pushRemoteState({
+                ifMatchRev: remote?.rev || null,
+                updatedBy: syncSession.email || syncSession.userId || "workspace-import",
+                data: localState,
+            });
+        }
+        catch (pushError) {
+            writeImportMarker(syncSession.workspaceId, "push-failed");
+            throw pushError;
+        }
         writeImportMarker(syncSession.workspaceId, "imported");
     }, [
         syncSession.email,
@@ -166,6 +188,18 @@ function useWorkspaceState() {
             return;
         if (!syncSession.hasWorkspaceAccess || !syncSession.workspaceId)
             return;
+        // Niemals pullen, während ein Save läuft — der Pull würde den gerade
+        // editierten Stand mit dem (noch alten) Remote-Stand überschreiben.
+        if (savingRef.current) {
+            if (remotePullTimerRef.current != null) {
+                window.clearTimeout(remotePullTimerRef.current);
+            }
+            remotePullTimerRef.current = window.setTimeout(() => {
+                remotePullTimerRef.current = null;
+                void pullRemoteNow(options);
+            }, REMOTE_PULL_DEBOUNCE_MS);
+            return;
+        }
         const skipLocalGrace = Boolean(options?.skipLocalGrace);
         const cfg = (0, runtimeConfig_js_1.getRuntimeConfig)();
         const graceMs = Math.max(0, Number(cfg.editGraceMs || 1200));
@@ -273,12 +307,15 @@ function useWorkspaceState() {
         const previous = stateRef.current;
         const next = (0, appState_1.ensureAppStateV2)(updater(cloneState(previous)));
         setSaving(true);
+        savingRef.current = true;
         setError("");
         setState(next);
         stateRef.current = next;
         emitWorkspaceSnapshot(next);
-        try {
-            await adapter.save(next, { source });
+        const commit = (saved) => {
+            setState(saved);
+            stateRef.current = saved;
+            emitWorkspaceSnapshot(saved);
             if (syncSession.workspaceId) {
                 void (0, realtimeWorkspace_1.publishWorkspaceBroadcast)({
                     workspaceId: syncSession.workspaceId,
@@ -290,16 +327,44 @@ function useWorkspaceState() {
                 });
             }
             setLastSavedAt(new Date().toISOString());
-        }
-        catch (saveError) {
+        };
+        const rollback = (failure, prefix) => {
             setState(previous);
             stateRef.current = previous;
             emitWorkspaceSnapshot(previous);
-            setError(saveError instanceof Error ? saveError.message : "Speichern fehlgeschlagen.");
-            throw saveError;
+            const detail = failure instanceof Error ? failure.message : "Speichern fehlgeschlagen.";
+            setError(detail);
+            antd_1.message.error(`${prefix}: ${detail}`);
+        };
+        try {
+            await adapter.save(next, { source });
+            commit(next);
+        }
+        catch (saveError) {
+            const isConflict = saveError instanceof Error && saveError.name === "ConflictError";
+            if (!isConflict) {
+                rollback(saveError, "Speichern fehlgeschlagen");
+                throw saveError;
+            }
+            // Konflikt (Workspace wurde parallel geändert): NIE still den fremden Stand
+            // überschreiben. Stattdessen: lokalen Versuch als Backup sichern, Remote neu
+            // laden, die Änderung auf dem frischen Stand re-anwenden, genau EIN Retry.
+            try {
+                (0, storageAdapters_1.createWorkspaceBackup)(`${source}:conflict-local-attempt`, next);
+                const fresh = (0, appState_1.ensureAppStateV2)(await adapter.load());
+                const merged = (0, appState_1.ensureAppStateV2)(updater(cloneState(fresh)));
+                await adapter.save(merged, { source: `${source}:conflict-retry` });
+                commit(merged);
+                antd_1.message.info("Parallel-Änderung erkannt — deine Änderung wurde auf den neuesten Stand angewendet.");
+            }
+            catch (retryError) {
+                rollback(retryError, "Speicher-Konflikt (parallel bearbeitet)");
+                throw retryError;
+            }
         }
         finally {
             setSaving(false);
+            savingRef.current = false;
         }
     }, [adapter, syncSession.workspaceId]);
     (0, react_1.useEffect)(() => {
@@ -339,6 +404,11 @@ function useWorkspaceState() {
         return () => {
             unsubscribe();
             stopFallbackPolling();
+            // Geplante Pulls des alten Workspace nicht in den neuen hinüberfeuern lassen.
+            if (remotePullTimerRef.current != null) {
+                window.clearTimeout(remotePullTimerRef.current);
+                remotePullTimerRef.current = null;
+            }
         };
     }, [
         scheduleRemotePull,

@@ -1,52 +1,24 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.currentMonthKey = currentMonthKey;
-exports.normalizeMonthKey = normalizeMonthKey;
-exports.monthIndex = monthIndex;
-exports.addMonths = addMonths;
+exports.normalizeMonthKey = exports.monthIndex = exports.currentMonthKey = exports.addMonths = void 0;
 exports.monthRange = monthRange;
 exports.formatMonthLabel = formatMonthLabel;
 exports.monthEndDate = monthEndDate;
 exports.formatMonthEndLabel = formatMonthEndLabel;
-function currentMonthKey() {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
-function normalizeMonthKey(value) {
-    if (!value)
-        return null;
-    const raw = String(value).trim();
-    if (/^\d{4}-\d{2}$/.test(raw))
-        return raw;
-    const mmYYYY = raw.match(/^(\d{2})-(\d{4})$/);
-    if (mmYYYY)
-        return `${mmYYYY[2]}-${mmYYYY[1]}`;
-    return null;
-}
-function monthIndex(month) {
-    if (!/^\d{4}-\d{2}$/.test(month || ""))
-        return null;
-    const [year, monthNumber] = month.split("-").map(Number);
-    return year * 12 + (monthNumber - 1);
-}
-function addMonths(month, offset) {
-    const index = monthIndex(month);
-    if (index == null)
-        return month;
-    const next = index + offset;
-    const year = Math.floor(next / 12);
-    const monthNumber = (next % 12) + 1;
-    return `${year}-${String(monthNumber).padStart(2, "0")}`;
-}
+const months_js_1 = require("../../domain/shared/months.js");
+Object.defineProperty(exports, "addMonths", { enumerable: true, get: function () { return months_js_1.addMonths; } });
+Object.defineProperty(exports, "currentMonthKey", { enumerable: true, get: function () { return months_js_1.currentMonthKey; } });
+Object.defineProperty(exports, "monthIndex", { enumerable: true, get: function () { return months_js_1.monthIndex; } });
+Object.defineProperty(exports, "normalizeMonthKey", { enumerable: true, get: function () { return months_js_1.normalizeMonthKey; } });
 function monthRange(startMonth, months) {
-    const normalized = normalizeMonthKey(startMonth);
+    const normalized = (0, months_js_1.normalizeMonthKey)(startMonth);
     const length = Number.isFinite(months) ? Math.max(0, Math.round(months)) : 0;
     if (!normalized || !length)
         return [];
-    return Array.from({ length }, (_, index) => addMonths(normalized, index));
+    return Array.from({ length }, (_, index) => (0, months_js_1.addMonths)(normalized, index));
 }
 function formatMonthLabel(month) {
-    const normalized = normalizeMonthKey(month);
+    const normalized = (0, months_js_1.normalizeMonthKey)(month);
     if (!normalized)
         return "—";
     const [year, monthNumber] = normalized.split("-").map(Number);
@@ -54,7 +26,7 @@ function formatMonthLabel(month) {
     return date.toLocaleDateString("de-DE", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 function monthEndDate(month) {
-    const normalized = normalizeMonthKey(month);
+    const normalized = (0, months_js_1.normalizeMonthKey)(month);
     if (!normalized)
         return null;
     const [year, monthNumber] = normalized.split("-").map(Number);
