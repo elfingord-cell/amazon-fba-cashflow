@@ -25,14 +25,28 @@
   --cfp-radius: 18px;
   --cfp-radius-sm: 14px;
   --cfp-shadow: 0 1px 2px rgba(15, 27, 45, 0.04), 0 8px 24px rgba(15, 27, 45, 0.06);
-  --cfp-tabbar-h: 64px;
+  --cfp-tabbar-h: 78px;
+
+  /* iOS 26 „Liquid Glass": translucente Materialien mit echtem Blur/Sättigung,
+     specular Kante (inset-Highlight) und konzentrischen Radien. Der farbige
+     Backdrop unten gibt dem Glas etwas zum Brechen. */
+  --cfp-glass: rgba(255, 255, 255, 0.55);
+  --cfp-glass-strong: rgba(255, 255, 255, 0.72);
+  --cfp-glass-border: rgba(255, 255, 255, 0.55);
+  --cfp-glass-blur: saturate(175%) blur(22px);
+  --cfp-glass-hi: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  --cfp-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 1px 2px rgba(15, 27, 45, 0.05), 0 12px 30px rgba(15, 27, 45, 0.10);
 
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  background: var(--cfp-bg);
+  background:
+    radial-gradient(125% 85% at 2% -6%, rgba(59, 194, 167, 0.30), transparent 55%),
+    radial-gradient(120% 90% at 100% -8%, rgba(116, 158, 255, 0.24), transparent 52%),
+    radial-gradient(135% 95% at 50% 108%, rgba(168, 140, 250, 0.22), transparent 60%),
+    #eef1f5;
   color: var(--cfp-ink);
   font-family: "Avenir Next", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   font-size: 15px;
@@ -59,16 +73,14 @@
 .cfp-m .cfp-pos { color: var(--cfp-pos); }
 .cfp-m .cfp-neg { color: var(--cfp-neg); }
 
-/* Sichtbarer Tastatur-Fokus (WCAG 2.4.7) — auf hellen Flächen mint, auf
-   dunklen/farbigen Flächen (Hero, Radar-Hero, Tab-Bar) weiß. */
+/* Sichtbarer Tastatur-Fokus (WCAG 2.4.7) — auf hellen Glas-Flächen mint, auf
+   dunklen Flächen (Radar-Hero) weiß. */
 .cfp-m :focus-visible {
   outline: 2px solid var(--cfp-mint-700);
   outline-offset: 2px;
   border-radius: 10px;
 }
-.cfp-hero :focus-visible,
-.cfp-radar-hero :focus-visible,
-.cfp-tabbar :focus-visible {
+.cfp-radar-hero :focus-visible {
   outline-color: #ffffff;
 }
 
@@ -78,10 +90,11 @@
   top: 0;
   z-index: 5;
   padding: calc(env(safe-area-inset-top, 0px) + 9px) 18px 9px;
-  background: rgba(245, 247, 248, 0.86);
-  backdrop-filter: saturate(180%) blur(14px);
-  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  background: rgba(247, 249, 251, 0.62);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
   border-bottom: 1px solid transparent;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.4);
   transition: border-color 0.2s ease;
 }
 
@@ -119,10 +132,12 @@
 .cfp-iconbtn {
   width: 38px;
   height: 38px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--cfp-surface);
-  box-shadow: var(--cfp-shadow);
+  border: 1px solid var(--cfp-glass-border);
+  border-radius: 13px;
+  background: var(--cfp-glass);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  box-shadow: var(--cfp-glass-hi), 0 4px 12px rgba(15, 27, 45, 0.08);
   color: var(--cfp-ink);
   display: inline-flex;
   align-items: center;
@@ -136,14 +151,15 @@
   background: var(--cfp-mint-tint);
 }
 
-/* ---- Segmented control ---- */
+/* ---- Segmented control (Glas-Groove + Glas-Thumb) ---- */
 .cfp-segment {
   display: flex;
   gap: 2px;
   margin-top: 9px;
   padding: 3px;
-  background: rgba(15, 27, 45, 0.06);
-  border-radius: 12px;
+  background: rgba(15, 27, 45, 0.07);
+  border-radius: 13px;
+  box-shadow: inset 0 1px 2px rgba(15, 27, 45, 0.08);
 }
 
 .cfp-segment-opt {
@@ -160,9 +176,9 @@
 }
 
 .cfp-segment-opt.is-active {
-  background: var(--cfp-surface);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--cfp-ink);
-  box-shadow: 0 1px 3px rgba(15, 27, 45, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 3px rgba(15, 27, 45, 0.18);
 }
 
 /* ---- Scroll body ---- */
@@ -209,16 +225,17 @@
   background: var(--cfp-mint);
 }
 
-/* ---- Hero (Liquidität) ---- */
+/* ---- Hero (Liquidität) — helles Glas mit dunklen Zahlen (iOS 26) ---- */
 .cfp-hero {
   margin-top: 12px;
   padding: 18px;
-  border-radius: 22px;
-  /* Dunkleres Teal für WCAG-Kontrast mit weißem Text (Kontostand ~3.4:1,
-     Fuß-Labels mit voller Deckkraft ~4.5:1). */
-  background: linear-gradient(155deg, #1f9d86 0%, #138a73 100%);
-  color: #fff;
-  box-shadow: 0 12px 30px rgba(19, 138, 115, 0.34);
+  border-radius: 24px;
+  background: var(--cfp-glass-strong);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border: 1px solid var(--cfp-glass-border);
+  color: var(--cfp-ink);
+  box-shadow: var(--cfp-glass-shadow);
   position: relative;
   overflow: hidden;
 }
@@ -234,7 +251,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  opacity: 0.95;
+  color: var(--cfp-muted);
 }
 
 .cfp-hero-pill {
@@ -243,7 +260,8 @@
   gap: 5px;
   padding: 5px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.26);
+  background: rgba(59, 194, 167, 0.14);
+  color: var(--cfp-mint-700);
   font-size: 12px;
   font-weight: 600;
 }
@@ -277,12 +295,15 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  opacity: 0.95;
+  color: var(--cfp-muted);
+  display: flex;
+  align-items: center;
 }
 
 .cfp-hero-foot-value {
   font-size: 17px;
   font-weight: 700;
+  color: var(--cfp-ink);
 }
 
 .cfp-hero-gap {
@@ -324,9 +345,12 @@
 /* ---- Monats-Diagramm (Kontostand & Netto) ---- */
 .cfp-chartcard {
   margin-top: 12px;
-  background: var(--cfp-surface);
-  border-radius: var(--cfp-radius);
-  box-shadow: var(--cfp-shadow);
+  background: var(--cfp-glass-strong);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border: 1px solid var(--cfp-glass-border);
+  border-radius: 20px;
+  box-shadow: var(--cfp-glass-shadow);
   padding: 12px 12px 10px;
 }
 
@@ -466,12 +490,14 @@
 
 .cfp-monthcard {
   width: 100%;
-  border: 0;
+  border: 1px solid var(--cfp-glass-border);
   text-align: left;
-  background: var(--cfp-surface);
-  border-radius: var(--cfp-radius);
+  background: var(--cfp-glass-strong);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border-radius: 20px;
   padding: 14px 15px;
-  box-shadow: var(--cfp-shadow);
+  box-shadow: var(--cfp-glass-shadow);
   display: flex;
   flex-direction: column;
   gap: 11px;
@@ -575,9 +601,12 @@
 
 /* ---- Monate list ---- */
 .cfp-list {
-  background: var(--cfp-surface);
-  border-radius: var(--cfp-radius);
-  box-shadow: var(--cfp-shadow);
+  background: var(--cfp-glass-strong);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border: 1px solid var(--cfp-glass-border);
+  border-radius: 20px;
+  box-shadow: var(--cfp-glass-shadow);
   overflow: hidden;
 }
 
@@ -695,9 +724,12 @@
   max-height: 88vh;
   display: flex;
   flex-direction: column;
-  background: var(--cfp-surface);
-  border-radius: 22px 22px 0 0;
-  box-shadow: 0 -10px 40px rgba(15, 27, 45, 0.22);
+  background: rgba(248, 250, 251, 0.85);
+  backdrop-filter: saturate(180%) blur(30px);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  border-top: 1px solid var(--cfp-glass-border);
+  border-radius: 28px 28px 0 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 -10px 40px rgba(15, 27, 45, 0.22);
   transform: translateY(0);
   animation: cfp-sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -890,15 +922,14 @@
 .cfp-amp-dot.is-ok { background: #16a34a; }
 .cfp-amp-dot.is-warn { background: #f59e0b; }
 .cfp-amp-dot.is-bad { background: #e4585a; }
-.cfp-hero .cfp-amp-dot.is-ok { background: #7ef0c8; }
-.cfp-hero .cfp-amp-dot.is-warn { background: #ffd45a; }
-.cfp-hero .cfp-amp-dot.is-bad { background: #ff8a8a; }
 
 /* Stepper (Cash-Puffer) */
 .cfp-stepper { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .cfp-stepper button {
-  width: 30px; height: 30px; border: 1px solid var(--cfp-line); border-radius: 8px;
-  background: var(--cfp-surface); font-size: 18px; font-weight: 700; color: var(--cfp-ink);
+  width: 30px; height: 30px; border: 1px solid var(--cfp-glass-border); border-radius: 10px;
+  background: var(--cfp-glass); backdrop-filter: var(--cfp-glass-blur); -webkit-backdrop-filter: var(--cfp-glass-blur);
+  box-shadow: var(--cfp-glass-hi);
+  font-size: 18px; font-weight: 700; color: var(--cfp-ink);
   line-height: 1; display: inline-flex; align-items: center; justify-content: center;
 }
 .cfp-stepper button:active { background: var(--cfp-mint-tint); }
@@ -924,11 +955,35 @@
 
 /* Dividenden-/Ausschüttungs-Simulator */
 .cfp-sim {
-  margin-top: 12px; padding: 12px 14px; border-radius: var(--cfp-radius-sm);
-  background: var(--cfp-mint-tint-2); border: 1px solid rgba(59, 194, 167, 0.28);
+  margin-top: 12px; padding: 12px 14px; border-radius: 16px;
+  background: rgba(59, 194, 167, 0.12);
+  backdrop-filter: var(--cfp-glass-blur); -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border: 1px solid rgba(59, 194, 167, 0.30);
+  box-shadow: var(--cfp-glass-hi);
 }
 .cfp-sim-head { font-size: 12.5px; font-weight: 700; color: var(--cfp-mint-700); }
-.cfp-sim-range { width: 100%; margin: 10px 0 6px; accent-color: var(--cfp-mint); }
+.cfp-sim-range {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 26px; margin: 8px 0 4px; background: transparent;
+}
+.cfp-sim-range::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 999px;
+  background: rgba(15, 27, 45, 0.10);
+  box-shadow: inset 0 1px 2px rgba(15, 27, 45, 0.14);
+}
+.cfp-sim-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 26px; height: 26px; margin-top: -9px; border-radius: 50%;
+  background: #ffffff; border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 1px 4px rgba(15, 27, 45, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+.cfp-sim-range::-moz-range-track {
+  height: 8px; border-radius: 999px; background: rgba(15, 27, 45, 0.10);
+}
+.cfp-sim-range::-moz-range-thumb {
+  width: 24px; height: 24px; border: 1px solid rgba(255, 255, 255, 0.85); border-radius: 50%;
+  background: #ffffff; box-shadow: 0 1px 4px rgba(15, 27, 45, 0.30);
+}
 .cfp-sim-result { display: flex; align-items: center; gap: 8px; font-size: 13.5px; flex-wrap: wrap; }
 .cfp-sim-amount { font-weight: 700; }
 .cfp-sim-arrow { color: var(--cfp-faint); }
@@ -961,22 +1016,30 @@
   color: var(--cfp-muted);
 }
 .cfp-set-card {
-  background: var(--cfp-surface);
-  border-radius: var(--cfp-radius);
-  box-shadow: var(--cfp-shadow);
+  background: var(--cfp-glass-strong);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border: 1px solid var(--cfp-glass-border);
+  border-radius: 20px;
+  box-shadow: var(--cfp-glass-shadow);
   overflow: hidden;
 }
 .cfp-set-pad { padding: 14px 15px; }
 .cfp-set-hint { font-size: 12px; color: var(--cfp-muted); margin-top: 10px; }
 
 .cfp-set-row {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 13px 15px;
+  background: transparent;
+  text-align: left;
   border-top: 1px solid var(--cfp-line);
+  transition: background 0.12s ease;
 }
 .cfp-set-row:first-child { border-top: 0; }
+button.cfp-set-row:active { background: rgba(15, 27, 45, 0.04); }
 .cfp-set-row-icon {
   width: 32px; height: 32px; border-radius: 9px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center; font-size: 15px;
@@ -990,9 +1053,12 @@
 
 .cfp-set-pills { display: flex; gap: 8px; }
 .cfp-pill {
-  border: 1px solid var(--cfp-line);
-  border-radius: 11px;
-  background: var(--cfp-surface);
+  border: 1px solid var(--cfp-glass-border);
+  border-radius: 13px;
+  background: var(--cfp-glass);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  box-shadow: var(--cfp-glass-hi);
   min-height: 40px;
   padding: 9px 14px;
   font-size: 13.5px;
@@ -1002,52 +1068,63 @@
   transition: all 0.15s ease;
 }
 .cfp-pill.is-on {
-  border-color: var(--cfp-mint);
-  background: var(--cfp-mint-tint);
+  border-color: rgba(59, 194, 167, 0.55);
+  background: rgba(59, 194, 167, 0.18);
   color: var(--cfp-mint-700);
 }
 .cfp-pill:active { transform: scale(0.95); }
 
-/* iOS toggle */
+/* iOS toggle (Liquid Glass) */
 .cfp-toggle {
   width: 50px; height: 30px; border-radius: 999px; border: 0; padding: 0;
   background: rgba(15, 27, 45, 0.16); position: relative; flex: 0 0 auto;
+  box-shadow: inset 0 1px 2px rgba(15, 27, 45, 0.12);
   transition: background 0.2s ease;
 }
-.cfp-toggle.is-on { background: var(--cfp-mint); }
+.cfp-toggle.is-on { background: var(--cfp-mint); box-shadow: inset 0 1px 2px rgba(15, 27, 45, 0.18); }
 .cfp-toggle::after {
   content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px;
-  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15, 27, 45, 0.3);
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 27, 45, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   transition: transform 0.2s ease;
 }
 .cfp-toggle.is-on::after { transform: translateX(20px); }
 
-/* ---- Bottom tab bar ---- */
+/* ---- Bottom tab bar — schwebende Glas-Pille (iOS 26) ---- */
 .cfp-tabbar {
   position: absolute;
-  left: 0; right: 0; bottom: 0;
+  left: 16px; right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
   z-index: 10;
   display: flex;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: saturate(180%) blur(16px);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  border-top: 1px solid var(--cfp-line);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  gap: 3px;
+  padding: 6px;
+  background: var(--cfp-glass);
+  backdrop-filter: var(--cfp-glass-blur);
+  -webkit-backdrop-filter: var(--cfp-glass-blur);
+  border: 1px solid var(--cfp-glass-border);
+  border-radius: 27px;
+  box-shadow: var(--cfp-glass-hi), 0 10px 30px rgba(15, 27, 45, 0.18);
 }
 
 .cfp-tab {
   flex: 1;
   border: 0;
   background: transparent;
-  padding: 9px 4px 8px;
+  border-radius: 21px;
+  padding: 8px 4px 7px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
   color: var(--cfp-faint);
-  transition: color 0.15s ease;
+  transition: color 0.18s ease, background 0.18s ease;
 }
-.cfp-tab.is-active { color: var(--cfp-mint); }
+.cfp-tab.is-active {
+  color: var(--cfp-mint-700);
+  background: rgba(59, 194, 167, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
 .cfp-tab-icon { font-size: 21px; line-height: 1; }
 .cfp-tab-label { font-size: 10.5px; font-weight: 600; }
 

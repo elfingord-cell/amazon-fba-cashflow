@@ -56,14 +56,14 @@ export function Sparkline({
     <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#ffffff" stopOpacity="0.42" />
-          <stop offset="100%" stopColor="#ffffff" stopOpacity="0.02" />
+          <stop offset="0%" stopColor="#0f766e" stopOpacity="0.20" />
+          <stop offset="100%" stopColor="#0f766e" stopOpacity="0.01" />
         </linearGradient>
       </defs>
       {/* Nulllinie */}
-      <line x1="0" y1={zeroY} x2={width} y2={zeroY} stroke="rgba(255,255,255,0.45)" strokeWidth={1} strokeDasharray="3 4" />
+      <line x1="0" y1={zeroY} x2={width} y2={zeroY} stroke="rgba(15,27,45,0.16)" strokeWidth={1} strokeDasharray="3 4" />
       <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} fill="none" stroke="#ffffff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={linePath} fill="none" stroke="#0f766e" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
       {negPoint ? (
         <circle cx={negPoint[0]} cy={negPoint[1]} r={3.6} fill="#e4585a" stroke="#fff" strokeWidth={1.6} />
       ) : null}
