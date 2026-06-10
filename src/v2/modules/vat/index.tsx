@@ -6,6 +6,7 @@ import {
   InputNumber,
   Modal,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -26,6 +27,8 @@ interface VatSettingsDraft {
   fixInputDefault: number;
   paymentLagMonths: number;
   paymentDayOfMonth: number;
+  svzActive: boolean;
+  svzAmountEur: number;
 }
 
 interface VatMonthOverrideDraft {
@@ -56,7 +59,8 @@ interface VatPreviewRow {
   outVat: number;
   feeInputVat: number;
   fixInputVat: number;
-  eustRefund: number;
+  eustInputVat: number;
+  svzCredit: number;
   payable: number;
   details: Record<string, VatDetailBucket>;
 }
@@ -69,7 +73,8 @@ interface VatPreviewResult {
     outVat: number;
     feeInputVat: number;
     fixInputVat: number;
-    eustRefund: number;
+    eustInputVat: number;
+    svzCredit: number;
     payable: number;
   };
 }
@@ -83,7 +88,7 @@ const DETAIL_LABELS: Record<string, string> = {
   outputUst: "Output-USt",
   vstFees: "VSt Fees",
   fixkostenVst: "Fixkosten-VSt",
-  eustErstattung: "EUSt-Erstattung",
+  eustVorsteuer: "EUSt-VSt",
   zahllast: "Zahllast",
 };
 
@@ -161,6 +166,8 @@ function normalizeSettings(state: Record<string, unknown>): VatSettingsDraft {
     fixInputDefault: Math.max(0, toNumber(vatPreview?.fixInputDefault, 0)),
     paymentLagMonths: Math.max(0, Math.round(toNumber(vatPreview?.paymentLagMonths, 1))),
     paymentDayOfMonth: Math.min(31, Math.max(1, Math.round(toNumber(vatPreview?.paymentDayOfMonth, 10)))),
+    svzActive: (vatPreview?.sondervorauszahlung as Record<string, unknown> | undefined)?.active === true,
+    svzAmountEur: Math.max(0, toNumber((vatPreview?.sondervorauszahlung as Record<string, unknown> | undefined)?.amountEur, 0)),
   };
 }
 
@@ -206,6 +213,10 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
       fixInputDefault: settingsDraft.fixInputDefault,
       paymentLagMonths: settingsDraft.paymentLagMonths,
       paymentDayOfMonth: settingsDraft.paymentDayOfMonth,
+      sondervorauszahlung: {
+        active: settingsDraft.svzActive,
+        amountEur: settingsDraft.svzAmountEur,
+      },
     };
     virtualState.vatPreviewMonths = monthOverridesDraft;
     return computeVatPreview(virtualState) as VatPreviewResult;
@@ -223,6 +234,10 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
       fixInputDefault: settingsDraft.fixInputDefault,
       paymentLagMonths: settingsDraft.paymentLagMonths,
       paymentDayOfMonth: settingsDraft.paymentDayOfMonth,
+      sondervorauszahlung: {
+        active: settingsDraft.svzActive,
+        amountEur: settingsDraft.svzAmountEur,
+      },
     };
     virtualState.vatPreviewMonths = monthOverridesDraft;
     return expandVatTaxInstances(virtualState, {
@@ -255,7 +270,8 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
       outVat: row.outVat,
       feeInputVat: row.feeInputVat,
       fixInputVat: row.fixInputVat,
-      eustRefund: row.eustRefund,
+      eustInputVat: row.eustInputVat,
+      svzCredit: row.svzCredit,
       payable: row.payable,
       paymentMonth: String(cashflowInstancesBySourceMonth.get(row.month)?.month || ""),
       paymentDueDate: String(cashflowInstancesBySourceMonth.get(row.month)?.dueDateIso || ""),
@@ -279,6 +295,10 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
           fixInputDefault: settingsDraft.fixInputDefault,
           paymentLagMonths: settingsDraft.paymentLagMonths,
           paymentDayOfMonth: settingsDraft.paymentDayOfMonth,
+          sondervorauszahlung: {
+            active: settingsDraft.svzActive,
+            amountEur: settingsDraft.svzAmountEur,
+          },
         },
       };
       next.vatPreviewMonths = monthOverridesDraft;
@@ -440,6 +460,32 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
               }}
             />
           </div>
+          <div>
+            <Text>Sondervorauszahlung (1/11)</Text>
+            <div>
+              <Switch
+                checked={settingsDraft.svzActive}
+                onChange={(checked) => {
+                  setSettingsDraft((prev) => ({ ...prev, svzActive: checked === true }));
+                  setDirty(true);
+                }}
+              />
+            </div>
+          </div>
+          <div>
+            <Text>Sondervorauszahlung (EUR/Jahr)</Text>
+            <InputNumber
+              value={settingsDraft.svzAmountEur}
+              min={0}
+              step={50}
+              disabled={!settingsDraft.svzActive}
+              onChange={(value) => {
+                setSettingsDraft((prev) => ({ ...prev, svzAmountEur: Math.max(0, Number(value || 0)) }));
+                setDirty(true);
+              }}
+            />
+            <div><Text type="secondary">Abfluss im Februar, Verrechnung in der Dezember-VA.</Text></div>
+          </div>
         </Space>
       </Card>
 
@@ -523,12 +569,12 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
               ),
             },
             {
-              title: "EUSt-Erstattung",
-              key: "eustRefund",
-              sorter: (a, b) => Number(a.eustRefund || 0) - Number(b.eustRefund || 0),
+              title: "EUSt-VSt",
+              key: "eustInputVat",
+              sorter: (a, b) => Number(a.eustInputVat || 0) - Number(b.eustInputVat || 0),
               render: (_, row) => (
-                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "eustErstattung" })}>
-                  {formatCurrency(row.eustRefund)}
+                <Button size="small" type="text" onClick={() => setDetailModal({ month: row.month, key: "eustVorsteuer" })}>
+                  {formatCurrency(row.eustInputVat)}
                 </Button>
               ),
             },
@@ -579,7 +625,7 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
               <Table.Summary.Cell index={4}><strong>{formatCurrency(preview.totals.outVat)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={5}><strong>{formatCurrency(preview.totals.feeInputVat)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={6}><strong>{formatCurrency(preview.totals.fixInputVat)}</strong></Table.Summary.Cell>
-              <Table.Summary.Cell index={7}><strong>{formatCurrency(preview.totals.eustRefund)}</strong></Table.Summary.Cell>
+              <Table.Summary.Cell index={7}><strong>{formatCurrency(preview.totals.eustInputVat)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={8}><strong>{formatCurrency(preview.totals.payable)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={9} />
               <Table.Summary.Cell index={10}><strong>{formatCurrency(vatCashflowTotal)}</strong></Table.Summary.Cell>

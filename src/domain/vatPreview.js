@@ -24,10 +24,30 @@ function getMonthConfig(month, state) {
   };
 }
 
-function sumRefund(entries) {
+// EUSt des Monats = Vorsteuer in der VA desselben Monats (Verrechnung beim Finanzamt,
+// bestätigt gegen reale USt-VAs 01-04/2026). Erstattungs-Events sind dafür obsolet.
+function isEustOutflowEntry(entry) {
+  if (!entry || entry.direction !== "out") return false;
+  const kind = String(entry.kind || "");
+  if (kind !== "po-import" && kind !== "fo-import") return false;
+  const label = String(entry.label || "").toLowerCase();
+  return label.includes("eust") && !label.includes("erstatt");
+}
+
+function sumEustInput(entries) {
   return entries
-    .filter(e => e && (e.type === "vat_refund" || (e.label || "").toLowerCase().includes("eust-erstatt")))
-    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    .filter(isEustOutflowEntry)
+    .reduce((sum, e) => sum + Math.abs(Number(e.amount) || 0), 0);
+}
+
+function normalizeSvzConfig(state) {
+  const cfg = state?.settings?.vatPreview?.sondervorauszahlung;
+  if (!cfg || typeof cfg !== "object") return { active: false, amountEur: 0 };
+  const amount = Math.abs(parseEuro(cfg.amountEur ?? cfg.amount ?? 0));
+  return {
+    active: cfg.active === true && amount > 0,
+    amountEur: amount,
+  };
 }
 
 function getForecastEntry(state, sku, month) {
@@ -148,29 +168,24 @@ function buildDeBruttoItems(state, month, grossDe) {
   return { items, notes: breakdownBase.notes };
 }
 
-function buildRefundItems(entries) {
-  const refundEntries = entries.filter(entry => {
-    const label = String(entry?.label || "").toLowerCase();
-    return entry?.kind === "po-refund"
-      || entry?.kind === "fo-refund"
-      || label.includes("eust-erstatt");
-  });
-
-  return refundEntries.map(entry => ({
-    label: entry.sourceNumber ? `PO ${entry.sourceNumber}` : (entry.source || "PO/FO"),
-    sublabel: entry.label || "EUSt-Erstattung",
-    date: entry.date || null,
-    amount: Number(entry.amount || 0),
-    meta: {
-      sourceTab: entry.sourceTab,
-      lagMonths: entry.lagMonths,
-    },
-  }));
+function buildEustItems(entries) {
+  return entries
+    .filter(isEustOutflowEntry)
+    .map(entry => ({
+      label: entry.sourceNumber ? `${entry.kind === "fo-import" ? "FO" : "PO"} ${entry.sourceNumber}` : (entry.source || "PO/FO"),
+      sublabel: entry.label || "EUSt",
+      date: entry.date || null,
+      amount: Math.abs(Number(entry.amount || 0)),
+      meta: {
+        sourceTab: entry.sourceTab,
+      },
+    }));
 }
 
 export function computeVatPreview(state) {
   const series = computeSeries(state || {});
   const months = series.months;
+  const svz = normalizeSvzConfig(state);
   const forecastRevenueByMonth = Object.fromEntries(
     months.map((month) => {
       const breakdownBase = collectRevenueBreakdownBase(state, month);
@@ -190,9 +205,10 @@ export function computeVatPreview(state) {
     const feeInputVat = (grossTotal * cfg.feeRateOfGross) / 1.19 * 0.19;
     const fixInputVat = cfg.fixInputVat || 0;
     const entries = series.breakdown[idx]?.entries || [];
-    const eustRefund = sumRefund(entries);
-    const payable = outVat - feeInputVat - fixInputVat - eustRefund;
-    const refundItems = buildRefundItems(entries);
+    const eustInputVat = sumEustInput(entries);
+    const svzCredit = svz.active && m.endsWith("-12") ? svz.amountEur : 0;
+    const payable = outVat - feeInputVat - fixInputVat - eustInputVat - svzCredit;
+    const eustItems = buildEustItems(entries);
     const deBreakdown = buildDeBruttoItems(state, m, grossDe);
     const feeBase = grossTotal * cfg.feeRateOfGross;
 
@@ -216,7 +232,7 @@ export function computeVatPreview(state) {
       vstFees: {
         formula: "VSt Fees = Gebührenbasis × 19/119",
         items: [
-          { label: "Gebührenbasis", sublabel: `DE-Brutto × ${(cfg.feeRateOfGross * 100).toFixed(1)} %`, amount: feeBase },
+          { label: "Gebührenbasis", sublabel: `Gesamt-Brutto × ${(cfg.feeRateOfGross * 100).toFixed(1)} %`, amount: feeBase },
           { label: "VSt aus Gebühren", sublabel: "19/119 der Gebührenbasis", amount: feeInputVat },
         ],
         notes: "Gebührensatz basiert auf der Einstellungen der USt-Vorschau.",
@@ -228,19 +244,20 @@ export function computeVatPreview(state) {
         notes: "Pauschale Fixkosten-VSt gemäß Monats-/Standardwert.",
         total: fixInputVat,
       },
-      eustErstattung: {
-        formula: "EUSt-Erstattung = Summe der EUSt-Erstattungs-Events im Monat",
-        items: refundItems,
-        notes: refundItems.length ? "" : "Keine EUSt-Erstattungs-Events für diesen Monat gefunden.",
-        total: eustRefund,
+      eustVorsteuer: {
+        formula: "EUSt-VSt = im Monat gezahlte EUSt (Vorsteuer in der VA desselben Monats)",
+        items: eustItems,
+        notes: eustItems.length ? "" : "Keine EUSt-Zahlungen in diesem Monat.",
+        total: eustInputVat,
       },
       zahllast: {
-        formula: "Zahllast = Output-USt – VSt Fees – Fixkosten-VSt – EUSt-Erstattung",
+        formula: "Zahllast = Output-USt – VSt Fees – Fixkosten-VSt – EUSt-VSt" + (svzCredit ? " – Sondervorauszahlung" : ""),
         items: [
           { label: "Output-USt", amount: outVat },
           { label: "- VSt Fees", amount: -feeInputVat },
           { label: "- Fixkosten-VSt", amount: -fixInputVat },
-          { label: "- EUSt-Erstattung", amount: -eustRefund },
+          { label: "- EUSt-VSt", amount: -eustInputVat },
+          ...(svzCredit ? [{ label: "- Verrechnung USt-Sondervorauszahlung", amount: -svzCredit }] : []),
         ],
         notes: "",
         total: payable,
@@ -255,7 +272,8 @@ export function computeVatPreview(state) {
       outVat,
       feeInputVat,
       fixInputVat,
-      eustRefund,
+      eustInputVat,
+      svzCredit,
       payable,
       details,
     };
@@ -267,10 +285,11 @@ export function computeVatPreview(state) {
     acc.outVat += row.outVat;
     acc.feeInputVat += row.feeInputVat;
     acc.fixInputVat += row.fixInputVat;
-    acc.eustRefund += row.eustRefund;
+    acc.eustInputVat += row.eustInputVat;
+    acc.svzCredit += row.svzCredit;
     acc.payable += row.payable;
     return acc;
-  }, { grossTotal: 0, grossDe: 0, outVat: 0, feeInputVat: 0, fixInputVat: 0, eustRefund: 0, payable: 0 });
+  }, { grossTotal: 0, grossDe: 0, outVat: 0, feeInputVat: 0, fixInputVat: 0, eustInputVat: 0, svzCredit: 0, payable: 0 });
 
   return { months, rows, totals };
 }

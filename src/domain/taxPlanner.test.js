@@ -225,3 +225,25 @@ test("OSS handles zero and full non-DE share edge cases without noisy instances"
   assert.equal(fullInstances[0].month, "2026-04");
   assert.ok(Math.abs(Number(fullInstances[0].amount || 0) - 609) < 0.001);
 });
+
+test("USt-Sondervorauszahlung erzeugt Februar-Instanz pro Jahr", () => {
+  const state = buildState();
+  state.settings.startMonth = "2026-01";
+  state.settings.horizonMonths = 14;
+  state.settings.vatPreview.sondervorauszahlung = { active: true, amountEur: 1001 };
+
+  const months = Array.from({ length: 14 }, (_e, i) => {
+    const idx = 2026 * 12 + i;
+    return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, "0")}`;
+  });
+  const instances = expandVatTaxInstances(state, { months });
+  const svz = instances.filter((entry) => String(entry.note || "").includes("Sondervorauszahlung"));
+
+  assert.equal(svz.length, 2, "Feb 2026 + Feb 2027");
+  assert.deepEqual(svz.map((entry) => entry.month).sort(), ["2026-02", "2027-02"]);
+  svz.forEach((entry) => {
+    assert.equal(entry.direction, "out");
+    assert.equal(entry.taxType, "umsatzsteuer_de");
+    assert.ok(Math.abs(entry.amount - 1001) < 0.001);
+  });
+});

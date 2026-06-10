@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { computeVatPreview } from "./vatPreview.js";
+import { computeSeries as computeSeriesForTest } from "./cashflow.js";
 
 const baseState = {
   settings: {
@@ -97,8 +98,69 @@ test("uses monthly overrides and EUSt refunds", () => {
   const nov = res.rows.find(r => r.month === "2025-11");
   assert.ok(nov, "November row present");
   assert.ok(Math.abs(nov.grossDe - 25000) < 0.1, "Override DE share applied");
-  const refundMonth = res.rows.find(r => r.eustRefund > 0);
-  assert.ok(refundMonth, "EUSt refund populated");
+  // EUSt wird im Monat der EUSt-Zahlung (ETA-Monat) als Vorsteuer verrechnet,
+  // nicht mehr über spätere Erstattungs-Events.
+  const oct = res.rows.find(r => r.month === "2025-10");
+  assert.ok(oct, "Oktober row present");
+  assert.ok(oct.eustInputVat > 0, `EUSt-VSt im ETA-Monat erwartet, got ${oct.eustInputVat}`);
+  const expectedEust = oct.eustInputVat;
+  const expectedPayable = oct.outVat - oct.feeInputVat - oct.fixInputVat - expectedEust;
+  assert.ok(Math.abs(oct.payable - expectedPayable) < 0.01, "Zahllast zieht EUSt-VSt im selben Monat ab");
+});
+
+test("global vatRefundEnabled=false suppresses refund events (no double counting)", () => {
+  const state = cloneState();
+  state.settings.vatRefundEnabled = false;
+  state.settings.horizonMonths = 6;
+  state.pos.push({
+    id: "po2",
+    poNo: "PO25008",
+    orderDate: "2025-10-01",
+    prodDays: 0,
+    transitDays: 0,
+    transport: "sea",
+    ddp: false,
+    freightEur: "0",
+    dutyRatePct: "0",
+    dutyIncludeFreight: true,
+    eustRatePct: "19",
+    fxOverride: "1,00",
+    items: [
+      { sku: "SKU-1", units: "1", unitCostUsd: "10000", unitExtraUsd: "0", extraFlatUsd: "0" },
+    ],
+    milestones: [
+      { id: "m1", label: "Full", percent: 100, anchor: "ORDER_DATE", lagDays: 0 },
+    ],
+  });
+
+  const series = computeSeriesForTest(state);
+  const refundEntries = series.breakdown.flatMap((b) => (b.entries || []))
+    .filter((e) => e.kind === "po-refund" || e.kind === "fo-refund");
+  assert.equal(refundEntries.length, 0, "Keine EUSt-Erstattungs-Events bei globalem Aus");
+
+  const res = computeVatPreview(state);
+  const eustMonths = res.rows.filter((row) => row.eustInputVat > 0);
+  assert.ok(eustMonths.length === 1, "EUSt-VSt genau im ETA-Monat");
+  assert.ok(Math.abs(eustMonths[0].eustInputVat - 1900) < 0.5, `EUSt-VSt 1900 erwartet, got ${eustMonths[0].eustInputVat}`);
+});
+
+test("Sondervorauszahlung reduziert Dezember-Zahllast", () => {
+  const state = cloneState();
+  state.settings.startMonth = "2025-10";
+  state.settings.horizonMonths = 4;
+  state.settings.vatPreview.sondervorauszahlung = { active: true, amountEur: 1001 };
+  state.incomings = [
+    { month: "2025-12", revenueEur: "100.000" },
+  ];
+
+  const res = computeVatPreview(state);
+  const dec = res.rows.find((row) => row.month === "2025-12");
+  assert.ok(dec, "Dezember row present");
+  assert.ok(Math.abs(dec.svzCredit - 1001) < 0.001, "SVZ-Verrechnung im Dezember");
+  const expected = dec.outVat - dec.feeInputVat - dec.fixInputVat - dec.eustInputVat - 1001;
+  assert.ok(Math.abs(dec.payable - expected) < 0.01, "Zahllast um SVZ gemindert");
+  const nov = res.rows.find((row) => row.month === "2025-11");
+  assert.ok(nov && nov.svzCredit === 0, "Keine SVZ-Verrechnung außerhalb Dezember");
 });
 
 test("falls back to forecast-based gross revenue when month revenue input is missing", () => {

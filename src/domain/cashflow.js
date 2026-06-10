@@ -1069,7 +1069,9 @@ function expandOrderEvents(row, settings, entityLabel, numberField) {
   const eustRate = parsePct(row.eustRatePct ?? settings.eustRatePct ?? 0);
   const fxFeePct = parsePct(row.fxFeePct ?? settings.fxFeePct ?? 0);
   const vatLagMonths = Number(row.vatRefundLagMonths ?? settings.vatRefundLagMonths ?? 0);
-  const vatEnabled = row.vatRefundEnabled !== false;
+  // Global aus (settings.vatRefundEnabled === false), wenn die USt-Vorschau die EUSt bereits
+  // im Quellmonat als Vorsteuer verrechnet — sonst würde die EUSt doppelt gutgeschrieben.
+  const vatEnabled = row.vatRefundEnabled !== false && settings.vatRefundEnabled !== false;
 
   const autoResults = {};
   for (const auto of autoEvents) {
@@ -1950,6 +1952,13 @@ export function computeSeries(state) {
     }, { auto: row.autoPaid === true, autoEligible: row.autoPaid === true }));
   });
 
+  const kapestCfg = (s.settings && typeof s.settings === 'object' && s.settings.dividendKapest && typeof s.settings.dividendKapest === 'object')
+    ? s.settings.dividendKapest
+    : {};
+  const kapestEnabled = kapestCfg.enabled === true;
+  const kapestRatePct = Number.isFinite(Number(kapestCfg.ratePct)) && Number(kapestCfg.ratePct) > 0
+    ? Number(kapestCfg.ratePct)
+    : 26.375;
   (Array.isArray(s.dividends) ? s.dividends : []).forEach(row => {
     const month = row.month || (row.date ? toMonthKey(row.date) : null);
     if (!month || !bucket[month]) return;
@@ -1967,6 +1976,33 @@ export function computeSeries(state) {
       source: 'dividends',
       sourceTab: '#eingaben',
     }, { auto: false }));
+
+    // KapESt+Soli auf die Ausschüttung: amountEur = Netto an Gesellschafter,
+    // Abführung ans FA bis zum 10. des Folgemonats (Brutto = Netto / (1 - Satz)).
+    if (kapestEnabled && amt > 0 && row.kapestExempt !== true) {
+      const rate = kapestRatePct / 100;
+      if (rate > 0 && rate < 1) {
+        const kapestAmount = amt * (rate / (1 - rate));
+        const [yearStr, monthStr] = month.split('-');
+        const kapestDate = new Date(Number(yearStr), Number(monthStr), 10);
+        const kapestMonth = toMonthKey(kapestDate);
+        if (bucket[kapestMonth] && kapestAmount > 0.005) {
+          pushEntry(kapestMonth, baseEntry({
+            id: `div-kapest-${row.id || row.label || month}`,
+            direction: 'out',
+            amount: kapestAmount,
+            label: `KapESt+Soli – ${row.label || 'Dividende'} ${month}`,
+            month: kapestMonth,
+            date: isoDate(kapestDate),
+            kind: 'dividend-kapest',
+            group: 'Dividende & KapESt',
+            source: 'dividends',
+            sourceTab: '#eingaben',
+            tooltip: `KapESt+Soli ${kapestRatePct.toLocaleString('de-DE')} % auf Brutto (Netto ${Math.abs(amt).toLocaleString('de-DE')} EUR / ${(1 - rate).toLocaleString('de-DE')})`,
+          }, { auto: false }));
+        }
+      }
+    }
   });
 
   (Array.isArray(s.products) ? s.products : []).forEach((entry, productIndex) => {

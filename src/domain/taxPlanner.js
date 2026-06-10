@@ -11,7 +11,8 @@ const VAT_TAX_LABEL = "Umsatzsteuer DE";
 const OSS_TAX_TYPE_KEY = "oss";
 const OSS_TAX_LABEL = "OSS";
 const OSS_PROXY_RATE = 0.203;
-const OSS_PAYMENT_DAY = 10;
+// Reale OSS-Lastschriften (Bundeskasse Trier) gehen um den 20. des Folgemonats raus.
+const OSS_PAYMENT_DAY = 20;
 const DEFAULT_OSS_CONFIG = Object.freeze({
   active: false,
   deSharePct: "100",
@@ -437,11 +438,41 @@ export function expandVatTaxInstances(state, opts = {}) {
         outVat: Number(row?.outVat || 0),
         feeInputVat: Number(row?.feeInputVat || 0),
         fixInputVat: Number(row?.fixInputVat || 0),
-        eustRefund: Number(row?.eustRefund || 0),
+        eustInputVat: Number(row?.eustInputVat || 0),
+        svzCredit: Number(row?.svzCredit || 0),
       },
       overrideActive: false,
     });
   });
+
+  // USt-Sondervorauszahlung (1/11, Dauerfristverlängerung): Abfluss jedes Jahr im Februar,
+  // Verrechnung mit der Dezember-VA passiert bereits in computeVatPreview (svzCredit).
+  const svzCfg = sourceState?.settings?.vatPreview?.sondervorauszahlung;
+  const svzAmount = svzCfg && typeof svzCfg === "object" ? Math.abs(parseEuro(svzCfg.amountEur ?? svzCfg.amount ?? 0)) : 0;
+  if (svzCfg && svzCfg.active === true && svzAmount > 0) {
+    const years = Array.from(new Set(months.map((month) => month.slice(0, 4))));
+    years.forEach((year) => {
+      const svzMonth = `${year}-02`;
+      if (!monthSet.has(svzMonth)) return;
+      const dueDate = isoDate(dueDateForMonth(svzMonth, paymentDayOfMonth));
+      if (!dueDate) return;
+      results.push({
+        id: `tax-${VAT_TAX_TYPE_KEY}-svz-${year}`,
+        month: svzMonth,
+        amount: svzAmount,
+        direction: "out",
+        dueDateIso: dueDate,
+        taxType: VAT_TAX_TYPE_KEY,
+        label: VAT_TAX_LABEL,
+        sourceSection: "ust-de",
+        note: `USt-Sondervorauszahlung ${year} (1/11, Dauerfristverlängerung)`,
+        sourceMonth: svzMonth,
+        paymentLagMonths: 0,
+        paymentDayOfMonth,
+        overrideActive: false,
+      });
+    });
+  }
 
   results.sort((left, right) => {
     if (left.month === right.month) {

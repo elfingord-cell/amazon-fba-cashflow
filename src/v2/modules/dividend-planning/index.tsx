@@ -11,6 +11,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Tag,
   Tooltip,
   Typography,
@@ -376,6 +377,26 @@ function readinessLabel(level: ReadinessLevel): string {
 
 export default function DividendPlanningModule(): JSX.Element {
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
+  const kapestSettings = ((state as unknown as Record<string, unknown>).settings as Record<string, unknown> | undefined)?.dividendKapest as Record<string, unknown> | undefined;
+  const kapestEnabled = kapestSettings?.enabled === true;
+  const kapestRatePct = Number.isFinite(Number(kapestSettings?.ratePct)) && Number(kapestSettings?.ratePct) > 0
+    ? Number(kapestSettings?.ratePct)
+    : 26.375;
+
+  async function saveKapestSettings(enabled: boolean, ratePct: number): Promise<void> {
+    await saveWith((current) => {
+      const next = ensureAppStateV2(current);
+      const settings = (next.settings || {}) as Record<string, unknown>;
+      next.settings = {
+        ...settings,
+        dividendKapest: {
+          enabled,
+          ratePct: Number.isFinite(ratePct) && ratePct > 0 ? ratePct : 26.375,
+        },
+      };
+      return next;
+    }, "v2:dividend-planning:kapest");
+  }
   const navigate = useNavigate();
   const stateObj = state as unknown as Record<string, unknown>;
 
@@ -1146,6 +1167,28 @@ export default function DividendPlanningModule(): JSX.Element {
                   </Row>
                 )}
                 <Text type="secondary">Näherung, ersetzt keine Steuerberatung.</Text>
+              </div>
+
+              <div className="v2-dividend-field">
+                <Text strong>KapESt+Soli auf Ausschüttungen (Cashflow)</Text>
+                <div>
+                  <Switch
+                    checked={kapestEnabled}
+                    onChange={(checked) => { void saveKapestSettings(checked === true, kapestRatePct); }}
+                  />
+                </div>
+                <Text>Satz auf Brutto (%)</Text>
+                <DeNumberInput
+                  mode="percent"
+                  min={0}
+                  max={50}
+                  value={kapestRatePct}
+                  onChange={(value) => { void saveKapestSettings(kapestEnabled, Math.min(50, Math.max(0, Number(value || 0)))); }}
+                />
+                <Text type="secondary">
+                  Eingetragene Dividenden gelten als Netto an Gesellschafter; KapESt+Soli (Standard 26,375 %)
+                  fließt am 10. des Folgemonats als Abfluss in den Cashflow.
+                </Text>
               </div>
             </Space>
           </Card>

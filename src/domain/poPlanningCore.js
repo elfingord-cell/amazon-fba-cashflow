@@ -222,7 +222,9 @@ export function resolveRates(record, settings) {
     fxFeePct: parsePercent(record?.fxFeePct ?? settings?.fxFeePct ?? 0),
     dutyIncludeFreight: record?.dutyIncludeFreight !== false,
     vatRefundLagMonths: Number(record?.vatRefundLagMonths ?? settings?.vatRefundLagMonths ?? 0) || 0,
-    vatRefundEnabled: record?.vatRefundEnabled !== false,
+    // Global aus überstimmt das per-PO-Flag: bei settings.vatRefundEnabled === false verrechnet
+    // die USt-Vorschau die EUSt bereits im Quellmonat — Erstattungs-Events wären Doppelzählung.
+    vatRefundEnabled: record?.vatRefundEnabled !== false && settings?.vatRefundEnabled !== false,
   };
 }
 
