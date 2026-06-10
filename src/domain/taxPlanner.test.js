@@ -247,3 +247,28 @@ test("USt-Sondervorauszahlung erzeugt Februar-Instanz pro Jahr", () => {
     assert.ok(Math.abs(entry.amount - 1001) < 0.001);
   });
 });
+
+test("Ist-Zahllast (MBD) ersetzt die Modell-Schätzung in den USt-Instanzen", () => {
+  const state = buildState();
+  state.settings.startMonth = "2026-03";
+  state.settings.horizonMonths = 2;
+  state.incomings = [
+    { month: "2026-03", revenueEur: "100.000" },
+  ];
+  state.vatActualsByMonth = {
+    "2026-03": { payableEur: 4909.1 },
+  };
+
+  const instances = expandVatTaxInstances(state, { months: ["2026-04"] });
+  assert.equal(instances.length, 1);
+  assert.equal(instances[0].isActual, true);
+  assert.ok(Math.abs(instances[0].amount - 4909.1) < 0.001);
+  assert.equal(instances[0].direction, "out");
+  assert.ok(String(instances[0].note).includes("Ist laut MBD"));
+
+  // Negative Ist-Zahllast = Erstattung
+  state.vatActualsByMonth["2026-03"] = { payableEur: -2504.04 };
+  const refund = expandVatTaxInstances(state, { months: ["2026-04"] });
+  assert.equal(refund[0].direction, "in");
+  assert.ok(Math.abs(refund[0].amount - 2504.04) < 0.001);
+});

@@ -218,3 +218,22 @@ test("payment-month settings do not change the underlying USt preview payable ca
   assert.ok(shiftedRow);
   assert.ok(Math.abs(Number(baselineRow.payable || 0) - Number(shiftedRow.payable || 0)) < 0.000001);
 });
+
+test("vatActualsByMonth liefert actualPayable und Abweichung in der Vorschau", () => {
+  const state = cloneState();
+  state.incomings = [
+    { month: "2025-10", revenueEur: "100.000" },
+  ];
+  state.vatActualsByMonth = {
+    "2025-10": { payableEur: 4000 },
+  };
+
+  const res = computeVatPreview(state);
+  const oct = res.rows.find((row) => row.month === "2025-10");
+  assert.ok(oct);
+  assert.equal(oct.actualPayable, 4000);
+  assert.ok(Math.abs(oct.payableDeviation - (oct.payable - 4000)) < 0.001);
+  const nov = res.rows.find((row) => row.month === "2025-11");
+  assert.equal(nov.actualPayable, null);
+  assert.equal(nov.payableDeviation, null);
+});

@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.readVatActualPayable = readVatActualPayable;
 exports.computeVatPreview = computeVatPreview;
 const cashflow_js_1 = require("./cashflow.js");
 const monthLong = new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" });
@@ -38,6 +39,19 @@ function sumEustInput(entries) {
     return entries
         .filter(isEustOutflowEntry)
         .reduce((sum, e) => sum + Math.abs(Number(e.amount) || 0), 0);
+}
+// Ist-Zahllast je Quellmonat (aus der MBD-Mail "Auswertung Finanzbuchführung").
+// Negative Werte = Erstattung. Quelle: state.vatActualsByMonth[YYYY-MM].payableEur
+function readVatActualPayable(state, month) {
+    const map = state?.vatActualsByMonth;
+    if (!map || typeof map !== "object")
+        return null;
+    const entry = map[month];
+    if (entry == null)
+        return null;
+    const raw = typeof entry === "object" ? entry.payableEur : entry;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
 }
 function normalizeSvzConfig(state) {
     const cfg = state?.settings?.vatPreview?.sondervorauszahlung;
@@ -251,6 +265,7 @@ function computeVatPreview(state) {
                 total: payable,
             },
         };
+        const actualPayable = readVatActualPayable(state, m);
         return {
             month: m,
             monthLabel: monthLabel(m),
@@ -262,6 +277,8 @@ function computeVatPreview(state) {
             eustInputVat,
             svzCredit,
             payable,
+            actualPayable,
+            payableDeviation: actualPayable == null ? null : payable - actualPayable,
             details,
         };
     });

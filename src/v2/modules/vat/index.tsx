@@ -62,6 +62,8 @@ interface VatPreviewRow {
   eustInputVat: number;
   svzCredit: number;
   payable: number;
+  actualPayable: number | null;
+  payableDeviation: number | null;
   details: Record<string, VatDetailBucket>;
 }
 
@@ -171,6 +173,17 @@ function normalizeSettings(state: Record<string, unknown>): VatSettingsDraft {
   };
 }
 
+function normalizeVatActuals(input: unknown): Record<string, number> {
+  if (!input || typeof input !== "object") return {};
+  return Object.entries(input as Record<string, unknown>).reduce((acc, [month, row]) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return acc;
+    const raw = (row && typeof row === "object") ? (row as Record<string, unknown>).payableEur : row;
+    const value = Number(raw);
+    if (Number.isFinite(value)) acc[month] = value;
+    return acc;
+  }, {} as Record<string, number>);
+}
+
 function normalizeMonthOverrides(input: unknown): Record<string, VatMonthOverrideDraft> {
   if (!input || typeof input !== "object") return {};
   return Object.entries(input as Record<string, unknown>).reduce((acc, [month, row]) => {
@@ -189,6 +202,7 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
   const { state, loading, saving, error, lastSavedAt, saveWith } = useWorkspaceState();
   const [settingsDraft, setSettingsDraft] = useState<VatSettingsDraft>(() => normalizeSettings(state as unknown as Record<string, unknown>));
   const [monthOverridesDraft, setMonthOverridesDraft] = useState<Record<string, VatMonthOverrideDraft>>({});
+  const [vatActualsDraft, setVatActualsDraft] = useState<Record<string, number>>({});
   const [dirty, setDirty] = useState(false);
   const [monthModal, setMonthModal] = useState<null | { month: string; values: VatMonthOverrideDraft }>(null);
   const [detailModal, setDetailModal] = useState<null | { month: string; key: string }>(null);
@@ -198,8 +212,9 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
   useEffect(() => {
     setSettingsDraft(normalizeSettings(stateObj));
     setMonthOverridesDraft(normalizeMonthOverrides(stateObj.vatPreviewMonths));
+    setVatActualsDraft(normalizeVatActuals(stateObj.vatActualsByMonth));
     setDirty(false);
-  }, [state.settings, state.vatPreviewMonths]);
+  }, [state.settings, state.vatPreviewMonths, (state as unknown as Record<string, unknown>).vatActualsByMonth]);
 
   const preview = useMemo(() => {
     const virtualState = structuredClone(stateObj);
@@ -219,8 +234,11 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
       },
     };
     virtualState.vatPreviewMonths = monthOverridesDraft;
+    virtualState.vatActualsByMonth = Object.fromEntries(
+      Object.entries(vatActualsDraft).map(([month, value]) => [month, { payableEur: value }]),
+    );
     return computeVatPreview(virtualState) as VatPreviewResult;
-  }, [monthOverridesDraft, settingsDraft, stateObj]);
+  }, [monthOverridesDraft, settingsDraft, stateObj, vatActualsDraft]);
 
   const vatCashflowInstances = useMemo(() => {
     const virtualState = structuredClone(stateObj);
@@ -240,10 +258,13 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
       },
     };
     virtualState.vatPreviewMonths = monthOverridesDraft;
+    virtualState.vatActualsByMonth = Object.fromEntries(
+      Object.entries(vatActualsDraft).map(([month, value]) => [month, { payableEur: value }]),
+    );
     return expandVatTaxInstances(virtualState, {
       months: preview.months.map((month) => shiftMonthKey(month, settingsDraft.paymentLagMonths)).filter(Boolean),
     });
-  }, [monthOverridesDraft, preview.months, settingsDraft, stateObj]);
+  }, [monthOverridesDraft, preview.months, settingsDraft, stateObj, vatActualsDraft]);
 
   const cashflowInstancesBySourceMonth = useMemo(
     () => new Map(vatCashflowInstances.map((instance) => [String(instance.sourceMonth || ""), instance])),
@@ -273,6 +294,8 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
       eustInputVat: row.eustInputVat,
       svzCredit: row.svzCredit,
       payable: row.payable,
+      actualPayable: row.actualPayable,
+      payableDeviation: row.payableDeviation,
       paymentMonth: String(cashflowInstancesBySourceMonth.get(row.month)?.month || ""),
       paymentDueDate: String(cashflowInstancesBySourceMonth.get(row.month)?.dueDateIso || ""),
       paymentAmount: Number(cashflowInstancesBySourceMonth.get(row.month)?.amount || 0),
@@ -302,6 +325,9 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
         },
       };
       next.vatPreviewMonths = monthOverridesDraft;
+      (next as unknown as Record<string, unknown>).vatActualsByMonth = Object.fromEntries(
+        Object.entries(vatActualsDraft).map(([month, value]) => [month, { payableEur: value }]),
+      );
       return next;
     }, "v2:vat:save");
     setDirty(false);
@@ -500,6 +526,17 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
           <Tag color={vatCashflowTotal < 0 ? "blue" : "orange"}>
             Steuer-Cashflow gesamt: {formatCurrency(vatCashflowTotal)}
           </Tag>
+          {(() => {
+            const withActual = preview.rows.filter((row) => row.payableDeviation != null);
+            if (!withActual.length) return null;
+            const totalDev = withActual.reduce((sum, row) => sum + Number(row.payableDeviation || 0), 0);
+            const avgDev = totalDev / withActual.length;
+            return (
+              <Tag color={Math.abs(avgDev) < 500 ? "green" : "volcano"}>
+                Soll/Ist ({withActual.length} Monate): Ø {formatCurrency(avgDev)} | Σ {formatCurrency(totalDev)}
+              </Tag>
+            );
+          })()}
         </Space>
       </Card>
 
@@ -589,6 +626,44 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
               ),
             },
             {
+              title: "Ist (MBD)",
+              key: "actualPayable",
+              sorter: (a, b) => Number(a.actualPayable || 0) - Number(b.actualPayable || 0),
+              render: (_, row) => (
+                <InputNumber
+                  size="small"
+                  style={{ width: 110 }}
+                  value={row.actualPayable == null ? undefined : row.actualPayable}
+                  placeholder="—"
+                  step={10}
+                  onChange={(value) => {
+                    setVatActualsDraft((prev) => {
+                      const next = { ...prev };
+                      const numeric = Number(value);
+                      if (value == null || !Number.isFinite(numeric)) delete next[row.month];
+                      else next[row.month] = numeric;
+                      return next;
+                    });
+                    setDirty(true);
+                  }}
+                />
+              ),
+            },
+            {
+              title: "Abweichung",
+              key: "payableDeviation",
+              sorter: (a, b) => Number(a.payableDeviation || 0) - Number(b.payableDeviation || 0),
+              render: (_, row) => {
+                if (row.payableDeviation == null) return "—";
+                const dev = Number(row.payableDeviation);
+                return (
+                  <Text type={Math.abs(dev) < 250 ? "success" : dev > 0 ? "warning" : "danger"}>
+                    {dev > 0 ? "+" : ""}{formatCurrency(dev)}
+                  </Text>
+                );
+              },
+            },
+            {
               title: "Zahlungsmonat",
               key: "paymentMonth",
               render: (_, row) => formatVatPaymentMonthLabel(row.paymentMonth, formatVatMonthLabel),
@@ -628,8 +703,10 @@ export default function VatModule({ embedded = false }: VatModuleProps = {}): JS
               <Table.Summary.Cell index={7}><strong>{formatCurrency(preview.totals.eustInputVat)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={8}><strong>{formatCurrency(preview.totals.payable)}</strong></Table.Summary.Cell>
               <Table.Summary.Cell index={9} />
-              <Table.Summary.Cell index={10}><strong>{formatCurrency(vatCashflowTotal)}</strong></Table.Summary.Cell>
+              <Table.Summary.Cell index={10} />
               <Table.Summary.Cell index={11} />
+              <Table.Summary.Cell index={12}><strong>{formatCurrency(vatCashflowTotal)}</strong></Table.Summary.Cell>
+              <Table.Summary.Cell index={13} />
             </Table.Summary.Row>
           )}
         />

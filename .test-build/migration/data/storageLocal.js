@@ -155,6 +155,7 @@ const defaults = {
         { name: "Sonstiges", isGrossInput: true, vatRate: "19", reverseCharge: false },
     ],
     vatPreviewMonths: {},
+    vatActualsByMonth: {},
     forecast: {
         items: [],
         settings: {
@@ -300,6 +301,9 @@ function ensureVatData(state) {
     }
     if (!state.vatPreviewMonths || typeof state.vatPreviewMonths !== "object") {
         state.vatPreviewMonths = {};
+    }
+    if (!state.vatActualsByMonth || typeof state.vatActualsByMonth !== "object") {
+        state.vatActualsByMonth = {};
     }
 }
 function ensureGlobalSettings(state) {

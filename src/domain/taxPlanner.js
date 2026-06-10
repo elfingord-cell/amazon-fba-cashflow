@@ -1,4 +1,4 @@
-import { computeVatPreview } from "./vatPreview.js";
+import { computeVatPreview, readVatActualPayable } from "./vatPreview.js";
 
 const TAX_TYPE_CONFIG = [
   { key: "koerperschaftsteuer", label: "Körperschaftsteuer" },
@@ -414,7 +414,9 @@ export function expandVatTaxInstances(state, opts = {}) {
     if (!sourceMonth) return;
     const paymentMonth = shiftMonth(sourceMonth, paymentLagMonths);
     if (!paymentMonth || !monthSet.has(paymentMonth)) return;
-    const payable = Number(row?.payable || 0);
+    // Ist-Zahllast (MBD-Mail) ersetzt die Modell-Schätzung, sobald sie vorliegt.
+    const actualPayable = readVatActualPayable(sourceState, sourceMonth);
+    const payable = actualPayable != null ? actualPayable : Number(row?.payable || 0);
     if (!Number.isFinite(payable) || Math.abs(payable) <= 0.000001) return;
     const dueDate = isoDate(dueDateForMonth(paymentMonth, paymentDayOfMonth));
     if (!dueDate) return;
@@ -428,13 +430,16 @@ export function expandVatTaxInstances(state, opts = {}) {
       taxType: VAT_TAX_TYPE_KEY,
       label: VAT_TAX_LABEL,
       sourceSection: "ust-de",
-      note: `USt DE aus ${sourceMonth}`,
+      note: actualPayable != null ? `USt DE aus ${sourceMonth} (Ist laut MBD)` : `USt DE aus ${sourceMonth}`,
+      isActual: actualPayable != null,
       sourceMonth,
       paymentLagMonths,
       paymentDayOfMonth,
       previewRow: {
         month: sourceMonth,
         payable,
+        modelPayable: Number(row?.payable || 0),
+        actualPayable,
         outVat: Number(row?.outVat || 0),
         feeInputVat: Number(row?.feeInputVat || 0),
         fixInputVat: Number(row?.fixInputVat || 0),

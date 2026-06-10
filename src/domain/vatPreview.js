@@ -40,6 +40,18 @@ function sumEustInput(entries) {
     .reduce((sum, e) => sum + Math.abs(Number(e.amount) || 0), 0);
 }
 
+// Ist-Zahllast je Quellmonat (aus der MBD-Mail "Auswertung Finanzbuchführung").
+// Negative Werte = Erstattung. Quelle: state.vatActualsByMonth[YYYY-MM].payableEur
+export function readVatActualPayable(state, month) {
+  const map = state?.vatActualsByMonth;
+  if (!map || typeof map !== "object") return null;
+  const entry = map[month];
+  if (entry == null) return null;
+  const raw = typeof entry === "object" ? entry.payableEur : entry;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
 function normalizeSvzConfig(state) {
   const cfg = state?.settings?.vatPreview?.sondervorauszahlung;
   if (!cfg || typeof cfg !== "object") return { active: false, amountEur: 0 };
@@ -264,6 +276,8 @@ export function computeVatPreview(state) {
       },
     };
 
+    const actualPayable = readVatActualPayable(state, m);
+
     return {
       month: m,
       monthLabel: monthLabel(m),
@@ -275,6 +289,8 @@ export function computeVatPreview(state) {
       eustInputVat,
       svzCredit,
       payable,
+      actualPayable,
+      payableDeviation: actualPayable == null ? null : payable - actualPayable,
       details,
     };
   });
